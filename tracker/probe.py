@@ -35,7 +35,9 @@ class ProbeResult:
 
 
 def _same_window(a: Utilization, b: Utilization) -> bool:
-    if a.five_hour_resets_at and b.five_hour_resets_at and a.five_hour_resets_at != b.five_hour_resets_at:
+    ra, rb = a.five_hour_resets_at, b.five_hour_resets_at
+    # The endpoint jitters resets_at by milliseconds between reads; compare to the minute.
+    if ra and rb and ra[:16] != rb[:16]:
         return False
     return (b.five_hour or 0) >= (a.five_hour or 0)
 
@@ -77,7 +79,7 @@ def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], win
     a = read()
     sleep(window_s)
     b = read()
-    return a.five_hour == b.five_hour and a.five_hour_resets_at == b.five_hour_resets_at
+    return a.five_hour == b.five_hour and _same_window(a, b)
 
 
 def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], Callable[[], Utilization]],
