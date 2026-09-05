@@ -1,3 +1,4 @@
-out/
-history/
+.superpowers/
 __pycache__/
+history/
+out/
