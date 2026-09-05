@@ -35,3 +35,19 @@ class ParseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(FileNotFoundError):
                 read_usage(Path(d), fetch=lambda u, h: BODY)
+
+
+class Retry429Tests(unittest.TestCase):
+    def test_429_retries_then_succeeds(self):
+        import io
+        import urllib.error
+        from unittest import mock
+        from tracker.usage_api import _default_fetch
+        calls = []
+        err = urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "7"}, io.BytesIO(b""))
+        ok = mock.MagicMock()
+        ok.__enter__.return_value.read.return_value = b'{"five_hour": {"utilization": 1, "resets_at": "x"}}'
+        with mock.patch("urllib.request.urlopen", side_effect=[err, ok]):
+            body = _default_fetch("u", {}, sleep=calls.append)
+        self.assertEqual(body["five_hour"]["utilization"], 1)
+        self.assertEqual(calls, [7.0])

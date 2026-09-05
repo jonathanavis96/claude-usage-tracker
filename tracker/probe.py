@@ -42,7 +42,7 @@ def _same_window(a: Utilization, b: Utilization) -> bool:
 
 def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Utilization],
                    run: Callable[[], RunUsage], sleep: Callable[[float], None],
-                   now: Callable[[], datetime], max_prompts: int = 60, settle_s: float = 5) -> ProbeResult:
+                   now: Callable[[], datetime], max_prompts: int = 60, settle_s: float = 10) -> ProbeResult:
     start = now()
     before = read()
     last = before
