@@ -1,0 +1,5 @@
+{
+  "claude-sonnet-5":  {"input": 3,  "output": 15, "cache_read": 0.3, "cache_write": 3.75},
+  "claude-opus-5":    {"input": 15, "output": 75, "cache_read": 1.5, "cache_write": 18.75},
+  "claude-fable-5-1": {"input": 15, "output": 75, "cache_read": 1.5, "cache_write": 18.75}
+}

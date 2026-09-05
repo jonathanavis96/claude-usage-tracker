@@ -1,0 +1,6 @@
+{
+  "_status": "placeholder",
+  "claude-sonnet-5":  {"low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000},
+  "claude-opus-5":    {"low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000},
+  "claude-fable-5-1": {"low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000}
+}
