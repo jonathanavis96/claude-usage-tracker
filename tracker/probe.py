@@ -49,11 +49,9 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     prompts = 0
     tick1: int | None = None
     spent = {c: 0 for c in CLASSES}
-    largest = 0
     while prompts < max_prompts:
         u = run()
         prompts += 1
-        largest = max(largest, u.total)
         if tick1 is not None:
             for c in CLASSES:
                 spent[c] += getattr(u, c)
@@ -62,7 +60,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if not _same_window(last, cur):
             raise ProbeAbort("window reset during probe")
         jump = (cur.five_hour or 0) - (last.five_hour or 0)
-        if jump >= 2 or (jump >= 1 and tick1 is not None and sum(spent.values()) < largest):
+        if jump >= 2:
             raise ProbeAbort(f"utilization jumped {jump}% after one prompt; account not idle")
         if jump >= 1:
             if tick1 is None:
