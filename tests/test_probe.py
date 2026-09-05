@@ -21,6 +21,16 @@ def runner(tokens=20_000):
         return RunUsage("claude-sonnet-5", 100, 400, tokens - 500, 0, 0.001, 3.0)
     return run
 
+class JitterTests(unittest.TestCase):
+    def test_is_idle_ignores_sub_minute_resets_at_jitter(self):
+        from tracker.probe import is_idle
+        from tracker.usage_api import Utilization
+        from datetime import datetime, timezone
+        rs = iter(["2026-09-06T02:29:59.965637+00:00", "2026-09-06T02:29:59.759696+00:00"])
+        read = lambda: Utilization(datetime.now(timezone.utc), 0.0, 0.0, next(rs))  # noqa: E731
+        self.assertTrue(is_idle(read, lambda s: None))
+
+
 class TickTests(unittest.TestCase):
     def test_two_ticks_give_tokens_per_pct(self):
         # readings after each prompt: 10,10,11(tick1),11,11,11,12(tick2)
