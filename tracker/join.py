@@ -36,7 +36,8 @@ class DailyRate:
 
 
 def _is_reset(a: Sample, b: Sample) -> bool:
-    if a.resets_at and b.resets_at and a.resets_at != b.resets_at:
+    # The endpoint jitters resets_at by sub-second amounts between reads; compare to the minute.
+    if a.resets_at and b.resets_at and a.resets_at[:16] != b.resets_at[:16]:
         return True
     return b.five_hour < a.five_hour
 
