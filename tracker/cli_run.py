@@ -33,7 +33,9 @@ def parse_result(stdout: str, model_hint: str) -> RunUsage:
         raise RuntimeError(f"claude -p returned an error result: {d.get('result') or d.get('subtype')}")
     mu = d.get("modelUsage") or {}
     if mu:
-        model, m = next(iter(mu.items()))
+        # Prefer the entry for the model we asked for; a haiku sidecar can appear first.
+        model = next((k for k in mu if k == model_hint or k.startswith(model_hint)), next(iter(mu)))
+        m = mu[model]
         return RunUsage(model, int(m.get("inputTokens") or 0), int(m.get("outputTokens") or 0),
                         int(m.get("cacheReadInputTokens") or 0), int(m.get("cacheCreationInputTokens") or 0),
                         m.get("costUSD", d.get("total_cost_usd")), (d.get("duration_ms") or 0) / 1000)

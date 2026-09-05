@@ -17,6 +17,14 @@ class CliTests(unittest.TestCase):
         self.assertAlmostEqual(u.duration_s, 4.321)
         self.assertEqual(u.total, 12385)
 
+    def test_parse_picks_hinted_model_not_first_entry(self):
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-haiku-4-5-20251001": {"inputTokens": 1, "outputTokens": 2, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0, "costUSD": 0.0001},
+                           **d["modelUsage"]}
+        u = parse_result(json.dumps(d), "claude-sonnet-5")
+        self.assertEqual(u.model, "claude-sonnet-5")
+        self.assertEqual(u.total, 12385)
+
     def test_parse_falls_back_to_usage_block(self):
         d = json.loads(RESULT)
         del d["modelUsage"]
