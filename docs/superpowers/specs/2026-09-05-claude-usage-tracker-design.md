@@ -17,9 +17,12 @@ The visual target is `docs/mockup.html` in this repo (approved 2026-09-05).
 
 ### Primary: the fixed probe
 
-A cron job on `ssh gs`, running as the `dclaude` account (dave@greenscape.systems,
-credentials in that host's `.claude-dave` directory), measures **tokens per
-percent tick**. The prompt, model and effort never change, so the tokens per
+A cron job on `ssh gs` measures **tokens per percent tick**. It runs as
+`dclaude` (dave@greenscape.systems, credentials in that host's `.claude-dave`
+directory) and falls back to `wclaude` (jono@greenscape.systems,
+`.claude-javiswork`) when the Dave account is busy. Both are on Max 20x, the
+same plan as Jonathan's own account, so probe and passive figures are directly
+comparable. The prompt, model and effort never change, so the tokens per
 prompt are constant within noise, and the only thing that can move the tick
 size is Anthropic's limit. The measurement is independent of anyone's
 workload and of whether masterrig is on.
@@ -40,13 +43,14 @@ workload and of whether masterrig is on.
 - Each probe records: timestamp, model, effort, per-prompt tokens by class
   from the `--output-format json` usage block, utilization readings, tick
   times, and derived tokens per 1% of window.
-- The account's own usage between ticks would corrupt a probe. The `dclaude`
-  account must be otherwise idle while a probe runs; the probe checks
-  utilization is stable for 2 minutes before starting and aborts if a tick
-  arrives faster than its own prompts can explain.
-- The probe measures the plan the Dave account is on. The public JSON records
-  that plan as `plan_measured`, and the passive history from Jonathan's account
-  is scaled to it by the measured plan ratio.
+- Other usage on the account between ticks would corrupt a probe, so the
+  account must be idle while a probe runs. The probe reads utilization twice,
+  2 minutes apart, on the Dave account; if it moved, it tries the Jono Work
+  account the same way. If both are busy it sleeps 15 minutes and retries, up
+  to 4 hours, then gives up for that slot and logs it. During the run it aborts
+  if a tick arrives faster than its own prompts can explain.
+- Each probe row records which account it ran on. Both are Max 20x, so the
+  rate is pooled, but the account is kept for diagnosis.
 
 ### Secondary: the passive join
 
@@ -100,9 +104,8 @@ as "about", because they are one task shape.
 
 ### Plans
 
-The probe measures the Dave account's plan going forward. Jonathan's passive
-history measured Max 5x until 2026-08-18 and Max 20x after, so the 5x-to-20x
-ratio is observed. Pro is scaled by the published 1:5 ratio to Max 5x. The
+All three accounts are Max 20x. Jonathan's passive history measured Max 5x
+until 2026-08-18 and Max 20x after, so the 5x-to-20x ratio is observed. Pro is scaled by the published 1:5 ratio to Max 5x. The
 table says which figures are measured and which are scaled.
 
 ### Change detection
@@ -120,8 +123,8 @@ is that model's.
 ### 1. Collector (this repo, private, Python 3 stdlib)
 
 - `tracker/probe.py` runs one tick probe and appends a row to `probes.jsonl`.
-  Deployed to `ssh gs` under the `dclaude` account with a cron entry; the same
-  file runs on masterrig for the spike.
+  Deployed to `ssh gs` with a cron entry; it selects the account per the idle
+  rules above. The same file runs on masterrig for the spike.
 - `tracker/samples.py` reads the utilization log into (timestamp, five_hour,
   seven_day, resets_at) rows. Goes on reading the existing systemd log; no
   second sampler.
