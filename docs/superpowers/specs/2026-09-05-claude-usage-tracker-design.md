@@ -17,46 +17,58 @@ The visual target is `docs/mockup.html` in this repo (approved 2026-09-05).
 
 ### Primary: the fixed probe
 
-A cron job on the VPS runs a fixed prompt through `claude -p` at a fixed
-model and effort, reading `GET https://api.anthropic.com/api/oauth/usage`
-immediately before and after. The prompt, model and effort never change, so
-the tokens consumed are constant within noise, and the only thing that can move
-the utilization delta is Anthropic's limit. This makes the measurement
-independent of Jonathan's own workload and of whether masterrig is on.
+A cron job on `ssh gs`, running as the `dclaude` account (dave@greenscape.systems,
+credentials in that host's `.claude-dave` directory), measures **tokens per
+percent tick**. The prompt, model and effort never change, so the tokens per
+prompt are constant within noise, and the only thing that can move the tick
+size is Anthropic's limit. The measurement is independent of anyone's
+workload and of whether masterrig is on.
 
-- The endpoint reports whole percent. A probe is sized to move roughly 3%, or
-  is run as 3 back-to-back prompts and summed, so rounding error is under a
-  third of the signal. The spike determines the prompt size that achieves this.
-- Probes that straddle a window reset (`resets_at` changes, or utilization
-  falls) are discarded and re-run.
+- The endpoint reports whole percent, so a single delta has up to ±0.5% of
+  rounding error. The probe therefore runs a small fixed prompt (about 0.2%
+  of a window) in a loop, reading `GET https://api.anthropic.com/api/oauth/usage`
+  after each run, until `five_hour.utilization` increments. It notes the token
+  count at that tick, keeps going until the next tick, and reports the tokens
+  consumed between the two ticks as one percent's worth. Precision is one
+  small prompt, about a tenth of the signal. Cost is roughly 1 to 1.5% of a
+  window per probe.
+- A probe that sees `resets_at` change or utilization fall mid-run is
+  discarded and re-run once.
 - Cadence: twice a day, models rotated (Sonnet 5, Opus 5, Fable 5.1), so each
   model is probed at least every 36 hours. The daily figure per model is the
   median of its probes over the trailing 3 days.
-- Each probe records: timestamp, model, effort, tokens by class from the
-  `--output-format json` usage block, utilization before and after, delta,
-  and derived tokens per 1% of window.
-- The VPS holds a copy of the Claude OAuth credentials file; the CLI refreshes
-  the token on its own. Probe usage counts against the same subscription, which
-  is the point. The spike measures the weekly cost of the cadence.
+- Each probe records: timestamp, model, effort, per-prompt tokens by class
+  from the `--output-format json` usage block, utilization readings, tick
+  times, and derived tokens per 1% of window.
+- The account's own usage between ticks would corrupt a probe. The `dclaude`
+  account must be otherwise idle while a probe runs; the probe checks
+  utilization is stable for 2 minutes before starting and aborts if a tick
+  arrives faster than its own prompts can explain.
+- The probe measures the plan the Dave account is on. The public JSON records
+  that plan as `plan_measured`, and the passive history from Jonathan's account
+  is scaled to it by the measured plan ratio.
 
 ### Secondary: the passive join
 
 Two data streams already exist on masterrig:
 
-- **Utilization samples.** `~/.paperclip/ops/mis-usage-ceiling-systemd.log`
-  holds `five_hour` and `seven_day` utilization percent, sampled every 60 to
-  300 seconds since 2026-08-18, from `GET https://api.anthropic.com/api/oauth/usage`.
+- **Utilization samples.** `~/.moonlighter/usage_log.jsonl` holds
+  `five_hour`, `seven_day` and `seven_day_sonnet` utilization with `resets_at`,
+  sampled every 30 minutes since 2026-06-13. From 2026-08-18
+  `~/.paperclip/ops/mis-usage-ceiling-systemd.log` adds samples every 60 to
+  300 seconds. Both are read; the denser source wins where they overlap.
 - **Token consumption.** `~/.claude/projects/**/*.jsonl` transcripts record
   every assistant turn with model, input, output, cache-read and cache-write
-  token counts and a timestamp.
+  token counts and a timestamp. On disk from at least 2026-07-08.
 
 Joining them gives the **rate**: tokens consumed between two samples divided
 by the utilization delta, in tokens per 1% of the 5-hour window. Multiplied by
 100 that is the effective window size. Computed per model and per cache class.
 
 The passive join supplies what the probe cannot: the real cache-class split of
-a working session, the API-value figure, and history back to 2026-08-18. It
-does not feed change detection or the headline.
+a working session, the API-value figure, history back to July 2026 covering
+the Max 5x period, and the measured 5x-to-20x plan ratio from the 2026-08-18
+plan change. It does not feed change detection or the headline.
 
 ### Join rules
 
@@ -88,16 +100,16 @@ as "about", because they are one task shape.
 
 ### Plans
 
-Only the current plan (Max 20x) is measured going forward. Max 5x was measured
-before the 2026-08-18 plan change and the observed ratio between the two is
-used to scale. Pro is scaled by the published 1:5 ratio to Max 5x. The table
-says which figures are scaled.
+The probe measures the Dave account's plan going forward. Jonathan's passive
+history measured Max 5x until 2026-08-18 and Max 20x after, so the 5x-to-20x
+ratio is observed. Pro is scaled by the published 1:5 ratio to Max 5x. The
+table says which figures are measured and which are scaled.
 
 ### Change detection
 
 Detection runs on probe data only. A change is declared when the rolling
 3-day median of the probe rate differs from the preceding 7-day median by more
-than the probe's rounding error (about 10% at a 3% probe) and the difference
+than 5%, above the tick method's error of about 2%, and the difference
 persists for 2 consecutive days. The event records date, direction and
 percentage. The headline shows the most recent event. Detection runs per
 model, and an event is reported when any model changes; the headline percent
@@ -107,9 +119,9 @@ is that model's.
 
 ### 1. Collector (this repo, private, Python 3 stdlib)
 
-- `tracker/probe.py` runs one probe and appends a row to `probes.jsonl`.
-  Deployed to the VPS with a cron entry; the same file runs on masterrig for
-  the spike.
+- `tracker/probe.py` runs one tick probe and appends a row to `probes.jsonl`.
+  Deployed to `ssh gs` under the `dclaude` account with a cron entry; the same
+  file runs on masterrig for the spike.
 - `tracker/samples.py` reads the utilization log into (timestamp, five_hour,
   seven_day, resets_at) rows. Goes on reading the existing systemd log; no
   second sampler.
@@ -119,7 +131,7 @@ is that model's.
 - `tracker/detect.py` runs change detection over the daily history.
 - `tracker/publish.py` writes the public JSON and the private history.
 - `tracker/calibrate.py` runs the effort calibration and writes the matrix.
-- `bin/daily.sh` runs on the VPS: pulls the probe rows, merges the latest
+- `bin/daily.sh` runs on `ssh gs`: pulls the probe rows, merges the latest
   passive-join output pushed from masterrig when available, runs detection,
   writes the public JSON, commits it into the alldonesites checkout and pushes.
   Cron, once a day. The passive output being stale only ages the cache split
@@ -203,13 +215,14 @@ message is fixed text, no attribution trailers.
   straddling, zero-delta pooling, model attribution threshold, interpolation,
   and change detection edge cases. Run only the touched files.
 - Page: the site's existing typecheck plus a render test with a fixture JSON.
-- Probe: a dry-run mode that uses a recorded usage pair and a recorded CLI
-  JSON, so the parsing is tested without spending usage.
+- Probe: a dry-run mode that replays a recorded sequence of usage readings
+  and CLI JSON outputs, so tick detection, reset handling and the idle guard
+  are tested without spending usage.
 - End to end: the spike in step 1 of the plan is the acceptance check for the
   method: probe sizing, weekly cost, and agreement between probe rate and
   passive rate on the same day. Its result is recorded in `docs/spike-2026-09.md`.
 
 ## Out of scope
 
-Other people's accounts, per-user login, historical data before 2026-08-18
-beyond what the log holds, dark mode beyond what the site already does.
+Other people's accounts beyond the two named, per-user login, historical data
+before 2026-06-13, dark mode beyond what the site already does.
