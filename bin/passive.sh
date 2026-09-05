@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Daily on masterrig: passive join, commit history/passive.json, push. Safe to run when gs is down.
 set -euo pipefail
+export PATH="/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.."
 python3 -m tracker.passive --out history/passive.json
 git add history/passive.json

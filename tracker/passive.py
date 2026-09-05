@@ -43,7 +43,9 @@ def main(argv: list[str] | None = None) -> int:
     rates = daily_rates(build_intervals(samples, turns))
     summary = passive_summary(rates)
     a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
+    tmp = a.out.with_suffix(".tmp")
+    tmp.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
+    tmp.replace(a.out)  # atomic: a killed run never leaves a truncated file
     print(f"wrote {a.out}: {len(rates)} days, ratio {summary['plan_ratio_5x_to_20x']}")
     return 0
 
