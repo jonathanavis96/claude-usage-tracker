@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from statistics import median
 from .samples import Sample
+from .usage_api import same_reset
 from .turns import Turn
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
@@ -36,8 +37,7 @@ class DailyRate:
 
 
 def _is_reset(a: Sample, b: Sample) -> bool:
-    # The endpoint jitters resets_at by sub-second amounts between reads; compare to the minute.
-    if a.resets_at and b.resets_at and a.resets_at[:16] != b.resets_at[:16]:
+    if not same_reset(a.resets_at, b.resets_at):
         return True
     return b.five_hour < a.five_hour
 

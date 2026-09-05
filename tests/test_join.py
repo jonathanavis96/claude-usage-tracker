@@ -34,7 +34,7 @@ class IntervalTests(unittest.TestCase):
 
     def test_sub_minute_resets_at_jitter_is_not_a_reset(self):
         a = "2026-07-01T02:59:59.627759+00:00"
-        b = "2026-07-01T02:59:59.575898+00:00"
+        b = "2026-07-01T03:00:00.496943+00:00"
         iv = build_intervals([S(0, 3, reset=a), S(30, 4, reset=b)], [T(1)])
         self.assertEqual(len(iv), 1)
 

@@ -26,7 +26,7 @@ class JitterTests(unittest.TestCase):
         from tracker.probe import is_idle
         from tracker.usage_api import Utilization
         from datetime import datetime, timezone
-        rs = iter(["2026-09-06T02:29:59.965637+00:00", "2026-09-06T02:29:59.759696+00:00"])
+        rs = iter(["2026-09-06T02:29:59.965637+00:00", "2026-09-06T02:30:00.148993+00:00"])
         read = lambda: Utilization(datetime.now(timezone.utc), 0.0, 0.0, next(rs))  # noqa: E731
         self.assertTrue(is_idle(read, lambda s: None))
 

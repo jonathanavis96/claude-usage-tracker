@@ -5,7 +5,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from .usage_api import Utilization
+from .usage_api import Utilization, same_reset
 from .cli_run import RunUsage
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
@@ -35,9 +35,7 @@ class ProbeResult:
 
 
 def _same_window(a: Utilization, b: Utilization) -> bool:
-    ra, rb = a.five_hour_resets_at, b.five_hour_resets_at
-    # The endpoint jitters resets_at by milliseconds between reads; compare to the minute.
-    if ra and rb and ra[:16] != rb[:16]:
+    if not same_reset(a.five_hour_resets_at, b.five_hour_resets_at):
         return False
     return (b.five_hour or 0) >= (a.five_hour or 0)
 
