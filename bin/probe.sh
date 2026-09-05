@@ -12,7 +12,7 @@ export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/cur
 cd "$(dirname "$0")/.." || exit 1
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-git pull -q --rebase origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
+git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
 
 MODELS=(claude-sonnet-5 claude-opus-5 claude-fable-5-1)
 SLOT=$(( ( $(date -u +%j) * 2 + ( $(date -u +%H) >= 12 ) ) % 3 ))
