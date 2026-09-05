@@ -1792,7 +1792,7 @@ Expected: both credential files exist, `claude` path printed. Note the `claude` 
 #!/usr/bin/env bash
 # Twice daily on gs: one tick probe, model rotated by slot. Appends to probes.jsonl and pushes.
 set -uo pipefail
-export PATH="$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.."
 git pull -q --rebase origin main || true
 MODELS=(claude-sonnet-5 claude-opus-5 claude-fable-5-1)
