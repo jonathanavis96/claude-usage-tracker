@@ -45,3 +45,18 @@ def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = Non
     headers = {"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"}
     body = (fetch or _default_fetch)(USAGE_URL, headers)
     return parse_usage(body, (now or (lambda: datetime.now(timezone.utc)))())
+
+
+def same_reset(a: str | None, b: str | None, tol_s: float = 60) -> bool:
+    """True unless both stamps are present and differ by more than tol_s.
+
+    The endpoint jitters resets_at by sub-second amounts between reads, and that
+    jitter crosses minute boundaries, so string or minute comparison is wrong.
+    """
+    if not a or not b:
+        return True
+    try:
+        da, db = datetime.fromisoformat(a), datetime.fromisoformat(b)
+    except ValueError:
+        return a == b
+    return abs((da - db).total_seconds()) <= tol_s
