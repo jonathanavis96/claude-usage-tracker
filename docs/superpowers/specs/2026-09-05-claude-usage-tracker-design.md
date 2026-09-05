@@ -15,6 +15,32 @@ The visual target is `docs/mockup.html` in this repo (approved 2026-09-05).
 
 ## The core measurement
 
+### Primary: the fixed probe
+
+A cron job on the VPS runs a fixed prompt through `claude -p` at a fixed
+model and effort, reading `GET https://api.anthropic.com/api/oauth/usage`
+immediately before and after. The prompt, model and effort never change, so
+the tokens consumed are constant within noise, and the only thing that can move
+the utilization delta is Anthropic's limit. This makes the measurement
+independent of Jonathan's own workload and of whether masterrig is on.
+
+- The endpoint reports whole percent. A probe is sized to move roughly 3%, or
+  is run as 3 back-to-back prompts and summed, so rounding error is under a
+  third of the signal. The spike determines the prompt size that achieves this.
+- Probes that straddle a window reset (`resets_at` changes, or utilization
+  falls) are discarded and re-run.
+- Cadence: twice a day, models rotated (Sonnet 5, Opus 5, Fable 5.1), so each
+  model is probed at least every 36 hours. The daily figure per model is the
+  median of its probes over the trailing 3 days.
+- Each probe records: timestamp, model, effort, tokens by class from the
+  `--output-format json` usage block, utilization before and after, delta,
+  and derived tokens per 1% of window.
+- The VPS holds a copy of the Claude OAuth credentials file; the CLI refreshes
+  the token on its own. Probe usage counts against the same subscription, which
+  is the point. The spike measures the weekly cost of the cadence.
+
+### Secondary: the passive join
+
 Two data streams already exist on masterrig:
 
 - **Utilization samples.** `~/.paperclip/ops/mis-usage-ceiling-systemd.log`
@@ -28,8 +54,9 @@ Joining them gives the **rate**: tokens consumed between two samples divided
 by the utilization delta, in tokens per 1% of the 5-hour window. Multiplied by
 100 that is the effective window size. Computed per model and per cache class.
 
-The rate is the thing Anthropic can silently change. A step change in the rate
-on a date, with the workload mix unchanged, is the evidence the page reports.
+The passive join supplies what the probe cannot: the real cache-class split of
+a working session, the API-value figure, and history back to 2026-08-18. It
+does not feed change detection or the headline.
 
 ### Join rules
 
@@ -68,16 +95,21 @@ says which figures are scaled.
 
 ### Change detection
 
-A change is declared when the rolling 7-day median of the daily rate differs
-from the preceding 7-day median by more than 10% and the difference persists
-for 2 consecutive days. The event records date, direction and percentage. The
-headline shows the most recent event. Detection runs on the total rate, not a
-per-model rate, so a shift in model mix cannot trigger it on its own.
+Detection runs on probe data only. A change is declared when the rolling
+3-day median of the probe rate differs from the preceding 7-day median by more
+than the probe's rounding error (about 10% at a 3% probe) and the difference
+persists for 2 consecutive days. The event records date, direction and
+percentage. The headline shows the most recent event. Detection runs per
+model, and an event is reported when any model changes; the headline percent
+is that model's.
 
 ## Components
 
 ### 1. Collector (this repo, private, Python 3 stdlib)
 
+- `tracker/probe.py` runs one probe and appends a row to `probes.jsonl`.
+  Deployed to the VPS with a cron entry; the same file runs on masterrig for
+  the spike.
 - `tracker/samples.py` reads the utilization log into (timestamp, five_hour,
   seven_day, resets_at) rows. Goes on reading the existing systemd log; no
   second sampler.
@@ -87,8 +119,11 @@ per-model rate, so a shift in model mix cannot trigger it on its own.
 - `tracker/detect.py` runs change detection over the daily history.
 - `tracker/publish.py` writes the public JSON and the private history.
 - `tracker/calibrate.py` runs the effort calibration and writes the matrix.
-- `bin/daily.sh` runs the pipeline, commits the public JSON into the
-  alldonesites checkout and pushes. Cron, once a day.
+- `bin/daily.sh` runs on the VPS: pulls the probe rows, merges the latest
+  passive-join output pushed from masterrig when available, runs detection,
+  writes the public JSON, commits it into the alldonesites checkout and pushes.
+  Cron, once a day. The passive output being stale only ages the cache split
+  and the pre-probe history; the headline stays current.
 
 Tests cover the join rules with synthetic fixtures. No network in tests.
 
@@ -103,7 +138,7 @@ Written to `website/public/data/claude-usage.json` in alldonesites. Shape:
   "plan_measured": "max20",
   "plan_ratios": { "pro": 0.05, "max5": 0.25, "max20": 1.0 },
   "rates": {
-    "sonnet-5":   { "tokens_per_window": 42000000, "split": { "input": 0.062, "output": 0.021, "cache_read": 0.907, "cache_write": 0.010 } },
+    "sonnet-5":   { "tokens_per_window": 42000000, "source": "probe", "probe_effort": "high", "split": { "input": 0.062, "output": 0.021, "cache_read": 0.907, "cache_write": 0.010 } },
     "opus-5":     { "...": "..." },
     "fable-5-1":  { "...": "..." }
   },
@@ -114,8 +149,9 @@ Written to `website/public/data/claude-usage.json` in alldonesites. Shape:
 }
 ```
 
-`history` holds the last 90 days of the total rate expressed as Sonnet
-equivalent tokens per window on the measured plan. The page scales it by the
+`history` holds the last 90 days per model: probe-derived from the day probes
+began, passive-join-derived before that and marked `"source": "passive"`,
+expressed as tokens per window on the measured plan. The page scales it by the
 selected plan ratio and model rate. Effort and price tables are static inputs
 copied into the JSON so the page has one fetch.
 
@@ -167,8 +203,11 @@ message is fixed text, no attribution trailers.
   straddling, zero-delta pooling, model attribution threshold, interpolation,
   and change detection edge cases. Run only the touched files.
 - Page: the site's existing typecheck plus a render test with a fixture JSON.
+- Probe: a dry-run mode that uses a recorded usage pair and a recorded CLI
+  JSON, so the parsing is tested without spending usage.
 - End to end: the spike in step 1 of the plan is the acceptance check for the
-  method. Its result is recorded in `docs/spike-2026-09.md`.
+  method: probe sizing, weekly cost, and agreement between probe rate and
+  passive rate on the same day. Its result is recorded in `docs/spike-2026-09.md`.
 
 ## Out of scope
 
