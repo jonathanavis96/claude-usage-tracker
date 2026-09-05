@@ -61,3 +61,21 @@ class CalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FailureTests(unittest.TestCase):
+    def test_failing_cell_is_skipped_and_others_survive(self):
+        from tracker.calibrate import calibrate
+        from tracker.cli_run import RunUsage
+        from tracker.usage_api import Utilization
+        from datetime import datetime, timezone
+        def run(prompt, model, effort):
+            if effort == "high":
+                raise RuntimeError("boom")
+            return RunUsage(model, 1, 2, 3, 4, 0.0, 1.0)
+        read = lambda: Utilization(datetime.now(timezone.utc), 0.0, 0.0, None)  # noqa: E731
+        seen = []
+        m = calibrate(["m"], ["low", "high"], 2, run, read, lambda s: None, checkpoint=lambda x: seen.append(len(x["_meta"]["runs"])))
+        self.assertEqual(m["m"], {"low": 10})
+        self.assertEqual(len(m["_meta"]["failed"]), 2)
+        self.assertEqual(seen, [1, 2])

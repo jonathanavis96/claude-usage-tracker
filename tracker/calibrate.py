@@ -55,9 +55,14 @@ if __name__ == '__main__':
 ```"""
 
 
-def calibrate(models: list[str], efforts: list[str], repeats: int, run: Callable, read: Callable, sleep: Callable) -> dict:
+def calibrate(models: list[str], efforts: list[str], repeats: int, run: Callable, read: Callable, sleep: Callable,
+              checkpoint: Callable[[dict], None] | None = None) -> dict:
+    """Run every cell; a run that fails twice is skipped and its cell left out (recorded under _meta.failed).
+
+    checkpoint, when given, is called with the matrix after every cell so a long real run survives a crash.
+    """
     matrix: dict = {"_meta": {"repeats": repeats, "started": datetime.now(timezone.utc).isoformat(),
-                               "usage_deltas": {}, "runs": {}}}
+                               "usage_deltas": {}, "runs": {}, "failed": []}}
     for model in models:
         matrix[model] = {}
         for effort in efforts:
@@ -65,16 +70,27 @@ def calibrate(models: list[str], efforts: list[str], repeats: int, run: Callable
             totals = []
             runs = []
             for _ in range(repeats):
-                u = run(CALIBRATION_PROMPT, model, effort)
+                try:
+                    u = run(CALIBRATION_PROMPT, model, effort)
+                except Exception:  # one retry, then give up on this run
+                    sleep(10)
+                    try:
+                        u = run(CALIBRATION_PROMPT, model, effort)
+                    except Exception as e2:
+                        matrix["_meta"]["failed"].append({"cell": f"{model}/{effort}", "error": str(e2)[:200]})
+                        continue
                 totals.append(u.total)
                 runs.append({"input": u.input, "output": u.output,
                              "cache_read": u.cache_read, "cache_write": u.cache_write, "total": u.total})
                 sleep(3)
             after = read()
             cell = f"{model}/{effort}"
-            matrix[model][effort] = round(median(totals))
+            if totals:
+                matrix[model][effort] = round(median(totals))
             matrix["_meta"]["usage_deltas"][cell] = (after.five_hour or 0) - (before.five_hour or 0)
             matrix["_meta"]["runs"][cell] = runs
+            if checkpoint:
+                checkpoint(matrix)
     matrix["_meta"]["finished"] = datetime.now(timezone.utc).isoformat()
     return matrix
 
@@ -92,9 +108,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("data/effort_matrix.json"))
     a = ap.parse_args(argv)
     cfg = a.config_dir or Path.home() / ".claude"
+    def write(m: dict) -> None:
+        tmp = a.out.with_suffix(".tmp")
+        tmp.write_text(json.dumps(m, indent=1) + "\n", encoding="utf-8")
+        tmp.replace(a.out)
+
     m = calibrate(a.models, a.efforts, a.repeats,
-                  lambda p, mo, ef: run_prompt(p, mo, ef, a.config_dir), lambda: read_usage(cfg), time.sleep)
-    a.out.write_text(json.dumps(m, indent=1) + "\n", encoding="utf-8")
+                  lambda p, mo, ef: run_prompt(p, mo, ef, a.config_dir), lambda: read_usage(cfg), time.sleep,
+                  checkpoint=write)
+    write(m)
     print(json.dumps({k: v for k, v in m.items() if not k.startswith("_")}, indent=1))
     return 0
 
