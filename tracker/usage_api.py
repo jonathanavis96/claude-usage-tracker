@@ -1,6 +1,8 @@
 """Read subscription utilization from the Claude OAuth usage endpoint."""
 from __future__ import annotations
 import json
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,10 +32,22 @@ def parse_usage(body: dict, now: datetime) -> Utilization:
     return Utilization(ts=now, five_hour=fh, seven_day=sd, five_hour_resets_at=fh_reset)
 
 
-def _default_fetch(url: str, headers: dict) -> dict:
+RETRY_429_S = (30, 60, 120, 240, 480)
+
+
+def _default_fetch(url: str, headers: dict, sleep: Callable[[float], None] = time.sleep) -> dict:
+    """GET the usage endpoint; on 429 back off and retry, honouring Retry-After when present."""
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode())
+    for wait in (*RETRY_429_S, None):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or wait is None:
+                raise
+            ra = e.headers.get("Retry-After") if e.headers else None
+            sleep(float(ra) if ra and ra.isdigit() else wait)
+    raise AssertionError("unreachable")
 
 
 def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = None,
