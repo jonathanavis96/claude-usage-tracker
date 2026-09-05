@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude usage tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Bricolage+Grotesque:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FBFCFD;--fg:#0F172A;--muted:#646B79;--bd:#475569;
+  --border:#E6E9EE;--primary:#0EA5E9;--primary-d:#0277B5;--acg:linear-gradient(92deg,#0B82CC,#11A6E6);
+  --green:#059669;--green-bg:rgba(5,150,105,.10);--red:#B42318;--red-bg:rgba(180,35,24,.08);
+  --claude:#D97757;--disp:'Bricolage Grotesque',sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+nav{display:flex;align-items:center;justify-content:space-between;padding:18px 48px;border-bottom:1px solid var(--border)}
+nav .brand{display:flex;align-items:center;gap:11px;font-family:var(--disp);font-weight:700;font-size:17px}
+nav .brand img{width:32px;height:32px;border-radius:8px}
+nav ul{display:flex;gap:28px;list-style:none;padding:0;font-size:14px;color:var(--muted)}
+nav .cta{background:var(--acg);color:#fff;font-weight:600;font-size:14px;padding:9px 18px;border-radius:8px}
+main{max-width:880px;margin:0 auto;padding:0 24px;overflow-x:hidden}
+body{overflow-x:hidden}
+.hero{text-align:center;padding:96px 0 72px}
+.eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:var(--disp);font-size:15px;font-weight:600;color:var(--fg);margin-bottom:22px;padding:7px 14px 7px 10px;border:1px solid var(--border);border-radius:999px;background:#fff}
+.eyebrow svg{width:20px;height:20px}
+.eyebrow small{color:var(--muted);font-weight:500;font-family:Inter,sans-serif;font-size:13px}
+h1{font-family:var(--disp);font-size:36px;line-height:1.2;font-weight:700;letter-spacing:-.02em;margin-bottom:16px}
+.delta{color:var(--red)}
+.pill{display:inline-flex;align-items:center;gap:8px;background:var(--green-bg);color:hsl(160 84% 27%);font-size:13px;font-weight:600;padding:6px 14px;border-radius:999px;margin-bottom:56px}
+.pill .dot{font-style:normal;color:var(--green);opacity:.6}
+.pill i{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+.sentence{font-size:18px;color:var(--fg);margin-bottom:22px}
+.sel{color:var(--primary-d);font-weight:600;border-bottom:1.5px solid rgba(14,165,233,.5);padding-bottom:1px;white-space:nowrap}
+.sel:after{content:"";display:inline-block;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translate(-2px,-3px);margin-left:7px}
+.big{font-family:var(--disp);font-size:72px;font-weight:800;letter-spacing:-.04em;line-height:1;color:var(--primary)}
+.big span{font-family:var(--disp);font-size:30px;font-weight:600;letter-spacing:-.02em;color:var(--fg);margin-left:10px}
+.split{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:14px;color:var(--fg);margin-top:26px;letter-spacing:-.01em}
+.split b{font-weight:500}
+.split em{font-style:normal;color:var(--muted);margin:0 8px}
+.quiet{font-size:15px;color:var(--muted);margin-top:12px}
+.quiet em{font-style:normal;margin:0 8px}
+section{padding:56px 0;border-top:1px solid var(--border)}
+h2{font-family:var(--disp);font-size:20px;font-weight:600;letter-spacing:-.01em;margin-bottom:6px}
+.sub{font-size:14px;color:var(--muted);margin-bottom:28px}
+svg text{font-family:Inter,sans-serif;font-size:11px;fill:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:14px 12px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:500;font-size:13px}
+th:not(:first-child),td:not(:first-child){text-align:right;font-variant-numeric:tabular-nums}
+td.hl,th.hl{color:var(--primary-d);font-weight:600}
+.acc{display:flex;justify-content:space-between;align-items:center;padding:18px 0;border-top:1px solid var(--border);font-weight:500;font-size:15px}
+.acc span{color:var(--muted);font-weight:400;font-size:13px}
+footer{text-align:center;font-size:14px;color:var(--muted);padding:40px 0 64px}
+footer a{color:var(--primary);text-decoration:none;font-weight:500}
+@media (max-width:640px){
+  nav{padding:16px 20px}nav ul,nav .cta{display:none}
+  .hero{padding:56px 0 48px}h1{font-size:24px}h1 br{display:none}
+  .pill{white-space:normal;flex-direction:column;gap:2px;padding:9px 16px;margin-bottom:36px}.pill i,.pill .dot{display:none}
+  .split span,.quiet span{display:block}.brk{display:none}
+  .eyebrow{font-size:14px}
+  .sentence .sel{white-space:normal}
+  .split{font-size:12px}
+  .sentence{font-size:16px;line-height:1.7}
+  .big{font-size:52px}.big span{display:block;margin:10px 0 0;font-size:22px}
+  .split{font-size:12px;line-height:1.8;white-space:normal}.split em{margin:0 5px}
+  .quiet{line-height:1.7}
+  svg{overflow:visible}
+  th,td{padding:12px 6px;font-size:13px}
+}
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand"><img src="logo.png" alt="">All Done Sites</div>
+  <ul><li>How it works</li><li>Portfolio</li><li>Pricing</li><li>Guides</li></ul>
+  <div class="cta">Work with us</div>
+</nav>
+<main>
+  <div class="hero">
+    <div class="eyebrow"><svg viewBox="0 0 24 24" fill="var(--claude)"><path d="M12 1.5l1.6 6.2 4.6-4.4-3 5.6 6.3-.4-5.8 2.5 5.8 2.5-6.3-.4 3 5.6-4.6-4.4L12 22.5l-1.6-6.2-4.6 4.4 3-5.6-6.3.4 5.8-2.5-5.8-2.5 6.3.4-3-5.6 4.6 4.4z"/></svg><span style="color:var(--claude)">Claude</span> <small>usage tracker</small></div>
+    <h1>Anthropic last <span class="delta">decreased</span> Claude's limits <br>by <span class="delta">14%</span> on 2 Sep 2026.</h1>
+    <div class="pill"><i></i><span>Measured daily from a real account</span><em class="dot">·</em><span>last sample <time data-utc="2026-09-05T20:15:00Z">22:15 local</time></span></div>
+    <div class="sentence">On <span class="sel">Max 20x</span>, running <span class="sel">Sonnet 5</span> at <span class="sel">high</span> effort, you get</div>
+    <div class="big">42M<span>tokens per 5-hour window</span></div>
+    <div class="split"><span><b>2.6M</b> input<em>·</em><b>0.9M</b> output</span><em class="brk">·</em><span><b>38.1M</b> cache read<em>·</em><b>0.4M</b> cache write</span></div>
+    <div class="quiet"><span>about 17 tasks<em>·</em>476 per week</span><em class="brk">·</em><span>roughly $630 of API value</span></div>
+  </div>
+
+  <section>
+    <h2>Effective window size, last 60 days</h2>
+    <div class="sub">Max 20x · Sonnet 5 tokens per 5-hour window, in millions</div>
+    <svg viewBox="0 0 840 260" width="100%" height="auto">
+      <defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#0EA5E9" stop-opacity=".28"/><stop offset="1" stop-color="#0EA5E9" stop-opacity=".02"/></linearGradient></defs>
+      <g stroke="#E6E9EE" stroke-width="1">
+        <line x1="44" y1="20" x2="820" y2="20"/><line x1="44" y1="80" x2="820" y2="80"/>
+        <line x1="44" y1="140" x2="820" y2="140"/><line x1="44" y1="200" x2="820" y2="200"/>
+      </g>
+      <text x="0" y="24">50M</text><text x="0" y="84">45M</text><text x="0" y="144">40M</text><text x="0" y="204">35M</text>
+      <polygon fill="url(#fill)" points="44,200 44,74 80,78 120,70 160,76 200,72 240,74 280,68 320,72 360,70 400,66 440,70 480,64 520,68 560,66 600,62 630,64 645,160 680,166 720,162 760,165 800,163 820,164 820,200"/>
+      <polyline fill="none" stroke="#0EA5E9" stroke-width="2.5" stroke-linejoin="round"
+        points="44,74 80,78 120,70 160,76 200,72 240,74 280,68 320,72 360,70 400,66 440,70 480,64 520,68 560,66 600,62 630,64 645,160 680,166 720,162 760,165 800,163 820,164"/>
+      <line x1="645" y1="20" x2="645" y2="200" stroke="#B42318" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <rect x="652" y="24" width="112" height="22" rx="6" fill="#B42318"/>
+      <text x="660" y="39" style="fill:#fff;font-weight:600">2 Sep · down 14%</text>
+      <circle cx="820" cy="164" r="4.5" fill="#0EA5E9" stroke="#fff" stroke-width="2"/>
+      <g style="fill:#0277B5;font-weight:500"><text x="44" y="236">8 Jul</text><text x="235" y="236">22 Jul</text><text x="430" y="236">5 Aug</text><text x="625" y="236">19 Aug</text><text x="795" y="236">5 Sep</text></g>
+    </svg>
+  </section>
+
+  <section>
+    <h2>Plan comparison</h2>
+    <div class="sub">Sonnet 5 at high effort. Pro and Max 5x are scaled from the measured Max 20x rate.</div>
+    <table>
+      <tr><th></th><th>Pro</th><th>Max 5x</th><th class="hl">Max 20x</th></tr>
+      <tr><td>Tokens per 5-hour window</td><td>~2M</td><td>~10M</td><td class="hl">~42M</td></tr>
+      <tr><td>Tasks per 5-hour window</td><td>&lt; 1</td><td>4</td><td class="hl">17</td></tr>
+      <tr><td>Tasks per week</td><td>28</td><td>112</td><td class="hl">476</td></tr>
+      <tr><td>API value per week</td><td>~$40</td><td>~$210</td><td class="hl">~$630</td></tr>
+    </table>
+    <div style="height:32px"></div>
+    <div class="acc">How we measure this <span>expand ⌄</span></div>
+    <div class="acc" style="border-bottom:1px solid var(--border)">Caveats <span>expand ⌄</span></div>
+  </section>
+  <footer>All Done Sites measures before it claims. Want a site that does the same? <a href="#">Get in touch</a></footer>
+</main>
+<script>
+document.querySelectorAll('time[data-utc]').forEach(t=>{const d=new Date(t.dataset.utc);t.textContent=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+' local';});
+</script>
+</body>
+</html>
