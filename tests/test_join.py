@@ -32,6 +32,12 @@ class IntervalTests(unittest.TestCase):
         self.assertEqual(len(iv), 1)
         self.assertEqual(iv[0].start, S(5, 3).ts)
 
+    def test_sub_minute_resets_at_jitter_is_not_a_reset(self):
+        a = "2026-07-01T02:59:59.627759+00:00"
+        b = "2026-07-01T02:59:59.575898+00:00"
+        iv = build_intervals([S(0, 3, reset=a), S(30, 4, reset=b)], [T(1)])
+        self.assertEqual(len(iv), 1)
+
     def test_utilization_drop_without_reset_field_is_a_reset(self):
         iv = build_intervals([S(0, 90, reset=None), S(5, 3, reset=None)], [T(1)])
         self.assertEqual(iv, [])
