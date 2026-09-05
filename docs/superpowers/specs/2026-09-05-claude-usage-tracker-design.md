@@ -1,0 +1,176 @@
+# Claude usage tracker — design
+
+Date: 2026-09-05. Status: approved in conversation, pending spec review.
+
+## Purpose
+
+A public page on alldonesites.com that states, from measured data, how much a
+Claude subscription actually buys per 5-hour window, whether Anthropic has
+changed that amount, and by how much. It exists as advertising: All Done Sites
+measures before it claims. The page must stay honest, so every number on it is
+either measured on Jonathan's own account or derived from a measured number by
+arithmetic the page explains.
+
+The visual target is `docs/mockup.html` in this repo (approved 2026-09-05).
+
+## The core measurement
+
+Two data streams already exist on masterrig:
+
+- **Utilization samples.** `~/.paperclip/ops/mis-usage-ceiling-systemd.log`
+  holds `five_hour` and `seven_day` utilization percent, sampled every 60 to
+  300 seconds since 2026-08-18, from `GET https://api.anthropic.com/api/oauth/usage`.
+- **Token consumption.** `~/.claude/projects/**/*.jsonl` transcripts record
+  every assistant turn with model, input, output, cache-read and cache-write
+  token counts and a timestamp.
+
+Joining them gives the **rate**: tokens consumed between two samples divided
+by the utilization delta, in tokens per 1% of the 5-hour window. Multiplied by
+100 that is the effective window size. Computed per model and per cache class.
+
+The rate is the thing Anthropic can silently change. A step change in the rate
+on a date, with the workload mix unchanged, is the evidence the page reports.
+
+### Join rules
+
+- Transcript parsing follows the traps documented in
+  `~/code/claude-friction-audit/README.md`: stream, never load; dedup usage by
+  `message.id` (one record per content block); ignore sidecar and automation
+  noise where it carries no usage.
+- A window resets when `resets_at` changes or utilization drops. Intervals that
+  straddle a reset are discarded.
+- Intervals with a utilization delta of 0 are pooled with their neighbours until
+  the delta is at least 1, because the endpoint reports whole percent.
+- Intervals are attributed to a model when at least 90% of their tokens came
+  from one model. Mixed intervals feed the total rate but not the per-model
+  rates.
+- The rate is computed daily as the median of that day's qualifying intervals.
+  Days with fewer than 5 qualifying intervals carry the previous value and are
+  marked interpolated.
+
+### Effort tiers
+
+Effort does not change the rate. It changes how many tokens one prompt burns.
+A one-off calibration run measures that: a fixed task run through `claude -p`
+at each of 3 models × 5 efforts (low, medium, high, xhigh, max) × 3 repeats,
+median tokens per run, with the usage endpoint read before and after each
+batch so the utilization delta is measured directly as well. Output is an
+effort matrix JSON committed to this repo. It is re-run only when a model is
+added or Anthropic changes effort semantics. The page presents effort figures
+as "about", because they are one task shape.
+
+### Plans
+
+Only the current plan (Max 20x) is measured going forward. Max 5x was measured
+before the 2026-08-18 plan change and the observed ratio between the two is
+used to scale. Pro is scaled by the published 1:5 ratio to Max 5x. The table
+says which figures are scaled.
+
+### Change detection
+
+A change is declared when the rolling 7-day median of the daily rate differs
+from the preceding 7-day median by more than 10% and the difference persists
+for 2 consecutive days. The event records date, direction and percentage. The
+headline shows the most recent event. Detection runs on the total rate, not a
+per-model rate, so a shift in model mix cannot trigger it on its own.
+
+## Components
+
+### 1. Collector (this repo, private, Python 3 stdlib)
+
+- `tracker/samples.py` reads the utilization log into (timestamp, five_hour,
+  seven_day, resets_at) rows. Goes on reading the existing systemd log; no
+  second sampler.
+- `tracker/turns.py` streams transcripts modified since a watermark and yields
+  deduplicated (timestamp, model, input, output, cache_read, cache_write).
+- `tracker/join.py` produces qualifying intervals and daily rates.
+- `tracker/detect.py` runs change detection over the daily history.
+- `tracker/publish.py` writes the public JSON and the private history.
+- `tracker/calibrate.py` runs the effort calibration and writes the matrix.
+- `bin/daily.sh` runs the pipeline, commits the public JSON into the
+  alldonesites checkout and pushes. Cron, once a day.
+
+Tests cover the join rules with synthetic fixtures. No network in tests.
+
+### 2. Public JSON
+
+Written to `website/public/data/claude-usage.json` in alldonesites. Shape:
+
+```json
+{
+  "generated_at": "2026-09-05T20:15:00Z",
+  "last_sample_at": "2026-09-05T20:13:07Z",
+  "plan_measured": "max20",
+  "plan_ratios": { "pro": 0.05, "max5": 0.25, "max20": 1.0 },
+  "rates": {
+    "sonnet-5":   { "tokens_per_window": 42000000, "split": { "input": 0.062, "output": 0.021, "cache_read": 0.907, "cache_write": 0.010 } },
+    "opus-5":     { "...": "..." },
+    "fable-5-1":  { "...": "..." }
+  },
+  "effort": { "sonnet-5": { "low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000 }, "...": {} },
+  "api_price_per_mtok": { "sonnet-5": { "input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75 }, "...": {} },
+  "history": [ { "date": "2026-07-08", "tokens_per_window": 45100000, "interpolated": false }, "..." ],
+  "last_change": { "date": "2026-09-02", "direction": "decreased", "percent": 14 }
+}
+```
+
+`history` holds the last 90 days of the total rate expressed as Sonnet
+equivalent tokens per window on the measured plan. The page scales it by the
+selected plan ratio and model rate. Effort and price tables are static inputs
+copied into the JSON so the page has one fetch.
+
+### 3. Page (alldonesites, public repo)
+
+- Route `/claude-usage-tracker` in `website/src/App.tsx`, component under
+  `website/src/pages/`. Uses the site's existing chrome and CSS tokens from
+  `src/styles/home.css`. No new dependencies; the chart is inline SVG.
+- Fetches the JSON on load. Every figure is arithmetic on it:
+  - tokens per window = rate[model] × plan_ratio[plan]
+  - split figures = tokens per window × split fractions
+  - tasks per window = tokens per window ÷ effort[model][effort]
+  - tasks per week = tasks per window × 28
+  - API value = Σ split tokens × price per class
+- Three inline dropdown words: plan, model, effort. No slider.
+- Headline template: "Anthropic last {increased|decreased} Claude's limits by
+  {percent}% on {date}." Red for decreased, green for increased. If no change
+  has ever been detected: "Anthropic hasn't changed Claude's limits since
+  {first date measured}."
+- Chart: selected plan and model only, y axis fitted to the data range so a
+  change is visible, gradient fill to the axis, dates in brand blue, the last
+  change marked with a dashed dark red line and a filled tag.
+- Last sample rendered in the viewer's local time from the UTC stamp.
+- "How we measure this" and "Caveats" are collapsed sections; caveat text
+  states: one account, one workload mix, whole-percent rounding, effort figures
+  from one task shape, Pro and Max 5x scaled.
+- Guide-style metadata for SEO. No AI trailers or handoff files in that repo.
+
+### 4. Publishing
+
+The daily job commits the JSON to alldonesites `main` and pushes. The existing
+Pages workflow deploys. The repo is public so the daily deploy is free. Commit
+message is fixed text, no attribution trailers.
+
+## Error handling
+
+- Usage log unreadable or transcripts missing: the job exits non-zero, leaves
+  the previous JSON in place, logs to `~/.paperclip/ops/claude-usage-tracker.log`.
+  The page shows the previous data and its own `generated_at`, so staleness is
+  visible.
+- Fewer than 5 qualifying intervals in a day: previous rate carried forward,
+  point marked interpolated, drawn hollow on the chart.
+- JSON fetch fails on the page: the hero shows "Data temporarily unavailable"
+  and the rest of the page still renders with the method text.
+
+## Testing
+
+- Collector: unit tests with synthetic samples and turns covering reset
+  straddling, zero-delta pooling, model attribution threshold, interpolation,
+  and change detection edge cases. Run only the touched files.
+- Page: the site's existing typecheck plus a render test with a fixture JSON.
+- End to end: the spike in step 1 of the plan is the acceptance check for the
+  method. Its result is recorded in `docs/spike-2026-09.md`.
+
+## Out of scope
+
+Other people's accounts, per-user login, historical data before 2026-08-18
+beyond what the log holds, dark mode beyond what the site already does.
