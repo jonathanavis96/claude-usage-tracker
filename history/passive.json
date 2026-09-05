@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-05T22:59:05.031695+00:00",
+ "generated_at": "2026-09-05T23:01:58.358108+00:00",
  "plan_ratio_5x_to_20x": 0.3865,
  "split": {
   "input": 0.0001,
@@ -161,7 +161,7 @@
    "interpolated": false
   },
   "2026-09-06": {
-   "tokens_per_pct": 3931096,
+   "tokens_per_pct": 3752366,
    "interpolated": false
   }
  }
