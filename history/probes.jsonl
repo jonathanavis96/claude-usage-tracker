@@ -1,0 +1,1 @@
+{"ts": "2026-09-05T23:04:47.304378+00:00", "model": "claude-sonnet-5", "effort": "low", "tokens_per_pct": 490713.0, "tokens": {"input": 18, "output": 45, "cache_read": 87021, "cache_write": 403629}, "prompts": 10, "tick_from": 2, "tick_to": 3, "elapsed_s": 1429.883721, "account": "dave"}
