@@ -1041,7 +1041,7 @@ git commit -m "Tick probe with idle guard and account fallback"
 
 ### Task 7: Spike — validate the method on real data
 
-This task spends real usage (one probe, roughly 1 to 2% of a 5-hour window on masterrig's account) and reads real logs. It is the acceptance test for the method. Output is a findings document, not code.
+This task spends real usage (one probe, roughly 1 to 2% of a 5-hour window on a Greenscape account) and reads real logs. It is the acceptance test for the method. Output is a findings document, not code.
 
 **Files:**
 - Create: `docs/spike-2026-09.md`, `bin/passive.sh` (first draft, refined in Task 10)
@@ -1091,17 +1091,19 @@ EOF
 
 Expected: a `RunUsage` with a few thousand tokens, mostly cache read and system prompt. Divide the passive Max 20x rate per percent by this total: that is prompts per tick. Target is 5 to 15 prompts per tick. If it is above 15, make `PROBE_PROMPT` ask for more output (for example the numbers 1 to 200); if below 5, ask for less. Record the chosen prompt and its token count.
 
-- [ ] **Step 4: Run one real tick probe on masterrig**
+- [ ] **Step 4: Run one real tick probe on gs against the Dave account**
+
+Jonathan's own account has another agent working on it, so the spike probe runs on gs. Push the repo first (Task 10 creates the private remote; if that has not happened yet, run `gh repo create jonathanavis96/claude-usage-tracker --private --source=. --remote=origin --push` now), then:
 
 ```bash
-PROBE_OUT=out/spike-probes.jsonl python3 -m tracker.probe --model claude-sonnet-5 --effort low --account main=$HOME/.claude --max-wait 600
+ssh gs 'gh repo clone jonathanavis96/claude-usage-tracker ~/claude-usage-tracker 2>/dev/null || git -C ~/claude-usage-tracker pull -q; cd ~/claude-usage-tracker && PROBE_OUT=out/spike-probes.jsonl python3 -m tracker.probe --model claude-sonnet-5 --effort low --account dave=$HOME/.claude-dave --account jono=$HOME/.claude-javiswork --max-wait 1800'
 ```
 
-Do not run this while a Claude session is active on this account; the idle guard will refuse and that is correct. Expected: one line printed with tokens per 1%, and `out/spike-probes.jsonl` gaining a row. Record: tokens per percent, prompts used, elapsed seconds, and the actual 5-hour utilization cost (tick_to minus reading before the probe).
+The idle guard picks Dave if idle, else Jono Work, else waits up to 30 minutes. Expected: one line printed with tokens per 1%, and `out/spike-probes.jsonl` on gs gaining a row. Copy it back with `scp gs:~/claude-usage-tracker/out/spike-probes.jsonl out/`. Record: account used, tokens per percent, prompts used, elapsed seconds, and the actual 5-hour utilization cost (tick_to minus the reading before the probe).
 
 - [ ] **Step 5: Compare probe and passive for today**
 
-Passive rate for today from Step 1 versus the probe's tokens per percent. They measure different things (a working session's mix vs a tiny fixed prompt) so they need not match, but they must be the same order of magnitude and the probe must be the more stable one across two runs if time allows a second. Record both.
+Passive rate for today from Step 1 (Jonathan's account) versus the probe's tokens per percent (a Greenscape account). Both are Max 20x. They measure different things (a working session's mix vs a tiny fixed prompt) on different accounts, so they need not match, but they must be the same order of magnitude and the probe must be the more stable one across two runs if time allows a second. Record both.
 
 - [ ] **Step 6: Weekly cost of the cadence**
 
