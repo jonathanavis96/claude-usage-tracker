@@ -17,9 +17,18 @@ def util_seq(values, reset="r1"):
     return read
 
 def runner(tokens=20_000):
-    def run():
+    def run(_i=0):
         return RunUsage("claude-sonnet-5", 100, 400, tokens - 500, 0, 0.001, 3.0)
     return run
+
+class PromptTests(unittest.TestCase):
+    def test_probe_prompt_is_deterministic_and_unique_per_index(self):
+        from tracker.probe import probe_prompt
+        a, b, c = probe_prompt("s", 0, 50), probe_prompt("s", 0, 50), probe_prompt("s", 1, 50)
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+        self.assertEqual(len(a.split()), len(c.split()))
+
 
 class JitterTests(unittest.TestCase):
     def test_is_idle_ignores_sub_minute_resets_at_jitter(self):

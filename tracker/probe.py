@@ -1,6 +1,7 @@
 """Tick probe: loop a fixed small prompt until 5-hour utilization ticks twice."""
 from __future__ import annotations
 import json
+import random
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -10,11 +11,21 @@ from .cli_run import RunUsage
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
 
-PROBE_PROMPT = (
-    "You are a probe. Reply with exactly the 26 lowercase letters of the English "
-    "alphabet separated by spaces, then the numbers 1 to 40 separated by spaces, "
-    "then the word DONE. No other text."
-)
+PROBE_PAYLOAD_WORDS = 9000  # about 42k tokens: roughly 0.15% of a Max 20x window on Sonnet 5
+_WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima "
+          "mike november oscar papa quebec romeo sierra tango").split()
+PROBE_PROMPT = "Below is a list of tokens. Reply with only the word DONE.\n\n"
+
+
+def probe_prompt(salt: str, index: int, words: int = PROBE_PAYLOAD_WORDS) -> str:
+    """A fixed-size prompt that is unique per (salt, index).
+
+    An identical prompt re-sent within the cache TTL is served as a cache read, which the
+    usage meter weighs far lighter than the cache write of the first send; uniqueness keeps
+    every prompt the same class and the same cost. The size is deterministic.
+    """
+    rng = random.Random(f"{salt}:{index}")
+    return PROBE_PROMPT + " ".join(f"{rng.choice(_WORDS)}{rng.randint(0, 999)}" for _ in range(words))
 
 
 class ProbeAbort(Exception):
@@ -41,8 +52,8 @@ def _same_window(a: Utilization, b: Utilization) -> bool:
 
 
 def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Utilization],
-                   run: Callable[[], RunUsage], sleep: Callable[[float], None],
-                   now: Callable[[], datetime], max_prompts: int = 60, settle_s: float = 10) -> ProbeResult:
+                   run: Callable[[int], RunUsage], sleep: Callable[[float], None],
+                   now: Callable[[], datetime], max_prompts: int = 40, settle_s: float = 60) -> ProbeResult:
     start = now()
     before = read()
     last = before
@@ -50,7 +61,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     tick1: int | None = None
     spent = {c: 0 for c in CLASSES}
     while prompts < max_prompts:
-        u = run()
+        u = run(prompts)
         prompts += 1
         if tick1 is not None:
             for c in CLASSES:
@@ -131,8 +142,9 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     name, cfg = picked
     try:
+        salt = datetime.now(timezone.utc).isoformat()
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg),
-                           lambda: run_prompt(PROBE_PROMPT, a.model, a.effort, cfg),
+                           lambda i: run_prompt(probe_prompt(salt, i), a.model, a.effort, cfg),
                            time.sleep, lambda: datetime.now(timezone.utc))
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
