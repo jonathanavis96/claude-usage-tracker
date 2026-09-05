@@ -20,11 +20,30 @@ def load_probes(path: Path) -> list[dict]:
     return rows
 
 
-def probe_daily_series(rows: list[dict], trailing_days: int = 3) -> dict[str, dict[date, float]]:
+def usd_per_pct(row: dict, price: dict) -> float:
+    tokens = row["tokens"]
+    total_usd = sum(tokens[cls] * price[cls] / 1e6 for cls in ("input", "output", "cache_read", "cache_write"))
+    return total_usd / (row["tick_to"] - row["tick_from"])
+
+
+def blended_price_per_token(split: dict, price: dict) -> float:
+    return sum(frac * price[cls] / 1e6 for cls, frac in split.items())
+
+
+def _row_split(row: dict) -> dict:
+    tokens = row["tokens"]
+    total = sum(tokens[cls] for cls in ("input", "output", "cache_read", "cache_write"))
+    return {cls: tokens[cls] / total for cls in ("input", "output", "cache_read", "cache_write")}
+
+
+def probe_daily_series(rows: list[dict], prices: dict, split: dict, trailing_days: int = 3) -> dict[str, dict[date, float]]:
     by_model: dict[str, dict[date, list[float]]] = {}
     for r in rows:
         d = datetime.fromisoformat(r["ts"]).date()
-        by_model.setdefault(r["model"], {}).setdefault(d, []).append(r["tokens_per_pct"] * 100)
+        price = prices[r["model"]]
+        split_for_row = split if split else _row_split(r)
+        value = usd_per_pct(r, price) * 100 / blended_price_per_token(split_for_row, price)
+        by_model.setdefault(r["model"], {}).setdefault(d, []).append(value)
     out: dict[str, dict[date, float]] = {}
     for model, days in by_model.items():
         series: dict[date, float] = {}
@@ -36,7 +55,8 @@ def probe_daily_series(rows: list[dict], trailing_days: int = 3) -> dict[str, di
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime) -> dict:
-    series = probe_daily_series(probe_rows)
+    passive_split = passive.get("split", {})
+    series = probe_daily_series(probe_rows, prices, passive_split)
     events = detect_changes(series)
     last = latest_change(events)
     # Published ratios only: the passive-observed 5x-to-20x ratio is too noisy to publish
@@ -47,9 +67,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     rates, history = {}, {}
     for model, s in series.items():
         latest_day = max(s)
+        latest_row = max((r for r in probe_rows if r["model"] == model), key=lambda r: r["ts"])
         rates[model] = {"tokens_per_window": round(s[latest_day]), "source": "probe",
-                        "probe_effort": max((r for r in probe_rows if r["model"] == model), key=lambda r: r["ts"])["effort"],
-                        "split": passive.get("split", {})}
+                        "probe_effort": latest_row["effort"],
+                        "split": passive_split,
+                        "api_value_per_window": round(usd_per_pct(latest_row, prices[model]) * 100, 2)}
         hist = []
         for ds, v in sorted(passive.get("history", {}).items()):
             d = date.fromisoformat(ds)
@@ -65,6 +87,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "last_sample_at": last_sample,
         "plan_measured": "max20",
         "plan_ratios": ratios,
+        "rate_basis": "api_value",
         "rates": rates,
         "effort": effort,
         "api_price_per_mtok": prices,
