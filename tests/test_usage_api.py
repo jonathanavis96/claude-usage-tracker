@@ -50,4 +50,4 @@ class Retry429Tests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", side_effect=[err, ok]):
             body = _default_fetch("https://x.test/u", {}, sleep=calls.append)
         self.assertEqual(body["five_hour"]["utilization"], 1)
-        self.assertEqual(calls, [7.0])
+        self.assertEqual(calls, [30.0])  # header 7 < first backoff 30
