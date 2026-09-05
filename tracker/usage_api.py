@@ -46,7 +46,7 @@ def _default_fetch(url: str, headers: dict, sleep: Callable[[float], None] = tim
             if e.code != 429 or wait is None:
                 raise
             ra = e.headers.get("Retry-After") if e.headers else None
-            sleep(float(ra) if ra and ra.isdigit() else wait)
+            sleep(max(float(ra), wait) if ra and ra.isdigit() else wait)
     raise AssertionError("unreachable")
 
 
