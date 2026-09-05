@@ -1,0 +1,168 @@
+{
+ "generated_at": "2026-09-05T22:59:05.031695+00:00",
+ "plan_ratio_5x_to_20x": 0.3865,
+ "split": {
+  "input": 0.0001,
+  "output": 0.0047,
+  "cache_read": 0.9654,
+  "cache_write": 0.0302
+ },
+ "history": {
+  "2026-07-30": {
+   "tokens_per_pct": 2194672,
+   "interpolated": false
+  },
+  "2026-07-31": {
+   "tokens_per_pct": 2194672,
+   "interpolated": true
+  },
+  "2026-08-01": {
+   "tokens_per_pct": 2194672,
+   "interpolated": true
+  },
+  "2026-08-02": {
+   "tokens_per_pct": 2194672,
+   "interpolated": true
+  },
+  "2026-08-03": {
+   "tokens_per_pct": 469093,
+   "interpolated": false
+  },
+  "2026-08-04": {
+   "tokens_per_pct": 469093,
+   "interpolated": true
+  },
+  "2026-08-05": {
+   "tokens_per_pct": 469093,
+   "interpolated": true
+  },
+  "2026-08-06": {
+   "tokens_per_pct": 886961,
+   "interpolated": false
+  },
+  "2026-08-07": {
+   "tokens_per_pct": 960568,
+   "interpolated": false
+  },
+  "2026-08-08": {
+   "tokens_per_pct": 1705462,
+   "interpolated": false
+  },
+  "2026-08-09": {
+   "tokens_per_pct": 2290551,
+   "interpolated": false
+  },
+  "2026-08-10": {
+   "tokens_per_pct": 1771284,
+   "interpolated": false
+  },
+  "2026-08-11": {
+   "tokens_per_pct": 2394532,
+   "interpolated": false
+  },
+  "2026-08-12": {
+   "tokens_per_pct": 1805840,
+   "interpolated": false
+  },
+  "2026-08-13": {
+   "tokens_per_pct": 1855247,
+   "interpolated": false
+  },
+  "2026-08-14": {
+   "tokens_per_pct": 3415040,
+   "interpolated": false
+  },
+  "2026-08-15": {
+   "tokens_per_pct": 4931783,
+   "interpolated": false
+  },
+  "2026-08-16": {
+   "tokens_per_pct": 5788280,
+   "interpolated": false
+  },
+  "2026-08-17": {
+   "tokens_per_pct": 6696333,
+   "interpolated": false
+  },
+  "2026-08-18": {
+   "tokens_per_pct": 3626586,
+   "interpolated": false
+  },
+  "2026-08-19": {
+   "tokens_per_pct": 5447823,
+   "interpolated": false
+  },
+  "2026-08-20": {
+   "tokens_per_pct": 5546485,
+   "interpolated": false
+  },
+  "2026-08-21": {
+   "tokens_per_pct": 16247699,
+   "interpolated": false
+  },
+  "2026-08-22": {
+   "tokens_per_pct": 5563975,
+   "interpolated": false
+  },
+  "2026-08-23": {
+   "tokens_per_pct": 5278861,
+   "interpolated": false
+  },
+  "2026-08-24": {
+   "tokens_per_pct": 6398502,
+   "interpolated": false
+  },
+  "2026-08-25": {
+   "tokens_per_pct": 13619144,
+   "interpolated": false
+  },
+  "2026-08-26": {
+   "tokens_per_pct": 7545440,
+   "interpolated": false
+  },
+  "2026-08-27": {
+   "tokens_per_pct": 3493378,
+   "interpolated": false
+  },
+  "2026-08-28": {
+   "tokens_per_pct": 4730516,
+   "interpolated": false
+  },
+  "2026-08-29": {
+   "tokens_per_pct": 782585,
+   "interpolated": false
+  },
+  "2026-08-30": {
+   "tokens_per_pct": 1006825,
+   "interpolated": false
+  },
+  "2026-08-31": {
+   "tokens_per_pct": 1483693,
+   "interpolated": false
+  },
+  "2026-09-01": {
+   "tokens_per_pct": 8025724,
+   "interpolated": false
+  },
+  "2026-09-02": {
+   "tokens_per_pct": 802618,
+   "interpolated": false
+  },
+  "2026-09-03": {
+   "tokens_per_pct": 605396,
+   "interpolated": false
+  },
+  "2026-09-04": {
+   "tokens_per_pct": 2003004,
+   "interpolated": false
+  },
+  "2026-09-05": {
+   "tokens_per_pct": 1621737,
+   "interpolated": false
+  },
+  "2026-09-06": {
+   "tokens_per_pct": 3931096,
+   "interpolated": false
+  }
+ }
+}
