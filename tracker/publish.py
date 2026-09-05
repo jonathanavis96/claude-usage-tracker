@@ -1,6 +1,7 @@
 """Assemble the public JSON from probe rows, passive output, and static tables."""
 from __future__ import annotations
 import json
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
@@ -38,17 +39,16 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     series = probe_daily_series(probe_rows)
     events = detect_changes(series)
     last = latest_change(events)
+    # Published ratios only: the passive-observed 5x-to-20x ratio is too noisy to publish
+    # (see docs/spike-2026-09.md); the page cites it in caveats instead.
     ratios = dict(PLAN_RATIOS_BASE)
-    if passive.get("plan_ratio_5x_to_20x"):
-        ratios["max5"] = passive["plan_ratio_5x_to_20x"]
-        ratios["pro"] = ratios["max5"] / 5
     cutoff = now.date() - timedelta(days=HISTORY_DAYS)
     first_probe_day = min((min(s) for s in series.values()), default=None)
     rates, history = {}, {}
     for model, s in series.items():
         latest_day = max(s)
         rates[model] = {"tokens_per_window": round(s[latest_day]), "source": "probe",
-                        "probe_effort": next(r["effort"] for r in probe_rows if r["model"] == model),
+                        "probe_effort": max((r for r in probe_rows if r["model"] == model), key=lambda r: r["ts"])["effort"],
                         "split": passive.get("split", {})}
         hist = []
         for ds, v in sorted(passive.get("history", {}).items()):
@@ -75,7 +75,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
 
 def write_json(path: Path, obj: dict) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(obj, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    tmp = Path(path).with_suffix(".tmp")
+    tmp.write_text(json.dumps(obj, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)  # atomic: a crash mid-write never truncates the previous file
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,9 +90,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
-    passive = json.loads(a.passive.read_text()) if a.passive.exists() else {}
-    effort = {k: v for k, v in json.loads(a.effort.read_text()).items() if not k.startswith("_")}
-    j = build_public_json(load_probes(a.probes), passive, effort, json.loads(a.prices.read_text()), datetime.now(timezone.utc))
+    # A missing passive file is allowed (it arrives from masterrig and may lag); an unreadable one is not.
+    try:
+        passive = json.loads(a.passive.read_text()) if a.passive.exists() else {}
+        effort = {k: v for k, v in json.loads(a.effort.read_text()).items() if not k.startswith("_")}
+        j = build_public_json(load_probes(a.probes), passive, effort, json.loads(a.prices.read_text()), datetime.now(timezone.utc))
+    except (OSError, ValueError, KeyError) as e:
+        print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
+        return 1
     write_json(a.out, j)
     print(f"wrote {a.out}: {len(j['rates'])} models, last_change={j['last_change']}")
     return 0

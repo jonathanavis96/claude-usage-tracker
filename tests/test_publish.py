@@ -46,3 +46,19 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(j["last_change"]["direction"], "decreased")
         self.assertEqual(j["last_change"]["percent"], 14)
         self.assertEqual(j["last_change"]["model"], "claude-sonnet-5")
+
+
+class FailurePathTests(unittest.TestCase):
+    def test_corrupt_input_exits_nonzero_and_keeps_previous_output(self):
+        import tempfile
+        from pathlib import Path
+        from tracker.publish import main
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            out = d / "claude-usage.json"
+            out.write_text('{"previous": true}')
+            (d / "probes.jsonl").write_text("not json\n")
+            (d / "passive.json").write_text("{}")
+            rc = main(["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"), "--out", str(out)])
+            self.assertNotEqual(rc, 0)
+            self.assertEqual(out.read_text(), '{"previous": true}')
