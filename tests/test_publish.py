@@ -1,6 +1,6 @@
 import unittest
 from datetime import date, datetime, timezone
-from tracker.publish import probe_daily_series, build_public_json
+from tracker.publish import probe_daily_series, build_public_json, usd_per_pct, blended_price_per_token
 
 def probe(day, model, tpp, account="dave"):
     return {"ts": f"2026-09-{day:02d}T08:00:00+00:00", "model": model, "effort": "low", "tokens_per_pct": tpp,
@@ -13,12 +13,26 @@ PASSIVE = {"generated_at": "2026-09-05T20:00:00+00:00", "plan_ratio_5x_to_20x": 
 EFFORT = {"claude-sonnet-5": {"low": 900000, "high": 2520000}}
 PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}}
 
+
+class UsdPerPctTests(unittest.TestCase):
+    def test_usd_per_pct_brief_example(self):
+        row = {"tokens": {"input": 0, "output": 0, "cache_read": 100_000, "cache_write": 400_000},
+               "tick_from": 10, "tick_to": 11}
+        price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
+        self.assertAlmostEqual(usd_per_pct(row, price), 1.02, delta=1e-9)
+
+    def test_blended_price_per_token_brief_example(self):
+        price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
+        split = {"cache_read": 0.9, "cache_write": 0.1}
+        self.assertAlmostEqual(blended_price_per_token(split, price), 4.3e-7, delta=1e-15)
+
+
 class SeriesTests(unittest.TestCase):
     def test_trailing_median_per_model(self):
         rows = [probe(1, "claude-sonnet-5", 400000), probe(2, "claude-sonnet-5", 420000), probe(3, "claude-sonnet-5", 410000)]
-        s = probe_daily_series(rows)
-        self.assertEqual(s["claude-sonnet-5"][date(2026, 9, 3)], 41_000_000)
-        self.assertEqual(s["claude-sonnet-5"][date(2026, 9, 1)], 40_000_000)
+        s = probe_daily_series(rows, PRICES, {})
+        self.assertAlmostEqual(s["claude-sonnet-5"][date(2026, 9, 3)], 41_000_000, delta=1e-3)
+        self.assertAlmostEqual(s["claude-sonnet-5"][date(2026, 9, 1)], 40_000_000, delta=1e-3)
 
 class BuildTests(unittest.TestCase):
     def test_shape(self):
@@ -29,16 +43,30 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(j["last_sample_at"], "2026-09-05T08:00:00+00:00")
         self.assertEqual(j["plan_measured"], "max20")
         self.assertEqual(j["plan_ratios"], {"pro": 0.05, "max5": 0.25, "max20": 1.0})
+        self.assertEqual(j["rate_basis"], "api_value")
         r = j["rates"]["claude-sonnet-5"]
-        self.assertEqual(r["tokens_per_window"], 42_000_000)
+        latest = probe(5, "claude-sonnet-5", 420000)
+        expected_tpw = usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100 / blended_price_per_token(PASSIVE["split"], PRICES["claude-sonnet-5"])
+        self.assertAlmostEqual(r["tokens_per_window"], round(expected_tpw), delta=1)
         self.assertEqual(r["source"], "probe")
         self.assertEqual(r["split"], PASSIVE["split"])
+        self.assertEqual(r["api_value_per_window"], round(usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100, 2))
         self.assertEqual(j["effort"], EFFORT)
         self.assertEqual(j["api_price_per_mtok"], PRICES)
         self.assertIsNone(j["last_change"])
         hist = j["history"]["claude-sonnet-5"]
         self.assertEqual(hist[0], {"date": "2026-08-01", "tokens_per_window": 10_000_000, "source": "passive", "interpolated": False})
         self.assertEqual(hist[-1]["source"], "probe")
+
+    def test_shape_empty_passive_split_falls_back_to_row_split(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, {}, EFFORT, PRICES, now)
+        r = j["rates"]["claude-sonnet-5"]
+        # with no passive split, the row's own class fractions are used, which reduces to
+        # the raw tokens_per_pct * 100 (see probe_daily_series docstring in the brief).
+        self.assertAlmostEqual(r["tokens_per_window"], 42_000_000, delta=1)
+        self.assertIn("api_value_per_window", r)
 
     def test_change_event_surfaces(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)] + [probe(d, "claude-sonnet-5", 360000) for d in range(11, 16)]
