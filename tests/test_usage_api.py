@@ -48,6 +48,6 @@ class Retry429Tests(unittest.TestCase):
         ok = mock.MagicMock()
         ok.__enter__.return_value.read.return_value = b'{"five_hour": {"utilization": 1, "resets_at": "x"}}'
         with mock.patch("urllib.request.urlopen", side_effect=[err, ok]):
-            body = _default_fetch("u", {}, sleep=calls.append)
+            body = _default_fetch("https://x.test/u", {}, sleep=calls.append)
         self.assertEqual(body["five_hour"]["utilization"], 1)
         self.assertEqual(calls, [7.0])
