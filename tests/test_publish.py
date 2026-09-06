@@ -67,7 +67,9 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(j["api_price_per_mtok"], PRICES)
         self.assertIsNone(j["last_change"])
         hist = j["history"]["claude-sonnet-5"]
-        self.assertEqual(hist[0], {"date": "2026-08-01", "tokens_per_window": 10_000_000, "source": "passive", "interpolated": False})
+        # days before the first probe are held flat at the first (only) regime's value --
+        # no plan noise, no passive daily series, just the step function's opening level.
+        self.assertEqual(hist[0], {"date": "2026-08-01", "tokens_per_window": r["tokens_per_window"], "source": "held", "interpolated": False})
         self.assertEqual(hist[-1]["source"], "probe")
 
     def test_every_priced_model_gets_a_rate_derived_from_the_one_probed_model(self):
@@ -145,15 +147,28 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(j["last_change"]["model"], "all")
         self.assertIn(j["last_change"]["percent"], range(20, 40))
 
-    def test_events_includes_the_plan_change_dated_from_passive_py(self):
-        from tracker.passive import PLAN_CHANGE
+    def test_events_excludes_the_plan_change(self):
+        # Jonathan's ruling: the public chart is a step function of the measured limit
+        # only -- nothing about his own plan history belongs in it.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        plan_events = [e for e in j["events"] if e["kind"] == "plan"]
-        self.assertEqual(len(plan_events), 1)
-        self.assertEqual(plan_events[0]["date"], PLAN_CHANGE.isoformat())
-        self.assertEqual(plan_events[0]["label"], "Plan changed to Max 20x")
+        self.assertEqual([e for e in j["events"] if e["kind"] == "plan"], [])
+
+    def test_change_produces_exactly_two_flat_levels_stepping_on_the_event_date(self):
+        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)]
+                + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)])
+        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        hist = j["history"]["claude-sonnet-5"]
+        event_date = j["last_change"]["date"]
+        before = [h["tokens_per_window"] for h in hist if h["date"] < event_date]
+        on_and_after = [h["tokens_per_window"] for h in hist if h["date"] >= event_date]
+        self.assertTrue(before and on_and_after)
+        self.assertEqual(len(set(before)), 1, before)
+        self.assertEqual(len(set(on_and_after)), 1, on_and_after)
+        self.assertNotEqual(before[0], on_and_after[0])
+        self.assertEqual({h["tokens_per_window"] for h in hist}, {before[0], on_and_after[0]})
 
     def test_events_includes_every_detected_change(self):
         rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)]
