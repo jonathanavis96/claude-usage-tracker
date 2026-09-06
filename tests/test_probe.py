@@ -72,7 +72,7 @@ class TickTests(unittest.TestCase):
         # readings after each prompt: 10,10,11(tick1),11,11,11,12(tick2)
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
-                           ticks=1)
+                           ticks=1, skip=0)
         self.assertEqual(r.prompts, 7)
         self.assertEqual((r.tick_from, r.tick_to), (11, 12))
         self.assertEqual(r.tokens_per_pct, 80_000)  # 4 prompts between ticks
@@ -82,7 +82,7 @@ class TickTests(unittest.TestCase):
         # tick1 at 11, then three separate 1% jumps (12, 13, 14): span = 3.
         read = util_seq([10, 11, 12, 13, 14])
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
-                           ticks=3)
+                           ticks=3, skip=0)
         self.assertEqual(r.prompts, 4)
         self.assertEqual((r.tick_from, r.tick_to), (11, 14))
         self.assertEqual(r.tokens_per_pct, 20_000)
@@ -91,7 +91,7 @@ class TickTests(unittest.TestCase):
     def test_readings_recorded_once_per_prompt(self):
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
-                           ticks=1)
+                           ticks=1, skip=0)
         self.assertEqual(len(r.readings), r.prompts)
         self.assertEqual(r.readings[0]["tokens"], {"input": 100, "output": 400, "cache_read": 19_500, "cache_write": 0})
         self.assertEqual(r.readings[-1]["five_hour"], 12)
@@ -103,18 +103,18 @@ class TickTests(unittest.TestCase):
             v = next(it)
             return Utilization(T0, v, 30.0, "r1" if v > 5 else "r2")
         with self.assertRaises(ProbeAbort):
-            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0)
+            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0, skip=0)
 
     def test_too_many_prompts_aborts(self):
         read = util_seq([10] * 100)
         with self.assertRaises(ProbeAbort):
-            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0, max_prompts=5)
+            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0, max_prompts=5, skip=0)
 
     def test_tick_faster_than_prompts_explain_aborts(self):
         # a jump of 3% after one 20k prompt cannot be ours
         read = util_seq([10, 10, 11, 14])
         with self.assertRaises(ProbeAbort):
-            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0)
+            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0, skip=0)
 
 class IdleTests(unittest.TestCase):
     def test_idle_when_two_readings_match(self):
@@ -141,7 +141,7 @@ class AppendTests(unittest.TestCase):
     def test_append_writes_jsonl(self):
         read = util_seq([10, 11, 11, 12])
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
-                           ticks=1)
+                           ticks=1, skip=0)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d, "probes.jsonl")
             append_result(p, r, account="dave")
@@ -161,7 +161,7 @@ class DeadlineTests(unittest.TestCase):
             return clock[0]
         with self.assertRaises(ProbeAbort) as e:
             run_tick_probe("claude-sonnet-5", "low", "p", util_seq([10] * 20), runner(),
-                           sleep=lambda s: None, now=now, deadline=T0 + timedelta(hours=1))
+                           sleep=lambda s: None, now=now, deadline=T0 + timedelta(hours=1), skip=0)
         self.assertIn("deadline", str(e.exception))
 
     def test_choose_account_returns_none_past_the_deadline(self):
@@ -179,13 +179,13 @@ class EarlyTickTests(unittest.TestCase):
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
         with self.assertRaises(ProbeAbort) as e:
             run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
-                           now=lambda: T0, usd_per_token=self.PRICE, ticks=1)
+                           now=lambda: T0, usd_per_token=self.PRICE, ticks=1, skip=0)
         self.assertIn("too early", str(e.exception))
 
     def test_tick_we_paid_for_is_accepted_and_records_seven_day(self):
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(tokens=1_000_000),
-                           sleep=lambda s: None, now=lambda: T0, usd_per_token=self.PRICE, ticks=1)
+                           sleep=lambda s: None, now=lambda: T0, usd_per_token=self.PRICE, ticks=1, skip=0)
         self.assertEqual((r.tick_from, r.tick_to), (11, 12))
         self.assertEqual((r.seven_day_before, r.seven_day_after), (30.0, 30.0))
 
@@ -238,6 +238,7 @@ class PayloadCliTests(unittest.TestCase):
                 prices.write_text(json.dumps(
                     {"claude-fable": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}}))
                 rc = probe_mod.main(["--model", "claude-fable", "--payload", "output",
+                                    "--expect-tokens-per-pct", "31724",
                                     "--account", f"dave={d}", "--prices", str(prices)])
         finally:
             probe_mod.choose_account = orig_choose
@@ -262,7 +263,7 @@ class SkipTests(unittest.TestCase):
         self.assertEqual(r.tokens["cache_read"], 3 * 19_500)  # p4, p5, p6 only
         self.assertEqual(r.tokens_per_pct, 60_000)
         self.assertEqual(r.skip, 1)
-        self.assertFalse(r.overshoot)
+        self.assertFalse(r.early_tick)
 
     def test_skip_two_then_three_measured_ticks(self):
         read = util_seq([10, 11, 12, 13, 13, 14, 15, 16])
@@ -320,107 +321,96 @@ def concurrent_runner(tokens=20_000, parallel_indexes=()):
     return run
 
 
-class BurstTests(unittest.TestCase):
-    def test_burst_fires_k_concurrent_runs_with_unique_indexes_and_sums_spend(self):
-        # expect 100k per 1% at 20k per prompt: 5 prompts per tick, so a burst of 3 fits.
-        # before=10; p1->11 (tick1, measuring); burst p2-p4->11; p5->11; p6->12.
-        run = concurrent_runner(parallel_indexes={1, 2, 3})
-        read = util_seq([10, 11, 11, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=3, expect_tokens_per_pct=100_000)
-        self.assertEqual(sorted(run.seen), [0, 1, 2, 3, 4, 5])
-        self.assertEqual(len(set(run.seen)), 6)
-        self.assertEqual(run.peak[0], 3)
-        self.assertEqual(r.prompts, 6)
-        self.assertEqual(len(r.readings), 4)  # p1, burst, p5, p6
-        self.assertEqual(r.readings[1]["burst"], 3)
-        self.assertEqual(r.readings[1]["prompt"], 4)
-        self.assertEqual(r.readings[1]["tokens"]["cache_read"], 3 * 19_500)
-        self.assertNotIn("burst", r.readings[0])
-        self.assertNotIn("burst", r.readings[2])
-        self.assertEqual(r.tokens["cache_read"], 5 * 19_500)  # burst of 3 + p5 + p6
-        self.assertEqual(r.tokens_per_pct, 100_000)
-        self.assertEqual(r.burst, 3)
-        self.assertFalse(r.overshoot)
 
-    def test_burst_once_per_measured_tick(self):
-        # two measured ticks, each opened by a burst of 2 then singles.
-        run = concurrent_runner()
-        read = util_seq([10, 11, 11, 12, 12, 13])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=2, burst=2, expect_tokens_per_pct=60_000)
-        self.assertEqual([x.get("burst") for x in r.readings], [None, 2, None, 2, None])
-        self.assertEqual(r.prompts, 7)
-        self.assertEqual(r.tokens_per_pct, 6 * 20_000 / 2)
 
-    def test_burst_shrinks_to_the_prompts_expected_to_remain(self):
-        # expect 60k per 1% at 20k per prompt: 3 per tick, so a burst of 5 shrinks to 3.
-        run = concurrent_runner(parallel_indexes={1, 2, 3})
-        read = util_seq([10, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=5, expect_tokens_per_pct=60_000)
-        self.assertEqual(r.readings[1]["burst"], 3)
-        self.assertEqual(run.peak[0], 3)
-        self.assertEqual(r.prompts, 4)
+# Standard burst setup: expect 100k per 1% at 20k per prompt is a 5-prompt span, so the
+# opening burst is 80% of 5 = 4 prompts, and 50% of 5 = 2 after an early tick. The
+# pre-run estimate (5,000 words at 3.47 tokens per word = 17,350) sizes the very first
+# burst to floor(0.8 * 100k / 17,350) = 4 as well.
+EXPECT = 100_000
+WORDS = 5_000
 
-    def test_burst_skipped_when_fewer_than_two_prompts_fit(self):
-        run = concurrent_runner()
-        read = util_seq([10, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=4, expect_tokens_per_pct=25_000)
-        self.assertEqual(run.peak[0], 1)
-        self.assertTrue(all("burst" not in x for x in r.readings))
-        self.assertEqual(r.prompts, 2)
 
-    def test_burst_skipped_without_an_expectation(self):
-        run = concurrent_runner()
-        read = util_seq([10, 11, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=4)
-        self.assertEqual(run.peak[0], 1)
-        self.assertTrue(all("burst" not in x for x in r.readings))
-        self.assertEqual(r.burst, 4)
+def burst_probe(read, run, **kw):
+    kw.setdefault("sleep", lambda s: None)
+    kw.setdefault("now", lambda: T0)
+    kw.setdefault("expect_tokens_per_pct", EXPECT)
+    kw.setdefault("payload_words", WORDS)
+    return run_tick_probe("claude-sonnet-5", "low", "p", read, run, **kw)
 
-    def test_burst_only_in_the_measured_phase(self):
-        # with skip=1 the span after tick1 is discarded and must be single prompts.
-        run = concurrent_runner()
-        read = util_seq([10, 11, 11, 12, 12, 13])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, skip=1, burst=2, expect_tokens_per_pct=60_000)
-        self.assertEqual([x.get("burst") for x in r.readings], [None, None, None, 2, None])
+
+def bursts(r):
+    return [x.get("burst") for x in r.readings]
+
+
+class PromptSizeTests(unittest.TestCase):
+    def test_one_prompt_is_a_tenth_of_a_tick(self):
+        from tracker.probe import payload_words_for, TOKENS_PER_WORD
+        self.assertEqual(payload_words_for(117_897), round(117_897 / 10 / TOKENS_PER_WORD))
+        self.assertEqual(payload_words_for(117_897), 3398)
+
+    def test_prompt_size_is_clamped_to_the_word_range(self):
+        from tracker.probe import payload_words_for
+        self.assertEqual(payload_words_for(467_779), 12_000)
+        self.assertEqual(payload_words_for(20_000), 1_500)
+
+    def test_output_prompt_takes_a_reply_size(self):
+        from tracker.probe import output_prompt, OUTPUT_REPLY_WORDS
+        self.assertEqual(OUTPUT_REPLY_WORDS, 4_000)
+        self.assertIn("2,500 words", output_prompt("s", 0, 2_500))
+
+
+class BurstFirstSpanTests(unittest.TestCase):
+    def test_alignment_and_each_span_open_with_an_80_percent_burst_then_singles(self):
+        # before=10; alignment: burst4->10, 10, 11 (tick1); measured: burst4->11, 11, 12.
+        run = concurrent_runner(parallel_indexes={0, 1, 2, 3})
+        r = burst_probe(util_seq([10, 10, 10, 11, 11, 11, 12]), run, ticks=1, skip=0)
+        self.assertEqual(bursts(r), [4, None, None, 4, None, None])
+        self.assertEqual(run.peak[0], 4)
+        self.assertEqual(sorted(run.seen), list(range(12)))
+        self.assertEqual(r.prompts, 12)
+        self.assertEqual((r.tick_from, r.tick_to), (11, 12))
+        self.assertEqual(r.tokens["cache_read"], 6 * 19_500)
+        self.assertEqual(r.tokens_per_pct, 120_000)
+        self.assertFalse(r.early_tick)
+
+    def test_skip_span_opens_with_the_same_burst(self):
+        # before=10; burst4->10, 11 (tick1); skip span: burst4->11, 12 (tick_from);
+        # measured: burst4->12, 13.
+        r = burst_probe(util_seq([10, 10, 11, 11, 12, 12, 13]), concurrent_runner(), ticks=1, skip=1)
+        self.assertEqual(bursts(r), [4, None, 4, None, 4, None])
         self.assertEqual((r.tick_from, r.tick_to), (12, 13))
-        self.assertEqual(r.tokens["cache_read"], 3 * 19_500)
+        self.assertEqual(r.tokens["cache_read"], 5 * 19_500)
+        self.assertEqual(r.tokens_per_pct, 100_000)
+
+    def test_burst_size_uses_the_observed_tokens_per_prompt_once_seen(self):
+        # 40k per prompt: a 2.5-prompt span, so bursts after the first are floor(0.8*2.5)=2;
+        # the first burst is sized from the word estimate (17,350): floor(0.8*100k/17,350)=4.
+        r = burst_probe(util_seq([10, 10, 11, 11, 12]), concurrent_runner(tokens=40_000), ticks=1, skip=0)
+        self.assertEqual(bursts(r), [4, None, 2, None])
+
+    def test_no_expectation_means_no_bursts(self):
+        run = concurrent_runner()
+        r = burst_probe(util_seq([10, 11, 11, 12]), run, ticks=1, skip=0, expect_tokens_per_pct=None)
+        self.assertEqual(run.peak[0], 1)
+        self.assertTrue(all("burst" not in x for x in r.readings))
+
+    def test_burst_of_one_is_a_single(self):
+        # 60k per prompt at 100k per 1%: floor(0.8 * 1.67) = 1, so no burst reading.
+        run = concurrent_runner(tokens=60_000)
+        r = burst_probe(util_seq([10, 10, 11, 11, 12]), run, ticks=1, skip=0, payload_words=12_000)
+        self.assertEqual(run.peak[0], 1)
+        self.assertTrue(all("burst" not in x for x in r.readings))
 
     def test_burst_capped_by_max_prompts(self):
         run = concurrent_runner()
-        read = util_seq([10, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=4, expect_tokens_per_pct=100_000, max_prompts=3)
-        self.assertEqual(r.readings[1]["burst"], 2)
-        self.assertEqual(r.prompts, 3)
-
-    def test_burst_overshoot_is_flagged_and_included_in_the_division(self):
-        # burst of 3 carries the meter from 11 to 13 in one reading: 2% for the 3 prompts.
-        run = concurrent_runner()
-        read = util_seq([10, 11, 13])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=3, expect_tokens_per_pct=60_000)
-        self.assertTrue(r.overshoot)
-        self.assertEqual((r.tick_from, r.tick_to), (11, 13))
-        self.assertEqual(r.tokens_per_pct, 3 * 20_000 / 2)
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d, "probes.jsonl")
-            append_result(p, r, account="dave")
-            row = json.loads(p.read_text().splitlines()[0])
-        self.assertIs(row["overshoot"], True)
-        self.assertEqual(row["readings"][1]["burst"], 3)
+        with self.assertRaises(ProbeAbort):
+            burst_probe(util_seq([10, 10]), run, ticks=1, skip=0, max_prompts=3)
+        self.assertEqual((run.peak[0], sorted(run.seen)), (3, [0, 1, 2]))
 
     def test_jump_larger_than_the_burst_still_aborts(self):
-        run = concurrent_runner()
-        read = util_seq([10, 11, 15])
         with self.assertRaises(ProbeAbort) as e:
-            run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=3, expect_tokens_per_pct=60_000)
+            burst_probe(util_seq([10, 15]), concurrent_runner(), ticks=1, skip=0)
         self.assertIn("not idle", str(e.exception))
 
     def test_burst_run_failure_propagates(self):
@@ -428,67 +418,197 @@ class BurstTests(unittest.TestCase):
             if i == 2:
                 raise RuntimeError("claude exited 1")
             return runner()(i)
-        read = util_seq([10, 11, 11, 12])
         with self.assertRaises(RuntimeError):
-            run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
-                           ticks=1, burst=3, expect_tokens_per_pct=100_000)
+            burst_probe(util_seq([10, 11]), run, ticks=1, skip=0)
 
 
-class SettleTests(unittest.TestCase):
-    def test_settle_is_slept_and_stored(self):
+class EarlyTickFlagTests(unittest.TestCase):
+    def test_tick_during_a_measured_burst_flags_early_tick_and_halves_later_bursts(self):
+        # before=10; burst4->10, 11 (tick1=tick_from); burst4->12 (early: 1 of 2 measured);
+        # burst2->12, 12, 13 (done). Measured spend: 4 + 2 + 2 prompts over 2%.
+        r = burst_probe(util_seq([10, 10, 11, 12, 12, 12, 13]), concurrent_runner(), ticks=2, skip=0)
+        self.assertEqual(bursts(r), [4, None, 4, 2, None, None])
+        self.assertTrue(r.early_tick)
+        self.assertEqual((r.tick_from, r.tick_to), (11, 13))
+        self.assertEqual(r.tokens_per_pct, 8 * 20_000 / 2)
+
+    def test_tick_during_the_skip_span_burst_also_flags(self):
+        # before=10; burst4->10, 11 (tick1); skip span: burst4->12 (early, tick_from);
+        # measured: burst2->12, 13.
+        r = burst_probe(util_seq([10, 10, 11, 12, 12, 13]), concurrent_runner(), ticks=1, skip=1)
+        self.assertEqual(bursts(r), [4, None, 4, 2, None])
+        self.assertTrue(r.early_tick)
+        self.assertEqual((r.tick_from, r.tick_to), (12, 13))
+
+    def test_tick_during_the_alignment_burst_is_not_early_when_a_span_is_skipped(self):
+        # The alignment span is a partial, so a tick inside its burst says nothing about
+        # the limit, and the span it corrupts is the one skip discards anyway.
+        r = burst_probe(util_seq([10, 11, 11, 12, 12, 13]), concurrent_runner(), ticks=1, skip=1)
+        self.assertEqual(bursts(r), [4, 4, None, 4, None])
+        self.assertFalse(r.early_tick)
+
+    def test_tick_during_the_alignment_burst_is_early_without_a_skip(self):
+        # With nothing skipped, tick_from itself lands inside the burst, so the row is suspect.
+        r = burst_probe(util_seq([10, 11, 11, 12]), concurrent_runner(), ticks=1, skip=0)
+        self.assertEqual(bursts(r), [4, 2, None])
+        self.assertTrue(r.early_tick)
+
+    def test_final_burst_past_the_last_tick_is_early_and_in_the_division(self):
+        # before=10; burst4->10, 11 (tick1); the measured burst of 4 carries the meter from
+        # 11 to 13 in one reading: 2% for the 4 prompts.
+        r = burst_probe(util_seq([10, 10, 11, 13]), concurrent_runner(), ticks=1, skip=0)
+        self.assertTrue(r.early_tick)
+        self.assertEqual((r.tick_from, r.tick_to), (11, 13))
+        self.assertEqual(r.tokens_per_pct, 4 * 20_000 / 2)
+
+
+def reset_seq(values, resets, now=T0):
+    """Readings whose resets_at is an ISO stamp `resets[i]` minutes after `now` (None for absent)."""
+    from datetime import timedelta
+    it = iter(zip(values, resets))
+    def read():
+        v, m = next(it)
+        stamp = (now + timedelta(minutes=m)).isoformat() if m is not None else None
+        return Utilization(now, v, 30.0, stamp)
+    return read
+
+
+class ResetWaitTests(unittest.TestCase):
+    def test_reset_within_20_minutes_is_waited_for_and_measurement_starts_at_zero(self):
+        # before=40 with 10 min to the reset; after the wait the meter reads 0.0 with no
+        # resets_at yet (as the endpoint does right after a reset). No alignment: tick1 is 0,
+        # the skip span is 0->1 and the measured span 1->2.
         slept = []
-        read = util_seq([10, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=slept.append, now=lambda: T0,
-                           ticks=1, settle_s=30)
-        self.assertEqual(slept, [30, 30])
-        self.assertEqual(r.settle_s, 30)
+        read = reset_seq([40, 0, 0, 1, 1, 2], [10, None, 300, 300, 300, 300])
+        r = burst_probe(read, concurrent_runner(), ticks=1, skip=1, sleep=slept.append)
+        self.assertEqual(slept[0], 10 * 60 + 30)
+        self.assertTrue(r.reset_start)
+        self.assertEqual(bursts(r), [4, None, 4, None])
+        self.assertEqual((r.tick_from, r.tick_to), (1, 2))
+        self.assertEqual(r.tokens_per_pct, 100_000)
+        self.assertEqual(r.prompts, 10)
+
+    def test_reset_start_with_no_skip_measures_from_the_first_prompt(self):
+        read = reset_seq([40, 0, 0, 1], [5, 300, 300, 300])
+        r = burst_probe(read, concurrent_runner(), ticks=1, skip=0)
+        self.assertTrue(r.reset_start)
+        self.assertEqual((r.tick_from, r.tick_to), (0, 1))
+        self.assertEqual(r.tokens_per_pct, 5 * 20_000)
+
+    def test_reset_further_than_20_minutes_away_is_not_waited_for(self):
+        slept = []
+        read = reset_seq([40, 40, 41, 41, 42], [25, 25, 25, 25, 25])
+        r = burst_probe(read, concurrent_runner(), ticks=1, skip=0, sleep=slept.append)
+        self.assertFalse(r.reset_start)
+        self.assertEqual(slept, [60] * 4)
+        self.assertEqual((r.tick_from, r.tick_to), (41, 42))
+
+    def test_meter_not_at_zero_after_the_wait_falls_back_to_alignment(self):
+        read = reset_seq([40, 40, 40, 41, 41, 42], [10, 300, 300, 300, 300, 300])
+        r = burst_probe(read, concurrent_runner(), ticks=1, skip=0)
+        self.assertFalse(r.reset_start)
+        self.assertEqual((r.tick_from, r.tick_to), (41, 42))
+
+    def test_wait_is_charged_against_the_deadline(self):
+        from datetime import timedelta
+        clock = [T0]
+        def now():
+            return clock[0]
+        def sleep(s):
+            clock[0] += timedelta(seconds=s)
+        read = reset_seq([40, 0, 0, 1], [10, 300, 300, 300])
+        with self.assertRaises(ProbeAbort) as e:
+            burst_probe(read, concurrent_runner(), ticks=1, skip=0, sleep=sleep, now=now,
+                        deadline=T0 + timedelta(minutes=5))
+        self.assertIn("deadline", str(e.exception))
+
+    def test_unparseable_resets_at_is_ignored(self):
+        r = burst_probe(util_seq([10, 11, 12]), concurrent_runner(), ticks=1, skip=0)
+        self.assertFalse(r.reset_start)
+
+
+class RowShapeTests(unittest.TestCase):
+    def test_row_records_the_new_fields_and_drops_the_old_flags(self):
+        r = burst_probe(util_seq([10, 11, 11, 12]), concurrent_runner(), ticks=1, skip=0, settle_s=30)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d, "probes.jsonl")
             append_result(p, r, account="dave")
             row = json.loads(p.read_text().splitlines()[0])
-        self.assertEqual(row["settle_s"], 30)
+        self.assertEqual(row["payload_words"], WORDS)
+        self.assertEqual(row["expect_tokens_per_pct"], EXPECT)
+        self.assertIs(row["early_tick"], True)
+        self.assertIs(row["reset_start"], False)
+        self.assertEqual((row["skip"], row["ticks"], row["settle_s"]), (0, 1, 30))
+        self.assertNotIn("burst", row)
+        self.assertNotIn("overshoot", row)
+        self.assertEqual(row["readings"][0]["burst"], 4)
 
-    def test_settle_defaults_to_sixty(self):
+    def test_defaults_are_three_measured_ticks_and_skip_one(self):
         slept = []
-        r = run_tick_probe("claude-sonnet-5", "low", "p", util_seq([10, 11, 12]), runner(), sleep=slept.append,
-                           now=lambda: T0, ticks=1)
-        self.assertEqual(slept, [60, 60])
-        self.assertEqual((r.settle_s, r.skip, r.burst, r.overshoot), (60, 0, 0, False))
+        # before=10; 11 (tick1); 12 (skipped); 13, 14, 15 (three measured).
+        r = run_tick_probe("claude-sonnet-5", "low", "p", util_seq([10, 11, 12, 13, 14, 15]), runner(),
+                           sleep=slept.append, now=lambda: T0)
+        self.assertEqual((r.ticks, r.skip, r.settle_s), (3, 1, 60))
+        self.assertEqual((r.tick_from, r.tick_to), (12, 15))
+        self.assertEqual(slept, [60] * 5)
+        self.assertEqual(r.tokens_per_pct, 20_000)
 
 
-class ModeCliTests(unittest.TestCase):
-    def test_mode_flags_reach_run_tick_probe(self):
+class CliTests(unittest.TestCase):
+    PRICES = {"claude-sonnet-5": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1},
+              "claude-fable-5-1": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}}
+
+    def _capture(self, argv):
         import tracker.probe as probe_mod
         import tracker.cli_run as cli_run_mod
         import tracker.usage_api as usage_api_mod
-        from tracker.usage_api import Utilization
         captured = {}
 
         def fake_run_tick_probe(model, effort, prompt, read, run, sleep, now, **kwargs):
             captured.update(kwargs)
+            captured["prompt"] = None
+            captured["prompt"] = run(0) and captured["prompt_text"]
             raise ProbeAbort("stop-test")
+
+        def fake_run_prompt(prompt_text, model, effort, cfg):
+            captured["prompt_text"] = prompt_text
+            return RunUsage(model, 1, 1, 1, 0, 0.0, 1.0)
 
         orig = (probe_mod.choose_account, probe_mod.run_tick_probe, cli_run_mod.run_prompt, usage_api_mod.read_usage)
         probe_mod.choose_account = lambda accounts, *a, **k: accounts[0]
         probe_mod.run_tick_probe = fake_run_tick_probe
-        cli_run_mod.run_prompt = lambda *a, **k: RunUsage("m", 1, 1, 1, 0, 0.0, 1.0)
+        cli_run_mod.run_prompt = fake_run_prompt
         usage_api_mod.read_usage = lambda cfg, fetch=None: Utilization(T0, 10.0, 30.0, "r1")
         try:
             with tempfile.TemporaryDirectory() as d:
                 prices = Path(d, "prices.json")
-                prices.write_text(json.dumps({"claude-sonnet-5": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}}))
-                common = ["--model", "claude-sonnet-5", "--account", f"dave={d}", "--prices", str(prices)]
-                rc = probe_mod.main(common + ["--skip", "1", "--ticks", "1", "--burst", "4",
-                                              "--expect-tokens-per-pct", "468000", "--settle", "30"])
-                self.assertEqual(rc, 4)
-                self.assertEqual(captured["skip"], 1)
-                self.assertEqual(captured["ticks"], 1)
-                self.assertEqual(captured["burst"], 4)
-                self.assertEqual(captured["expect_tokens_per_pct"], 468000.0)
-                self.assertEqual(captured["settle_s"], 30.0)
-                captured.clear()
-                probe_mod.main(common)
-                self.assertEqual((captured["skip"], captured["burst"], captured["settle_s"],
-                                  captured["expect_tokens_per_pct"]), (0, 0, 60, None))
+                prices.write_text(json.dumps(self.PRICES))
+                rc = probe_mod.main(argv + ["--account", f"dave={d}", "--prices", str(prices)])
         finally:
             (probe_mod.choose_account, probe_mod.run_tick_probe, cli_run_mod.run_prompt, usage_api_mod.read_usage) = orig
+        return rc, captured
+
+    def test_defaults_are_three_ticks_skip_one_and_the_expectation_sizes_the_prompt(self):
+        rc, c = self._capture(["--model", "claude-fable-5-1", "--expect-tokens-per-pct", "117897"])
+        self.assertEqual(rc, 4)
+        self.assertEqual((c["ticks"], c["skip"], c["settle_s"]), (3, 1, 60))
+        self.assertEqual(c["expect_tokens_per_pct"], 117897.0)
+        self.assertEqual(c["payload_words"], 3398)
+        self.assertGreaterEqual(len(c["prompt_text"].split()), 3398)
+        self.assertLess(len(c["prompt_text"].split()), 3398 + 40)
+
+    def test_flags_reach_run_tick_probe(self):
+        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "468000",
+                               "--ticks", "2", "--skip", "0", "--settle", "30"])
+        self.assertEqual((c["ticks"], c["skip"], c["settle_s"], c["payload_words"]), (2, 0, 30.0, 12_000))
+
+    def test_expectation_is_required(self):
+        with self.assertRaises(SystemExit):
+            self._capture(["--model", "claude-sonnet-5"])
+
+    def test_output_payload_keeps_its_fixed_reply_size(self):
+        rc, c = self._capture(["--model", "claude-fable-5-1", "--payload", "output",
+                               "--expect-tokens-per-pct", "31724"])
+        self.assertEqual(c["payload"], "output")
+        self.assertEqual(c["payload_words"], 4_000)
+        self.assertIn("4,000 words", c["prompt_text"])
