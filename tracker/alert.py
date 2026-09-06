@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 ENV_FILE = Path.home() / ".claude-usage-notify.env"
+USER_AGENT = "claude-usage-tracker/1.0 (+https://alldonesites.com/claude-usage-tracker/)"
 SEND_URL = "https://alldonesites.com/api/notify/send"
 SUBJECT_PREFIX = "Claude usage tracker: "
 KEYS = ("NOTIFY_SEND_SECRET", "NOTIFY_ALERT_TO", "NOTIFY_SEND_URL")
@@ -123,7 +124,10 @@ def send_alert(subject: str, text: str, cfg: AlertConfig, *, post: Poster = _def
     endpoint could not be reached at all. Never logs the secret."""
     body = alert_body(subject, text, cfg.to, source=source or socket.gethostname(),
                       now=now or datetime.now(timezone.utc))
-    headers = {"authorization": f"Bearer {cfg.secret}", "content-type": "application/json"}
+    # Cloudflare's edge blocks urllib's default "Python-urllib/x.y" agent with a 403
+    # (error 1010) before the Function runs; any explicit agent passes.
+    headers = {"authorization": f"Bearer {cfg.secret}", "content-type": "application/json",
+               "user-agent": USER_AGENT}
     return post(cfg.url, headers, json.dumps(body).encode("utf-8"))
 
 
