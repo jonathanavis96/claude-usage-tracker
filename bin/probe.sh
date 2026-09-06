@@ -39,8 +39,26 @@ git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --r
 
 MODEL=claude-sonnet-5
 
-python3 -m tracker.probe --model "$MODEL" --effort low --out history/probes.jsonl
-rc=$?
+# One email to Jonathan through the site's send endpoint (tracker/alert.py reads
+# NOTIFY_ALERT_TO and the bearer secret from ~/.claude-usage-notify.env). Advisory:
+# it can never change this script's exit status. The drift check in the rotation
+# wrapper (outlier, confirmed change) raises its alerts through the same helper.
+alert_jonathan() {
+  python3 -m tracker.alert --subject "$1" --text "$2" || true
+}
+
+# The probe's own output is kept (out/ is gitignored) so an alert can quote it.
+mkdir -p out
+PROBE_LOG=out/probe-last.log
+python3 -m tracker.probe --model "$MODEL" --effort low --out history/probes.jsonl 2>&1 | tee "$PROBE_LOG"
+rc=${PIPESTATUS[0]}
+
+case "$rc" in
+  3) alert_jonathan "Probe skipped: no idle account for $MODEL" \
+       "$(printf 'tracker.probe exited 3 (no idle account within the wait).\n\nLast lines:\n%s\n' "$(tail -n 20 "$PROBE_LOG")")" ;;
+  4) alert_jonathan "Probe aborted on $MODEL" \
+       "$(printf 'tracker.probe exited 4 (window reset or a jump it could not explain). No row was written.\n\nLast lines:\n%s\n' "$(tail -n 20 "$PROBE_LOG")")" ;;
+esac
 
 if [ "$rc" -eq 0 ]; then
   git add history/probes.jsonl

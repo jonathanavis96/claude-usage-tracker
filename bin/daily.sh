@@ -59,6 +59,16 @@ fi
 )
 publish_rc=$?
 
+# One email to Jonathan through the same send endpoint, via tracker/alert.py
+# (which reads NOTIFY_ALERT_TO and the bearer secret from
+# ~/.claude-usage-notify.env, and skips with a note when either is missing).
+# Advisory, like everything after the publish: it can never change this
+# script's exit status. The weekly weight guard (publisher) raises its alert
+# through the same helper.
+alert_jonathan() {
+  python3 -m tracker.alert --subject "$1" --text "$2" || true
+}
+
 # Tell alldonesites.com to email its subscribers, but only about a change we have
 # not already announced. Everything below is advisory: a missing env file, no
 # network, or a non-2xx answer logs a warning and leaves publish_rc alone. The
@@ -130,6 +140,20 @@ PYEOF
       echo "warning: notify POST for $date returned '$status', will retry tomorrow" >&2
       ;;
   esac
+
+  # Jonathan hears about every confirmed change, whether or not the list send
+  # went through. A failed fan-out retries tomorrow and alerts again, which is
+  # the reminder wanted; a successful one is recorded above and never repeats.
+  local summary
+  summary="$(BODY="$body" python3 - <<'PYEOF'
+import json, os
+c = json.loads(os.environ["BODY"])
+model = f" ({c['model']})" if c.get("model") else ""
+print(f"{c['direction']} {c['percent']}% on {c['date']}{model}")
+PYEOF
+)"
+  alert_jonathan "Change confirmed: $summary" \
+    "$(printf 'The publisher found a new last_change in %s:\n\n%s\n\nSubscriber send via /api/notify/send: HTTP %s\n' "$json" "$body" "$status")"
 }
 
 notify_change
