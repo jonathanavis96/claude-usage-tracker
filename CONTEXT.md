@@ -48,6 +48,9 @@ _Avoid_: batch, parallel run
 **Early tick**:
 A tick that arrives during a burst, meaning the span was shorter than expected and the limit has probably fallen.
 
+**Reset start**:
+A probe that waited for a window reset within 20 minutes of starting and took the meter's 0.0 as its first tick, spending no alignment span.
+
 **Settle**:
 The wait between a prompt returning and the meter being read.
 _Avoid_: delay, cooldown
