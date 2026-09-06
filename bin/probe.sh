@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Weekly on gs: one tick probe, always claude-sonnet-5. Every other model's
+# Twice daily on gs (03:30 and 15:30 UTC): a 5-tick probe, always claude-sonnet-5. Every other model's
 # rate is derived from this one model's dollar value (see docs/spike-2026-09.md
 # and tracker/publish.py) rather than probed directly. Appends to
 # history/probes.jsonl and pushes it to this private repo (build branch)
