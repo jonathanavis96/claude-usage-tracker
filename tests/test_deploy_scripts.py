@@ -28,12 +28,32 @@ class TestDeployScriptsSyntax(unittest.TestCase):
     def test_daily_sh_syntax(self) -> None:
         self._check("daily.sh")
 
-    def test_both_wrappers_raise_alerts_through_the_helper(self) -> None:
-        # One helper, one address, one secret: neither wrapper may grow its own curl.
-        for name in ("probe.sh", "daily.sh"):
+    def test_output_probe_sh_syntax(self) -> None:
+        self._check("output-probe.sh")
+
+    def test_every_wrapper_raises_alerts_through_the_helper(self) -> None:
+        # One helper, one address, one secret: no wrapper may grow its own curl.
+        for name in ("probe.sh", "daily.sh", "output-probe.sh"):
             text = (BIN / name).read_text(encoding="utf-8")
             self.assertIn("python3 -m tracker.alert", text, name)
             self.assertIn("alert_jonathan()", text, name)
+
+    def test_output_probe_is_a_five_tick_fable_output_run(self) -> None:
+        # The weekly weight run: Fable, --payload output, 5 ticks, same lock and
+        # history file as the rate probe, so the publisher finds its row.
+        text = (BIN / "output-probe.sh").read_text(encoding="utf-8")
+        self.assertIn("MODEL=claude-fable-5-1", text)
+        self.assertIn("PAYLOAD=output", text)
+        self.assertIn("TICKS=5", text)
+        self.assertIn('--payload "$PAYLOAD" --ticks "$TICKS"', text)
+        self.assertIn("--out history/probes.jsonl", text)
+        self.assertIn("flock -n 9", text)
+        self.assertNotIn("--burst", text)
+
+    def test_daily_commits_the_recomputed_weight_back_to_the_tracker_branch(self) -> None:
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        self.assertIn("git add data/prices.json", text)
+        self.assertIn('git push -q origin "$BRANCH"', text)
 
 
 class TestDailyNotifyChange(unittest.TestCase):
