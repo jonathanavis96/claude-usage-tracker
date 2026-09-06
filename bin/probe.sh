@@ -11,17 +11,12 @@
 # reflect the probe's own success/failure, not a transient git hiccup) --
 # but the probe row is still lost if push fails, so the log line matters.
 #
-# tracker.probe also takes three optional flags, all off here until a live
-# comparison against the plain 5-tick run has been done (see tracker/probe.py):
-#   --skip N                  discard the first N ticks after alignment before
-#                             measuring (the first span looks like meter catch-up:
-#                             5 prompts vs a steady 9-10 on 2026-09-06 09:39)
-#   --burst K                 fire K prompts concurrently once per measured tick;
-#                             needs --expect-tokens-per-pct RATE (e.g. the last
-#                             published tokens per 1%) to size the burst so it
-#                             cannot overshoot, otherwise it is skipped
-#   --settle SECONDS          wait before each meter read (default 60)
-# A 2.5% run is: --skip 1 --ticks 1  (align, discard one span, measure one).
+# tracker.probe needs --expect-tokens-per-pct (the last published Sonnet rate): it
+# sizes the prompt to a tenth of a tick and each span's opening burst to 80% of
+# the span. Defaults are 3 measured ticks after 1 skipped span; a window reset
+# within 20 min is waited for so the run starts at 0.0. The literal below is
+# the 2026-09-06 09:39 Sonnet row; tracker/rotate.py replaces it with the
+# rotation's own expectation.
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.." || exit 1
@@ -38,8 +33,10 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
 
 MODEL=claude-sonnet-5
+EXPECT=468000
 
-python3 -m tracker.probe --model "$MODEL" --effort low --out history/probes.jsonl
+python3 -m tracker.probe --model "$MODEL" --effort low --out history/probes.jsonl \
+  --expect-tokens-per-pct "$EXPECT"
 rc=$?
 
 if [ "$rc" -eq 0 ]; then
