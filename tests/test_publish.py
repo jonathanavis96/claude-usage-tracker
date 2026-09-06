@@ -69,10 +69,10 @@ class BuildTests(unittest.TestCase):
         self.assertIn("api_value_per_window", r)
 
     def test_change_event_surfaces(self):
-        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)] + [probe(d, "claude-sonnet-5", 360000) for d in range(11, 16)]
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)] + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)]
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 15, tzinfo=timezone.utc))
         self.assertEqual(j["last_change"]["direction"], "decreased")
-        self.assertEqual(j["last_change"]["percent"], 14)
+        self.assertEqual(j["last_change"]["percent"], 27)
         self.assertEqual(j["last_change"]["model"], "claude-sonnet-5")
 
 
