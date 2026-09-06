@@ -80,6 +80,10 @@ How much harder the meter charges one model than another for the same list value
 The mix of token classes in Jonathan's own real sessions, used to convert dollars per window into tokens per window for the page.
 _Avoid_: real-world mix, session profile
 
+**Session**:
+One transcript file's worth of turns (a subagent's own transcript counts as its own session). `session_tokens[model]` is the median cumulative tokens of a real session on that model over the last 30 days; the page's "about N sessions per window" unit.
+_Avoid_: task, conversation, run
+
 **Derived rate**:
 A model's published rate computed from another model's probe through the dollar invariant, rather than probed directly.
 

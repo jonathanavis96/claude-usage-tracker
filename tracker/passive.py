@@ -6,12 +6,13 @@ from pathlib import Path
 from statistics import median
 from .join import DailyRate, build_intervals, daily_rates
 from .samples import merge_samples, parse_ceiling_log, parse_moonlighter
-from .turns import iter_turns, transcript_paths
+from .turns import iter_turns, session_tokens_by_model, transcript_paths
 
 PLAN_CHANGE = date(2026, 8, 18)
 
 
-def passive_summary(rates: dict[date, DailyRate], plan_change: date = PLAN_CHANGE) -> dict:
+def passive_summary(rates: dict[date, DailyRate], plan_change: date = PLAN_CHANGE,
+                     session_tokens: dict[str, int] | None = None) -> dict:
     before = [r.tokens_per_pct for d, r in rates.items() if plan_change - timedelta(days=14) <= d < plan_change and not r.interpolated]
     after = [r.tokens_per_pct for d, r in rates.items() if plan_change <= d < plan_change + timedelta(days=14) and not r.interpolated]
     ratio = (median(before) / median(after)) if before and after else None
@@ -25,6 +26,7 @@ def passive_summary(rates: dict[date, DailyRate], plan_change: date = PLAN_CHANG
         "plan_ratio_5x_to_20x": None if ratio is None else round(ratio, 4),
         "split": split,
         "history": {d.isoformat(): {"tokens_per_pct": round(r.tokens_per_pct), "interpolated": r.interpolated} for d, r in sorted(rates.items())},
+        "session_tokens": session_tokens or {},
     }
 
 
@@ -39,9 +41,11 @@ def main(argv: list[str] | None = None) -> int:
     cl_path = home / ".paperclip/ops/mis-usage-ceiling-systemd.log"
     cl = parse_ceiling_log(open(cl_path, encoding="utf-8")) if cl_path.exists() else []
     samples = merge_samples(ml, cl)
-    turns = list(iter_turns(transcript_paths(home / ".claude/projects", None)))
+    paths = transcript_paths(home / ".claude/projects", None)
+    turns = list(iter_turns(paths))
     rates = daily_rates(build_intervals(samples, turns))
-    summary = passive_summary(rates)
+    session_tokens = session_tokens_by_model(paths)
+    summary = passive_summary(rates, session_tokens=session_tokens)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     tmp = a.out.with_suffix(".tmp")
     tmp.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")

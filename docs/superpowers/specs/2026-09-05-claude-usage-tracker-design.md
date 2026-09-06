@@ -158,6 +158,7 @@ Written to `website/public/data/claude-usage.json` in alldonesites. Shape:
     "fable-5-1":  { "...": "..." }
   },
   "effort": { "sonnet-5": { "low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000 }, "...": {} },
+  "session_tokens": { "claude-sonnet-5": 627295, "claude-opus-5": 1595528, "claude-fable-5-1": 11239886 },
   "api_price_per_mtok": { "sonnet-5": { "input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75 }, "...": {} },
   "history": [ { "date": "2026-07-08", "tokens_per_window": 45100000, "interpolated": false }, "..." ],
   "last_change": { "date": "2026-09-02", "direction": "decreased", "percent": 14 }
@@ -178,7 +179,7 @@ copied into the JSON so the page has one fetch.
 - Fetches the JSON on load. Every figure is arithmetic on it:
   - tokens per window = rate[model] × plan_ratio[plan]
   - split figures = tokens per window × split fractions
-  - tasks per window = tokens per window ÷ effort[model][effort]
+  - tasks per window = tokens per window ÷ (session_tokens[model] × effort[model][effort] ÷ effort[model]["medium"])
   - tasks per week = tasks per window × 28
   - API value = Σ split tokens × price per class
 - Three inline dropdown words: plan, model, effort. No slider.

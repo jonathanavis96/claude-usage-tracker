@@ -19,3 +19,8 @@ class PassiveTests(unittest.TestCase):
         self.assertEqual(len(s["history"]), 29)
         self.assertEqual(s["history"]["2026-08-18"], {"tokens_per_pct": 400000, "interpolated": False})
         self.assertIn("generated_at", s)
+        self.assertEqual(s["session_tokens"], {})
+
+    def test_session_tokens_passthrough(self):
+        s = passive_summary({}, session_tokens={"claude-sonnet-5": 123456})
+        self.assertEqual(s["session_tokens"], {"claude-sonnet-5": 123456})

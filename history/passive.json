@@ -1,47 +1,15 @@
 {
- "generated_at": "2026-09-06T01:15:12.749084+00:00",
- "plan_ratio_5x_to_20x": 0.3805,
+ "generated_at": "2026-09-06T16:34:26.479843+00:00",
+ "plan_ratio_5x_to_20x": 0.423,
  "split": {
   "input": 0.0001,
   "output": 0.0044,
-  "cache_read": 0.9669,
-  "cache_write": 0.0285
+  "cache_read": 0.9684,
+  "cache_write": 0.0275
  },
  "history": {
-  "2026-07-30": {
-   "tokens_per_pct": 2194672,
-   "interpolated": false
-  },
-  "2026-07-31": {
-   "tokens_per_pct": 2194672,
-   "interpolated": true
-  },
-  "2026-08-01": {
-   "tokens_per_pct": 2194672,
-   "interpolated": true
-  },
-  "2026-08-02": {
-   "tokens_per_pct": 2194672,
-   "interpolated": true
-  },
-  "2026-08-03": {
-   "tokens_per_pct": 469093,
-   "interpolated": false
-  },
-  "2026-08-04": {
-   "tokens_per_pct": 469093,
-   "interpolated": true
-  },
-  "2026-08-05": {
-   "tokens_per_pct": 469093,
-   "interpolated": true
-  },
-  "2026-08-06": {
-   "tokens_per_pct": 875501,
-   "interpolated": false
-  },
   "2026-08-07": {
-   "tokens_per_pct": 966559,
+   "tokens_per_pct": 938322,
    "interpolated": false
   },
   "2026-08-08": {
@@ -161,8 +129,13 @@
    "interpolated": false
   },
   "2026-09-06": {
-   "tokens_per_pct": 1645696,
+   "tokens_per_pct": 3057171,
    "interpolated": false
   }
+ },
+ "session_tokens": {
+  "claude-sonnet-5": 627295,
+  "claude-opus-5": 1595528,
+  "claude-fable-5-1": 11239886
  }
 }
