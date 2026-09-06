@@ -1,6 +1,393 @@
 {
-  "_status": "placeholder",
-  "claude-sonnet-5":  {"low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000},
-  "claude-opus-5":    {"low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000},
-  "claude-fable-5-1": {"low": 900000, "medium": 1400000, "high": 2520000, "xhigh": 3900000, "max": 5600000}
+ "_meta": {
+  "repeats": 3,
+  "started": "2026-09-05T23:31:04.692774+00:00",
+  "usage_deltas": {
+   "claude-sonnet-5/low": 0.0,
+   "claude-sonnet-5/medium": 0.0,
+   "claude-sonnet-5/high": 0.0,
+   "claude-sonnet-5/xhigh": 0.0,
+   "claude-sonnet-5/max": 1.0,
+   "claude-opus-5/low": 1.0,
+   "claude-opus-5/medium": 0.0,
+   "claude-opus-5/high": 1.0,
+   "claude-opus-5/xhigh": 1.0,
+   "claude-opus-5/max": 1.0,
+   "claude-fable-5-1/low": 1.0,
+   "claude-fable-5-1/medium": 0.0,
+   "claude-fable-5-1/high": 2.0,
+   "claude-fable-5-1/xhigh": 4.0,
+   "claude-fable-5-1/max": 9.0
+  },
+  "runs": {
+   "claude-sonnet-5/low": [
+    {
+     "input": 2,
+     "output": 1508,
+     "cache_read": 9669,
+     "cache_write": 4257,
+     "total": 15436
+    },
+    {
+     "input": 2,
+     "output": 1913,
+     "cache_read": 13926,
+     "cache_write": 0,
+     "total": 15841
+    },
+    {
+     "input": 2,
+     "output": 1638,
+     "cache_read": 13926,
+     "cache_write": 0,
+     "total": 15566
+    }
+   ],
+   "claude-sonnet-5/medium": [
+    {
+     "input": 2,
+     "output": 2398,
+     "cache_read": 0,
+     "cache_write": 13933,
+     "total": 16333
+    },
+    {
+     "input": 2,
+     "output": 3061,
+     "cache_read": 13933,
+     "cache_write": 0,
+     "total": 16996
+    },
+    {
+     "input": 2,
+     "output": 1742,
+     "cache_read": 13933,
+     "cache_write": 0,
+     "total": 15677
+    }
+   ],
+   "claude-sonnet-5/high": [
+    {
+     "input": 2,
+     "output": 5281,
+     "cache_read": 8683,
+     "cache_write": 5250,
+     "total": 19216
+    },
+    {
+     "input": 2,
+     "output": 6001,
+     "cache_read": 13933,
+     "cache_write": 0,
+     "total": 19936
+    },
+    {
+     "input": 2,
+     "output": 5848,
+     "cache_read": 13933,
+     "cache_write": 0,
+     "total": 19783
+    }
+   ],
+   "claude-sonnet-5/xhigh": [
+    {
+     "input": 2,
+     "output": 8617,
+     "cache_read": 0,
+     "cache_write": 13933,
+     "total": 22552
+    },
+    {
+     "input": 2,
+     "output": 9746,
+     "cache_read": 13933,
+     "cache_write": 0,
+     "total": 23681
+    },
+    {
+     "input": 2,
+     "output": 8044,
+     "cache_read": 13933,
+     "cache_write": 0,
+     "total": 21979
+    }
+   ],
+   "claude-sonnet-5/max": [
+    {
+     "input": 12,
+     "output": 28008,
+     "cache_read": 129678,
+     "cache_write": 37145,
+     "total": 194843
+    },
+    {
+     "input": 6,
+     "output": 20885,
+     "cache_read": 47837,
+     "cache_write": 10441,
+     "total": 79169
+    },
+    {
+     "input": 8,
+     "output": 29955,
+     "cache_read": 64409,
+     "cache_write": 16559,
+     "total": 110931
+    }
+   ],
+   "claude-opus-5/low": [
+    {
+     "input": 2,
+     "output": 2457,
+     "cache_read": 8628,
+     "cache_write": 6146,
+     "total": 17233
+    },
+    {
+     "input": 2,
+     "output": 3340,
+     "cache_read": 14774,
+     "cache_write": 0,
+     "total": 18116
+    },
+    {
+     "input": 2,
+     "output": 2648,
+     "cache_read": 14774,
+     "cache_write": 0,
+     "total": 17424
+    }
+   ],
+   "claude-opus-5/medium": [
+    {
+     "input": 2,
+     "output": 3956,
+     "cache_read": 0,
+     "cache_write": 14774,
+     "total": 18732
+    },
+    {
+     "input": 2,
+     "output": 4391,
+     "cache_read": 14774,
+     "cache_write": 0,
+     "total": 19167
+    },
+    {
+     "input": 2,
+     "output": 3873,
+     "cache_read": 14774,
+     "cache_write": 0,
+     "total": 18649
+    }
+   ],
+   "claude-opus-5/high": [
+    {
+     "input": 2,
+     "output": 7006,
+     "cache_read": 8628,
+     "cache_write": 6146,
+     "total": 21782
+    },
+    {
+     "input": 2,
+     "output": 9013,
+     "cache_read": 14774,
+     "cache_write": 0,
+     "total": 23789
+    },
+    {
+     "input": 8,
+     "output": 9439,
+     "cache_read": 67066,
+     "cache_write": 11189,
+     "total": 87702
+    }
+   ],
+   "claude-opus-5/xhigh": [
+    {
+     "input": 6,
+     "output": 14382,
+     "cache_read": 38919,
+     "cache_write": 29133,
+     "total": 82440
+    },
+    {
+     "input": 6,
+     "output": 11280,
+     "cache_read": 51417,
+     "cache_write": 8159,
+     "total": 70862
+    },
+    {
+     "input": 6,
+     "output": 14378,
+     "cache_read": 50354,
+     "cache_write": 10227,
+     "total": 74965
+    }
+   ],
+   "claude-opus-5/max": [
+    {
+     "input": 8,
+     "output": 15289,
+     "cache_read": 66627,
+     "cache_write": 16826,
+     "total": 98750
+    },
+    {
+     "input": 6,
+     "output": 18212,
+     "cache_read": 49708,
+     "cache_write": 17295,
+     "total": 85221
+    },
+    {
+     "input": 10,
+     "output": 17963,
+     "cache_read": 109684,
+     "cache_write": 15080,
+     "total": 142737
+    }
+   ],
+   "claude-fable-5-1/low": [
+    {
+     "input": 2,
+     "output": 2178,
+     "cache_read": 8628,
+     "cache_write": 7082,
+     "total": 17890
+    },
+    {
+     "input": 2,
+     "output": 2607,
+     "cache_read": 15710,
+     "cache_write": 0,
+     "total": 18319
+    },
+    {
+     "input": 2,
+     "output": 2403,
+     "cache_read": 15710,
+     "cache_write": 0,
+     "total": 18115
+    }
+   ],
+   "claude-fable-5-1/medium": [
+    {
+     "input": 2,
+     "output": 3506,
+     "cache_read": 11514,
+     "cache_write": 4196,
+     "total": 19218
+    },
+    {
+     "input": 2,
+     "output": 3578,
+     "cache_read": 15710,
+     "cache_write": 0,
+     "total": 19290
+    },
+    {
+     "input": 2,
+     "output": 5389,
+     "cache_read": 15710,
+     "cache_write": 0,
+     "total": 21101
+    }
+   ],
+   "claude-fable-5-1/high": [
+    {
+     "input": 2,
+     "output": 7808,
+     "cache_read": 11514,
+     "cache_write": 4196,
+     "total": 23520
+    },
+    {
+     "input": 2,
+     "output": 4171,
+     "cache_read": 15710,
+     "cache_write": 0,
+     "total": 19883
+    },
+    {
+     "input": 2,
+     "output": 5244,
+     "cache_read": 15710,
+     "cache_write": 0,
+     "total": 20956
+    }
+   ],
+   "claude-fable-5-1/xhigh": [
+    {
+     "input": 2,
+     "output": 17394,
+     "cache_read": 11514,
+     "cache_write": 4196,
+     "total": 33106
+    },
+    {
+     "input": 34,
+     "output": 21118,
+     "cache_read": 31420,
+     "cache_write": 18017,
+     "total": 70589
+    },
+    {
+     "input": 2,
+     "output": 17366,
+     "cache_read": 15710,
+     "cache_write": 0,
+     "total": 33078
+    }
+   ],
+   "claude-fable-5-1/max": [
+    {
+     "input": 66,
+     "output": 31577,
+     "cache_read": 56484,
+     "cache_write": 26462,
+     "total": 114589
+    },
+    {
+     "input": 66,
+     "output": 29334,
+     "cache_read": 61302,
+     "cache_write": 16689,
+     "total": 107391
+    },
+    {
+     "input": 98,
+     "output": 24702,
+     "cache_read": 93390,
+     "cache_write": 18061,
+     "total": 136251
+    }
+   ]
+  },
+  "failed": [],
+  "finished": "2026-09-06T01:04:28.866832+00:00"
+ },
+ "claude-sonnet-5": {
+  "low": 15566,
+  "medium": 16333,
+  "high": 19783,
+  "xhigh": 22552,
+  "max": 110931
+ },
+ "claude-opus-5": {
+  "low": 17424,
+  "medium": 18732,
+  "high": 23789,
+  "xhigh": 74965,
+  "max": 98750
+ },
+ "claude-fable-5-1": {
+  "low": 18115,
+  "medium": 19290,
+  "high": 20956,
+  "xhigh": 33106,
+  "max": 114589
+ }
 }
