@@ -90,3 +90,57 @@ class FailurePathTests(unittest.TestCase):
             rc = main(["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"), "--out", str(out)])
             self.assertNotEqual(rc, 0)
             self.assertEqual(out.read_text(), '{"previous": true}')
+
+
+class GuardTests(unittest.TestCase):
+    def _files(self, d, *, rows=None, effort=None, prices=None, passive=None):
+        import json
+        from pathlib import Path
+        d = Path(d)
+        rows = [probe(5, "claude-sonnet-5", 420000)] if rows is None else rows
+        (d / "probes.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        (d / "passive.json").write_text(json.dumps(PASSIVE if passive is None else passive))
+        (d / "effort.json").write_text(json.dumps(EFFORT if effort is None else effort))
+        (d / "prices.json").write_text(json.dumps(PRICES if prices is None else prices))
+        return d
+
+    def _run(self, d):
+        from tracker.publish import main
+        return main(["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"),
+                     "--effort", str(d / "effort.json"), "--prices", str(d / "prices.json"),
+                     "--out", str(d / "out.json")])
+
+    def test_placeholder_effort_matrix_refuses_and_does_not_write(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t, effort={"_status": "placeholder", **EFFORT})
+            self.assertEqual(self._run(d), 1)
+            self.assertFalse((d / "out.json").exists())
+
+    def test_underscore_keys_are_filtered_out_of_prices(self):
+        import json
+        import tempfile
+        now = datetime.now(timezone.utc)
+        row = probe(5, "claude-sonnet-5", 420000)
+        row["ts"] = now.isoformat()
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t, rows=[row], effort={k: v for k, v in EFFORT.items()},
+                            prices={"_source": "docs", **PRICES})
+            self.assertEqual(self._run(d), 0)
+            j = json.loads((d / "out.json").read_text())
+            self.assertEqual(j["api_price_per_mtok"], PRICES)
+            self.assertEqual(j["passive_generated_at"], PASSIVE["generated_at"])
+
+    def test_no_rates_refuses(self):
+        with self.assertRaises(ValueError):
+            build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, tzinfo=timezone.utc))
+
+    def test_stale_last_sample_refuses(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        with self.assertRaises(ValueError):
+            build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 12, tzinfo=timezone.utc))
+
+    def test_passive_generated_at_is_null_when_missing(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        j = build_public_json(rows, {}, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc))
+        self.assertIsNone(j["passive_generated_at"])
