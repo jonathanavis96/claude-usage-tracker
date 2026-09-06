@@ -7,9 +7,20 @@
 # (git@github-cut-site is a second write-only deploy key alias the controller
 # sets up) and pulled on later runs. If tracker.publish leaves the JSON
 # unchanged, no commit is made in the site repo.
+#
+# Exit 6 is this wrapper's own: the tracker lock was still held after 10 minutes.
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.." || exit 1
+
+# One tracker job at a time: a probe and the daily publisher share this checkout.
+# The publisher waits for a probe to finish rather than skipping the day.
+LOCK=/tmp/claude-usage-tracker.lock
+exec 9>"$LOCK"
+if ! flock -w 600 9; then
+  echo "daily skipped: could not take $LOCK within 600s" >&2
+  exit 6
+fi
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
