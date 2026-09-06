@@ -17,10 +17,19 @@ To install with the cron switchover (not in the live crontab as of 2026-09-06):
 0 6 * * 0     /home/jonathan/claude-usage-tracker/bin/output-probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-output-probe.log 2>&1
 ```
 
-Times are UTC. `probe.sh` runs weekly and always probes Sonnet 5; every other
-model's rate is derived from that one model's dollar value (the API-list
-invariant, see `docs/spike-2026-09.md`) rather than probed directly. It
-appends to `history/probes.jsonl`, committing and pushing to `build`.
+Times are UTC. `probe.sh` is one rotation slot: `tracker/rotate.py` picks
+the model (Sonnet 5, Opus 5, Fable 5.1 in turn, from the last prose row in
+`history/probes.jsonl`) and its expectation (the last median dollar value
+per 1% through the API-list invariant, see `docs/spike-2026-09.md`), runs a
+3-tick probe, checks the new row for drift against the median of that
+model's last four prose rows (more than 15% away), and on drift reruns once
+with 2 ticks and decides: rerun agrees with the median, the first row is an
+outlier and is flagged in place (`"outlier": true`, ignored by the publisher
+and the rotation); rerun agrees with the first row, a change; neither,
+inconclusive. Each row is committed and pushed to `build` as it lands. The
+cron line above still runs it weekly; the 00:00 and 12:00 rotation cadence
+is the next switchover. `python3 -m tracker.rotate plan` is the dry run: the
+flags every model would be probed with and which is next.
 `daily.sh` pulls `build` (which also brings `history/passive.json` pushed
 from masterrig), runs `tracker.publish`, and commits
 `website/public/data/claude-usage.json` into the site checkout at
@@ -101,8 +110,9 @@ left in place), 6 the tracker lock was still held after waiting 600s.
 `bin/probe.sh` and `bin/output-probe.sh` raise one when the probe exits 3 or
 4, `bin/daily.sh` when a new `last_change` is announced, the weekly weight
 guard (`tracker/weight.py`, inside `tracker.publish`) when it refuses a
-recomputed output class weight, and the rotation wrapper raises its outlier
-alert through the same helper. Config
+recomputed output class weight, and `bin/probe.sh` after a drift rerun
+(outlier, change confirmed, or inconclusive; and a rerun that wrote no row),
+all through the same helper. Config
 is `~/.claude-usage-notify.env` on gs (mode 600, never printed):
 
 ```

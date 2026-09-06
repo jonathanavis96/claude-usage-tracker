@@ -134,6 +134,26 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(all(h["source"] == "probe" for h in sonnet_hist))
         self.assertTrue(all(h["source"] == "derived" for h in opus_hist))
 
+    def test_outlier_rows_are_skipped_everywhere(self):
+        # The rotation's drift check flags a lone outlier in place (tracker.rotate);
+        # it stays in history/probes.jsonl but the publisher must never see it: not
+        # in the regime median, not as a probe day, not as the latest sample.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        rows.append(dict(probe(7, "claude-sonnet-5", 900000), outlier=True))
+        now = datetime(2026, 9, 7, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        clean = build_public_json(rows[:-1], PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual(j["rates"], clean["rates"])
+        self.assertEqual(j["history"], clean["history"])
+        self.assertEqual(j["last_sample_at"], "2026-09-05T08:00:00+00:00")
+        self.assertIsNone(j["last_change"])
+        self.assertEqual(next(h for h in j["history"]["claude-sonnet-5"] if h["date"] == "2026-09-07")["source"], "derived")
+
+    def test_only_outlier_rows_refuses(self):
+        rows = [dict(probe(5, "claude-sonnet-5", 420000), outlier=True)]
+        with self.assertRaises(ValueError):
+            build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, tzinfo=timezone.utc))
+
     def test_shape_empty_passive_split_falls_back_to_the_latest_row_split(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)

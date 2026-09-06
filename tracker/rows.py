@@ -8,6 +8,10 @@ the meter's weighting, not of the limit: its dollar value must never enter the
 publisher's regime medians, change detection, the rotation's next-model choice
 or the drift medians. Every consumer filters through here so the rule lives in
 one place.
+
+A prose row may also be flagged `"outlier": true` by the rotation's drift check
+(tracker/rotate.py): its rerun agreed with the earlier median, so the reading is
+kept in history but ignored. `usable_rows` is the set that may enter a median.
 """
 from __future__ import annotations
 
@@ -27,3 +31,12 @@ def prose_rows(rows: list[dict]) -> list[dict]:
 
 def output_rows(rows: list[dict]) -> list[dict]:
     return [r for r in rows if is_output(r)]
+
+
+def is_outlier(row: dict) -> bool:
+    return bool(row.get("outlier"))
+
+
+def usable_rows(rows: list[dict]) -> list[dict]:
+    """Prose rows that may enter a median or a published series: not flagged outliers."""
+    return [r for r in prose_rows(rows) if not is_outlier(r)]

@@ -1,18 +1,24 @@
 """Syntax-check the gs deployment wrappers (Task 12): bin/probe.sh, bin/daily.sh.
 
 Also exercises daily.sh's notify_change step offline, with a stub curl on PATH,
-because that step must never be able to fail the publish it runs after.
+because that step must never be able to fail the publish it runs after; and runs
+bin/probe.sh end to end offline, with a stub python3 that fakes tracker.probe and
+tracker.alert but hands tracker.rotate to the real interpreter, against a scratch
+git clone with a bare origin.
 """
 from __future__ import annotations
 import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tracker.rotate import expectation
 
-BIN = Path(__file__).resolve().parent.parent / "bin"
+ROOT = Path(__file__).resolve().parent.parent
+BIN = ROOT / "bin"
 
 
 class TestDeployScriptsSyntax(unittest.TestCase):
@@ -30,6 +36,13 @@ class TestDeployScriptsSyntax(unittest.TestCase):
 
     def test_output_probe_sh_syntax(self) -> None:
         self._check("output-probe.sh")
+
+    def test_probe_sh_takes_its_flags_from_the_rotation_not_a_literal(self) -> None:
+        text = (BIN / "probe.sh").read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"^EXPECT=", "the literal expectation is gone; tracker.rotate supplies it")
+        self.assertNotRegex(text, r"^MODEL=claude", "the model comes from the rotation, not a literal")
+        for sub in ("rotate flags", "rotate check", "rotate flags --rerun", "rotate decide"):
+            self.assertIn(f"python3 -m tracker.{sub}", text, sub)
 
     def test_every_wrapper_raises_alerts_through_the_helper(self) -> None:
         # One helper, one address, one secret: no wrapper may grow its own curl.
@@ -175,6 +188,187 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIsNone(state)
         self.assertEqual(request, "")
+
+
+
+SONNET_0939 = {"ts": "2026-09-06T09:39:26.287942+00:00", "model": "claude-sonnet-5", "effort": "low",
+               "tokens_per_pct": 467778.6,
+               "tokens": {"input": 86, "output": 215, "cache_read": 415767, "cache_write": 1922825},
+               "prompts": 48, "tick_from": 1, "tick_to": 6, "elapsed_s": 4742.686796, "account": "dave"}
+SONNET_1433 = {"ts": "2026-09-06T14:33:05.254749+00:00", "model": "claude-sonnet-5", "effort": "low",
+               "tokens_per_pct": 579818.6666666666,
+               "tokens": {"input": 86, "output": 215, "cache_read": 415767, "cache_write": 1323388},
+               "prompts": 63, "tick_from": 5, "tick_to": 8, "elapsed_s": 1569.897585, "payload": "prose",
+               "payload_words": 12000, "ticks": 3, "skip": 1, "settle_s": 60, "expect_tokens_per_pct": 468000.0,
+               "early_tick": False, "reset_start": False, "account": "dave"}
+
+
+def _row(ts, model, tpp, ticks=3):
+    return {"ts": ts, "model": model, "effort": "low", "tokens_per_pct": float(tpp),
+            "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": int(tpp * ticks)},
+            "prompts": 10, "tick_from": 1, "tick_to": 1 + ticks, "elapsed_s": 100.0, "payload": "prose",
+            "ticks": ticks, "account": "dave"}
+
+
+# The real 11:16 Fable prose row (readings dropped): $1.08 of list value per 1%.
+FABLE = {"ts": "2026-09-06T11:16:29.286577+00:00", "model": "claude-fable-5-1", "effort": "low",
+         "tokens_per_pct": 117896.8, "tokens": {"input": 28, "output": 70, "cache_read": 160622, "cache_write": 428764},
+         "prompts": 17, "tick_from": 8, "tick_to": 13, "elapsed_s": 2063.701164, "account": "dave"}
+
+# The stub python3. tracker.probe appends the canned row for this call (FAKE_ROW_<n>)
+# to --out and exits FAKE_RC_<n>; tracker.alert logs its arguments; anything else
+# (tracker.rotate) runs on the real interpreter against the real package.
+STUB_PYTHON = """#!/usr/bin/env bash
+case "${2:-}" in
+  tracker.probe)
+    n=$(( $(cat "$CALLS" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$CALLS"
+    printf '%s\\n' "$*" >> "$PROBE_ARGS"
+    out=""; while [ $# -gt 0 ]; do [ "$1" = "--out" ] && out="$2"; shift; done
+    row_var="FAKE_ROW_$n"; rc_var="FAKE_RC_$n"
+    row="${!row_var:-}"; rc="${!rc_var:-0}"
+    [ -n "$row" ] && printf '%s\\n' "$row" >> "$out"
+    echo "fake probe $n rc $rc"
+    exit "$rc" ;;
+  tracker.alert)
+    printf '%s\\n' "$*" >> "$ALERT_LOG"; exit 0 ;;
+  *)
+    PYTHONPATH="$REAL_ROOT" exec "$REAL_PYTHON" "$@" ;;
+esac
+"""
+
+
+class TestProbeShFlow(unittest.TestCase):
+    """bin/probe.sh end to end, offline: rotation flags, drift check, rerun, decide, alerts."""
+
+    def _git(self, *args, cwd):
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True)
+
+    def _run(self, history, fake_rows=(), fake_rcs=()):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            stub_dir = home / ".npm-global" / "bin"  # first on the PATH probe.sh exports
+            stub_dir.mkdir(parents=True)
+            stub = stub_dir / "python3"
+            stub.write_text(STUB_PYTHON, encoding="utf-8")
+            stub.chmod(0o755)
+
+            origin = root / "origin.git"
+            self._git("init", "-q", "--bare", "-b", "build", str(origin), cwd=root)
+            repo = root / "repo"
+            self._git("clone", "-q", str(origin), str(repo), cwd=root)
+            (repo / "bin").mkdir()
+            (repo / "bin" / "probe.sh").write_bytes((BIN / "probe.sh").read_bytes())
+            (repo / "history").mkdir()
+            (repo / "history" / "probes.jsonl").write_text(
+                "".join(json.dumps(r) + "\n" for r in history), encoding="utf-8")
+            (repo / "data").mkdir()
+            (repo / "data" / "prices.json").write_bytes((ROOT / "data" / "prices.json").read_bytes())
+            self._git("-c", "user.name=t", "-c", "user.email=t@t", "checkout", "-q", "-b", "build", cwd=repo)
+            self._git("add", "-A", cwd=repo)
+            self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed", cwd=repo)
+            self._git("push", "-q", "-u", "origin", "build", cwd=repo)
+
+            env = {k: v for k, v in os.environ.items() if not k.startswith("FAKE_")}
+            env.update(HOME=str(home), REAL_ROOT=str(ROOT), REAL_PYTHON=sys.executable,
+                       CALLS=str(root / "calls"), PROBE_ARGS=str(root / "probe-args.log"),
+                       ALERT_LOG=str(root / "alerts.log"),
+                       GIT_CONFIG_GLOBAL=str(root / "gitconfig"), GIT_CONFIG_NOSYSTEM="1")
+            for i, r in enumerate(fake_rows, start=1):
+                if r is not None:  # a run that writes no row
+                    env[f"FAKE_ROW_{i}"] = json.dumps(r)
+            for i, rc in enumerate(fake_rcs, start=1):
+                env[f"FAKE_RC_{i}"] = str(rc)
+            proc = subprocess.run(["bash", str(repo / "bin" / "probe.sh")], cwd=repo, env=env,
+                                  capture_output=True, text=True)
+            args = (root / "probe-args.log").read_text(encoding="utf-8").splitlines() \
+                if (root / "probe-args.log").exists() else []
+            alerts = (root / "alerts.log").read_text(encoding="utf-8") if (root / "alerts.log").exists() else ""
+            rows = [json.loads(ln) for ln in (repo / "history" / "probes.jsonl").read_text(encoding="utf-8").splitlines()]
+            log = self._git("log", "--format=%s", "origin/build", cwd=repo).stdout.splitlines()
+            return proc, args, alerts, rows, log
+
+    def test_no_drift_runs_once_with_the_rotations_flags_and_pushes_the_row(self):
+        opus = _row("2026-09-07T00:00:00+00:00", "claude-opus-5", 190000)
+        proc, args, alerts, rows, log = self._run([SONNET_0939], [opus])
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertEqual(len(args), 1)
+        self.assertIn("--model claude-opus-5 --expect-tokens-per-pct 187111", args[0])
+        self.assertIn("--effort low", args[0])
+        self.assertNotIn("--ticks", args[0])
+        self.assertIn("drift check: ok claude-opus-5 190000: no earlier prose row", proc.stdout)
+        self.assertEqual(rows[-1]["model"], "claude-opus-5")
+        self.assertEqual(alerts, "")
+        self.assertRegex(log[0], r"^Probe \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z claude-opus-5$")
+        self.assertEqual(log[1], "seed")
+
+    def test_drift_reruns_with_two_ticks_and_flags_the_outlier(self):
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 470000, ticks=2)
+        proc, args, alerts, rows, log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertEqual(len(args), 2)
+        # first run: Sonnet's turn, expectation through the dollar invariant from the
+        # median of the Sonnet and Fable dollar values (about $1.03 per 1%)
+        prices = {k: v for k, v in json.loads((ROOT / "data" / "prices.json").read_text()).items() if not k.startswith("_")}
+        expect = round(expectation([SONNET_0939, FABLE], "claude-sonnet-5", prices))
+        self.assertIn(f"--model claude-sonnet-5 --expect-tokens-per-pct {expect}", args[0])
+        self.assertGreater(expect, 467779)
+        self.assertLess(expect, 579819)
+        # rerun: same model, 2 ticks, the smaller of the median and the drifted reading
+        self.assertIn("--model claude-sonnet-5 --expect-tokens-per-pct 467779 --ticks 2", args[1])
+        self.assertIn("drift check: drift claude-sonnet-5 579819 against median 467779 (+24%)", proc.stdout)
+        self.assertIn("decision: outlier claude-sonnet-5", proc.stdout)
+        self.assertEqual([r.get("outlier", False) for r in rows], [False, False, True, False])
+        self.assertIn("Outlier on claude-sonnet-5", alerts)
+        self.assertNotIn("Change confirmed", alerts)
+        self.assertEqual(log[0].split(": ")[-1], "outlier")
+        self.assertRegex(log[1], r"^Probe rerun .* claude-sonnet-5$")
+        self.assertRegex(log[2], r"^Probe .* claude-sonnet-5$")
+        self.assertEqual(log[3], "seed")
+
+    def test_drift_confirmed_by_the_rerun_is_a_change_and_flags_nothing(self):
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 590000, ticks=2)
+        proc, args, alerts, rows, log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertEqual(len(args), 2)
+        self.assertIn("decision: change claude-sonnet-5", proc.stdout)
+        self.assertFalse(any(r.get("outlier") for r in rows))
+        self.assertIn("Change confirmed on claude-sonnet-5", alerts)
+        self.assertIn("increased +25%", alerts)
+        self.assertEqual(len(log), 3)  # seed, row, rerun: no third commit without a flag
+
+    def test_inconclusive_pair_alerts_and_flags_nothing(self):
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 800000, ticks=2)
+        proc, _args, alerts, rows, _log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertIn("decision: inconclusive", proc.stdout)
+        self.assertFalse(any(r.get("outlier") for r in rows))
+        self.assertIn("Drift on claude-sonnet-5 inconclusive", alerts)
+
+    def test_failed_rerun_keeps_the_drifted_row_unflagged_and_exits_with_its_code(self):
+        proc, args, alerts, rows, log = self._run([SONNET_0939, FABLE], [SONNET_1433, None], fake_rcs=[0, 4])
+        self.assertEqual(proc.returncode, 4, proc.stderr + proc.stdout)
+        self.assertEqual(len(args), 2)
+        self.assertEqual(len(rows), 3)
+        self.assertFalse(any(r.get("outlier") for r in rows))
+        self.assertIn("Probe aborted on claude-sonnet-5", alerts)
+        self.assertIn("Drift on claude-sonnet-5 unconfirmed: rerun exited 4", alerts)
+        self.assertEqual(len(log), 2)  # seed and the first row
+
+    def test_first_run_failure_alerts_writes_nothing_and_bubbles_the_code(self):
+        proc, args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[3])
+        self.assertEqual(proc.returncode, 3, proc.stderr + proc.stdout)
+        self.assertEqual(len(args), 1)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("Probe skipped: no idle account for claude-opus-5", alerts)
+        self.assertEqual(log, ["seed"])
+
+    def test_no_usable_history_means_no_flags_and_no_probe(self):
+        proc, args, alerts, _rows, _log = self._run([])
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(args, [])
+        self.assertIn("no usable prose row", proc.stderr)
+        self.assertEqual(alerts, "")
 
 
 if __name__ == "__main__":
