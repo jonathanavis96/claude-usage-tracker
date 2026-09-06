@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from tracker.detect import detect_changes, latest_change
 
 
@@ -60,6 +60,32 @@ class DetectTests(unittest.TestCase):
         ordered = readings([100, 100, 100, 100, 140])
         shuffled = [ordered[4], ordered[0], ordered[2], ordered[1], ordered[3]]
         self.assertEqual(detect_changes(shuffled), detect_changes(ordered))
+
+    def test_max20_weekly_windows_real_history_has_no_event(self):
+        # The 9.5-11 windows/week plateau (weeks ending on or before 2026-08-14)
+        # is Max 5x, frozen history from before Jonathan's plan change -- it is
+        # never run through detection at all (tracker/publish.py splits weekly
+        # windows by plan and only detects on the live max20 series). The real
+        # max20 series is just the two post-change weeks, 6.58 and 6.35: too
+        # short (detect_changes needs MIN_HISTORY=3 prior readings) to produce
+        # any event, so the 2026-08-18 plan change itself is correctly never
+        # reported as a weekly-limit change.
+        values = [6.58, 6.35]
+        d0 = date(2026, 8, 28)
+        r = [(datetime(d0.year, d0.month, d0.day) + timedelta(days=i * 7), v) for i, v in enumerate(values)]
+        self.assertEqual(detect_changes(r), [])
+
+    def test_max20_weekly_windows_synthetic_drop_fires_an_event(self):
+        # Same real max20 start, extended with two more weeks and a genuine
+        # later cut to 4.0 windows/week -- once there is enough max20 history,
+        # a real step still fires.
+        values = [6.58, 6.35, 6.5, 4.0]
+        d0 = date(2026, 8, 28)
+        r = [(datetime(d0.year, d0.month, d0.day) + timedelta(days=i * 7), v) for i, v in enumerate(values)]
+        ev = detect_changes(r)
+        self.assertEqual(len(ev), 1)
+        self.assertEqual(ev[0].direction, "decreased")
+        self.assertEqual(ev[0].date, date(2026, 9, 18))
 
     def test_latest_change_picks_newest(self):
         r = readings([100, 100, 100, 100, 200, 100, 100, 100, 100, 60])

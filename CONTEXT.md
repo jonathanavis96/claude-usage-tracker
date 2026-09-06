@@ -81,8 +81,10 @@ The mix of token classes in Jonathan's own real sessions, used to convert dollar
 _Avoid_: real-world mix, session profile
 
 **Weekly windows**:
-How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). The published `current` figure prefers the probe series once it has at least two complete weeks of its own history -- a probe row's five-hour meter read is a direct measurement with no passive-log pairing assumptions, so it wins as soon as there is enough of it -- and falls back to the passive series otherwise. Both series and the winning one's history are published under `weekly_windows` (`passive`, `probe`, and top-level `current`/`history` for the winner).
+How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). `weekly_windows` publishes both raw series (`passive`, `probe`) plus one `{current, history}` object per plan.
 _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
+
+_Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it); `max20` is the live plan -- probe weeks replace passive `max20` weeks from the first probe week on, and it is the only series change detection runs on. `pro` has no measurement of its own, so it publishes `max5`'s figures again (same 5x-ratio era) with `"assumed": true`; `max20` and `max5` carry `"assumed": false`.
 
 **Session**:
 One transcript file's worth of turns (a subagent's own transcript counts as its own session). `session_tokens[model]` is the median cumulative tokens of a real session on that model over the last 30 days; the page's "about N sessions per window" unit.
@@ -118,8 +120,12 @@ A drifted row whose rerun agreed with the earlier median. It stays in history bu
 _Avoid_: bad row, glitch
 
 **Change**:
-Two agreeing readings that both differ from the earlier median: the limit moved.
+Two agreeing readings that both differ from the earlier median: the limit moved. Published events and `last_change` carry a `scope`, `"window"` or `"weekly"`, naming which series the change was detected on.
 _Avoid_: shift, event
+
+**Weekly change**:
+A step of more than 15% in weekly windows between two consecutive readings of the live plan's series (`max20`), dated by the week ending. Detected the same way as a window `Change`, but on `weekly_windows`'s `max20.history` instead of the five-hour dollar series; `max5` is frozen and never runs detection, so the Max 5x -> Max 20x plan change itself is never reported as a weekly change. Published as an event with `"scope": "weekly"`.
+_Avoid_: plan change (that is Jonathan's own subscription move, not a measured step)
 
 **Alert**:
 One email to Jonathan, sent by the tracker through the site's send endpoint, for an outlier, a confirmed change or a refused weight.

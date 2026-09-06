@@ -5,7 +5,8 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
-from .detect import detect_changes, latest_change
+from .detect import detect_changes
+from .passive import PLAN_CHANGE
 from .rows import usable_rows
 from .weekly import probe_weekly_windows
 
@@ -130,7 +131,6 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # would have cost at API list prices, regardless of which model probed it.
     dollar_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100) for r in probe_rows]
     events = detect_changes(dollar_readings)
-    last = latest_change(events)
     regime_starts = sorted({e.date for e in events})
 
     def regime_index(d: date) -> int:
@@ -203,21 +203,41 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         raise ValueError(f"newest probe sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
     passive_weekly = passive.get("weekly_windows")
     weekly_windows = None
+    weekly_events: list = []
     if passive_weekly is not None:
-        # The probe series wins once it has enough of its own history to trust: at
-        # least two COMPLETE weeks (a week is complete once its week_ending date
-        # is in the past -- probe_weekly_windows already restricts `current` to
-        # such weeks, but a single complete week alone still produces a `current`
-        # there, so the count is re-checked here rather than trusting `current`
-        # being non-None).
-        complete_probe_weeks = [h for h in probe_weekly["history"] if date.fromisoformat(h["week_ending"]) < now.date()]
-        use_probe = len(complete_probe_weeks) >= 2
+        # The count of five-hour windows a week's cap holds is per plan, not one
+        # continuous series: Jonathan moved Max 5x -> Max 20x on PLAN_CHANGE, so
+        # the passive history is split at that date rather than treated as one
+        # series that happens to contain a plan-change artifact. The week whose
+        # (week_ending-7, week_ending] span straddles PLAN_CHANGE is dropped from
+        # both plans -- it mixes days from each plan and belongs to neither.
+        # max5 is frozen (Jonathan is not going back to it); only max20, the live
+        # plan, gets a probe series and change detection. Probe weeks (the Dave
+        # account, which probes on max20) replace passive max20 weeks from the
+        # first probe week on, same concatenation rule as before.
+        passive_history = passive_weekly.get("history", [])
+        probe_history = probe_weekly["history"]
+        max5_history = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max5"]
+        passive_max20 = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max20"]
+        if probe_history:
+            first_probe_week = min(h["week_ending"] for h in probe_history)
+            max20_history = [h for h in passive_max20 if h["week_ending"] < first_probe_week] + probe_history
+        else:
+            max20_history = list(passive_max20)
+        weekly_readings = [(datetime.fromisoformat(h["week_ending"]), h["windows"]) for h in max20_history]
+        weekly_events = detect_changes(weekly_readings)
+        max5_current = _weekly_current(max5_history, now)
         weekly_windows = {
-            "current": probe_weekly["current"] if use_probe else passive_weekly.get("current"),
-            "history": probe_weekly["history"] if use_probe else passive_weekly.get("history", []),
+            "max20": {"current": _weekly_current(max20_history, now), "history": max20_history, "assumed": False},
+            "max5": {"current": max5_current, "history": max5_history, "assumed": False},
+            # Pro has no measurement of its own yet: publish max5's frozen figures
+            # as a stand-in (same 5x-ratio era) flagged "assumed" so the page can
+            # show Pro numbers while labelling them unmeasured.
+            "pro": {"current": max5_current, "history": max5_history, "assumed": True},
             "passive": passive_weekly,
             "probe": probe_weekly,
         }
+    last_change = _latest_change_with_scope(events, weekly_events)
     out = {
         "generated_at": now.isoformat(),
         "last_sample_at": last_sample,
@@ -229,8 +249,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "effort": effort,
         "api_price_per_mtok": prices,
         "history": history,
-        "last_change": None if last is None else {"date": last.date.isoformat(), "direction": last.direction, "percent": last.percent, "model": last.model},
-        "events": _build_events(events),
+        "last_change": last_change,
+        "events": _build_events(events, weekly_events),
         "session_tokens": passive.get("session_tokens", {}),
     }
     if weekly_windows is not None:
@@ -238,12 +258,48 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     return out
 
 
-def _build_events(events: list) -> list[dict]:
-    return [
-        {"date": e.date.isoformat(), "kind": "change",
+def _plan_for_week(week_ending: str) -> str | None:
+    """Which plan a passive weekly-window bucket belongs to, or None if it straddles PLAN_CHANGE.
+
+    A week's bucket spans (week_ending - 7 days, week_ending]. It is max5 only if
+    it ends on or before PLAN_CHANGE, max20 only if it starts on or after
+    PLAN_CHANGE; a week whose span contains PLAN_CHANGE mixes days from both
+    plans and is dropped from both.
+    """
+    we = date.fromisoformat(week_ending)
+    start = we - timedelta(days=7)
+    if we <= PLAN_CHANGE:
+        return "max5"
+    if start >= PLAN_CHANGE:
+        return "max20"
+    return None
+
+
+def _weekly_current(history: list[dict], now: datetime) -> float | None:
+    complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]
+    return round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
+
+
+def _latest_change_with_scope(window_events: list, weekly_events: list) -> dict | None:
+    """The most recent change across both event series, tagged with which one it came from."""
+    candidates = [(e, "window") for e in window_events] + [(e, "weekly") for e in weekly_events]
+    if not candidates:
+        return None
+    e, scope = max(candidates, key=lambda c: c[0].date)
+    return {"date": e.date.isoformat(), "direction": e.direction, "percent": e.percent, "model": e.model, "scope": scope}
+
+
+def _build_events(window_events: list, weekly_events: list) -> list[dict]:
+    events = [
+        {"date": e.date.isoformat(), "kind": "change", "scope": "window",
          "label": f"Window changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
-        for e in events
+        for e in window_events
+    ] + [
+        {"date": e.date.isoformat(), "kind": "change", "scope": "weekly",
+         "label": f"Weekly limit changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
+        for e in weekly_events
     ]
+    return sorted(events, key=lambda ev: ev["date"])
 
 
 def write_json(path: Path, obj: dict) -> None:
