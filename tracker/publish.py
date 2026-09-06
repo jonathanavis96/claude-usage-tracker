@@ -21,10 +21,13 @@ def load_probes(path: Path) -> list[dict]:
     return rows
 
 
+def tokens_usd(tokens: dict, price: dict) -> float:
+    """API-list value of a token bundle. `price` is USD per million tokens, per class."""
+    return sum(tokens[cls] * price[cls] / 1e6 for cls in ("input", "output", "cache_read", "cache_write"))
+
+
 def usd_per_pct(row: dict, price: dict) -> float:
-    tokens = row["tokens"]
-    total_usd = sum(tokens[cls] * price[cls] / 1e6 for cls in ("input", "output", "cache_read", "cache_write"))
-    return total_usd / (row["tick_to"] - row["tick_from"])
+    return tokens_usd(row["tokens"], price) / (row["tick_to"] - row["tick_from"])
 
 
 def blended_price_per_token(split: dict, price: dict) -> float:
