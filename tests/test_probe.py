@@ -44,11 +44,30 @@ class TickTests(unittest.TestCase):
     def test_two_ticks_give_tokens_per_pct(self):
         # readings after each prompt: 10,10,11(tick1),11,11,11,12(tick2)
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0)
+        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
+                           ticks=1)
         self.assertEqual(r.prompts, 7)
         self.assertEqual((r.tick_from, r.tick_to), (11, 12))
         self.assertEqual(r.tokens_per_pct, 80_000)  # 4 prompts between ticks
         self.assertEqual(r.tokens["cache_read"], 4 * 19_500)
+
+    def test_three_tick_span_sums_and_divides_by_ticks(self):
+        # tick1 at 11, then three separate 1% jumps (12, 13, 14): span = 3.
+        read = util_seq([10, 11, 12, 13, 14])
+        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
+                           ticks=3)
+        self.assertEqual(r.prompts, 4)
+        self.assertEqual((r.tick_from, r.tick_to), (11, 14))
+        self.assertEqual(r.tokens_per_pct, 20_000)
+        self.assertEqual(r.tokens["cache_read"], 3 * 19_500)
+
+    def test_readings_recorded_once_per_prompt(self):
+        read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
+        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
+                           ticks=1)
+        self.assertEqual(len(r.readings), r.prompts)
+        self.assertEqual(r.readings[0]["tokens"], {"input": 100, "output": 400, "cache_read": 19_500, "cache_write": 0})
+        self.assertEqual(r.readings[-1]["five_hour"], 12)
 
     def test_reset_mid_probe_aborts(self):
         vals = [90, 90, 91, 91, 2]
@@ -94,7 +113,8 @@ class IdleTests(unittest.TestCase):
 class AppendTests(unittest.TestCase):
     def test_append_writes_jsonl(self):
         read = util_seq([10, 11, 11, 12])
-        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0)
+        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None, now=lambda: T0,
+                           ticks=1)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d, "probes.jsonl")
             append_result(p, r, account="dave")
@@ -132,12 +152,12 @@ class EarlyTickTests(unittest.TestCase):
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
         with self.assertRaises(ProbeAbort) as e:
             run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
-                           now=lambda: T0, usd_per_token=self.PRICE)
+                           now=lambda: T0, usd_per_token=self.PRICE, ticks=1)
         self.assertIn("too early", str(e.exception))
 
     def test_tick_we_paid_for_is_accepted_and_records_seven_day(self):
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(tokens=1_000_000),
-                           sleep=lambda s: None, now=lambda: T0, usd_per_token=self.PRICE)
+                           sleep=lambda s: None, now=lambda: T0, usd_per_token=self.PRICE, ticks=1)
         self.assertEqual((r.tick_from, r.tick_to), (11, 12))
         self.assertEqual((r.seven_day_before, r.seven_day_after), (30.0, 30.0))

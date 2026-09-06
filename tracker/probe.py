@@ -1,8 +1,17 @@
-"""Tick probe: loop a fixed small prompt until 5-hour utilization ticks twice."""
+"""Tick probe: loop a fixed small prompt until the 5-hour utilization meter has advanced
+several percent past the first observed tick, and report tokens spent over that span.
+
+A single tick-to-tick span is noisy: the meter reports ticks with a variable lag of
+several prompts, so two probes with identical per-prompt cost can see very different
+prompt counts (and therefore very different tokens-per-1%) between one tick and the next.
+Summing spend over several ticks and dividing by the total percent advanced averages that
+lag out.
+"""
 from __future__ import annotations
 import json
 import random
-from dataclasses import dataclass, asdict
+import sys
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -49,6 +58,7 @@ class ProbeResult:
     elapsed_s: float
     seven_day_before: float | None = None
     seven_day_after: float | None = None
+    readings: list = field(default_factory=list)
 
 
 def _same_window(a: Utilization, b: Utilization) -> bool:
@@ -59,14 +69,19 @@ def _same_window(a: Utilization, b: Utilization) -> bool:
 
 def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Utilization],
                    run: Callable[[int], RunUsage], sleep: Callable[[float], None],
-                   now: Callable[[], datetime], max_prompts: int = 40, settle_s: float = 60,
-                   deadline: datetime | None = None, usd_per_token: dict | None = None) -> ProbeResult:
-    """Loop prompts until the 5-hour meter ticks twice.
+                   now: Callable[[], datetime], max_prompts: int = 80, settle_s: float = 60,
+                   deadline: datetime | None = None, usd_per_token: dict | None = None,
+                   ticks: int = 5) -> ProbeResult:
+    """Loop prompts until the 5-hour meter has advanced `ticks` percent past the first
+    observed tick, and report tokens spent over that whole span.
 
-    `deadline` is the one wall-clock budget for the whole run: every sleep is charged
-    against it and the probe aborts once it passes. `usd_per_token` is the model's entry
-    from data/prices.json (USD per million tokens); when given, a second tick our own
-    prompts cannot pay for is rejected rather than published as a rate.
+    A single tick-to-tick span sees a variable lag of several prompts, so it is too noisy
+    to publish alone; summing spend across `ticks` ticks and dividing by the total percent
+    advanced averages that lag out. `deadline` is the one wall-clock budget for the whole
+    run: every sleep is charged against it and the probe aborts once it passes.
+    `usd_per_token` is the model's entry from data/prices.json (USD per million tokens);
+    when given, a span our own prompts cannot pay for is rejected rather than published
+    as a rate.
     """
     from .publish import tokens_usd
     start = now()
@@ -74,7 +89,9 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     last = before
     prompts = 0
     tick1: int | None = None
+    advanced = 0
     spent = {c: 0 for c in CLASSES}
+    readings = []
     while prompts < max_prompts:
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
@@ -87,6 +104,11 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         cur = read()
+        readings.append({"prompt": prompts, "five_hour": cur.five_hour,
+                          "tokens": {c: getattr(u, c) for c in CLASSES}})
+        print(f"prompt {prompts}: five_hour={cur.five_hour} resets_at={cur.five_hour_resets_at} "
+              f"spent=input={u.input} output={u.output} cache_read={u.cache_read} cache_write={u.cache_write}",
+              file=sys.stderr)
         if not _same_window(last, cur):
             raise ProbeAbort("window reset during probe")
         jump = (cur.five_hour or 0) - (last.five_hour or 0)
@@ -96,12 +118,14 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
             if tick1 is None:
                 tick1 = int(cur.five_hour)
             else:
-                if usd_per_token is not None and tokens_usd(spent, usd_per_token) < MIN_TICK_USD * jump:
-                    raise ProbeAbort("tick too early")
-                elapsed = (now() - start).total_seconds()
-                total = sum(spent.values())
-                return ProbeResult(start, model, effort, total / jump, spent, prompts, tick1, int(cur.five_hour),
-                                   elapsed, before.seven_day, cur.seven_day)
+                advanced += jump
+                if advanced >= ticks:
+                    if usd_per_token is not None and tokens_usd(spent, usd_per_token) < MIN_TICK_USD * advanced:
+                        raise ProbeAbort("tick too early")
+                    elapsed = (now() - start).total_seconds()
+                    total = sum(spent.values())
+                    return ProbeResult(start, model, effort, total / advanced, spent, prompts, tick1,
+                                       int(cur.five_hour), elapsed, before.seven_day, cur.seven_day, readings)
         last = cur
     raise ProbeAbort(f"no second tick after {prompts} prompts")
 
@@ -156,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="name=config_dir, in priority order; default dave and jono from $HOME")
     ap.add_argument("--max-wait", type=int, default=4 * 3600)
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
+    ap.add_argument("--ticks", type=int, default=5, help="percent to advance past the first tick before reporting")
     a = ap.parse_args(argv)
     home = Path.home()
     accounts = [tuple(x.split("=", 1)) for x in a.account] or [("dave", home / ".claude-dave"), ("jono", home / ".claude-javiswork")]
@@ -196,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         salt = clock().isoformat()
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
                            lambda i: run_prompt(probe_prompt(salt, i), a.model, a.effort, cfg),
-                           time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token)
+                           time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks)
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
         return 4
