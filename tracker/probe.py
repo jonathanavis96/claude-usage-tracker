@@ -24,21 +24,45 @@ CLASSES = ("input", "output", "cache_read", "cache_write")
 # our own prompts cannot pay for came from someone else's traffic on the same account.
 MIN_TICK_USD = 0.40
 
-PROBE_PAYLOAD_WORDS = 9000  # about 42k tokens: roughly 0.15% of a Max 20x window on Sonnet 5
-_WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima "
-          "mike november oscar papa quebec romeo sierra tango").split()
-PROBE_PROMPT = "Below is a list of tokens. Reply with only the word DONE.\n\n"
+PROBE_PAYLOAD_WORDS = 12000  # prose measures ~3.47 tokens/word: ~42k tokens, matching the old payload's size
+_SUBJECTS = ("the harbour master", "the shift supervisor", "the finance clerk", "the site foreman",
+             "the duty officer", "the regional auditor", "the warehouse manager", "the compliance lead")
+_VERBS = ("postponed", "reviewed", "confirmed", "escalated", "archived", "reissued", "verified", "logged")
+_OBJECTS = ("the tide tables", "the expense report", "the delivery schedule", "the safety checklist",
+            "the vendor invoice", "the shift roster", "the incident log", "the maintenance order")
+_TAILS = ("before the holiday", "after the audit", "ahead of schedule", "during the handover",
+          "prior to closing", "following the inspection", "without further delay", "pending final review")
+PROBE_PROMPT = "Below is a long log of routine office notes. Reply with only the word DONE.\n\n"
 
 
 def probe_prompt(salt: str, index: int, words: int = PROBE_PAYLOAD_WORDS) -> str:
-    """A fixed-size prompt that is unique per (salt, index).
+    """A fixed-size prose prompt that is unique per (salt, index).
 
-    An identical prompt re-sent within the cache TTL is served as a cache read, which the
-    usage meter weighs far lighter than the cache write of the first send; uniqueness keeps
-    every prompt the same class and the same cost. The size is deterministic.
+    Fable 5.1 reroutes a non-language payload (a list of tokens) to Opus 5 to serve it; the
+    CLI's own JSON reports the substitute model in modelUsage, and cli_run refuses the run
+    once it sees a model other than the one asked for. A payload of ordinary English
+    sentences is served by Fable as asked, so the probe payload must read as prose, not as
+    a token list.
+
+    Sentences are assembled from four short phrase lists (subject, verb, object, tail) plus
+    a random 4-digit reference number, one sentence per line, generated until the word count
+    reaches `words`. An identical prompt re-sent within the cache TTL is served as a cache
+    read, which the usage meter weighs far lighter than the cache write of the first send;
+    uniqueness by (salt, index) keeps every prompt the same class and the same cost.
     """
     rng = random.Random(f"{salt}:{index}")
-    return PROBE_PROMPT + " ".join(f"{rng.choice(_WORDS)}{rng.randint(0, 999)}" for _ in range(words))
+    lines = []
+    total = 0
+    while total < words:
+        subject = rng.choice(_SUBJECTS).capitalize()
+        verb = rng.choice(_VERBS)
+        obj = rng.choice(_OBJECTS)
+        tail = rng.choice(_TAILS)
+        ref = rng.randint(1000, 9999)
+        line = f"{subject} {verb} {obj} {tail} (ref {ref})."
+        lines.append(line)
+        total += len(line.split())
+    return PROBE_PROMPT + "\n".join(lines)
 
 
 class ProbeAbort(Exception):
