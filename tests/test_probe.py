@@ -103,3 +103,41 @@ class AppendTests(unittest.TestCase):
         self.assertEqual(row["model"], "claude-sonnet-5")
         self.assertEqual(row["tokens_per_pct"], 40_000)
         self.assertEqual(row["ts"], "2026-09-06T08:00:00+00:00")
+
+
+class DeadlineTests(unittest.TestCase):
+    def test_probe_aborts_once_the_deadline_passes(self):
+        from datetime import timedelta
+        clock = [T0]
+        def now():
+            clock[0] += timedelta(minutes=30)
+            return clock[0]
+        with self.assertRaises(ProbeAbort) as e:
+            run_tick_probe("claude-sonnet-5", "low", "p", util_seq([10] * 20), runner(),
+                           sleep=lambda s: None, now=now, deadline=T0 + timedelta(hours=1))
+        self.assertIn("deadline", str(e.exception))
+
+    def test_choose_account_returns_none_past_the_deadline(self):
+        from datetime import timedelta
+        acc = choose_account([("dave", Path("/d"))], lambda n: util_seq([1, 1]), lambda s: None,
+                             max_wait_s=3600, retry_s=900, now=lambda: T0 + timedelta(hours=2),
+                             deadline=T0 + timedelta(hours=1))
+        self.assertIsNone(acc)
+
+
+class EarlyTickTests(unittest.TestCase):
+    PRICE = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
+
+    def test_tick_our_prompts_cannot_pay_for_aborts(self):
+        read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
+        with self.assertRaises(ProbeAbort) as e:
+            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
+                           now=lambda: T0, usd_per_token=self.PRICE)
+        self.assertIn("too early", str(e.exception))
+
+    def test_tick_we_paid_for_is_accepted_and_records_seven_day(self):
+        read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
+        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(tokens=1_000_000),
+                           sleep=lambda s: None, now=lambda: T0, usd_per_token=self.PRICE)
+        self.assertEqual((r.tick_from, r.tick_to), (11, 12))
+        self.assertEqual((r.seven_day_before, r.seven_day_after), (30.0, 30.0))
