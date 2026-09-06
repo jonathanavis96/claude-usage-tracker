@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     import sys
     import time
     from datetime import timedelta, timezone
-    from .usage_api import read_usage
+    from .usage_api import _default_fetch, read_usage
     from .cli_run import run_prompt
     ap = argparse.ArgumentParser(description="Run one tick probe and append to probes.jsonl")
     ap.add_argument("--model", required=True)
@@ -162,9 +162,6 @@ def main(argv: list[str] | None = None) -> int:
     accounts = [(n, Path(p)) for n, p in accounts]
     account_cfgs = dict(accounts)
 
-    def read_for(name):
-        return lambda: read_usage(account_cfgs[name])
-
     def clock():
         return datetime.now(timezone.utc)
 
@@ -176,6 +173,19 @@ def main(argv: list[str] | None = None) -> int:
     # One wall-clock budget for the whole run: waiting for an idle account and the probe
     # itself share it, so a slow start cannot push the probe into the next cron slot.
     deadline = clock() + timedelta(seconds=a.max_wait)
+
+    def deadline_sleep(seconds: float) -> None:
+        # Charged against the same budget: a 429 backoff must not outlive the run.
+        remaining = (deadline - clock()).total_seconds()
+        if remaining <= 0:
+            raise ProbeAbort("deadline")
+        time.sleep(min(seconds, remaining))
+
+    def fetch(url, headers):
+        return _default_fetch(url, headers, sleep=deadline_sleep)
+
+    def read_for(name):
+        return lambda: read_usage(account_cfgs[name], fetch=fetch)
     picked = choose_account(accounts, read_for, time.sleep, max_wait_s=a.max_wait,
                             now=clock, deadline=deadline)
     if picked is None:
@@ -184,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     name, cfg = picked
     try:
         salt = clock().isoformat()
-        r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg),
+        r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
                            lambda i: run_prompt(probe_prompt(salt, i), a.model, a.effort, cfg),
                            time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token)
     except ProbeAbort as e:
