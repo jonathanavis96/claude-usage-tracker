@@ -2,7 +2,7 @@
 from __future__ import annotations
 import bisect
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from statistics import median
 from .samples import Sample
 from .usage_api import same_reset
@@ -73,7 +73,8 @@ def build_intervals(samples: list[Sample], turns: list[Turn]) -> list[Interval]:
 def daily_rates(intervals: list[Interval]) -> dict[date, DailyRate]:
     by_day: dict[date, list[Interval]] = {}
     for iv in intervals:
-        by_day.setdefault(iv.end.date(), []).append(iv)
+        # UTC day boundaries, so passive and probe segments of the series line up.
+        by_day.setdefault(iv.end.astimezone(timezone.utc).date(), []).append(iv)
     if not by_day:
         return {}
     out: dict[date, DailyRate] = {}

@@ -33,8 +33,11 @@ def parse_result(stdout: str, model_hint: str) -> RunUsage:
         raise RuntimeError(f"claude -p returned an error result: {d.get('result') or d.get('subtype')}")
     mu = d.get("modelUsage") or {}
     if mu:
-        # Prefer the entry for the model we asked for; a haiku sidecar can appear first.
-        model = next((k for k in mu if k == model_hint or k.startswith(model_hint)), next(iter(mu)))
+        # Take the entry for the model we asked for; a haiku sidecar can appear first.
+        # Falling back to another model would silently measure the wrong one.
+        model = next((k for k in mu if k == model_hint or k.startswith(model_hint)), None)
+        if model is None:
+            raise RuntimeError(f"no usage for {model_hint}: {list(mu)}")
         m = mu[model]
         return RunUsage(model, int(m.get("inputTokens") or 0), int(m.get("outputTokens") or 0),
                         int(m.get("cacheReadInputTokens") or 0), int(m.get("cacheCreationInputTokens") or 0),
