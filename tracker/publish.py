@@ -27,7 +27,16 @@ def tokens_usd(tokens: dict, price: dict) -> float:
 
 
 def usd_per_pct(row: dict, price: dict) -> float:
-    return tokens_usd(row["tokens"], price) / (row["tick_to"] - row["tick_from"])
+    """Meter-dollar value of a token bundle for one pct of a window.
+
+    Meter dollars = list dollars x meter_weight: the 5-hour meter does not
+    charge every model at its list-price ratio (see docs/spike-2026-09.md,
+    2026-09-06 ruling), so a probe on any model must be scaled by that
+    model's own weight before it can serve as a model-agnostic invariant.
+    A missing meter_weight defaults to 1.0 (Sonnet 5's own weight).
+    """
+    weight = price.get("meter_weight", 1.0)
+    return tokens_usd(row["tokens"], price) * weight / (row["tick_to"] - row["tick_from"])
 
 
 def blended_price_per_token(split: dict, price: dict) -> float:
@@ -43,13 +52,18 @@ def _row_split(row: dict) -> dict:
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime) -> dict:
     """Derive every model's rate from one probed model's dollar value.
 
-    Only one model is probed (see bin/probe.sh, weekly cadence). Its API-list
-    dollar value per window is the invariant: every other model's
-    tokens_per_window is that same dollar amount divided by the model's own
-    blended price per token (blended_price_per_token returns USD per token,
-    not per million, so no further scaling is needed). A model's `rates`
-    entry is "probe" sourced only when it is the model the latest row
-    actually probed; every other model in prices.json is "derived".
+    Only one model is probed (see bin/probe.sh, weekly cadence). Its
+    meter-dollar value per window (list-dollar value x that model's own
+    meter_weight, see usd_per_pct) is the invariant: every other model's
+    tokens_per_window is that same meter-dollar amount divided by the
+    model's own blended price per token times its own meter_weight
+    (blended_price_per_token returns USD per token, not per million, so no
+    further scaling is needed there). meter_weight corrects for the 5-hour
+    meter charging models at a different rate than their list price implies
+    (see docs/spike-2026-09.md, 2026-09-06 ruling); a model missing the key
+    defaults to 1.0. A model's `rates` entry is "probe" sourced only when it
+    is the model the latest row actually probed; every other model in
+    prices.json is "derived".
     """
     passive_split = passive.get("split", {})
     if not probe_rows:
@@ -82,7 +96,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     rates, history = {}, {}
     for model, price in prices.items():
         blended = blended_price_per_token(passive_split, price)
-        rates[model] = {"tokens_per_window": round(api_value_per_window / blended),
+        weight = price.get("meter_weight", 1.0)
+        rates[model] = {"tokens_per_window": round(api_value_per_window / (blended * weight)),
                         "source": "probe" if model == latest_row["model"] else "derived",
                         "probe_effort": latest_row["effort"],
                         "split": passive_split,
@@ -95,7 +110,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         for d in sorted(by_day_value):
             if d >= cutoff:
                 day_value = median(by_day_value[d])
-                hist.append({"date": d.isoformat(), "tokens_per_window": round(day_value / blended),
+                hist.append({"date": d.isoformat(), "tokens_per_window": round(day_value / (blended * weight)),
                             "source": "probe" if model in by_day_models[d] else "derived", "interpolated": False})
         history[model] = hist
     last_sample = max((r["ts"] for r in probe_rows), default=None)
