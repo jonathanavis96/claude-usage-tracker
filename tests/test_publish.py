@@ -145,6 +145,27 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(j["last_change"]["model"], "all")
         self.assertIn(j["last_change"]["percent"], range(20, 40))
 
+    def test_events_includes_the_plan_change_dated_from_passive_py(self):
+        from tracker.passive import PLAN_CHANGE
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        plan_events = [e for e in j["events"] if e["kind"] == "plan"]
+        self.assertEqual(len(plan_events), 1)
+        self.assertEqual(plan_events[0]["date"], PLAN_CHANGE.isoformat())
+        self.assertEqual(plan_events[0]["label"], "Plan changed to Max 20x")
+
+    def test_events_includes_every_detected_change(self):
+        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)]
+                + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)])
+        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        change_events = [e for e in j["events"] if e["kind"] == "change"]
+        self.assertTrue(change_events)
+        self.assertEqual(change_events[-1]["date"], j["last_change"]["date"])
+        self.assertEqual(change_events[-1]["label"],
+                          f"Window changed -{j['last_change']['percent']}%")
+
 
 class FailurePathTests(unittest.TestCase):
     def test_corrupt_input_exits_nonzero_and_keeps_previous_output(self):
