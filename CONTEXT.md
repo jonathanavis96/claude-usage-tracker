@@ -110,6 +110,10 @@ _Avoid_: bad row, glitch
 Two agreeing readings that both differ from the earlier median: the limit moved.
 _Avoid_: shift, event
 
+**Alert**:
+One email to Jonathan, sent by the tracker through the site's send endpoint, for an outlier, a confirmed change or a refused weight.
+_Avoid_: notification, ping, warning email
+
 **Probe account**:
 A subscription account used only for probing. Dave is primary; Jono Work is the fallback.
 _Avoid_: test account, alt
