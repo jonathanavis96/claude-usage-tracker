@@ -161,9 +161,16 @@ Written to `website/public/data/claude-usage.json` in alldonesites. Shape:
   "session_tokens": { "claude-sonnet-5": 627295, "claude-opus-5": 1595528, "claude-fable-5-1": 11239886 },
   "api_price_per_mtok": { "sonnet-5": { "input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75 }, "...": {} },
   "history": [ { "date": "2026-07-08", "tokens_per_window": 45100000, "interpolated": false }, "..." ],
-  "last_change": { "date": "2026-09-02", "direction": "decreased", "percent": 14 }
+  "last_change": { "date": "2026-09-02", "direction": "decreased", "percent": 14, "model": "all", "scope": "window" }
 }
 ```
+
+`last_change` and each entry in `events` carry `scope`: `"window"` (detected on
+the five-hour dollar series) or `"weekly"` (detected on `weekly_windows`'s
+`max20.history`, the only weekly series change detection runs on). `last_change`
+is whichever of the two detected series produced the most recent event; older
+JSON without a probe/passive weekly series simply never has a `"weekly"`
+scoped event, so `scope` is always `"window"` there.
 
 `history` holds the last 90 days per model: probe-derived from the day probes
 began, passive-join-derived before that and marked `"source": "passive"`,
@@ -180,11 +187,16 @@ copied into the JSON so the page has one fetch.
   - tokens per window = rate[model] × plan_ratio[plan]
   - split figures = tokens per window × split fractions
   - tasks per window = tokens per window ÷ (session_tokens[model] × effort[model][effort] ÷ effort[model]["medium"])
-  - tasks per week = tasks per window × weekly_windows.current (measured full
-    five-hour windows the seven-day limit holds, from the passive meter log
-    -- not the calendar count of 28; JSON top-level key `weekly_windows`:
-    `{"current": 6.46, "history": [{"week_ending": "2026-09-04", "windows":
-    6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0}, ...]}`)
+  - tasks per week = tasks per window × weekly_windows[plan].current (measured
+    full five-hour windows the seven-day limit holds, from the passive meter
+    log -- not the calendar count of 28; JSON top-level key `weekly_windows`
+    is per plan: `{"max20": {"current": 6.46, "history": [{"week_ending":
+    "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct":
+    51.0}, ...], "assumed": false}, "max5": {"...": "...", "assumed": false},
+    "pro": {"...": "...", "assumed": true}, "passive": {...}, "probe": {...}}`.
+    `max5` is frozen passive-era history from before Jonathan's Max 5x -> Max
+    20x move; `pro` has no measurement of its own and republishes `max5`'s
+    figures flagged `"assumed": true`.)
   - API value = Σ split tokens × price per class
 - Three inline dropdown words: plan, model, effort. No slider.
 - Headline template: "Anthropic last {increased|decreased} Claude's limits by

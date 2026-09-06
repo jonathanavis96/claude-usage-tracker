@@ -129,6 +129,8 @@ if any(change.get(k) is None for k in required):
 payload = {k: change[k] for k in required}
 if change.get("model"):
     payload["model"] = change["model"]
+if change.get("scope"):
+    payload["scope"] = change["scope"]
 print(json.dumps(payload))
 PYEOF
 )"
