@@ -22,6 +22,20 @@ class UsdPerPctTests(unittest.TestCase):
         price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
         self.assertAlmostEqual(usd_per_pct(row, price), 1.02, delta=1e-9)
 
+    def test_usd_per_pct_applies_meter_weight(self):
+        row = {"tokens": {"input": 0, "output": 0, "cache_read": 100_000, "cache_write": 400_000},
+               "tick_from": 10, "tick_to": 11}
+        price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5, "meter_weight": 2.0}
+        # same list-dollar bundle as test_usd_per_pct_brief_example (1.02), but this
+        # model's meter weight doubles the meter-dollar reading.
+        self.assertAlmostEqual(usd_per_pct(row, price), 2.04, delta=1e-9)
+
+    def test_usd_per_pct_missing_meter_weight_defaults_to_one(self):
+        row = {"tokens": {"input": 0, "output": 0, "cache_read": 100_000, "cache_write": 400_000},
+               "tick_from": 10, "tick_to": 11}
+        price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
+        self.assertAlmostEqual(usd_per_pct(row, price), 1.02, delta=1e-9)
+
     def test_blended_price_per_token_brief_example(self):
         # blended_price_per_token returns USD per TOKEN (note the /1e6 in its
         # body converts from prices.json's USD-per-million-tokens), not per
@@ -98,6 +112,31 @@ class BuildTests(unittest.TestCase):
         row_split = {"input": 100 / 420000, "output": 400 / 420000, "cache_read": 419500 / 420000, "cache_write": 0.0}
         expected_opus_tpw = round(api_value / blended_price_per_token(row_split, PRICES["claude-opus-5"]))
         self.assertEqual(opus["tokens_per_window"], expected_opus_tpw)
+
+    def test_fable_and_sonnet_probe_rows_at_same_meter_value_yield_same_api_value_per_window(self):
+        prices = {**PRICES, "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25,
+                                                  "cache_write": 12.5, "meter_weight": 2.0}}
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        sonnet_rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        j_sonnet = build_public_json(sonnet_rows, PASSIVE, EFFORT, prices, now)
+        # tokens_per_pct chosen so tokens_usd(tokens, fable_price) * meter_weight(2.0)
+        # equals tokens_usd(sonnet 420000 tokens, sonnet_price) -- same meter dollars,
+        # different list dollars and a different model.
+        fable_rows = [probe(d, "claude-fable-5-1", 180800) for d in range(1, 6)]
+        j_fable = build_public_json(fable_rows, PASSIVE, EFFORT, prices, now)
+        self.assertAlmostEqual(j_sonnet["rates"]["claude-sonnet-5"]["api_value_per_window"],
+                                j_fable["rates"]["claude-fable-5-1"]["api_value_per_window"], delta=1e-6)
+
+    def test_fable_derived_tokens_are_half_what_they_would_be_at_weight_one(self):
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        fable_price = {"input": 10, "output": 50, "cache_read": 0.25, "cache_write": 12.5}
+        prices_weight_one = {**PRICES, "claude-fable-5-1": fable_price}
+        prices_weight_two = {**PRICES, "claude-fable-5-1": {**fable_price, "meter_weight": 2.0}}
+        j1 = build_public_json(rows, PASSIVE, EFFORT, prices_weight_one, now)
+        j2 = build_public_json(rows, PASSIVE, EFFORT, prices_weight_two, now)
+        self.assertAlmostEqual(j2["rates"]["claude-fable-5-1"]["tokens_per_window"],
+                                j1["rates"]["claude-fable-5-1"]["tokens_per_window"] / 2, delta=1)
 
     def test_change_event_surfaces(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)] + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)]
