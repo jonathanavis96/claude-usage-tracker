@@ -57,3 +57,81 @@ fi
     echo "warning: git push to site repo failed, commit made locally only" >&2
   fi
 )
+publish_rc=$?
+
+# Tell alldonesites.com to email its subscribers, but only about a change we have
+# not already announced. Everything below is advisory: a missing env file, no
+# network, or a non-2xx answer logs a warning and leaves publish_rc alone. The
+# publish is the job; the email is a courtesy on top of it.
+notify_change() {
+  local json="$SITE/website/public/data/claude-usage.json"
+  # The script cd'd to the repo root on entry and the push above ran in a
+  # subshell, so $PWD is still that root.
+  local state="$PWD/.notified-change"
+  local env_file="$HOME/.claude-usage-notify.env"
+
+  [ -f "$json" ] || { echo "notify: $json missing, skipping" >&2; return 0; }
+  if [ ! -r "$env_file" ]; then
+    echo "notify: $env_file missing or unreadable, skipping" >&2
+    return 0
+  fi
+
+  local secret
+  # Anchored so the explanatory comment in the file, which also names the
+  # variable, cannot be picked up as the value.
+  secret="$(sed -n 's/^NOTIFY_SEND_SECRET=//p' "$env_file" | head -1 | tr -d '\r\n')"
+  [ -n "$secret" ] || { echo "notify: no NOTIFY_SEND_SECRET in $env_file, skipping" >&2; return 0; }
+
+  # One python3 read: emit the POST body, or nothing at all when last_change is
+  # null or already announced.
+  local body
+  body="$(NOTIFIED="$(cat "$state" 2>/dev/null || true)" python3 - "$json" <<'PYEOF'
+import json, os, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        change = json.load(fh).get("last_change")
+except (OSError, ValueError) as exc:
+    print(f"notify: could not read {sys.argv[1]}: {exc}", file=sys.stderr)
+    raise SystemExit(0)
+if not isinstance(change, dict):
+    raise SystemExit(0)
+date = change.get("date")
+if not date or date == os.environ.get("NOTIFIED", "").strip():
+    raise SystemExit(0)
+required = ("date", "direction", "percent")
+if any(change.get(k) is None for k in required):
+    print("notify: last_change is missing date/direction/percent, skipping", file=sys.stderr)
+    raise SystemExit(0)
+payload = {k: change[k] for k in required}
+if change.get("model"):
+    payload["model"] = change["model"]
+print(json.dumps(payload))
+PYEOF
+)"
+  [ -n "$body" ] || return 0
+
+  local date
+  date="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["date"])')"
+
+  local status
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --retry 2 --retry-delay 5 \
+    -X POST "https://alldonesites.com/api/notify/send" \
+    -H "authorization: Bearer $secret" \
+    -H "content-type: application/json" \
+    --data-binary "$body" 2>&1)" || true
+
+  case "$status" in
+    2??)
+      # Recorded only on success, so a failed call simply retries tomorrow.
+      printf '%s\n' "$date" > "$state"
+      echo "notify: announced $date (HTTP $status)"
+      ;;
+    *)
+      echo "warning: notify POST for $date returned '$status', will retry tomorrow" >&2
+      ;;
+  esac
+}
+
+notify_change
+
+exit "$publish_rc"
