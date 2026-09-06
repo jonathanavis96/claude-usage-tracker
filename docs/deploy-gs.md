@@ -7,15 +7,12 @@ branch. masterrig runs only the passive join.
 ## Crontab on gs
 
 ```
-5 4 * * 1     /home/jonathan/claude-usage-tracker/bin/probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-probe.log 2>&1
+0 0,12 * * *  /home/jonathan/claude-usage-tracker/bin/probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-probe.log 2>&1
+0 6 * * 0     /home/jonathan/claude-usage-tracker/bin/output-probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-output-probe.log 2>&1
 30 5 * * *    /home/jonathan/claude-usage-tracker/bin/daily.sh >> /home/jonathan/.paperclip/ops/claude-usage-daily.log 2>&1
 ```
 
-To install with the cron switchover (not in the live crontab as of 2026-09-06):
-
-```
-0 6 * * 0     /home/jonathan/claude-usage-tracker/bin/output-probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-output-probe.log 2>&1
-```
+Installed on gs 2026-09-06 (cron switchover, map ticket #6); the old 03:30/15:30 Sonnet-only slot is retired.
 
 Times are UTC. `probe.sh` is one rotation slot: `tracker/rotate.py` picks
 the model (Sonnet 5, Opus 5, Fable 5.1 in turn, from the last prose row in
