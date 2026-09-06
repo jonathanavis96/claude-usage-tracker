@@ -10,6 +10,18 @@
 # A failed push is logged but does not change the exit code (cron mail should
 # reflect the probe's own success/failure, not a transient git hiccup) --
 # but the probe row is still lost if push fails, so the log line matters.
+#
+# tracker.probe also takes three optional flags, all off here until a live
+# comparison against the plain 5-tick run has been done (see tracker/probe.py):
+#   --skip N                  discard the first N ticks after alignment before
+#                             measuring (the first span looks like meter catch-up:
+#                             5 prompts vs a steady 9-10 on 2026-09-06 09:39)
+#   --burst K                 fire K prompts concurrently once per measured tick;
+#                             needs --expect-tokens-per-pct RATE (e.g. the last
+#                             published tokens per 1%) to size the burst so it
+#                             cannot overshoot, otherwise it is skipped
+#   --settle SECONDS          wait before each meter read (default 60)
+# A 2.5% run is: --skip 1 --ticks 1  (align, discard one span, measure one).
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.." || exit 1
