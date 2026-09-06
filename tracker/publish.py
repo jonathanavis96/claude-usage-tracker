@@ -102,6 +102,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     for the pre-first-probe fill. `interpolated` stays false everywhere --
     it is a step function, not an interpolation, and the page should never
     draw a dot on a held or derived day.
+
+    Every history day also carries `api_value_per_window`: the regime's
+    held dollar value itself, identical across models on any given day, so
+    the page can show dollars per window with the same step treatment as
+    tokens without re-deriving it from prices. `rates[model]` carries the
+    current regime's value under the same key.
     """
     passive_split = passive.get("split", {})
     if not probe_rows:
@@ -171,6 +177,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
             else:
                 source = "derived"
             hist.append({"date": d.isoformat(), "tokens_per_window": round(regime_value / (blended * weight)),
+                        "api_value_per_window": round(regime_value, 2),
                         "source": source, "interpolated": False})
             d += timedelta(days=1)
         history[model] = hist

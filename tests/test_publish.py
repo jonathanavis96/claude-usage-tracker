@@ -84,8 +84,29 @@ class BuildTests(unittest.TestCase):
         hist = j["history"]["claude-sonnet-5"]
         # days before the first probe are held flat at the first (only) regime's value --
         # no plan noise, no passive daily series, just the step function's opening level.
-        self.assertEqual(hist[0], {"date": "2026-08-01", "tokens_per_window": r["tokens_per_window"], "source": "held", "interpolated": False})
+        self.assertEqual(hist[0], {"date": "2026-08-01", "tokens_per_window": r["tokens_per_window"],
+                                   "api_value_per_window": r["api_value_per_window"], "source": "held", "interpolated": False})
         self.assertEqual(hist[-1]["source"], "probe")
+
+    def test_history_days_carry_the_held_regime_dollar_value_for_every_model(self):
+        # The page shows dollars per window beside tokens per window with the same
+        # step treatment, so every history day carries the regime's held dollar
+        # value: one figure per day, the same for every model, stepping only on a
+        # detected change and matching rates[model].api_value_per_window today.
+        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)]
+                + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)])
+        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        event_date = j["last_change"]["date"]
+        sonnet, opus = j["history"]["claude-sonnet-5"], j["history"]["claude-opus-5"]
+        self.assertEqual([h["api_value_per_window"] for h in sonnet], [h["api_value_per_window"] for h in opus])
+        before = {h["api_value_per_window"] for h in sonnet if h["date"] < event_date}
+        after = {h["api_value_per_window"] for h in sonnet if h["date"] >= event_date}
+        self.assertEqual(len(before), 1)
+        self.assertEqual(len(after), 1)
+        self.assertGreater(before.pop(), after.pop())
+        self.assertEqual(sonnet[-1]["api_value_per_window"], j["rates"]["claude-sonnet-5"]["api_value_per_window"])
+        self.assertEqual(sonnet[-1]["api_value_per_window"], j["rates"]["claude-opus-5"]["api_value_per_window"])
 
     def test_every_priced_model_gets_a_rate_derived_from_the_one_probed_model(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
