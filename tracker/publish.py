@@ -7,6 +7,7 @@ from pathlib import Path
 from statistics import median
 from .detect import detect_changes, latest_change
 from .rows import usable_rows
+from .weekly import probe_weekly_windows
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
 MAX_SAMPLE_AGE_DAYS = 10
@@ -111,6 +112,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     current regime's value under the same key.
     """
     passive_split = passive.get("split", {})
+    # Weekly windows measured from probe rows' own before/after meter reads,
+    # independent of the passive log -- taken from every row regardless of the
+    # outlier/class-weighting filter below, since that filter is about dollar
+    # value, not the five-hour/seven-day deltas this measures.
+    probe_weekly = probe_weekly_windows(probe_rows)
+
     # Output rows (the weekly Fable weight run, payload "output") measure the meter's
     # class weighting, not the limit, and a row flagged `outlier` by the rotation's
     # drift check was contradicted by its rerun: neither enters the dollar series,
@@ -194,7 +201,23 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         raise ValueError("no probe rates to publish")
     if last_sample is None or datetime.fromisoformat(last_sample) < now - timedelta(days=MAX_SAMPLE_AGE_DAYS):
         raise ValueError(f"newest probe sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
-    weekly_windows = passive.get("weekly_windows")
+    passive_weekly = passive.get("weekly_windows")
+    weekly_windows = None
+    if passive_weekly is not None:
+        # The probe series wins once it has enough of its own history to trust: at
+        # least two COMPLETE weeks (a week is complete once its week_ending date
+        # is in the past -- probe_weekly_windows already restricts `current` to
+        # such weeks, but a single complete week alone still produces a `current`
+        # there, so the count is re-checked here rather than trusting `current`
+        # being non-None).
+        complete_probe_weeks = [h for h in probe_weekly["history"] if date.fromisoformat(h["week_ending"]) < now.date()]
+        use_probe = len(complete_probe_weeks) >= 2
+        weekly_windows = {
+            "current": probe_weekly["current"] if use_probe else passive_weekly.get("current"),
+            "history": probe_weekly["history"] if use_probe else passive_weekly.get("history", []),
+            "passive": passive_weekly,
+            "probe": probe_weekly,
+        }
     out = {
         "generated_at": now.isoformat(),
         "last_sample_at": last_sample,

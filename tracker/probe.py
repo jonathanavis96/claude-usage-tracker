@@ -171,6 +171,12 @@ class ProbeResult:
     expect_tokens_per_pct: float | None = None
     early_tick: bool = False
     reset_start: bool = False
+    # The whole run's five-hour meter reads: the very first read (before any prompt,
+    # including any reset-wait) and the last read at exit -- so alignment and skip
+    # spans count too, unlike tick_from/tick_to which mark only the measured span.
+    # Mirrors seven_day_before/after, which measure the same whole-run span.
+    five_hour_before: float | None = None
+    five_hour_after: float | None = None
 
 
 def _same_window(a: Utilization, b: Utilization) -> bool:
@@ -314,7 +320,8 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                                        int(cur.five_hour), elapsed, before.seven_day, cur.seven_day, readings,
                                        payload, payload_words=payload_words, ticks=ticks, skip=skip,
                                        settle_s=settle_s, expect_tokens_per_pct=expect_tokens_per_pct,
-                                       early_tick=early_tick, reset_start=reset_start)
+                                       early_tick=early_tick, reset_start=reset_start,
+                                       five_hour_before=before.five_hour, five_hour_after=cur.five_hour)
         last = cur
     raise ProbeAbort(f"no second tick after {prompts} prompts")
 

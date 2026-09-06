@@ -81,7 +81,7 @@ The mix of token classes in Jonathan's own real sessions, used to convert dollar
 _Avoid_: real-world mix, session profile
 
 **Weekly windows**:
-How many full five-hour windows the seven-day limit holds, measured from the passive meter log rather than assumed: paired five-hour and seven-day deltas within a single window of each are bucketed by week, and each week's total five-hour movement is divided by its total seven-day movement.
+How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). The published `current` figure prefers the probe series once it has at least two complete weeks of its own history -- a probe row's five-hour meter read is a direct measurement with no passive-log pairing assumptions, so it wins as soon as there is enough of it -- and falls back to the passive series otherwise. Both series and the winning one's history are published under `weekly_windows` (`passive`, `probe`, and top-level `current`/`history` for the winner).
 _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
 
 **Session**:

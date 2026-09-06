@@ -8,12 +8,13 @@ single five-hour window and a single weekly window, gives the ratio directly
 """
 from __future__ import annotations
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import Iterable
 
 _FIVE_HOUR_TOLERANCE = timedelta(seconds=120)
 _MIN_FIVE_HOUR_PCT = 50.0
+_MIN_PROBE_FIVE_HOUR_PCT = 20.0
 
 
 def parse_rows(lines: Iterable[str]) -> list[dict | None]:
@@ -106,5 +107,75 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
 
     for h in history:
         del h["_resets_at"]
+
+    return {"current": current, "history": history}
+
+
+def _iso_week_ending(ts: str) -> str:
+    """The Sunday date (ISO week end) of the ISO week `ts` falls in, as YYYY-MM-DD.
+
+    A probe row does not carry the seven-day meter's own resets_at, so its week
+    key falls back to calendar ISO weeks rather than the meter's own reset
+    boundary.
+    """
+    d = datetime.fromisoformat(ts).date()
+    iso_year, iso_week, iso_weekday = d.isocalendar()
+    sunday = d + timedelta(days=7 - iso_weekday)
+    return sunday.isoformat()
+
+
+def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
+    """Same shape as weekly_windows, but derived from probe rows' whole-run deltas.
+
+    Each probe row (tracker/probe.py's ProbeResult, asdict'd) already spans one
+    probe run: five_hour_before/after are its first read (before any prompt)
+    and its last read at exit, and seven_day_before/after mirror it. A row
+    missing any of those four fields (every row from before this field existed)
+    is skipped outright, so this is empty until fresh probe rows accumulate.
+
+    d5 = five_hour_after - five_hour_before is discarded when <= 0 (the run
+    crossed a five-hour reset mid-probe, so the delta is not a true five-hour
+    movement); d7 = seven_day_after - seven_day_before is discarded when < 0.
+    Rows are bucketed by the row's own weekly reset date when present
+    (`seven_day_resets_at`, first 10 chars), else by the ISO week (Sunday) its
+    `ts` falls in. windows = d5/d7 for weeks with d7 > 0 and d5 >= 20 (a
+    single tick-probe run rarely moves the five-hour meter by much, so the
+    passive log's 50-point floor would empty this out entirely).
+
+    `current` is the median of the last two COMPLETE weeks (a week is complete
+    once its week-ending date is in the past).
+    """
+    now = now or datetime.now(timezone.utc)
+    buckets: dict[str, dict] = {}
+    for r in rows:
+        fhb, fha = r.get("five_hour_before"), r.get("five_hour_after")
+        sdb, sda = r.get("seven_day_before"), r.get("seven_day_after")
+        if fhb is None or fha is None or sdb is None or sda is None:
+            continue
+        d5 = fha - fhb
+        if d5 <= 0:
+            continue
+        d7 = sda - sdb
+        if d7 < 0:
+            continue
+        resets_at = r.get("seven_day_resets_at")
+        week_key = resets_at[:10] if resets_at else _iso_week_ending(r["ts"])
+        b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0})
+        b["d5"] += d5
+        b["d7"] += d7
+
+    history = []
+    for week_key in sorted(buckets):
+        b = buckets[week_key]
+        if b["d7"] > 0 and b["d5"] >= _MIN_PROBE_FIVE_HOUR_PCT:
+            history.append({
+                "week_ending": week_key,
+                "windows": round(b["d5"] / b["d7"], 2),
+                "five_hour_pct": round(b["d5"], 1),
+                "seven_day_pct": round(b["d7"], 1),
+            })
+
+    complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]
+    current = round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
 
     return {"current": current, "history": history}
