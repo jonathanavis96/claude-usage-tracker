@@ -306,3 +306,50 @@ class GuardTests(unittest.TestCase):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         j = build_public_json(rows, {}, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc))
         self.assertIsNone(j["passive_generated_at"])
+
+
+class WeeklyWindowsPassthroughTests(unittest.TestCase):
+    PASSIVE_WEEKLY = {"current": 6.46, "history": [
+        {"week_ending": "2026-08-28", "windows": 6.58, "five_hour_pct": 250.0, "seven_day_pct": 38.0},
+        {"week_ending": "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0},
+    ]}
+
+    def test_absent_from_passive_omits_top_level_key(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        self.assertNotIn("weekly_windows", j)
+
+    def test_probe_has_no_five_hour_fields_falls_back_to_passive(self):
+        # None of the existing rows carry five_hour_before/after, so the probe
+        # series is empty and passive wins.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        ww = j["weekly_windows"]
+        self.assertEqual(ww["current"], self.PASSIVE_WEEKLY["current"])
+        self.assertEqual(ww["history"], self.PASSIVE_WEEKLY["history"])
+        self.assertEqual(ww["passive"], self.PASSIVE_WEEKLY)
+        self.assertEqual(ww["probe"], {"current": None, "history": []})
+
+    def test_probe_wins_once_it_has_two_complete_weeks(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        for r, (fhb, fha, sdb, sda, wk) in zip(rows, [
+            (10.0, 40.0, 10.0, 12.0, "2026-08-28T03:59:59+00:00"),
+            (10.0, 45.0, 10.0, 13.0, "2026-08-28T03:59:59+00:00"),
+            (10.0, 50.0, 10.0, 12.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 55.0, 10.0, 13.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 30.0, 10.0, 20.0, "2026-09-11T03:59:59+00:00"),  # newest week, incomplete
+        ]):
+            r["five_hour_before"], r["five_hour_after"] = fhb, fha
+            r["seven_day_before"], r["seven_day_after"] = sdb, sda
+            r["seven_day_resets_at"] = wk
+        passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        ww = j["weekly_windows"]
+        self.assertEqual(len(ww["probe"]["history"]), 3)
+        self.assertEqual(ww["current"], ww["probe"]["current"])
+        self.assertNotEqual(ww["current"], self.PASSIVE_WEEKLY["current"])
+        self.assertEqual(ww["history"], ww["probe"]["history"])

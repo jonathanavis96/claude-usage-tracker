@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from tracker.weekly import parse_rows, weekly_windows
+from tracker.weekly import parse_rows, probe_weekly_windows, weekly_windows
 
 
 def row(ts, five, five_resets, seven, seven_resets):
@@ -115,6 +115,58 @@ class WeeklyWindowsTests(unittest.TestCase):
             self.assertGreaterEqual(by_week[wk], 6.3, wk)
             self.assertLessEqual(by_week[wk], 6.8, wk)
         self.assertAlmostEqual(by_week["2026-09-11"], 5.6, delta=0.1)
+
+
+def probe_row(ts, fhb, fha, sdb, sda, seven_resets=None):
+    return {"ts": ts, "five_hour_before": fhb, "five_hour_after": fha,
+            "seven_day_before": sdb, "seven_day_after": sda,
+            **({"seven_day_resets_at": seven_resets} if seven_resets else {})}
+
+
+class ProbeWeeklyWindowsTests(unittest.TestCase):
+    def test_rows_missing_five_hour_fields_are_skipped(self):
+        rows = [{"ts": "2026-09-01T00:00:00+00:00", "seven_day_before": 10.0, "seven_day_after": 12.0}]
+        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+
+    def test_negative_five_hour_delta_skipped_as_reset_crossing(self):
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 90.0, 5.0, 10.0, 12.0)]
+        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+
+    def test_negative_seven_day_delta_skipped(self):
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 40.0, 12.0, 10.0)]
+        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+
+    def test_below_min_five_hour_pct_skipped(self):
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 15.0, 10.0, 12.0)]
+        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+
+    def test_buckets_by_seven_day_resets_at_when_present(self):
+        rows = [
+            probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 12.0, "2026-09-04T03:59:59+00:00"),
+            probe_row("2026-09-02T00:00:00+00:00", 10.0, 40.0, 10.0, 13.0, "2026-09-04T03:59:59+00:00"),
+        ]
+        now = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        result = probe_weekly_windows(rows, now=now)
+        self.assertEqual(result["history"], [
+            {"week_ending": "2026-09-04", "windows": 11.0, "five_hour_pct": 55.0, "seven_day_pct": 5.0},
+        ])
+        self.assertEqual(result["current"], 11.0)
+
+    def test_falls_back_to_iso_week_ending_without_resets_at(self):
+        # 2026-09-01 is a Tuesday in ISO week ending Sunday 2026-09-06.
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 12.0)]
+        now = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        result = probe_weekly_windows(rows, now=now)
+        self.assertEqual(result["history"], [
+            {"week_ending": "2026-09-06", "windows": 12.5, "five_hour_pct": 25.0, "seven_day_pct": 2.0},
+        ])
+
+    def test_current_excludes_incomplete_week(self):
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 12.0, "2026-09-04T03:59:59+00:00")]
+        now = datetime(2026, 9, 3, tzinfo=timezone.utc)  # before the week has ended
+        result = probe_weekly_windows(rows, now=now)
+        self.assertEqual(len(result["history"]), 1)
+        self.assertIsNone(result["current"])
 
 
 if __name__ == "__main__":

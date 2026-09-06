@@ -188,6 +188,7 @@ class EarlyTickTests(unittest.TestCase):
                            sleep=lambda s: None, now=lambda: T0, usd_per_token=self.PRICE, ticks=1, skip=0)
         self.assertEqual((r.tick_from, r.tick_to), (11, 12))
         self.assertEqual((r.seven_day_before, r.seven_day_after), (30.0, 30.0))
+        self.assertEqual((r.five_hour_before, r.five_hour_after), (10, 12))
 
 
 class PayloadCliTests(unittest.TestCase):
