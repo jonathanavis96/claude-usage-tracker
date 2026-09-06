@@ -207,6 +207,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "history": history,
         "last_change": None if last is None else {"date": last.date.isoformat(), "direction": last.direction, "percent": last.percent, "model": last.model},
         "events": _build_events(events),
+        "session_tokens": passive.get("session_tokens", {}),
     }
 
 
