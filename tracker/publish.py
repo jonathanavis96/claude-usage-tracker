@@ -6,9 +6,10 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from .detect import detect_changes, latest_change
+from .passive import PLAN_CHANGE
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
-HISTORY_DAYS = 90
+HISTORY_DAYS = 180
 MAX_SAMPLE_AGE_DAYS = 10
 
 
@@ -132,7 +133,18 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "api_price_per_mtok": prices,
         "history": history,
         "last_change": None if last is None else {"date": last.date.isoformat(), "direction": last.direction, "percent": last.percent, "model": last.model},
+        "events": _build_events(events),
     }
+
+
+def _build_events(events: list) -> list[dict]:
+    plan_event = {"date": PLAN_CHANGE.isoformat(), "kind": "plan", "label": "Plan changed to Max 20x"}
+    change_events = [
+        {"date": e.date.isoformat(), "kind": "change",
+         "label": f"Window changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
+        for e in events
+    ]
+    return [plan_event, *change_events]
 
 
 def write_json(path: Path, obj: dict) -> None:
