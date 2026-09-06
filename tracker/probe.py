@@ -1,29 +1,34 @@
-"""Tick probe: loop a fixed small prompt until the 5-hour utilization meter has advanced
-several percent past the first observed tick, and report tokens spent over that span.
+"""Tick probe: send prompts until the 5-hour utilization meter has advanced a chosen
+number of ticks past the first observed tick, and report tokens spent per 1%.
 
 A single tick-to-tick span is noisy: the meter reports ticks with a variable lag of
 several prompts, so two probes with identical per-prompt cost can see very different
 prompt counts (and therefore very different tokens-per-1%) between one tick and the next.
 Summing spend over several ticks and dividing by the total percent advanced averages that
-lag out.
+lag out. Defaults: 3 measured ticks (`--ticks`), after 1 skipped span (`--skip`).
 
-Three optional modes, all off by default so the twice-daily cron run is unchanged:
+Every run needs an expectation, `--expect-tokens-per-pct` (the tokens per 1% the probe
+assumes before it starts, normally the last published rate for the model). It sizes the
+prompt and the bursts:
 
-`--skip N` discards the first N ticks after alignment. The 2026-09-06 09:39 Sonnet run
-observed the span from the first tick to the second in 5 prompts while the next four
-spans took 9, 10, 9 and 10, so the first post-alignment span looks like meter catch-up
-rather than a true rate. With skip, `spent` only starts accumulating once tick (1+N)
-has been seen, `tick_from` is that tick, and `ticks` counts spans measured after it.
-The row records `"skip": N`.
+Prompt size. `payload_words_for(expectation)` picks the prose payload size so one prompt
+is about a tenth of a tick, clamped to 1,500 to 12,000 words, and the row records it as
+`payload_words`. An output payload keeps its fixed 4,000-word reply and records that.
 
-`--burst K` fires K prompts concurrently (threads over `run`, each with its own prompt
-index) once per measured tick, then one settle sleep and one meter read, then single
-prompts until the next tick. It only bursts when the burst cannot overshoot: the
-expected prompts left in the current tick come from `--expect-tokens-per-pct` divided
-by the mean tokens per prompt seen so far, K is shrunk to that count, and without an
-expectation the burst is skipped for that tick. The reading after a burst records
-`"burst": K_used`; if a burst still carries the meter past the intended final tick the
-row is valid (the extra percent is in the division) and records `"overshoot": true`.
+Burst-first spans. Every span, the alignment span included, opens with one burst of
+concurrent prompts sized to 80% of the expected span (expected tokens per 1% over the
+tokens per prompt seen so far, or the word estimate before any prompt has run), then
+single prompts until the tick. The reading after a burst records `"burst": K`.
+
+Early tick. A tick that arrives during a burst in a full span means the span was shorter
+than expected and the limit has probably fallen: the row is flagged `early_tick` and
+every later burst is sized to 50% of the expected span instead. A tick inside the
+alignment burst is not early when a span is skipped, because the alignment span is a
+partial and the span it corrupts is the one skip discards.
+
+Reset wait. If the window's `resets_at` is within 20 minutes when the run starts, the
+probe waits for the reset and, if the meter then reads 0.0, starts measuring there with
+no alignment span (`reset_start` on the row): 0 is the first tick.
 
 `--settle SECONDS` is the sleep between a prompt returning and the meter being read
 (default 60). The row records it as `"settle_s"`.
@@ -46,7 +51,16 @@ CLASSES = ("input", "output", "cache_read", "cache_write")
 # our own prompts cannot pay for came from someone else's traffic on the same account.
 MIN_TICK_USD = 0.40
 
-PROBE_PAYLOAD_WORDS = 12000  # prose measures ~3.47 tokens/word: ~42k tokens, matching the old payload's size
+TOKENS_PER_WORD = 3.47  # measured on the prose payload: 12,000 words is about 42k tokens
+MIN_PAYLOAD_WORDS = 1500
+MAX_PAYLOAD_WORDS = 12000
+PROBE_PAYLOAD_WORDS = MAX_PAYLOAD_WORDS
+PROMPTS_PER_TICK = 10  # a prompt is sized to a tenth of a tick
+BURST_FRACTION = 0.8  # of the expected span, for the burst that opens each span
+EARLY_BURST_FRACTION = 0.5  # once a tick has arrived inside a burst
+RESET_WAIT_S = 20 * 60  # wait for a window reset this close rather than straddle it
+RESET_MARGIN_S = 30  # slack after resets_at before reading the fresh window
+OUTPUT_REPLY_WORDS = 4000
 _SUBJECTS = ("the harbour master", "the shift supervisor", "the finance clerk", "the site foreman",
              "the duty officer", "the regional auditor", "the warehouse manager", "the compliance lead")
 _VERBS = ("postponed", "reviewed", "confirmed", "escalated", "archived", "reissued", "verified", "logged")
@@ -55,6 +69,12 @@ _OBJECTS = ("the tide tables", "the expense report", "the delivery schedule", "t
 _TAILS = ("before the holiday", "after the audit", "ahead of schedule", "during the handover",
           "prior to closing", "following the inspection", "without further delay", "pending final review")
 PROBE_PROMPT = "Below is a long log of routine office notes. Reply with only the word DONE.\n\n"
+
+
+def payload_words_for(expect_tokens_per_pct: float) -> int:
+    """Prose payload size so one prompt costs about a tenth of a tick, within the word range."""
+    words = round(expect_tokens_per_pct / PROMPTS_PER_TICK / TOKENS_PER_WORD)
+    return max(MIN_PAYLOAD_WORDS, min(MAX_PAYLOAD_WORDS, words))
 
 
 def probe_prompt(salt: str, index: int, words: int = PROBE_PAYLOAD_WORDS) -> str:
@@ -97,7 +117,7 @@ _SEASONS = ("during the monsoon season", "during a harsh winter", "during the he
             "during the rainy season", "during the first snowfall")
 
 
-def output_prompt(salt: str, index: int) -> str:
+def output_prompt(salt: str, index: int, words: int = OUTPUT_REPLY_WORDS) -> str:
     """A short, unique-per-(salt, index) prompt whose entire cost is in the reply.
 
     Where `probe_prompt` measures cache-write-heavy traffic (a big payload, a one-word
@@ -115,11 +135,11 @@ def output_prompt(salt: str, index: int) -> str:
     place = rng.choice(_PLACES)
     season = rng.choice(_SEASONS)
     return (
-        f"Write approximately 4,000 words of original narrative prose about a day in the "
+        f"Write approximately {words:,} words of original narrative prose about a day in the "
         f"life of {role} {place} {season}. Write it as continuous prose: no lists, no "
         f"headings, no bullet points, no section breaks, just plain paragraphs telling the "
         f"story in order. Invent whatever specific detail you need; none of it needs to be "
-        f"factual. Keep writing until you reach roughly 4,000 words, then stop; do not "
+        f"factual. Keep writing until you reach roughly {words:,} words, then stop; do not "
         f"summarize, do not wrap up early, and do not add any closing remarks after the "
         f"story ends."
     )
@@ -144,11 +164,13 @@ class ProbeResult:
     seven_day_after: float | None = None
     readings: list = field(default_factory=list)
     payload: str = "prose"
-    skip: int = 0
-    burst: int = 0
+    payload_words: int = PROBE_PAYLOAD_WORDS
+    ticks: int = 3
+    skip: int = 1
     settle_s: float = 60
-    overshoot: bool = False
     expect_tokens_per_pct: float | None = None
+    early_tick: bool = False
+    reset_start: bool = False
 
 
 def _same_window(a: Utilization, b: Utilization) -> bool:
@@ -161,14 +183,25 @@ def _sum_usage(usages: list[RunUsage]) -> dict:
     return {c: sum(getattr(u, c) for u in usages) for c in CLASSES}
 
 
+def _seconds_until_reset(u: Utilization, now: datetime) -> float | None:
+    """Seconds from `now` to the window's resets_at, or None when it is absent or unreadable."""
+    if not u.five_hour_resets_at:
+        return None
+    try:
+        return (datetime.fromisoformat(u.five_hour_resets_at) - now).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
 def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Utilization],
                    run: Callable[[int], RunUsage], sleep: Callable[[float], None],
                    now: Callable[[], datetime], max_prompts: int = 80, settle_s: float = 60,
                    deadline: datetime | None = None, usd_per_token: dict | None = None,
-                   ticks: int = 5, payload: str = "prose", skip: int = 0, burst: int = 0,
-                   expect_tokens_per_pct: float | None = None) -> ProbeResult:
-    """Loop prompts until the 5-hour meter has advanced `ticks` percent past the first
-    observed tick, and report tokens spent over that whole span.
+                   ticks: int = 3, payload: str = "prose", skip: int = 1,
+                   expect_tokens_per_pct: float | None = None,
+                   payload_words: int = PROBE_PAYLOAD_WORDS) -> ProbeResult:
+    """Send prompts until the 5-hour meter has advanced `ticks` percent past the first
+    measured tick, and report tokens spent over that whole span.
 
     A single tick-to-tick span sees a variable lag of several prompts, so it is too noisy
     to publish alone; summing spend across `ticks` ticks and dividing by the total percent
@@ -176,41 +209,59 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     run: every sleep is charged against it and the probe aborts once it passes.
     `usd_per_token` is the model's entry from data/prices.json (USD per million tokens);
     when given, a span our own prompts cannot pay for is rejected rather than published
-    as a rate. `payload` is recorded on the result only, so the publisher can tell a
-    cache-write-heavy prose probe apart from an output-heavy one; the actual prompt text
-    comes from `run`, not from this function.
+    as a rate. `payload` and `payload_words` are recorded on the result only; the actual
+    prompt text comes from `run`, not from this function.
 
-    `skip` discards the first `skip` ticks after alignment: spend only accumulates once
-    tick (1+skip) has been seen, and that tick is the result's `tick_from`. `burst` fires
-    that many prompts concurrently once per measured tick, shrunk to the prompts expected
-    to remain in the tick (from `expect_tokens_per_pct` and the mean tokens per prompt so
-    far) and skipped for the tick when there is no expectation or fewer than two would
-    fit. Every prompt in a burst is counted in `spent`; the reading after it carries
-    `"burst": K_used`. After a burst of K the account-not-idle check allows a jump of up
-    to K percent instead of one. A run whose final jump carries the meter past `ticks` is
-    still valid and flags `overshoot`.
+    `skip` discards the first `skip` spans after alignment: spend only accumulates once
+    tick (1+skip) has been seen, and that tick is the result's `tick_from`.
+
+    With `expect_tokens_per_pct`, every span opens with a burst of concurrent prompts
+    sized to `BURST_FRACTION` of the expected span, then singles until the tick; the
+    reading after a burst carries `"burst": K`. A tick that lands inside a burst in a
+    full span flags `early_tick` and shrinks later bursts to `EARLY_BURST_FRACTION`.
+    After a burst of K the account-not-idle check allows a jump of up to K percent
+    instead of one; a run whose final jump carries the meter past `ticks` is still valid
+    (the extra percent is in the division). Without an expectation every prompt is single.
+
+    If the window resets within `RESET_WAIT_S` of the start, the probe sleeps until just
+    after the reset; a meter reading 0.0 there is taken as the first tick (`reset_start`),
+    so no alignment span is spent. Any other reading falls back to normal alignment.
     """
     from .publish import tokens_usd
     start = now()
     before = read()
-    last = before
-    prompts = 0
+    reset_start = False
     tick1: int | None = None
     tick_from: int | None = None  # the tick at which measurement started
+    to_reset = _seconds_until_reset(before, now())
+    if to_reset is not None and 0 <= to_reset <= RESET_WAIT_S:
+        print(f"window resets in {to_reset:.0f}s: waiting for it", file=sys.stderr)
+        sleep(to_reset + RESET_MARGIN_S)
+        if deadline is not None and now() >= deadline:
+            raise ProbeAbort("deadline")
+        before = read()
+        if before.five_hour == 0:
+            reset_start = True
+            tick1 = 0
+            if skip <= 0:
+                tick_from = 0
+    last = before
+    prompts = 0
     skipped = 0
     advanced = 0
     spent = {c: 0 for c in CLASSES}
     readings = []
     prompt_totals: list[int] = []  # per-prompt token totals, for the burst estimate
-    tick_tokens = 0  # tokens spent since the last observed tick
-    burst_pending = False  # a burst is allowed once per measured tick, at its start
+    early_tick = False
+    fraction = BURST_FRACTION
+    burst_pending = True  # every span, alignment included, opens with a burst
     while prompts < max_prompts:
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         k = 1
         if burst_pending:
             burst_pending = False
-            k = _burst_size(burst, expect_tokens_per_pct, prompt_totals, tick_tokens,
+            k = _burst_size(expect_tokens_per_pct, fraction, prompt_totals, payload_words,
                             max_prompts - prompts)
         if k > 1:
             with ThreadPoolExecutor(max_workers=k) as pool:
@@ -220,7 +271,6 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         prompts += len(usages)
         batch = _sum_usage(usages)
         prompt_totals.extend(u.total for u in usages)
-        tick_tokens += sum(batch.values())
         if tick_from is not None:
             for c in CLASSES:
                 spent[c] += batch[c]
@@ -241,20 +291,20 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if jump > k:
             raise ProbeAbort(f"utilization jumped {jump}% after {k} prompt{'s' if k > 1 else ''}; account not idle")
         if jump >= 1:
-            tick_tokens = 0
+            burst_pending = True
+            if k > 1 and not (tick1 is None and skip > 0):
+                early_tick = True
+                fraction = EARLY_BURST_FRACTION
             if tick1 is None:
                 tick1 = int(cur.five_hour)
                 if skip <= 0:
                     tick_from = tick1
-                    burst_pending = True
             elif tick_from is None:
                 skipped += jump
                 if skipped >= skip:
                     tick_from = int(cur.five_hour)
-                    burst_pending = True
             else:
                 advanced += jump
-                burst_pending = True
                 if advanced >= ticks:
                     if usd_per_token is not None and tokens_usd(spent, usd_per_token) < MIN_TICK_USD * advanced:
                         raise ProbeAbort("tick too early")
@@ -262,28 +312,31 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                     total = sum(spent.values())
                     return ProbeResult(start, model, effort, total / advanced, spent, prompts, tick_from,
                                        int(cur.five_hour), elapsed, before.seven_day, cur.seven_day, readings,
-                                       payload, skip=skip, burst=burst, settle_s=settle_s,
-                                       overshoot=advanced > ticks, expect_tokens_per_pct=expect_tokens_per_pct)
+                                       payload, payload_words=payload_words, ticks=ticks, skip=skip,
+                                       settle_s=settle_s, expect_tokens_per_pct=expect_tokens_per_pct,
+                                       early_tick=early_tick, reset_start=reset_start)
         last = cur
     raise ProbeAbort(f"no second tick after {prompts} prompts")
 
 
-def _burst_size(burst: int, expect_tokens_per_pct: float | None, prompt_totals: list[int],
-                tick_tokens: int, room: int) -> int:
-    """How many prompts to fire concurrently at the start of a measured tick: 1 means no burst.
+def _burst_size(expect_tokens_per_pct: float | None, fraction: float, prompt_totals: list[int],
+                payload_words: int, room: int) -> int:
+    """How many prompts open the span concurrently: 1 means a single prompt.
 
-    The burst may not overshoot, so it is capped at the prompts expected to remain in the
-    current tick: (`expect_tokens_per_pct` - tokens already spent in this tick) over the
-    mean tokens per prompt seen so far, rounded down. With no expectation there is no way
-    to bound it, so no burst that tick. `room` is the prompts left under `max_prompts`.
+    The burst is `fraction` of the expected span in prompts: `expect_tokens_per_pct` over
+    the mean tokens per prompt seen so far, or over the payload's word estimate before any
+    prompt has run. Without an expectation there is nothing to size it from, so no burst.
+    `room` is the prompts left under `max_prompts`.
     """
-    if burst < 2 or expect_tokens_per_pct is None or not prompt_totals:
+    if expect_tokens_per_pct is None:
         return 1
-    per_prompt = sum(prompt_totals) / len(prompt_totals)
+    if prompt_totals:
+        per_prompt = sum(prompt_totals) / len(prompt_totals)
+    else:
+        per_prompt = payload_words * TOKENS_PER_WORD
     if per_prompt <= 0:
         return 1
-    remaining = int((expect_tokens_per_pct - tick_tokens) // per_prompt)
-    k = min(burst, remaining, room)
+    k = min(int(fraction * expect_tokens_per_pct // per_prompt), room)
     return k if k >= 2 else 1
 
 
@@ -337,24 +390,28 @@ def main(argv: list[str] | None = None) -> int:
                     help="name=config_dir, in priority order; default dave and jono from $HOME")
     ap.add_argument("--max-wait", type=int, default=4 * 3600)
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
-    ap.add_argument("--ticks", type=int, default=5, help="percent to advance past the first tick before reporting")
+    ap.add_argument("--ticks", type=int, default=3, help="measured ticks after the skipped spans (default 3)")
     ap.add_argument("--payload", choices=("prose", "output"), default="prose",
                     help="prose: cache-write-heavy fixed payload with a one-word reply (default). "
                          "output: short prompt asking for ~4,000 words of reply, to measure output-token weight")
-    ap.add_argument("--skip", type=int, default=0,
-                    help="ticks to discard after the first observed tick before measuring starts (default 0)")
-    ap.add_argument("--burst", type=int, default=0,
-                    help="prompts to fire concurrently once per measured tick (default 0: one at a time); "
-                         "needs --expect-tokens-per-pct to bound the burst, else it is skipped")
-    ap.add_argument("--expect-tokens-per-pct", type=float, default=None,
-                    help="expected tokens per 1%% (e.g. the last published rate), used to size a burst "
-                         "so it cannot overshoot the tick")
+    ap.add_argument("--skip", type=int, default=1,
+                    help="spans to discard after the first observed tick before measuring starts (default 1)")
+    ap.add_argument("--expect-tokens-per-pct", type=float, required=True,
+                    help="expected tokens per 1%% (the last published rate for the model); sizes the "
+                         "prompt to a tenth of a tick and each span's opening burst to 80%% of the span")
     ap.add_argument("--settle", type=float, default=60,
                     help="seconds to wait after a prompt returns before reading the meter (default 60)")
     a = ap.parse_args(argv)
-    if a.skip < 0 or a.burst < 0 or a.settle < 0:
-        ap.error("--skip, --burst and --settle must not be negative")
-    builder = output_prompt if a.payload == "output" else probe_prompt
+    if a.skip < 0 or a.settle < 0 or a.ticks < 1:
+        ap.error("--skip and --settle must not be negative and --ticks must be at least 1")
+    if a.expect_tokens_per_pct <= 0:
+        ap.error("--expect-tokens-per-pct must be positive")
+    if a.payload == "output":
+        words = OUTPUT_REPLY_WORDS
+        builder = output_prompt
+    else:
+        words = payload_words_for(a.expect_tokens_per_pct)
+        builder = lambda salt, i: probe_prompt(salt, i, words)  # noqa: E731
     home = Path.home()
     accounts = [tuple(x.split("=", 1)) for x in a.account] or [("dave", home / ".claude-dave"), ("jono", home / ".claude-javiswork")]
     accounts = [(n, Path(p)) for n, p in accounts]
@@ -395,15 +452,15 @@ def main(argv: list[str] | None = None) -> int:
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
                            lambda i: run_prompt(builder(salt, i), a.model, a.effort, cfg),
                            time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks,
-                           payload=a.payload, skip=a.skip, burst=a.burst,
-                           expect_tokens_per_pct=a.expect_tokens_per_pct, settle_s=a.settle)
+                           payload=a.payload, skip=a.skip, expect_tokens_per_pct=a.expect_tokens_per_pct,
+                           payload_words=words, settle_s=a.settle)
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
         return 4
     append_result(a.out, r, account=name)
     print(f"{name} {a.model} {a.effort}: {r.tokens_per_pct:.0f} tokens per 1% ({r.prompts} prompts, "
-          f"ticks {r.tick_from}->{r.tick_to}, skip {r.skip}, burst {r.burst}, settle {r.settle_s:g}s"
-          f"{', overshoot' if r.overshoot else ''})")
+          f"ticks {r.tick_from}->{r.tick_to}, skip {r.skip}, {r.payload_words} words, settle {r.settle_s:g}s"
+          f"{', early tick' if r.early_tick else ''}{', reset start' if r.reset_start else ''})")
     return 0
 
 
