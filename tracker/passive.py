@@ -7,12 +7,14 @@ from statistics import median
 from .join import DailyRate, build_intervals, daily_rates
 from .samples import merge_samples, parse_ceiling_log, parse_moonlighter
 from .turns import iter_turns, session_tokens_by_model, transcript_paths
+from .weekly import parse_rows as parse_weekly_rows, weekly_windows
 
 PLAN_CHANGE = date(2026, 8, 18)
 
 
 def passive_summary(rates: dict[date, DailyRate], plan_change: date = PLAN_CHANGE,
-                     session_tokens: dict[str, int] | None = None) -> dict:
+                     session_tokens: dict[str, int] | None = None,
+                     weekly: dict | None = None) -> dict:
     before = [r.tokens_per_pct for d, r in rates.items() if plan_change - timedelta(days=14) <= d < plan_change and not r.interpolated]
     after = [r.tokens_per_pct for d, r in rates.items() if plan_change <= d < plan_change + timedelta(days=14) and not r.interpolated]
     ratio = (median(before) / median(after)) if before and after else None
@@ -21,13 +23,16 @@ def passive_summary(rates: dict[date, DailyRate], plan_change: date = PLAN_CHANG
     if recent:
         for c in recent[-1].split:
             split[c] = round(median(r.split[c] for r in recent), 4)
-    return {
+    summary = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "plan_ratio_5x_to_20x": None if ratio is None else round(ratio, 4),
         "split": split,
         "history": {d.isoformat(): {"tokens_per_pct": round(r.tokens_per_pct), "interpolated": r.interpolated} for d, r in sorted(rates.items())},
         "session_tokens": session_tokens or {},
     }
+    if weekly is not None:
+        summary["weekly_windows"] = weekly
+    return summary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("history/passive.json"))
     a = ap.parse_args(argv)
     home = Path.home()
-    with open(home / ".moonlighter/usage_log.jsonl", encoding="utf-8") as f:
+    moonlighter_path = home / ".moonlighter/usage_log.jsonl"
+    with open(moonlighter_path, encoding="utf-8") as f:
         ml = parse_moonlighter(f)
     cl_path = home / ".paperclip/ops/mis-usage-ceiling-systemd.log"
     cl = parse_ceiling_log(open(cl_path, encoding="utf-8")) if cl_path.exists() else []
@@ -45,7 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     turns = list(iter_turns(paths))
     rates = daily_rates(build_intervals(samples, turns))
     session_tokens = session_tokens_by_model(paths)
-    summary = passive_summary(rates, session_tokens=session_tokens)
+    with open(moonlighter_path, encoding="utf-8") as f:
+        weekly = weekly_windows(parse_weekly_rows(f))
+    summary = passive_summary(rates, session_tokens=session_tokens, weekly=weekly)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     tmp = a.out.with_suffix(".tmp")
     tmp.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")

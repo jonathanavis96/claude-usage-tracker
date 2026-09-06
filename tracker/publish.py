@@ -194,7 +194,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         raise ValueError("no probe rates to publish")
     if last_sample is None or datetime.fromisoformat(last_sample) < now - timedelta(days=MAX_SAMPLE_AGE_DAYS):
         raise ValueError(f"newest probe sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
-    return {
+    weekly_windows = passive.get("weekly_windows")
+    out = {
         "generated_at": now.isoformat(),
         "last_sample_at": last_sample,
         "passive_generated_at": passive.get("generated_at"),
@@ -209,6 +210,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "events": _build_events(events),
         "session_tokens": passive.get("session_tokens", {}),
     }
+    if weekly_windows is not None:
+        out["weekly_windows"] = weekly_windows
+    return out
 
 
 def _build_events(events: list) -> list[dict]:
