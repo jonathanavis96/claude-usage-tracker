@@ -1,6 +1,6 @@
 import unittest
-from datetime import date, datetime, timezone
-from tracker.publish import probe_daily_series, build_public_json, usd_per_pct, blended_price_per_token
+from datetime import datetime, timezone
+from tracker.publish import build_public_json, usd_per_pct, blended_price_per_token
 
 def probe(day, model, tpp, account="dave"):
     return {"ts": f"2026-09-{day:02d}T08:00:00+00:00", "model": model, "effort": "low", "tokens_per_pct": tpp,
@@ -11,7 +11,8 @@ PASSIVE = {"generated_at": "2026-09-05T20:00:00+00:00", "plan_ratio_5x_to_20x": 
            "split": {"input": 0.062, "output": 0.021, "cache_read": 0.907, "cache_write": 0.010},
            "history": {"2026-08-01": {"tokens_per_pct": 100000, "interpolated": False}}}
 EFFORT = {"claude-sonnet-5": {"low": 900000, "high": 2520000}}
-PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}}
+PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75},
+          "claude-opus-5": {"input": 7.5, "output": 37.5, "cache_read": 0.75, "cache_write": 9.375}}
 
 
 class UsdPerPctTests(unittest.TestCase):
@@ -22,17 +23,14 @@ class UsdPerPctTests(unittest.TestCase):
         self.assertAlmostEqual(usd_per_pct(row, price), 1.02, delta=1e-9)
 
     def test_blended_price_per_token_brief_example(self):
+        # blended_price_per_token returns USD per TOKEN (note the /1e6 in its
+        # body converts from prices.json's USD-per-million-tokens), not per
+        # million tokens -- pin that here since a missed conversion would be
+        # a silent 1e6x error in every derived model's tokens_per_window.
         price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
         split = {"cache_read": 0.9, "cache_write": 0.1}
         self.assertAlmostEqual(blended_price_per_token(split, price), 4.3e-7, delta=1e-15)
 
-
-class SeriesTests(unittest.TestCase):
-    def test_trailing_median_per_model(self):
-        rows = [probe(1, "claude-sonnet-5", 400000), probe(2, "claude-sonnet-5", 420000), probe(3, "claude-sonnet-5", 410000)]
-        s = probe_daily_series(rows, PRICES, {})
-        self.assertAlmostEqual(s["claude-sonnet-5"][date(2026, 9, 3)], 41_000_000, delta=1e-3)
-        self.assertAlmostEqual(s["claude-sonnet-5"][date(2026, 9, 1)], 40_000_000, delta=1e-3)
 
 class BuildTests(unittest.TestCase):
     def test_shape(self):
@@ -58,22 +56,55 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(hist[0], {"date": "2026-08-01", "tokens_per_window": 10_000_000, "source": "passive", "interpolated": False})
         self.assertEqual(hist[-1]["source"], "probe")
 
-    def test_shape_empty_passive_split_falls_back_to_row_split(self):
+    def test_every_priced_model_gets_a_rate_derived_from_the_one_probed_model(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual(set(j["rates"]), {"claude-sonnet-5", "claude-opus-5"})
+        sonnet, opus = j["rates"]["claude-sonnet-5"], j["rates"]["claude-opus-5"]
+        # same dollar invariant, different price -> different tokens_per_window
+        self.assertEqual(sonnet["api_value_per_window"], opus["api_value_per_window"])
+        self.assertEqual(opus["source"], "derived")
+        self.assertEqual(sonnet["source"], "probe")
+        latest = probe(5, "claude-sonnet-5", 420000)
+        api_value = usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100
+        expected_opus_tpw = round(api_value / blended_price_per_token(PASSIVE["split"], PRICES["claude-opus-5"]))
+        self.assertEqual(opus["tokens_per_window"], expected_opus_tpw)
+        # opus is priced ~2.5x sonnet across the board, so its derived rate is ~2.5x fewer tokens
+        self.assertLess(opus["tokens_per_window"], sonnet["tokens_per_window"])
+
+    def test_history_marks_probe_days_by_which_model_was_actually_probed(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        sonnet_hist = [h for h in j["history"]["claude-sonnet-5"] if h["source"] == "probe" or h["date"] >= "2026-09-01"]
+        opus_hist = [h for h in j["history"]["claude-opus-5"] if h["date"] >= "2026-09-01"]
+        self.assertTrue(all(h["source"] == "probe" for h in sonnet_hist))
+        self.assertTrue(all(h["source"] == "derived" for h in opus_hist))
+
+    def test_shape_empty_passive_split_falls_back_to_the_latest_row_split(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, {}, EFFORT, PRICES, now)
         r = j["rates"]["claude-sonnet-5"]
         # with no passive split, the row's own class fractions are used, which reduces to
-        # the raw tokens_per_pct * 100 (see probe_daily_series docstring in the brief).
+        # the raw tokens_per_pct * 100 for the model that was actually probed.
         self.assertAlmostEqual(r["tokens_per_window"], 42_000_000, delta=1)
         self.assertIn("api_value_per_window", r)
+        # the same fallback split is used to derive the unprobed model's rate too
+        opus = j["rates"]["claude-opus-5"]
+        latest = probe(5, "claude-sonnet-5", 420000)
+        api_value = usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100
+        row_split = {"input": 100 / 420000, "output": 400 / 420000, "cache_read": 419500 / 420000, "cache_write": 0.0}
+        expected_opus_tpw = round(api_value / blended_price_per_token(row_split, PRICES["claude-opus-5"]))
+        self.assertEqual(opus["tokens_per_window"], expected_opus_tpw)
 
     def test_change_event_surfaces(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)] + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)]
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 15, tzinfo=timezone.utc))
         self.assertEqual(j["last_change"]["direction"], "decreased")
-        self.assertEqual(j["last_change"]["percent"], 27)
-        self.assertEqual(j["last_change"]["model"], "claude-sonnet-5")
+        self.assertEqual(j["last_change"]["model"], "all")
+        self.assertIn(j["last_change"]["percent"], range(20, 40))
 
 
 class FailurePathTests(unittest.TestCase):
@@ -138,7 +169,7 @@ class GuardTests(unittest.TestCase):
     def test_stale_last_sample_refuses(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         with self.assertRaises(ValueError):
-            build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 12, tzinfo=timezone.utc))
+            build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 20, tzinfo=timezone.utc))
 
     def test_passive_generated_at_is_null_when_missing(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]

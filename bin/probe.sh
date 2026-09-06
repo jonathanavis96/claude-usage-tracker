@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Twice daily on gs: one tick probe, model rotated by slot. Appends to
+# Weekly on gs: one tick probe, always claude-sonnet-5. Every other model's
+# rate is derived from this one model's dollar value (see docs/spike-2026-09.md
+# and tracker/publish.py) rather than probed directly. Appends to
 # history/probes.jsonl and pushes it to this private repo (build branch)
 # so masterrig's daily publisher can see it.
 #
@@ -23,12 +25,7 @@ fi
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
 
-MODELS=(claude-sonnet-5 claude-opus-5 claude-fable-5-1)
-# %j and %H are zero padded, and bash reads a leading zero as octal, so force base 10.
-DOY=$((10#$(date -u +%j)))
-HR=$((10#$(date -u +%H)))
-SLOT=$(( (DOY * 2 + (HR >= 12)) % 3 ))
-MODEL="${MODELS[$SLOT]}"
+MODEL=claude-sonnet-5
 
 python3 -m tracker.probe --model "$MODEL" --effort low --out history/probes.jsonl
 rc=$?
