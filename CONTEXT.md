@@ -80,6 +80,10 @@ How much harder the meter charges one model than another for the same list value
 The mix of token classes in Jonathan's own real sessions, used to convert dollars per window into tokens per window for the page.
 _Avoid_: real-world mix, session profile
 
+**Weekly windows**:
+How many full five-hour windows the seven-day limit holds, measured from the passive meter log rather than assumed: paired five-hour and seven-day deltas within a single window of each are bucketed by week, and each week's total five-hour movement is divided by its total seven-day movement.
+_Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
+
 **Session**:
 One transcript file's worth of turns (a subagent's own transcript counts as its own session). `session_tokens[model]` is the median cumulative tokens of a real session on that model over the last 30 days; the page's "about N sessions per window" unit.
 _Avoid_: task, conversation, run

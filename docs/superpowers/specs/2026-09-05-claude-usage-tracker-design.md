@@ -180,7 +180,11 @@ copied into the JSON so the page has one fetch.
   - tokens per window = rate[model] × plan_ratio[plan]
   - split figures = tokens per window × split fractions
   - tasks per window = tokens per window ÷ (session_tokens[model] × effort[model][effort] ÷ effort[model]["medium"])
-  - tasks per week = tasks per window × 28
+  - tasks per week = tasks per window × weekly_windows.current (measured full
+    five-hour windows the seven-day limit holds, from the passive meter log
+    -- not the calendar count of 28; JSON top-level key `weekly_windows`:
+    `{"current": 6.46, "history": [{"week_ending": "2026-09-04", "windows":
+    6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0}, ...]}`)
   - API value = Σ split tokens × price per class
 - Three inline dropdown words: plan, model, effort. No slider.
 - Headline template: "Anthropic last {increased|decreased} Claude's limits by

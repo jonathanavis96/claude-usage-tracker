@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-06T16:34:26.479843+00:00",
+ "generated_at": "2026-09-06T16:55:59.014385+00:00",
  "plan_ratio_5x_to_20x": 0.423,
  "split": {
   "input": 0.0001,
@@ -129,13 +129,96 @@
    "interpolated": false
   },
   "2026-09-06": {
-   "tokens_per_pct": 3057171,
+   "tokens_per_pct": 3122094,
    "interpolated": false
   }
  },
  "session_tokens": {
-  "claude-sonnet-5": 627295,
+  "claude-sonnet-5": 630012,
   "claude-opus-5": 1595528,
   "claude-fable-5-1": 11239886
+ },
+ "weekly_windows": {
+  "current": 6.46,
+  "history": [
+   {
+    "week_ending": "2026-06-19",
+    "windows": 9.5,
+    "five_hour_pct": 532.0,
+    "seven_day_pct": 56.0
+   },
+   {
+    "week_ending": "2026-06-26",
+    "windows": 10.91,
+    "five_hour_pct": 742.0,
+    "seven_day_pct": 68.0
+   },
+   {
+    "week_ending": "2026-07-03",
+    "windows": 9.94,
+    "five_hour_pct": 527.0,
+    "seven_day_pct": 53.0
+   },
+   {
+    "week_ending": "2026-07-10",
+    "windows": 10.25,
+    "five_hour_pct": 533.0,
+    "seven_day_pct": 52.0
+   },
+   {
+    "week_ending": "2026-07-17",
+    "windows": 9.96,
+    "five_hour_pct": 498.0,
+    "seven_day_pct": 50.0
+   },
+   {
+    "week_ending": "2026-07-24",
+    "windows": 10.08,
+    "five_hour_pct": 373.0,
+    "seven_day_pct": 37.0
+   },
+   {
+    "week_ending": "2026-07-31",
+    "windows": 10.45,
+    "five_hour_pct": 491.0,
+    "seven_day_pct": 47.0
+   },
+   {
+    "week_ending": "2026-08-07",
+    "windows": 11.03,
+    "five_hour_pct": 397.0,
+    "seven_day_pct": 36.0
+   },
+   {
+    "week_ending": "2026-08-14",
+    "windows": 11.0,
+    "five_hour_pct": 506.0,
+    "seven_day_pct": 46.0
+   },
+   {
+    "week_ending": "2026-08-21",
+    "windows": 6.8,
+    "five_hour_pct": 381.0,
+    "seven_day_pct": 56.0
+   },
+   {
+    "week_ending": "2026-08-28",
+    "windows": 6.58,
+    "five_hour_pct": 250.0,
+    "seven_day_pct": 38.0
+   },
+   {
+    "week_ending": "2026-09-04",
+    "windows": 6.35,
+    "five_hour_pct": 324.0,
+    "seven_day_pct": 51.0
+   },
+   {
+    "week_ending": "2026-09-11",
+    "windows": 5.58,
+    "five_hour_pct": 212.0,
+    "seven_day_pct": 38.0
+   }
+  ]
  }
 }
