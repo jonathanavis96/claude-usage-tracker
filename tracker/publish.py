@@ -6,10 +6,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from .detect import detect_changes, latest_change
-from .passive import PLAN_CHANGE
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
-HISTORY_DAYS = 180
 MAX_SAMPLE_AGE_DAYS = 10
 
 
@@ -62,9 +60,27 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     further scaling is needed there). meter_weight corrects for the 5-hour
     meter charging models at a different rate than their list price implies
     (see docs/spike-2026-09.md, 2026-09-06 ruling); a model missing the key
-    defaults to 1.0. A model's `rates` entry is "probe" sourced only when it
-    is the model the latest row actually probed; every other model in
-    prices.json is "derived".
+    defaults to 1.0.
+
+    The published `history` is a step function of the measured limit, not
+    the raw daily series: Jonathan's own passive account is noisy 2x-5x day
+    to day (the rolling meter decays), and the public chart must show only
+    what change detection actually found, not that noise and not his plan
+    history. detect_changes splits the model-agnostic dollar series into
+    regimes; each regime is held flat at the median of the probe readings
+    that fall inside it, and every model's tokens_per_window for that regime
+    is that same median divided by the model's own blended price times its
+    own meter_weight -- so every model steps on the same dates, just at
+    different levels. Days before the first probe (when passive history
+    reaches further back) are folded into the first regime and held flat at
+    its value: the passive record certifies no step larger than the 30
+    July-18 August plan change happened before probing started, so nothing
+    in that gap can be measured, only held. A day's `source` is "probe" when
+    this exact model was probed that day, "derived" when the day falls in a
+    probed regime but another model was the one actually probed, and "held"
+    for the pre-first-probe fill. `interpolated` stays false everywhere --
+    it is a step function, not an interpolation, and the page should never
+    draw a dot on a held or derived day.
     """
     passive_split = passive.get("split", {})
     if not probe_rows:
@@ -75,44 +91,67 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     dollar_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100) for r in probe_rows]
     events = detect_changes(dollar_readings)
     last = latest_change(events)
+    regime_starts = sorted({e.date for e in events})
+
+    def regime_index(d: date) -> int:
+        idx = 0
+        for rd in regime_starts:
+            if d >= rd:
+                idx += 1
+            else:
+                break
+        return idx
 
     by_day_value: dict[date, list[float]] = {}
     by_day_models: dict[date, set[str]] = {}
+    regime_values: dict[int, list[float]] = {}
     for r in probe_rows:
         d = datetime.fromisoformat(r["ts"]).date()
-        by_day_value.setdefault(d, []).append(usd_per_pct(r, prices[r["model"]]) * 100)
+        v = usd_per_pct(r, prices[r["model"]]) * 100
+        by_day_value.setdefault(d, []).append(v)
         by_day_models.setdefault(d, set()).add(r["model"])
+        regime_values.setdefault(regime_index(d), []).append(v)
 
     latest_row = max(probe_rows, key=lambda r: r["ts"])
-    api_value_per_window = usd_per_pct(latest_row, prices[latest_row["model"]]) * 100
+    first_probe_day = min(by_day_value)
     # A missing/lagging passive.json is allowed (it arrives from masterrig), so fall back to
     # the latest probe row's own class split rather than blowing up on an empty split.
     passive_split = passive_split or _row_split(latest_row)
 
+    passive_history = passive.get("history", {})
+    first_day = min((date.fromisoformat(ds) for ds in passive_history), default=first_probe_day)
+    first_day = min(first_day, first_probe_day)
+    last_day = now.date()
+    current_regime = regime_index(last_day)
+    current_regime_value = median(regime_values[current_regime])
+    api_value_per_window = current_regime_value
+
     # Published ratios only: the passive-observed 5x-to-20x ratio is too noisy to publish
     # (see docs/spike-2026-09.md); the page cites it in caveats instead.
     ratios = dict(PLAN_RATIOS_BASE)
-    cutoff = now.date() - timedelta(days=HISTORY_DAYS)
-    first_probe_day = min(by_day_value, default=None)
     rates, history = {}, {}
     for model, price in prices.items():
         blended = blended_price_per_token(passive_split, price)
         weight = price.get("meter_weight", 1.0)
-        rates[model] = {"tokens_per_window": round(api_value_per_window / (blended * weight)),
+        rates[model] = {"tokens_per_window": round(current_regime_value / (blended * weight)),
                         "source": "probe" if model == latest_row["model"] else "derived",
                         "probe_effort": latest_row["effort"],
                         "split": passive_split,
                         "api_value_per_window": round(api_value_per_window, 2)}
         hist = []
-        for ds, v in sorted(passive.get("history", {}).items()):
-            d = date.fromisoformat(ds)
-            if d >= cutoff and (first_probe_day is None or d < first_probe_day):
-                hist.append({"date": ds, "tokens_per_window": round(v["tokens_per_pct"] * 100), "source": "passive", "interpolated": bool(v.get("interpolated"))})
-        for d in sorted(by_day_value):
-            if d >= cutoff:
-                day_value = median(by_day_value[d])
-                hist.append({"date": d.isoformat(), "tokens_per_window": round(day_value / (blended * weight)),
-                            "source": "probe" if model in by_day_models[d] else "derived", "interpolated": False})
+        d = first_day
+        while d <= last_day:
+            idx = regime_index(d)
+            regime_value = median(regime_values[idx])
+            if d < first_probe_day:
+                source = "held"
+            elif model in by_day_models.get(d, set()):
+                source = "probe"
+            else:
+                source = "derived"
+            hist.append({"date": d.isoformat(), "tokens_per_window": round(regime_value / (blended * weight)),
+                        "source": source, "interpolated": False})
+            d += timedelta(days=1)
         history[model] = hist
     last_sample = max((r["ts"] for r in probe_rows), default=None)
     # The page freezes generated_at, so a stale publish would silently present old
@@ -138,13 +177,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
 
 
 def _build_events(events: list) -> list[dict]:
-    plan_event = {"date": PLAN_CHANGE.isoformat(), "kind": "plan", "label": "Plan changed to Max 20x"}
-    change_events = [
+    return [
         {"date": e.date.isoformat(), "kind": "change",
          "label": f"Window changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
         for e in events
     ]
-    return [plan_event, *change_events]
 
 
 def write_json(path: Path, obj: dict) -> None:
