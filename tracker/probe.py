@@ -65,6 +65,44 @@ def probe_prompt(salt: str, index: int, words: int = PROBE_PAYLOAD_WORDS) -> str
     return PROBE_PROMPT + "\n".join(lines)
 
 
+_ROLES = ("a lighthouse keeper", "an overnight baker", "a subway dispatcher", "a wildlife vet",
+          "a night-shift nurse", "a ferry captain", "a beekeeper", "a glacier guide")
+_PLACES = ("in a coastal fishing town", "in a mountain village", "in a desert outpost",
+           "in a river delta city", "on a remote island", "in a highland farming valley",
+           "in a rainforest research station", "in an arctic research base")
+_SEASONS = ("during the monsoon season", "during a harsh winter", "during the height of summer",
+            "during the spring thaw", "during the autumn harvest", "during a long drought",
+            "during the rainy season", "during the first snowfall")
+
+
+def output_prompt(salt: str, index: int) -> str:
+    """A short, unique-per-(salt, index) prompt whose entire cost is in the reply.
+
+    Where `probe_prompt` measures cache-write-heavy traffic (a big payload, a one-word
+    reply), this measures output-heavy traffic: a prompt under 200 words asking for
+    roughly 4,000 words of original narrative prose, so nearly all the token spend lands
+    on the output side of the ledger instead of the input side.
+
+    The topic is a deterministic triple (role, place, season) picked from short phrase
+    lists by `random.Random(f"{salt}:{index}")`, the same uniqueness contract as
+    `probe_prompt`, so no two prompts in a run are identical and none can be served from
+    cache.
+    """
+    rng = random.Random(f"{salt}:{index}")
+    role = rng.choice(_ROLES)
+    place = rng.choice(_PLACES)
+    season = rng.choice(_SEASONS)
+    return (
+        f"Write approximately 4,000 words of original narrative prose about a day in the "
+        f"life of {role} {place} {season}. Write it as continuous prose: no lists, no "
+        f"headings, no bullet points, no section breaks, just plain paragraphs telling the "
+        f"story in order. Invent whatever specific detail you need; none of it needs to be "
+        f"factual. Keep writing until you reach roughly 4,000 words, then stop; do not "
+        f"summarize, do not wrap up early, and do not add any closing remarks after the "
+        f"story ends."
+    )
+
+
 class ProbeAbort(Exception):
     pass
 
@@ -83,6 +121,7 @@ class ProbeResult:
     seven_day_before: float | None = None
     seven_day_after: float | None = None
     readings: list = field(default_factory=list)
+    payload: str = "prose"
 
 
 def _same_window(a: Utilization, b: Utilization) -> bool:
@@ -95,7 +134,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                    run: Callable[[int], RunUsage], sleep: Callable[[float], None],
                    now: Callable[[], datetime], max_prompts: int = 80, settle_s: float = 60,
                    deadline: datetime | None = None, usd_per_token: dict | None = None,
-                   ticks: int = 5) -> ProbeResult:
+                   ticks: int = 5, payload: str = "prose") -> ProbeResult:
     """Loop prompts until the 5-hour meter has advanced `ticks` percent past the first
     observed tick, and report tokens spent over that whole span.
 
@@ -105,7 +144,9 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     run: every sleep is charged against it and the probe aborts once it passes.
     `usd_per_token` is the model's entry from data/prices.json (USD per million tokens);
     when given, a span our own prompts cannot pay for is rejected rather than published
-    as a rate.
+    as a rate. `payload` is recorded on the result only, so the publisher can tell a
+    cache-write-heavy prose probe apart from an output-heavy one; the actual prompt text
+    comes from `run`, not from this function.
     """
     from .publish import tokens_usd
     start = now()
@@ -149,7 +190,8 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                     elapsed = (now() - start).total_seconds()
                     total = sum(spent.values())
                     return ProbeResult(start, model, effort, total / advanced, spent, prompts, tick1,
-                                       int(cur.five_hour), elapsed, before.seven_day, cur.seven_day, readings)
+                                       int(cur.five_hour), elapsed, before.seven_day, cur.seven_day, readings,
+                                       payload)
         last = cur
     raise ProbeAbort(f"no second tick after {prompts} prompts")
 
@@ -205,7 +247,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-wait", type=int, default=4 * 3600)
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
     ap.add_argument("--ticks", type=int, default=5, help="percent to advance past the first tick before reporting")
+    ap.add_argument("--payload", choices=("prose", "output"), default="prose",
+                    help="prose: cache-write-heavy fixed payload with a one-word reply (default). "
+                         "output: short prompt asking for ~4,000 words of reply, to measure output-token weight")
     a = ap.parse_args(argv)
+    builder = output_prompt if a.payload == "output" else probe_prompt
     home = Path.home()
     accounts = [tuple(x.split("=", 1)) for x in a.account] or [("dave", home / ".claude-dave"), ("jono", home / ".claude-javiswork")]
     accounts = [(n, Path(p)) for n, p in accounts]
@@ -244,8 +290,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         salt = clock().isoformat()
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
-                           lambda i: run_prompt(probe_prompt(salt, i), a.model, a.effort, cfg),
-                           time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks)
+                           lambda i: run_prompt(builder(salt, i), a.model, a.effort, cfg),
+                           time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks,
+                           payload=a.payload)
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
         return 4
