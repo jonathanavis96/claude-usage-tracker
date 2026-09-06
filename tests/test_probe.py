@@ -29,6 +29,16 @@ class PromptTests(unittest.TestCase):
         self.assertNotEqual(a, c)
         self.assertEqual(len(a.split()), len(c.split()))
 
+    def test_probe_prompt_is_prose(self):
+        from tracker.probe import probe_prompt, PROBE_PROMPT
+        prompt = probe_prompt("s", 0, 100)
+        body = prompt[len(PROBE_PROMPT):]
+        lines = body.splitlines()
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertTrue(line.endswith("."), f"line does not end with a full stop: {line!r}")
+        self.assertGreaterEqual(len(body.split()), 100)
+
 
 class JitterTests(unittest.TestCase):
     def test_is_idle_ignores_sub_minute_resets_at_jitter(self):
