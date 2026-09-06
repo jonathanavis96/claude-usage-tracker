@@ -1,5 +1,5 @@
 {
-  "_source": "https://docs.anthropic.com/en/docs/about-claude/pricing fetched 2026-09-06; USD per million tokens; cache_write is the 5-minute rate. meter_weight is meter percent per list dollar relative to Sonnet 5; Fable's 1.0 is measured: the 2026-09-06 5-tick Fable probe cost $1.08 of list value per 1% against $0.98 for Sonnet on the same cache-write-heavy payload (ratio 0.91, within probe error). class_weight is meter percent per list dollar for each token class relative to cache_write, the class the Sonnet probe is made of: output 1.8 is measured (2026-09-06 output-heavy Fable probe, $0.589 list per 1% against $1.081 for the cache-write-heavy payload, 9 prompts over 5 ticks so about +-11%); input and cache_read are unmeasured and assumed 1.0; the same class weights are assumed for every model.",
+  "_source": "https://docs.anthropic.com/en/docs/about-claude/pricing fetched 2026-09-06; USD per million tokens; cache_write is the 5-minute rate. meter_weight is meter percent per list dollar relative to Sonnet 5; Fable's 1.0 is measured: the 2026-09-06 5-tick Fable probe cost $1.08 of list value per 1% against $0.98 for Sonnet on the same cache-write-heavy payload (ratio 0.91, within probe error). class_weight is meter percent per list dollar for each token class relative to cache_write, the class the Sonnet probe is made of. class_weight.output is maintained by the publisher (tracker/weight.py): the weekly Sunday Fable output run (bin/output-probe.sh, payload output) supplies a row, and the next daily publish solves the weight at which that row and the latest Fable prose row read the same meter dollars per 1%, writes it to every model here, and records the pair under _output_weight; a value more than 30% from the current one is refused, recorded with applied false, and alerts Jonathan instead. The 1.8 hand-entered on 2026-09-06 was the crude ratio of the two rows' list values; the first automatic recompute from the same pair gave 1.95 because the output row's own cache traffic (12% of its list value) sits on the unweighted side. input and cache_read are unmeasured and assumed 1.0; the same class weights are assumed for every model.",
   "claude-sonnet-5": {
     "input": 2,
     "output": 10,
@@ -8,7 +8,7 @@
     "meter_weight": 1.0,
     "class_weight": {
       "input": 1.0,
-      "output": 1.8,
+      "output": 1.95,
       "cache_read": 1.0,
       "cache_write": 1.0
     }
@@ -21,7 +21,7 @@
     "meter_weight": 1.0,
     "class_weight": {
       "input": 1.0,
-      "output": 1.8,
+      "output": 1.95,
       "cache_read": 1.0,
       "cache_write": 1.0
     }
@@ -34,9 +34,18 @@
     "meter_weight": 1.0,
     "class_weight": {
       "input": 1.0,
-      "output": 1.8,
+      "output": 1.95,
       "cache_read": 1.0,
       "cache_write": 1.0
     }
+  },
+  "_output_weight": {
+    "output_row": "2026-09-06T12:06:58.599078+00:00",
+    "prose_row": "2026-09-06T11:16:29.286577+00:00",
+    "value": 1.95,
+    "previous": 1.8,
+    "applied": true,
+    "computed_at": "2026-09-06T15:08:05+00:00",
+    "guard": 0.3
   }
 }

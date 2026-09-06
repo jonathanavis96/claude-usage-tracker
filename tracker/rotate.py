@@ -31,9 +31,10 @@ and by its meter_weight. So Opus and Fable get an expectation before they have e
 been probed, and every model's expectation moves together when the limit moves.
 
 Rows are usable when they are prose (no `payload` key, from before the flag existed, or
-`"payload": "prose"`) and not flagged `outlier`. Output rows never enter a median and
-never move the rotation; they are ticket #5's weekly weight run. An outlier row does
-not enter a median but does count as its model's turn.
+`"payload": "prose"`) and not flagged `outlier`; the rules live in tracker/rows.py and the
+publisher applies the same ones. Output rows never enter a median and never move the
+rotation; they are the weekly weight run (bin/output-probe.sh). An outlier row does not
+enter a median but does count as its model's turn.
 """
 from __future__ import annotations
 import json
@@ -43,6 +44,7 @@ from datetime import datetime
 from pathlib import Path
 from statistics import median
 from .publish import blended_price_per_token, load_probes, usd_per_pct
+from .rows import is_output, is_outlier
 
 ROTATION = ("claude-sonnet-5", "claude-opus-5", "claude-fable-5-1")
 DRIFT_THRESHOLD = 0.15
@@ -61,17 +63,17 @@ def _by_ts(rows: list[dict]) -> list[dict]:
 
 
 def is_prose(row: dict) -> bool:
-    return row.get("payload", "prose") == "prose"
+    return not is_output(row)
 
 
 def prose_rows(rows: list[dict]) -> list[dict]:
-    """Prose rows in time order, flagged outliers included."""
+    """Prose rows in time order, flagged outliers included (tracker/rows.py rules)."""
     return [r for r in _by_ts(rows) if is_prose(r)]
 
 
 def usable_rows(rows: list[dict]) -> list[dict]:
     """Prose rows that may enter a median: not flagged as outliers. Time order."""
-    return [r for r in prose_rows(rows) if not r.get("outlier")]
+    return [r for r in prose_rows(rows) if not is_outlier(r)]
 
 
 def next_model(rows: list[dict]) -> str:
