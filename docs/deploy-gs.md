@@ -7,11 +7,13 @@ branch. masterrig runs only the passive join.
 ## Crontab on gs
 
 ```
-5 4,16 * * *  /home/jonathan/claude-usage-tracker/bin/probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-probe.log 2>&1
+5 4 * * 1     /home/jonathan/claude-usage-tracker/bin/probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-probe.log 2>&1
 30 5 * * *    /home/jonathan/claude-usage-tracker/bin/daily.sh >> /home/jonathan/.paperclip/ops/claude-usage-daily.log 2>&1
 ```
 
-Times are UTC. `probe.sh` rotates Sonnet 5 / Opus 5 / Fable 5.1 by slot and
+Times are UTC. `probe.sh` runs weekly and always probes Sonnet 5; every other
+model's rate is derived from that one model's dollar value (the API-list
+invariant, see `docs/spike-2026-09.md`) rather than probed directly. It
 appends to `history/probes.jsonl`, committing and pushing to `build`.
 `daily.sh` pulls `build` (which also brings `history/passive.json` pushed
 from masterrig), runs `tracker.publish`, and commits

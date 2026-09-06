@@ -9,7 +9,7 @@ from .detect import detect_changes, latest_change
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
 HISTORY_DAYS = 90
-MAX_SAMPLE_AGE_DAYS = 3
+MAX_SAMPLE_AGE_DAYS = 10
 
 
 def load_probes(path: Path) -> list[dict]:
@@ -40,50 +40,63 @@ def _row_split(row: dict) -> dict:
     return {cls: tokens[cls] / total for cls in ("input", "output", "cache_read", "cache_write")}
 
 
-def probe_daily_series(rows: list[dict], prices: dict, split: dict, trailing_days: int = 3) -> dict[str, dict[date, float]]:
-    by_model: dict[str, dict[date, list[float]]] = {}
-    for r in rows:
-        d = datetime.fromisoformat(r["ts"]).date()
-        price = prices[r["model"]]
-        split_for_row = split if split else _row_split(r)
-        value = usd_per_pct(r, price) * 100 / blended_price_per_token(split_for_row, price)
-        by_model.setdefault(r["model"], {}).setdefault(d, []).append(value)
-    out: dict[str, dict[date, float]] = {}
-    for model, days in by_model.items():
-        series: dict[date, float] = {}
-        for d in sorted(days):
-            window = [v for dd, vs in days.items() if d - timedelta(days=trailing_days - 1) <= dd <= d for v in vs]
-            series[d] = median(window)
-        out[model] = series
-    return out
-
-
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime) -> dict:
+    """Derive every model's rate from one probed model's dollar value.
+
+    Only one model is probed (see bin/probe.sh, weekly cadence). Its API-list
+    dollar value per window is the invariant: every other model's
+    tokens_per_window is that same dollar amount divided by the model's own
+    blended price per token (blended_price_per_token returns USD per token,
+    not per million, so no further scaling is needed). A model's `rates`
+    entry is "probe" sourced only when it is the model the latest row
+    actually probed; every other model in prices.json is "derived".
+    """
     passive_split = passive.get("split", {})
-    series = probe_daily_series(probe_rows, prices, passive_split)
-    events = detect_changes(series)
+    if not probe_rows:
+        raise ValueError("no probe rates to publish")
+
+    # One model-agnostic dollar series: what a full window (100%) of usage
+    # would have cost at API list prices, regardless of which model probed it.
+    dollar_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100) for r in probe_rows]
+    events = detect_changes(dollar_readings)
     last = latest_change(events)
+
+    by_day_value: dict[date, list[float]] = {}
+    by_day_models: dict[date, set[str]] = {}
+    for r in probe_rows:
+        d = datetime.fromisoformat(r["ts"]).date()
+        by_day_value.setdefault(d, []).append(usd_per_pct(r, prices[r["model"]]) * 100)
+        by_day_models.setdefault(d, set()).add(r["model"])
+
+    latest_row = max(probe_rows, key=lambda r: r["ts"])
+    api_value_per_window = usd_per_pct(latest_row, prices[latest_row["model"]]) * 100
+    # A missing/lagging passive.json is allowed (it arrives from masterrig), so fall back to
+    # the latest probe row's own class split rather than blowing up on an empty split.
+    passive_split = passive_split or _row_split(latest_row)
+
     # Published ratios only: the passive-observed 5x-to-20x ratio is too noisy to publish
     # (see docs/spike-2026-09.md); the page cites it in caveats instead.
     ratios = dict(PLAN_RATIOS_BASE)
     cutoff = now.date() - timedelta(days=HISTORY_DAYS)
-    first_probe_day = min((min(s) for s in series.values()), default=None)
+    first_probe_day = min(by_day_value, default=None)
     rates, history = {}, {}
-    for model, s in series.items():
-        latest_day = max(s)
-        latest_row = max((r for r in probe_rows if r["model"] == model), key=lambda r: r["ts"])
-        rates[model] = {"tokens_per_window": round(s[latest_day]), "source": "probe",
+    for model, price in prices.items():
+        blended = blended_price_per_token(passive_split, price)
+        rates[model] = {"tokens_per_window": round(api_value_per_window / blended),
+                        "source": "probe" if model == latest_row["model"] else "derived",
                         "probe_effort": latest_row["effort"],
                         "split": passive_split,
-                        "api_value_per_window": round(usd_per_pct(latest_row, prices[model]) * 100, 2)}
+                        "api_value_per_window": round(api_value_per_window, 2)}
         hist = []
         for ds, v in sorted(passive.get("history", {}).items()):
             d = date.fromisoformat(ds)
             if d >= cutoff and (first_probe_day is None or d < first_probe_day):
                 hist.append({"date": ds, "tokens_per_window": round(v["tokens_per_pct"] * 100), "source": "passive", "interpolated": bool(v.get("interpolated"))})
-        for d in sorted(s):
+        for d in sorted(by_day_value):
             if d >= cutoff:
-                hist.append({"date": d.isoformat(), "tokens_per_window": round(s[d]), "source": "probe", "interpolated": False})
+                day_value = median(by_day_value[d])
+                hist.append({"date": d.isoformat(), "tokens_per_window": round(day_value / blended),
+                            "source": "probe" if model in by_day_models[d] else "derived", "interpolated": False})
         history[model] = hist
     last_sample = max((r["ts"] for r in probe_rows), default=None)
     # The page freezes generated_at, so a stale publish would silently present old
