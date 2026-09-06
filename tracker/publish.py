@@ -9,6 +9,7 @@ from .detect import detect_changes, latest_change
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
 HISTORY_DAYS = 90
+MAX_SAMPLE_AGE_DAYS = 3
 
 
 def load_probes(path: Path) -> list[dict]:
@@ -82,9 +83,16 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 hist.append({"date": d.isoformat(), "tokens_per_window": round(s[d]), "source": "probe", "interpolated": False})
         history[model] = hist
     last_sample = max((r["ts"] for r in probe_rows), default=None)
+    # The page freezes generated_at, so a stale publish would silently present old
+    # numbers as current instead of letting the page's own stale warning fire.
+    if not rates:
+        raise ValueError("no probe rates to publish")
+    if last_sample is None or datetime.fromisoformat(last_sample) < now - timedelta(days=MAX_SAMPLE_AGE_DAYS):
+        raise ValueError(f"newest probe sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
     return {
         "generated_at": now.isoformat(),
         "last_sample_at": last_sample,
+        "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
         "plan_ratios": ratios,
         "rate_basis": "api_value",
@@ -116,8 +124,12 @@ def main(argv: list[str] | None = None) -> int:
     # A missing passive file is allowed (it arrives from masterrig and may lag); an unreadable one is not.
     try:
         passive = json.loads(a.passive.read_text()) if a.passive.exists() else {}
-        effort = {k: v for k, v in json.loads(a.effort.read_text()).items() if not k.startswith("_")}
-        j = build_public_json(load_probes(a.probes), passive, effort, json.loads(a.prices.read_text()), datetime.now(timezone.utc))
+        effort_raw = json.loads(a.effort.read_text())
+        if effort_raw.get("_status") == "placeholder":
+            raise ValueError(f"{a.effort} is still a placeholder; calibrate it before publishing")
+        effort = {k: v for k, v in effort_raw.items() if not k.startswith("_")}
+        prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
+        j = build_public_json(load_probes(a.probes), passive, effort, prices, datetime.now(timezone.utc))
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
