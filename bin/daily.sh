@@ -44,6 +44,19 @@ if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
 
+# The publisher rewrites data/prices.json when the weekly output run supplied a
+# new output class weight (tracker/weight.py), or to record one it refused. That
+# is tracker state, so it goes back to this repo's branch; the site gets the
+# published JSON below. Advisory: a failed push is a warning, the file is still
+# committed locally and the next pull --rebase --autostash carries it.
+git add data/prices.json
+if ! git diff --cached --quiet; then
+  git -c user.name=publisher -c user.email=publisher@gs commit -q -m "Output class weight $(date -u +%FT%H:%MZ)"
+  if ! git push -q origin "$BRANCH"; then
+    echo "warning: git push of data/prices.json failed, committed locally only" >&2
+  fi
+fi
+
 (
   cd "$SITE" || exit 1
   git add website/public/data/claude-usage.json
@@ -63,8 +76,9 @@ publish_rc=$?
 # (which reads NOTIFY_ALERT_TO and the bearer secret from
 # ~/.claude-usage-notify.env, and skips with a note when either is missing).
 # Advisory, like everything after the publish: it can never change this
-# script's exit status. The weekly weight guard (publisher) raises its alert
-# through the same helper.
+# script's exit status. The weekly weight guard (tracker/weight.py, run inside
+# tracker.publish above) raises its refused-weight alert in-process through the
+# same helper's send_alert.
 alert_jonathan() {
   python3 -m tracker.alert --subject "$1" --text "$2" || true
 }
