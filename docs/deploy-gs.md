@@ -53,8 +53,8 @@ ssh gs 'tail -3 ~/claude-usage-tracker/history/probes.jsonl'
 ```
 
 Probe exit codes: 0 ok, 3 no idle account within the wait, 4 aborted (window
-reset or a jump the probe cannot explain), 5 another tracker job held
-/tmp/claude-usage-tracker.lock. A run costs about 1% of the account's 5-hour
+reset or a jump the probe cannot explain), 5 another tracker job held the
+checkout's .cron.lock. A run costs about 1% of the account's 5-hour
 window.
 
 Daily publisher exit codes: 0 ok, 1 publish refused or failed (previous JSON
