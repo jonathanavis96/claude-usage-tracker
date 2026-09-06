@@ -11,15 +11,56 @@ branch. masterrig runs only the passive join.
 30 5 * * *    /home/jonathan/claude-usage-tracker/bin/daily.sh >> /home/jonathan/.paperclip/ops/claude-usage-daily.log 2>&1
 ```
 
-Times are UTC. `probe.sh` runs weekly and always probes Sonnet 5; every other
-model's rate is derived from that one model's dollar value (the API-list
-invariant, see `docs/spike-2026-09.md`) rather than probed directly. It
-appends to `history/probes.jsonl`, committing and pushing to `build`.
+To install with the cron switchover (not in the live crontab as of 2026-09-06):
+
+```
+0 6 * * 0     /home/jonathan/claude-usage-tracker/bin/output-probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-output-probe.log 2>&1
+```
+
+Times are UTC. `probe.sh` is one rotation slot: `tracker/rotate.py` picks
+the model (Sonnet 5, Opus 5, Fable 5.1 in turn, from the last prose row in
+`history/probes.jsonl`) and its expectation (the last median dollar value
+per 1% through the API-list invariant, see `docs/spike-2026-09.md`), runs a
+3-tick probe, checks the new row for drift against the median of that
+model's last four prose rows (more than 15% away), and on drift reruns once
+with 2 ticks and decides: rerun agrees with the median, the first row is an
+outlier and is flagged in place (`"outlier": true`, ignored by the publisher
+and the rotation); rerun agrees with the first row, a change; neither,
+inconclusive. Each row is committed and pushed to `build` as it lands. The
+cron line above still runs it weekly; the 00:00 and 12:00 rotation cadence
+is the next switchover. `python3 -m tracker.rotate plan` is the dry run: the
+flags every model would be probed with and which is next.
 `daily.sh` pulls `build` (which also brings `history/passive.json` pushed
 from masterrig), runs `tracker.publish`, and commits
 `website/public/data/claude-usage.json` into the site checkout at
 `~/all-done-sites-platform` on `main`, then pushes. Cloudflare Pages builds
 from that push.
+
+## Weekly output class weight
+
+`output-probe.sh` runs Sunday 06:00 UTC: a 5-tick Fable 5.1 probe with
+`--payload output`, appended to `history/probes.jsonl` tagged
+`"payload": "output"`. It measures how hard the meter charges output tokens
+against their list price, not the limit, so the publisher keeps output rows
+out of every rate series (`tracker/rows.py`). Monday's `daily.sh` then has
+`tracker.publish` recompute `class_weight.output` from that row against the
+latest Fable prose row (`tracker/weight.py`), write it to every model in
+`data/prices.json` with the pair recorded under `_output_weight`, and commit
+and push `data/prices.json` to `build` before publishing the JSON. A weight
+more than 30% from the current one is not applied: the refusal is recorded
+(so it alerts once, not daily) and Jonathan gets one email through
+`tracker/alert.py`. To accept a refused value, edit `class_weight.output` on
+every model in `data/prices.json` by hand and commit.
+
+The run costs about 5% of Dave's 5-hour window (9 prompts of a 4,000-word
+reply over 5 ticks on 2026-09-06) and about 0.5% of the 7-day window. It
+takes the same `.cron.lock` as the other jobs, so it never overlaps a
+rotation probe; the 06:00 slot sits between the 00:00 and 12:00 rotation
+runs, and a run that starts within 20 minutes of a window reset waits for it.
+
+Output probe exit codes are `probe.sh`'s: 0 ok, 3 no idle account, 4 aborted,
+5 lock held. Exits 3 and 4 alert Jonathan; the weight then keeps its current
+value until the next Sunday.
 
 ## Crontab on masterrig
 
@@ -66,9 +107,12 @@ left in place), 6 the tracker lock was still held after waiting 600s.
 
 `tracker/alert.py` sends one email to Jonathan through the site's
 `/api/notify/send` endpoint (its admin `to` mode, bearer-secret guarded).
-`bin/probe.sh` raises one when the probe exits 3 or 4, `bin/daily.sh` when a
-new `last_change` is announced, and the rotation wrapper and weekly weight
-guard raise theirs (outlier, refused weight) through the same helper. Config
+`bin/probe.sh` and `bin/output-probe.sh` raise one when the probe exits 3 or
+4, `bin/daily.sh` when a new `last_change` is announced, the weekly weight
+guard (`tracker/weight.py`, inside `tracker.publish`) when it refuses a
+recomputed output class weight, and `bin/probe.sh` after a drift rerun
+(outlier, change confirmed, or inconclusive; and a rerun that wrote no row),
+all through the same helper. Config
 is `~/.claude-usage-notify.env` on gs (mode 600, never printed):
 
 ```

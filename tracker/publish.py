@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from .detect import detect_changes, latest_change
+from .rows import usable_rows
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
 MAX_SAMPLE_AGE_DAYS = 10
@@ -110,10 +111,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     current regime's value under the same key.
     """
     passive_split = passive.get("split", {})
-    # A row flagged `outlier` by the rotation's drift check (its rerun agreed with the
-    # earlier median, see tracker.rotate) stays in history but never enters a regime
-    # median or marks a probe day.
-    probe_rows = [r for r in probe_rows if not r.get("outlier")]
+    # Output rows (the weekly Fable weight run, payload "output") measure the meter's
+    # class weighting, not the limit, and a row flagged `outlier` by the rotation's
+    # drift check was contradicted by its rerun: neither enters the dollar series,
+    # the regime medians, change detection or the freshness check (tracker/rows.py).
+    probe_rows = usable_rows(probe_rows)
     if not probe_rows:
         raise ValueError("no probe rates to publish")
 
@@ -223,25 +225,39 @@ def write_json(path: Path, obj: dict) -> None:
     tmp.replace(path)  # atomic: a crash mid-write never truncates the previous file
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetime | None = None) -> int:
     import argparse
     from datetime import timezone
+    from .alert import ENV_FILE, _default_post
+    from .weight import update_output_weight
     ap = argparse.ArgumentParser(description="Write the public claude-usage.json")
     ap.add_argument("--probes", type=Path, required=True)
     ap.add_argument("--passive", type=Path, required=True, help="history/passive.json from bin/passive.sh")
     ap.add_argument("--effort", type=Path, default=Path("data/effort_matrix.json"))
-    ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
+    ap.add_argument("--prices", type=Path, default=Path("data/prices.json"),
+                    help="read for every model's price; rewritten when the weekly output run supplies a new output class weight")
+    ap.add_argument("--alert-env-file", type=Path, default=ENV_FILE, help="where the refused-weight alert finds its address")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
+    now = now or datetime.now(timezone.utc)
     # A missing passive file is allowed (it arrives from masterrig and may lag); an unreadable one is not.
     try:
+        probe_rows = load_probes(a.probes)
+        # The weekly output run's weight goes into prices.json first, so this publish uses
+        # it. Advisory: a bad pair of rows is a warning and the publish carries on with
+        # the weight prices.json already holds.
+        try:
+            update_output_weight(probe_rows, a.prices, post=post or _default_post, environ=environ,
+                                 env_file=a.alert_env_file, now=now)
+        except (OSError, ValueError, KeyError) as e:
+            print(f"warning: output weight not recomputed: {e}", file=sys.stderr)
         passive = json.loads(a.passive.read_text()) if a.passive.exists() else {}
         effort_raw = json.loads(a.effort.read_text())
         if effort_raw.get("_status") == "placeholder":
             raise ValueError(f"{a.effort} is still a placeholder; calibrate it before publishing")
         effort = {k: v for k, v in effort_raw.items() if not k.startswith("_")}
         prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
-        j = build_public_json(load_probes(a.probes), passive, effort, prices, datetime.now(timezone.utc))
+        j = build_public_json(probe_rows, passive, effort, prices, now)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
