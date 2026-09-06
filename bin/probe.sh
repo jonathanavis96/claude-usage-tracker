@@ -13,7 +13,7 @@ export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/cur
 cd "$(dirname "$0")/.." || exit 1
 
 # One tracker job at a time: a probe and the daily publisher share this checkout.
-LOCK=/tmp/claude-usage-tracker.lock
+LOCK="$(cd "$(dirname "$0")/.." && pwd)/.cron.lock"
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "probe skipped: another tracker job holds $LOCK" >&2

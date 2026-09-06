@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 # One tracker job at a time: a probe and the daily publisher share this checkout.
 # The publisher waits for a probe to finish rather than skipping the day.
-LOCK=/tmp/claude-usage-tracker.lock
+LOCK="$(cd "$(dirname "$0")/.." && pwd)/.cron.lock"
 exec 9>"$LOCK"
 if ! flock -w 600 9; then
   echo "daily skipped: could not take $LOCK within 600s" >&2
