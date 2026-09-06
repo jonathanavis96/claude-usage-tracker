@@ -40,6 +40,23 @@ class PromptTests(unittest.TestCase):
         self.assertGreaterEqual(len(body.split()), 100)
 
 
+class OutputPromptTests(unittest.TestCase):
+    def test_output_prompt_is_deterministic_and_unique_per_index(self):
+        from tracker.probe import output_prompt
+        a, b, c = output_prompt("s", 0), output_prompt("s", 0), output_prompt("s", 1)
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+
+    def test_output_prompt_is_under_200_words(self):
+        from tracker.probe import output_prompt
+        for i in range(5):
+            self.assertLess(len(output_prompt("s", i).split()), 200)
+
+    def test_output_prompt_mentions_the_4000_word_target(self):
+        from tracker.probe import output_prompt
+        self.assertIn("4,000 words", output_prompt("s", 0))
+
+
 class JitterTests(unittest.TestCase):
     def test_is_idle_ignores_sub_minute_resets_at_jitter(self):
         from tracker.probe import is_idle
@@ -171,3 +188,63 @@ class EarlyTickTests(unittest.TestCase):
                            sleep=lambda s: None, now=lambda: T0, usd_per_token=self.PRICE, ticks=1)
         self.assertEqual((r.tick_from, r.tick_to), (11, 12))
         self.assertEqual((r.seven_day_before, r.seven_day_after), (30.0, 30.0))
+
+
+class PayloadCliTests(unittest.TestCase):
+    def test_payload_output_reaches_prompt_builder(self):
+        """--payload output must make main()'s run() call output_prompt, not probe_prompt.
+
+        main() has real network/subprocess dependencies (choose_account, read_usage,
+        run_prompt), so those are faked out here (the existing fakes pattern used across
+        this suite); run_tick_probe itself is faked too, and used only to capture what the
+        `run` callable it was handed actually produces.
+        """
+        import json
+        import tempfile
+        import tracker.probe as probe_mod
+        import tracker.cli_run as cli_run_mod
+        import tracker.usage_api as usage_api_mod
+        from tracker.usage_api import Utilization
+
+        captured = {}
+
+        def fake_choose_account(accounts, read_for, sleep, max_wait_s=None, retry_s=None,
+                                now=None, deadline=None):
+            return accounts[0]
+
+        def fake_read_usage(cfg, fetch=None):
+            return Utilization(T0, 10.0, 30.0, "r1")
+
+        def fake_run_prompt(prompt_text, model, effort, cfg):
+            captured["prompt"] = prompt_text
+            return RunUsage(model, 10, 10, 10, 0, 0.001, 3.0)
+
+        def fake_run_tick_probe(model, effort, prompt, read, run, sleep, now, **kwargs):
+            captured["payload_kwarg"] = kwargs.get("payload")
+            run(0)
+            raise ProbeAbort("stop-test")
+
+        orig_choose = probe_mod.choose_account
+        orig_run_tick = probe_mod.run_tick_probe
+        orig_run_prompt = cli_run_mod.run_prompt
+        orig_read_usage = usage_api_mod.read_usage
+        probe_mod.choose_account = fake_choose_account
+        probe_mod.run_tick_probe = fake_run_tick_probe
+        cli_run_mod.run_prompt = fake_run_prompt
+        usage_api_mod.read_usage = fake_read_usage
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                prices = Path(d, "prices.json")
+                prices.write_text(json.dumps(
+                    {"claude-fable": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}}))
+                rc = probe_mod.main(["--model", "claude-fable", "--payload", "output",
+                                    "--account", f"dave={d}", "--prices", str(prices)])
+        finally:
+            probe_mod.choose_account = orig_choose
+            probe_mod.run_tick_probe = orig_run_tick
+            cli_run_mod.run_prompt = orig_run_prompt
+            usage_api_mod.read_usage = orig_read_usage
+
+        self.assertEqual(rc, 4)  # ProbeAbort path
+        self.assertEqual(captured["payload_kwarg"], "output")
+        self.assertIn("4,000 words", captured["prompt"])
