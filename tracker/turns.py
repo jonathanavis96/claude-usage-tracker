@@ -91,7 +91,7 @@ def session_tokens_by_model(paths: Iterable[Path], now: datetime | None = None,
         by_model: dict[str, int] = {}
         for t in turns:
             by_model[t.model] = by_model.get(t.model, 0) + t.total
-        top_model = max(by_model, key=by_model.get)
+        top_model = max(by_model, key=lambda m: by_model[m])
         model = normalize_model(top_model)
         if model is None:
             continue
