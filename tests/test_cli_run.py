@@ -48,3 +48,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(seen["env"]["CLAUDE_CONFIG_DIR"], "/x/.claude-dave")
         self.assertEqual(seen["prompt"], "say hi")
         self.assertEqual(u.output, 80)
+
+
+class ModelMismatchTests(unittest.TestCase):
+    def test_missing_hinted_model_raises_rather_than_measuring_another(self):
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-haiku-4-5-20251001": d["modelUsage"]["claude-sonnet-5"]}
+        with self.assertRaises(RuntimeError) as e:
+            parse_result(json.dumps(d), "claude-opus-5")
+        self.assertIn("claude-opus-5", str(e.exception))

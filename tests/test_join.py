@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timezone, timedelta, date
 from tracker.samples import Sample
 from tracker.turns import Turn
-from tracker.join import build_intervals, daily_rates
+from tracker.join import Interval, build_intervals, daily_rates
 
 T0 = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
 def S(mins, fh, reset="r1"): return Sample(T0 + timedelta(minutes=mins), fh, None, reset, "ceiling")
@@ -59,3 +59,15 @@ class DailyTests(unittest.TestCase):
         d2 = rates[date(2026, 9, 2)]
         self.assertTrue(d2.interpolated)
         self.assertAlmostEqual(d2.tokens_per_pct, d1.tokens_per_pct)
+
+
+class UtcBucketTests(unittest.TestCase):
+    def test_intervals_bucket_on_the_utc_day_not_the_local_one(self):
+        from datetime import timezone as tz
+        east = tz(timedelta(hours=4))
+        # 2026-09-02T01:00+04:00 is 2026-09-01T21:00Z: the local date is a day ahead
+        end = datetime(2026, 9, 2, 1, 0, tzinfo=east)
+        iv = Interval(T0, end, 1.0)
+        iv.tokens["cache_read"] = 1000
+        rates = daily_rates([iv] * 5)
+        self.assertEqual(list(rates), [date(2026, 9, 1)])
