@@ -25,21 +25,42 @@ def tokens_usd(tokens: dict, price: dict) -> float:
     return sum(tokens[cls] * price[cls] / 1e6 for cls in ("input", "output", "cache_read", "cache_write"))
 
 
+def class_weight(price: dict, cls: str) -> float:
+    """Meter weight of one token class relative to its list price.
+
+    The 5-hour meter does not charge every token class at its list-price
+    ratio: the 2026-09-06 output-heavy Fable probe cost $0.59 of list value
+    per 1% against $1.08 for the cache-write-heavy payload, so output tokens
+    weigh about 1.8x their list price (see docs/spike-2026-09.md). A missing
+    class_weight, or a class missing from it, defaults to 1.0 (cache_write,
+    the class the Sonnet invariant probe is made of).
+    """
+    return price.get("class_weight", {}).get(cls, 1.0)
+
+
+def meter_usd(tokens: dict, price: dict) -> float:
+    """Meter-dollar value of a token bundle: list value per class x class_weight."""
+    return sum(tokens[cls] * price[cls] * class_weight(price, cls) / 1e6
+               for cls in ("input", "output", "cache_read", "cache_write"))
+
+
 def usd_per_pct(row: dict, price: dict) -> float:
     """Meter-dollar value of a token bundle for one pct of a window.
 
-    Meter dollars = list dollars x meter_weight: the 5-hour meter does not
-    charge every model at its list-price ratio (see docs/spike-2026-09.md,
-    2026-09-06 ruling), so a probe on any model must be scaled by that
-    model's own weight before it can serve as a model-agnostic invariant.
-    A missing meter_weight defaults to 1.0 (Sonnet 5's own weight).
+    Meter dollars = list dollars x class_weight per token class x the model's
+    meter_weight: the 5-hour meter does not charge every model or every token
+    class at its list-price ratio (see docs/spike-2026-09.md, 2026-09-06
+    rulings), so a probe on any model must be scaled by both before it can
+    serve as a model-agnostic invariant. A missing meter_weight defaults to
+    1.0 (Sonnet 5's own weight).
     """
     weight = price.get("meter_weight", 1.0)
-    return tokens_usd(row["tokens"], price) * weight / (row["tick_to"] - row["tick_from"])
+    return meter_usd(row["tokens"], price) * weight / (row["tick_to"] - row["tick_from"])
 
 
 def blended_price_per_token(split: dict, price: dict) -> float:
-    return sum(frac * price[cls] / 1e6 for cls, frac in split.items())
+    """Meter dollars per token for a class split (class_weight applied, meter_weight not)."""
+    return sum(frac * price[cls] * class_weight(price, cls) / 1e6 for cls, frac in split.items())
 
 
 def _row_split(row: dict) -> dict:

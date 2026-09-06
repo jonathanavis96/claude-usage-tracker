@@ -36,6 +36,21 @@ class UsdPerPctTests(unittest.TestCase):
         price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
         self.assertAlmostEqual(usd_per_pct(row, price), 1.02, delta=1e-9)
 
+    def test_usd_per_pct_applies_class_weight(self):
+        # 100k output tokens at $10/M is $1.00 list; an output class_weight of 1.8
+        # makes the meter see $1.80, while the cache classes stay at list.
+        row = {"tokens": {"input": 0, "output": 100_000, "cache_read": 100_000, "cache_write": 0},
+               "tick_from": 10, "tick_to": 11}
+        price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5,
+                 "class_weight": {"output": 1.8}}
+        self.assertAlmostEqual(usd_per_pct(row, price), 1.82, delta=1e-9)
+
+    def test_blended_price_per_token_applies_class_weight(self):
+        price = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5,
+                 "class_weight": {"output": 1.8}}
+        split = {"output": 0.5, "cache_write": 0.5}
+        self.assertAlmostEqual(blended_price_per_token(split, price), (0.5 * 18 + 0.5 * 2.5) / 1e6, delta=1e-15)
+
     def test_blended_price_per_token_brief_example(self):
         # blended_price_per_token returns USD per TOKEN (note the /1e6 in its
         # body converts from prices.json's USD-per-million-tokens), not per
