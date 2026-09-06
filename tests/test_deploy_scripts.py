@@ -28,6 +28,13 @@ class TestDeployScriptsSyntax(unittest.TestCase):
     def test_daily_sh_syntax(self) -> None:
         self._check("daily.sh")
 
+    def test_both_wrappers_raise_alerts_through_the_helper(self) -> None:
+        # One helper, one address, one secret: neither wrapper may grow its own curl.
+        for name in ("probe.sh", "daily.sh"):
+            text = (BIN / name).read_text(encoding="utf-8")
+            self.assertIn("python3 -m tracker.alert", text, name)
+            self.assertIn("alert_jonathan()", text, name)
+
 
 class TestDailyNotifyChange(unittest.TestCase):
     """Run bin/daily.sh's notify_change function in isolation."""
@@ -78,9 +85,13 @@ class TestDailyNotifyChange(unittest.TestCase):
                 SITE=str(root / "site"),
                 PATH=f"{stub}{os.pathsep}{env['PATH']}",
                 REQUEST_LOG=str(root / "request.log"),
+                ALERT_LOG=str(root / "alert.log"),
             )
+            # The real alert_jonathan is defined by daily.sh outside notify_change and
+            # runs tracker.alert; here it is a stub that records its subject and text.
+            stub_alert = 'alert_jonathan() { printf \'%s\\n\' "$1" "$2" >> "$ALERT_LOG"; }'
             proc = subprocess.run(
-                ["bash", "-c", f"set -uo pipefail\n{self.func}\nnotify_change"],
+                ["bash", "-c", f"set -uo pipefail\n{stub_alert}\n{self.func}\nnotify_change"],
                 cwd=cwd,
                 env=env,
                 capture_output=True,
@@ -90,6 +101,8 @@ class TestDailyNotifyChange(unittest.TestCase):
             state = state_path.read_text(encoding="utf-8").strip() if state_path.exists() else None
             log_path = root / "request.log"
             request = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+            alert_path = root / "alert.log"
+            self.alerts = alert_path.read_text(encoding="utf-8") if alert_path.exists() else ""
             return proc, state, request
 
     CHANGE = {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"}
@@ -106,11 +119,15 @@ class TestDailyNotifyChange(unittest.TestCase):
             payload,
             {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"},
         )
+        # Jonathan gets his own alert for the confirmed change, quoting the outcome.
+        self.assertIn("Change confirmed: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
+        self.assertIn("HTTP 200", self.alerts)
 
     def test_skips_a_change_already_announced(self) -> None:
         proc, _state, request = self._run(last_change=self.CHANGE, notified="2026-09-11")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(request, "", "no request should be made for an announced change")
+        self.assertEqual(self.alerts, "", "an announced change must not alert again")
 
     def test_skips_when_there_is_no_change(self) -> None:
         proc, state, request = self._run(last_change=None)
@@ -129,6 +146,9 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIsNone(state, "a failed POST must not be recorded as announced")
         self.assertIn("will retry tomorrow", proc.stderr)
+        # The alert still goes out, and says the list send failed.
+        self.assertIn("Change confirmed: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
+        self.assertIn("HTTP 500", self.alerts)
 
     def test_incomplete_change_is_skipped(self) -> None:
         proc, state, request = self._run(last_change={"date": "2026-09-11"})

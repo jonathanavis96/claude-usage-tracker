@@ -62,6 +62,30 @@ window.
 Daily publisher exit codes: 0 ok, 1 publish refused or failed (previous JSON
 left in place), 6 the tracker lock was still held after waiting 600s.
 
+## Alerts to Jonathan
+
+`tracker/alert.py` sends one email to Jonathan through the site's
+`/api/notify/send` endpoint (its admin `to` mode, bearer-secret guarded).
+`bin/probe.sh` raises one when the probe exits 3 or 4, `bin/daily.sh` when a
+new `last_change` is announced, and the rotation wrapper and weekly weight
+guard raise theirs (outlier, refused weight) through the same helper. Config
+is `~/.claude-usage-notify.env` on gs (mode 600, never printed):
+
+```
+NOTIFY_SEND_SECRET=...        # already there: the send endpoint's bearer secret
+NOTIFY_ALERT_TO=...           # Jonathan's inbox; alerts are skipped until it is set
+```
+
+A test alert from gs:
+
+```
+cd ~/claude-usage-tracker && python3 -m tracker.alert --subject "Test alert" --text "Hello from gs."
+```
+
+It prints `alert: sent ...` on a 2xx, `alert: skipped, ...` when the env file
+lacks a key (exit 0), and `warning: alert ... refused` on a non-2xx (exit 1).
+The wrappers append `|| true`, so an alert can never fail the job that raised it.
+
 ## One-off: effort calibration
 
 ```
