@@ -116,6 +116,7 @@ class SendTests(unittest.TestCase):
         self.assertEqual(url, "http://127.0.0.1:1/send")
         self.assertEqual(headers["authorization"], "Bearer s3cr3t")
         self.assertEqual(headers["content-type"], "application/json")
+        self.assertTrue(headers["user-agent"].startswith("claude-usage-tracker/"))
         self.assertEqual(body["to"], "jonathan@example.com")
         self.assertEqual(body["subject"], "Claude usage tracker: Change confirmed")
         self.assertTrue(body["text"].startswith("Sonnet 5 up 7%\n\n-- claude-usage-tracker on gs, "))
