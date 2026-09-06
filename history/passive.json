@@ -1,11 +1,11 @@
 {
- "generated_at": "2026-09-05T23:01:58.358108+00:00",
- "plan_ratio_5x_to_20x": 0.3865,
+ "generated_at": "2026-09-06T01:15:12.749084+00:00",
+ "plan_ratio_5x_to_20x": 0.3805,
  "split": {
   "input": 0.0001,
-  "output": 0.0047,
-  "cache_read": 0.9654,
-  "cache_write": 0.0302
+  "output": 0.0044,
+  "cache_read": 0.9669,
+  "cache_write": 0.0285
  },
  "history": {
   "2026-07-30": {
@@ -37,47 +37,47 @@
    "interpolated": true
   },
   "2026-08-06": {
-   "tokens_per_pct": 886961,
+   "tokens_per_pct": 875501,
    "interpolated": false
   },
   "2026-08-07": {
-   "tokens_per_pct": 960568,
+   "tokens_per_pct": 966559,
    "interpolated": false
   },
   "2026-08-08": {
-   "tokens_per_pct": 1705462,
+   "tokens_per_pct": 1809204,
    "interpolated": false
   },
   "2026-08-09": {
-   "tokens_per_pct": 2290551,
+   "tokens_per_pct": 1530743,
    "interpolated": false
   },
   "2026-08-10": {
-   "tokens_per_pct": 1771284,
+   "tokens_per_pct": 2437855,
    "interpolated": false
   },
   "2026-08-11": {
-   "tokens_per_pct": 2394532,
+   "tokens_per_pct": 2307779,
    "interpolated": false
   },
   "2026-08-12": {
-   "tokens_per_pct": 1805840,
+   "tokens_per_pct": 1843969,
    "interpolated": false
   },
   "2026-08-13": {
-   "tokens_per_pct": 1855247,
+   "tokens_per_pct": 1547681,
    "interpolated": false
   },
   "2026-08-14": {
-   "tokens_per_pct": 3415040,
+   "tokens_per_pct": 3653460,
    "interpolated": false
   },
   "2026-08-15": {
-   "tokens_per_pct": 4931783,
+   "tokens_per_pct": 5707312,
    "interpolated": false
   },
   "2026-08-16": {
-   "tokens_per_pct": 5788280,
+   "tokens_per_pct": 5612980,
    "interpolated": false
   },
   "2026-08-17": {
@@ -85,11 +85,11 @@
    "interpolated": false
   },
   "2026-08-18": {
-   "tokens_per_pct": 3626586,
+   "tokens_per_pct": 3675348,
    "interpolated": false
   },
   "2026-08-19": {
-   "tokens_per_pct": 5447823,
+   "tokens_per_pct": 5901141,
    "interpolated": false
   },
   "2026-08-20": {
@@ -97,23 +97,23 @@
    "interpolated": false
   },
   "2026-08-21": {
-   "tokens_per_pct": 16247699,
+   "tokens_per_pct": 7414659,
    "interpolated": false
   },
   "2026-08-22": {
-   "tokens_per_pct": 5563975,
+   "tokens_per_pct": 5693653,
    "interpolated": false
   },
   "2026-08-23": {
-   "tokens_per_pct": 5278861,
+   "tokens_per_pct": 5365947,
    "interpolated": false
   },
   "2026-08-24": {
-   "tokens_per_pct": 6398502,
+   "tokens_per_pct": 6946980,
    "interpolated": false
   },
   "2026-08-25": {
-   "tokens_per_pct": 13619144,
+   "tokens_per_pct": 7572955,
    "interpolated": false
   },
   "2026-08-26": {
@@ -121,47 +121,47 @@
    "interpolated": false
   },
   "2026-08-27": {
-   "tokens_per_pct": 3493378,
+   "tokens_per_pct": 4017963,
    "interpolated": false
   },
   "2026-08-28": {
-   "tokens_per_pct": 4730516,
+   "tokens_per_pct": 3830475,
    "interpolated": false
   },
   "2026-08-29": {
-   "tokens_per_pct": 782585,
+   "tokens_per_pct": 800475,
    "interpolated": false
   },
   "2026-08-30": {
-   "tokens_per_pct": 1006825,
+   "tokens_per_pct": 1003185,
    "interpolated": false
   },
   "2026-08-31": {
-   "tokens_per_pct": 1483693,
+   "tokens_per_pct": 5067667,
    "interpolated": false
   },
   "2026-09-01": {
-   "tokens_per_pct": 8025724,
+   "tokens_per_pct": 8128827,
    "interpolated": false
   },
   "2026-09-02": {
-   "tokens_per_pct": 802618,
+   "tokens_per_pct": 562673,
    "interpolated": false
   },
   "2026-09-03": {
-   "tokens_per_pct": 605396,
+   "tokens_per_pct": 845840,
    "interpolated": false
   },
   "2026-09-04": {
-   "tokens_per_pct": 2003004,
+   "tokens_per_pct": 1761240,
    "interpolated": false
   },
   "2026-09-05": {
-   "tokens_per_pct": 1621737,
+   "tokens_per_pct": 3488902,
    "interpolated": false
   },
   "2026-09-06": {
-   "tokens_per_pct": 3752366,
+   "tokens_per_pct": 1645696,
    "interpolated": false
   }
  }
