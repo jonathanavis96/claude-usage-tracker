@@ -110,6 +110,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     current regime's value under the same key.
     """
     passive_split = passive.get("split", {})
+    # A row flagged `outlier` by the rotation's drift check (its rerun agreed with the
+    # earlier median, see tracker.rotate) stays in history but never enters a regime
+    # median or marks a probe day.
+    probe_rows = [r for r in probe_rows if not r.get("outlier")]
     if not probe_rows:
         raise ValueError("no probe rates to publish")
 
