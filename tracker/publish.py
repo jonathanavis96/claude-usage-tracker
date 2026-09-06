@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from .detect import detect_changes, latest_change
-from .rows import prose_rows
+from .rows import usable_rows
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
 MAX_SAMPLE_AGE_DAYS = 10
@@ -112,9 +112,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     """
     passive_split = passive.get("split", {})
     # Output rows (the weekly Fable weight run, payload "output") measure the meter's
-    # class weighting, not the limit: they never enter the dollar series, the regime
-    # medians, change detection or the freshness check (tracker/rows.py).
-    probe_rows = prose_rows(probe_rows)
+    # class weighting, not the limit, and a row flagged `outlier` by the rotation's
+    # drift check was contradicted by its rerun: neither enters the dollar series,
+    # the regime medians, change detection or the freshness check (tracker/rows.py).
+    probe_rows = usable_rows(probe_rows)
     if not probe_rows:
         raise ValueError("no probe rates to publish")
 
