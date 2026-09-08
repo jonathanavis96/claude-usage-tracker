@@ -1,8 +1,9 @@
 # Deployment on gs
 
 Everything unattended runs on the `gs` host (ssh alias) under the `jonathan`
-user, from a checkout of this repo at `~/claude-usage-tracker` on the `build`
-branch. masterrig runs only the passive join.
+user, from a checkout of this repo at `~/claude-usage-tracker` on `main` (the default
+branch since 2026-09-08; code changes arrive by pull request, while the cron jobs
+commit probe rows and the publisher's price write-back straight to `main`). masterrig runs only the passive join.
 
 ## Crontab on gs
 
