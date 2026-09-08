@@ -1,8 +1,9 @@
 # Deployment on gs
 
 Everything unattended runs on the `gs` host (ssh alias) under the `jonathan`
-user, from a checkout of this repo at `~/claude-usage-tracker` on the `build`
-branch. masterrig runs only the passive join.
+user, from a checkout of this repo at `~/claude-usage-tracker` on `main` (the default
+branch since 2026-09-08; code changes arrive by pull request, while the cron jobs
+commit probe rows and the publisher's price write-back straight to `main`). masterrig runs only the passive join.
 
 ## Crontab on gs
 
@@ -23,12 +24,13 @@ model's last four prose rows (more than 15% away), and on drift reruns once
 with 2 ticks and decides: rerun agrees with the median, the first row is an
 outlier and is flagged in place (`"outlier": true`, ignored by the publisher
 and the rotation); rerun agrees with the first row, a change; neither,
-inconclusive. Each row is committed and pushed to `build` as it lands. The
+inconclusive. Each row is committed and pushed to `main` as it lands. The
 cron line above still runs it weekly; the 00:00 and 12:00 rotation cadence
 is the next switchover. `python3 -m tracker.rotate plan` is the dry run: the
 flags every model would be probed with and which is next.
-`daily.sh` pulls `build` (which also brings `history/passive.json` pushed
-from masterrig), runs `tracker.publish`, and commits
+`daily.sh` pulls `main` (which also brings `history/passive.json` pushed
+from masterrig, whose checkout must likewise sit on `main`: `bin/passive.sh`
+commits to whatever branch that checkout has out), runs `tracker.publish`, and commits
 `website/public/data/claude-usage.json` into the site checkout at
 `~/all-done-sites-platform` on `main`, then pushes. Cloudflare Pages builds
 from that push.
@@ -43,7 +45,7 @@ out of every rate series (`tracker/rows.py`). Monday's `daily.sh` then has
 `tracker.publish` recompute `class_weight.output` from that row against the
 latest Fable prose row (`tracker/weight.py`), write it to every model in
 `data/prices.json` with the pair recorded under `_output_weight`, and commit
-and push `data/prices.json` to `build` before publishing the JSON. A weight
+and push `data/prices.json` to `main` before publishing the JSON. A weight
 more than 30% from the current one is not applied: the refusal is recorded
 (so it alerts once, not daily) and Jonathan gets one email through
 `tracker/alert.py`. To accept a refused value, edit `class_weight.output` on

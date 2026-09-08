@@ -13,7 +13,7 @@
 #            neither -> inconclusive, nothing flagged
 #   alert    one email to Jonathan for an outlier, a change or an inconclusive pair
 #
-# Each row is committed and pushed as soon as it lands (build branch, private repo)
+# Each row is committed and pushed as soon as it lands (the checkout's branch, main, private repo)
 # so masterrig's daily publisher can see it; the outlier flag is a second commit.
 #
 # Exit codes bubble up from tracker.probe: 0 ok, 3 no idle account, 4 aborted; a

@@ -177,6 +177,11 @@ class ProbeResult:
     # Mirrors seven_day_before/after, which measure the same whole-run span.
     five_hour_before: float | None = None
     five_hour_after: float | None = None
+    # The account's own weekly reset boundary, so probe_weekly_windows can bucket
+    # by the real weekly window instead of falling back to the ISO week. Taken
+    # from the last reading (`cur`, at exit) rather than the first, since that
+    # is the reading closest to the moment the run's d7 is attributed.
+    seven_day_resets_at: str | None = None
 
 
 def _same_window(a: Utilization, b: Utilization) -> bool:
@@ -321,7 +326,8 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                                        payload, payload_words=payload_words, ticks=ticks, skip=skip,
                                        settle_s=settle_s, expect_tokens_per_pct=expect_tokens_per_pct,
                                        early_tick=early_tick, reset_start=reset_start,
-                                       five_hour_before=before.five_hour, five_hour_after=cur.five_hour)
+                                       five_hour_before=before.five_hour, five_hour_after=cur.five_hour,
+                                       seven_day_resets_at=cur.seven_day_resets_at)
         last = cur
     raise ProbeAbort(f"no second tick after {prompts} prompts")
 
