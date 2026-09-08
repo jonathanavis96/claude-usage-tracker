@@ -15,6 +15,7 @@ from typing import Iterable
 _FIVE_HOUR_TOLERANCE = timedelta(seconds=120)
 _MIN_FIVE_HOUR_PCT = 50.0
 _MIN_PROBE_FIVE_HOUR_PCT = 20.0
+_MIN_PROBE_SEVEN_DAY_PCT = 10.0
 
 
 def parse_rows(lines: Iterable[str]) -> list[dict | None]:
@@ -138,9 +139,14 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     movement); d7 = seven_day_after - seven_day_before is discarded when < 0.
     Rows are bucketed by the row's own weekly reset date when present
     (`seven_day_resets_at`, first 10 chars), else by the ISO week (Sunday) its
-    `ts` falls in. windows = d5/d7 for weeks with d7 > 0 and d5 >= 20 (a
+    `ts` falls in. windows = d5/d7 for weeks with d5 >= 20 and d7 >= 10 (a
     single tick-probe run rarely moves the five-hour meter by much, so the
-    passive log's 50-point floor would empty this out entirely).
+    passive log's 50-point floor would empty this out entirely). The d7 floor
+    guards against the seven-day meter's own whole-percent quantisation: a
+    week whose summed d7 is only a few points carries error on the order of
+    +-33% (one point out of three), which is enough to fabricate a spurious
+    jump in `windows` on its own -- three probe rows once published a week
+    with d5=21, d7=3 (windows=7.0) purely from that rounding.
 
     `current` is the median of the last two COMPLETE weeks (a week is complete
     once its week-ending date is in the past).
@@ -167,7 +173,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     history = []
     for week_key in sorted(buckets):
         b = buckets[week_key]
-        if b["d7"] > 0 and b["d5"] >= _MIN_PROBE_FIVE_HOUR_PCT:
+        if b["d7"] >= _MIN_PROBE_SEVEN_DAY_PCT and b["d5"] >= _MIN_PROBE_FIVE_HOUR_PCT:
             history.append({
                 "week_ending": week_key,
                 "windows": round(b["d5"] / b["d7"], 2),

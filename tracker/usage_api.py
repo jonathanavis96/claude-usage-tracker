@@ -19,6 +19,7 @@ class Utilization:
     five_hour: float | None
     seven_day: float | None
     five_hour_resets_at: str | None
+    seven_day_resets_at: str | None = None
 
 
 def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
@@ -29,8 +30,9 @@ def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
 
 def parse_usage(body: dict, now: datetime) -> Utilization:
     fh, fh_reset = _bucket(body, "five_hour")
-    sd, _ = _bucket(body, "seven_day")
-    return Utilization(ts=now, five_hour=fh, seven_day=sd, five_hour_resets_at=fh_reset)
+    sd, sd_reset = _bucket(body, "seven_day")
+    return Utilization(ts=now, five_hour=fh, seven_day=sd, five_hour_resets_at=fh_reset,
+                        seven_day_resets_at=sd_reset)
 
 
 RETRY_429_S = (30, 60, 120, 240, 480)

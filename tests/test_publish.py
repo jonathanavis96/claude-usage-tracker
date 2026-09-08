@@ -354,10 +354,10 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
     def test_probe_weeks_replace_passive_max20_weeks_from_the_first_probe_week_on(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         for r, (fhb, fha, sdb, sda, wk) in zip(rows, [
-            (10.0, 40.0, 10.0, 12.0, "2026-08-28T03:59:59+00:00"),
-            (10.0, 45.0, 10.0, 13.0, "2026-08-28T03:59:59+00:00"),
-            (10.0, 50.0, 10.0, 12.0, "2026-09-04T03:59:59+00:00"),
-            (10.0, 55.0, 10.0, 13.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 40.0, 10.0, 15.0, "2026-08-28T03:59:59+00:00"),
+            (10.0, 45.0, 10.0, 16.0, "2026-08-28T03:59:59+00:00"),
+            (10.0, 50.0, 10.0, 15.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 55.0, 10.0, 16.0, "2026-09-04T03:59:59+00:00"),
             (10.0, 30.0, 10.0, 20.0, "2026-09-11T03:59:59+00:00"),  # newest week, incomplete
         ]):
             r["five_hour_before"], r["five_hour_after"] = fhb, fha
