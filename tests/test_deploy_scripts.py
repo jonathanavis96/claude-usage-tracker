@@ -15,7 +15,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from tracker.rotate import expectation
+from tracker.publish import blended_price_per_token, usd_per_pct
+from tracker.rotate import _split, expectation
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "bin"
@@ -317,7 +318,11 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertLess(expect, 579819)
         # rerun: same model, 2 ticks, the smaller of the median and the drifted reading
         # (in dollars), converted back to tokens through the drifted row's own split
-        self.assertIn("--model claude-sonnet-5 --expect-tokens-per-pct 501410 --ticks 2", args[1])
+        price = prices["claude-sonnet-5"]
+        median_usd = usd_per_pct(SONNET_0939, price)
+        per_token = blended_price_per_token(_split(SONNET_1433), price) * price.get("meter_weight", 1.0)
+        rerun_expect = round(min(median_usd, usd_per_pct(SONNET_1433, price)) / per_token)
+        self.assertIn(f"--model claude-sonnet-5 --expect-tokens-per-pct {rerun_expect} --ticks 2", args[1])
         self.assertIn("drift check: drift claude-sonnet-5 $1.132/1% against median $0.979/1% (+16%)", proc.stdout)
         self.assertIn("decision: outlier claude-sonnet-5", proc.stdout)
         self.assertEqual([r.get("outlier", False) for r in rows], [False, False, True, False])
