@@ -296,14 +296,15 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertIn("--model claude-opus-5 --expect-tokens-per-pct 187111", args[0])
         self.assertIn("--effort low", args[0])
         self.assertNotIn("--ticks", args[0])
-        self.assertIn("drift check: ok claude-opus-5 190000: no earlier prose row", proc.stdout)
+        self.assertIn("drift check: ok claude-opus-5 $1.188/1%: no earlier prose row", proc.stdout)
         self.assertEqual(rows[-1]["model"], "claude-opus-5")
         self.assertEqual(alerts, "")
         self.assertRegex(log[0], r"^Probe \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z claude-opus-5$")
         self.assertEqual(log[1], "seed")
 
     def test_drift_reruns_with_two_ticks_and_flags_the_outlier(self):
-        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 470000, ticks=2)
+        # 391,566 tpp is $0.979/1% (real prices.json), agreeing with the earlier median
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 391566, ticks=2)
         proc, args, alerts, rows, log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         self.assertEqual(len(args), 2)
@@ -315,8 +316,9 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertGreater(expect, 467779)
         self.assertLess(expect, 579819)
         # rerun: same model, 2 ticks, the smaller of the median and the drifted reading
-        self.assertIn("--model claude-sonnet-5 --expect-tokens-per-pct 467779 --ticks 2", args[1])
-        self.assertIn("drift check: drift claude-sonnet-5 579819 against median 467779 (+24%)", proc.stdout)
+        # (in dollars), converted back to tokens through the drifted row's own split
+        self.assertIn("--model claude-sonnet-5 --expect-tokens-per-pct 501410 --ticks 2", args[1])
+        self.assertIn("drift check: drift claude-sonnet-5 $1.132/1% against median $0.979/1% (+16%)", proc.stdout)
         self.assertIn("decision: outlier claude-sonnet-5", proc.stdout)
         self.assertEqual([r.get("outlier", False) for r in rows], [False, False, True, False])
         self.assertIn("Outlier on claude-sonnet-5", alerts)
@@ -327,18 +329,20 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(log[3], "seed")
 
     def test_drift_confirmed_by_the_rerun_is_a_change_and_flags_nothing(self):
-        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 590000, ticks=2)
+        # 452,798 tpp is $1.132/1% (real prices.json), agreeing with the drifted reading
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 452798, ticks=2)
         proc, args, alerts, rows, log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         self.assertEqual(len(args), 2)
         self.assertIn("decision: change claude-sonnet-5", proc.stdout)
         self.assertFalse(any(r.get("outlier") for r in rows))
         self.assertIn("Change confirmed on claude-sonnet-5", alerts)
-        self.assertIn("increased +25%", alerts)
+        self.assertIn("increased +16%", alerts)
         self.assertEqual(len(log), 3)  # seed, row, rerun: no third commit without a flag
 
     def test_inconclusive_pair_alerts_and_flags_nothing(self):
-        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 800000, ticks=2)
+        # about 3x the earlier median in dollars: agrees with neither
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 1174699, ticks=2)
         proc, _args, alerts, rows, _log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         self.assertIn("decision: inconclusive", proc.stdout)

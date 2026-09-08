@@ -444,7 +444,9 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(min(seconds, remaining))
 
     def fetch(url, headers):
-        return _default_fetch(url, headers, sleep=deadline_sleep)
+        # No max_retries: a 429 is retried until deadline_sleep itself raises
+        # ProbeAbort("deadline") once the run's wall-clock budget is gone.
+        return _default_fetch(url, headers, sleep=deadline_sleep, max_retries=None)
 
     def read_for(name):
         return lambda: read_usage(account_cfgs[name], fetch=fetch)
