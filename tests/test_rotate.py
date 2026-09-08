@@ -2,8 +2,11 @@
 row it produced drifted.
 
 The drift tests use the two real Sonnet rows from history/probes.jsonl: the 09:39
-5-tick reading (467,778.6 tokens per 1%) and the first burst-first row at 14:33
-(579,818.7), which is 24% above it.
+5-tick reading and the first burst-first row at 14:33. Drift is now compared in
+meter dollars per 1% (tracker.publish.usd_per_pct), not raw tokens/1%, so these two
+rows' dollar values (about $0.979 and $1.132, +16%) differ from their raw
+tokens/1% ratio (467,778.6 vs 579,818.7, +24%): both are pure cache-write-heavy but
+their class splits differ enough that the two measures disagree slightly.
 """
 from __future__ import annotations
 import io
@@ -163,40 +166,46 @@ class DriftTests(unittest.TestCase):
         self.assertEqual(DRIFT_THRESHOLD, 0.15)
 
     def test_the_first_burst_first_sonnet_row_drifted_against_the_0939_reading(self):
-        # real data: 579,818.7 against a median of 467,778.6 is +24%, outside the 15% band
-        d = check_drift([SONNET_0939, SONNET_1433])
+        # real data: the two rows differ in class split (see module docstring), so
+        # the dollar ratio (+16%) differs from the raw tokens/1% ratio (+24%) but is
+        # still outside the 15% band
+        want_median = usd_per_pct(SONNET_0939, PRICES["claude-sonnet-5"])
+        want_value = usd_per_pct(SONNET_1433, PRICES["claude-sonnet-5"])
+        d = check_drift([SONNET_0939, SONNET_1433], PRICES)
         self.assertTrue(d.drifted)
-        self.assertAlmostEqual(d.median, 467778.6, delta=0.1)
-        self.assertAlmostEqual(d.value, 579818.67, delta=0.1)
-        self.assertEqual(round(d.ratio * 100), 24)
+        self.assertAlmostEqual(d.median, want_median, delta=1e-9)
+        self.assertAlmostEqual(d.value, want_value, delta=1e-9)
+        self.assertEqual(round(d.ratio * 100), 16)
         self.assertEqual(d.model, "claude-sonnet-5")
 
     def test_the_full_real_history_still_calls_it_drift(self):
-        # with the 23:04 (490,713) and 04:07 (272,631) rows in front, the median of the
-        # three prior Sonnet prose rows is still the 09:39 reading
+        # with the 23:04 (490,713) and 04:07 (272,631) tokens/1% rows in front, the
+        # median of the three prior Sonnet prose rows is still the 09:39 reading
         rows = [row("2026-09-05T23:04:47+00:00", "claude-sonnet-5", 490713.0),
                 row("2026-09-06T04:07:08+00:00", "claude-sonnet-5", 272631.0),
                 SONNET_0939,
                 row("2026-09-06T11:16:29+00:00", "claude-fable-5-1", 117896.8),
                 row("2026-09-06T12:06:58+00:00", "claude-fable-5-1", 31724.4, payload="output"),
                 SONNET_1433]
-        d = check_drift(rows)
+        d = check_drift(rows, PRICES)
         self.assertTrue(d.drifted)
-        self.assertAlmostEqual(d.median, 467778.6, delta=0.1)
+        self.assertAlmostEqual(d.median, usd_per_pct(SONNET_0939, PRICES["claude-sonnet-5"]), delta=1e-9)
 
     def test_within_band_is_not_drift(self):
-        d = check_drift([SONNET_0939, row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 500000)])
+        d = check_drift([SONNET_0939, row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 420000)], PRICES)
         self.assertFalse(d.drifted)
         self.assertLess(abs(d.ratio), DRIFT_THRESHOLD)
 
     def test_exactly_fifteen_percent_is_not_drift(self):
-        d = check_drift([row("2026-09-06T00:00:00+00:00", "claude-sonnet-5", 100000),
-                         row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 115000)])
+        # chosen so the dollar conversion (tokens -> meter_usd -> /1%) lands at
+        # exactly 0.15 rather than a hair over, unlike 100000/115000 (float rounding)
+        d = check_drift([row("2026-09-06T00:00:00+00:00", "claude-sonnet-5", 80000),
+                         row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 92000)], PRICES)
         self.assertFalse(d.drifted)
 
     def test_drift_downwards(self):
         d = check_drift([row("2026-09-06T00:00:00+00:00", "claude-sonnet-5", 100000),
-                         row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 80000)])
+                         row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 80000)], PRICES)
         self.assertTrue(d.drifted)
         self.assertAlmostEqual(d.ratio, -0.2)
 
@@ -210,72 +219,111 @@ class DriftTests(unittest.TestCase):
                 row("2026-09-05T00:00:00+00:00", "claude-sonnet-5", 110000),
                 row("2026-09-06T00:00:00+00:00", "claude-sonnet-5", 120000),
                 row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 130000)]
-        d = check_drift(rows)
-        self.assertAlmostEqual(d.median, 105000)  # median of 100k, 100k, 110k, 120k
+        d = check_drift(rows, PRICES)
+        # median of 100k, 100k, 110k, 120k tokens/1% -> 105000 * $2.5/1e6 cache_write price
+        self.assertAlmostEqual(d.median, 105000 * 2.5e-6)
         self.assertTrue(d.drifted)  # 130k / 105k = +24%
 
     def test_first_row_for_a_model_cannot_drift(self):
-        d = check_drift([SONNET_0939, row("2026-09-07T00:00:00+00:00", "claude-opus-5", 200000)])
+        d = check_drift([SONNET_0939, row("2026-09-07T00:00:00+00:00", "claude-opus-5", 200000)], PRICES)
         self.assertFalse(d.drifted)
         self.assertIsNone(d.median)
 
     def test_an_output_row_is_never_checked(self):
         rows = [SONNET_0939, row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 20000, payload="output")]
-        self.assertIsNone(check_drift(rows))
+        self.assertIsNone(check_drift(rows, PRICES))
 
     def test_empty_history_is_none(self):
-        self.assertIsNone(check_drift([]))
+        self.assertIsNone(check_drift([], PRICES))
+
+    def test_a_model_with_no_price_cannot_be_checked(self):
+        rows = [row("2026-09-06T00:00:00+00:00", "claude-haiku-4-5", 100000),
+                row("2026-09-07T00:00:00+00:00", "claude-haiku-4-5", 150000)]
+        self.assertIsNone(check_drift(rows, PRICES))
+
+    def test_different_splits_equal_dollars_is_not_drift(self):
+        # two same-model rows whose token-class splits differ (cache_read 27% vs 51%
+        # of a cache-write-heavy split) but whose meter dollars/1% agree closely
+        cheap_split = row("2026-09-06T00:00:00+00:00", "claude-fable-5-1", 1)
+        cheap_split["tokens"] = {"input": 28, "output": 70, "cache_read": 160622, "cache_write": 428764}
+        cheap_split["tick_from"], cheap_split["tick_to"] = 8, 13
+        rich_split = row("2026-09-07T00:00:00+00:00", "claude-fable-5-1", 1)
+        rich_split["tokens"] = {"input": 48, "output": 120, "cache_read": 275352, "cache_write": 261782}
+        rich_split["tick_from"], rich_split["tick_to"] = 3, 6
+        d = check_drift([cheap_split, rich_split], PRICES)
+        # tokens/1% differ by +52% (117,896.8 vs 179,100.7) but dollars/1% only +3%
+        self.assertLess(abs(d.ratio), DRIFT_THRESHOLD)
+        self.assertFalse(d.drifted)
+
+    def test_equal_splits_thirty_percent_token_difference_is_drift(self):
+        rows = [row("2026-09-06T00:00:00+00:00", "claude-fable-5-1", 100000),
+                row("2026-09-07T00:00:00+00:00", "claude-fable-5-1", 130000)]
+        d = check_drift(rows, PRICES)
+        self.assertTrue(d.drifted)
+        self.assertAlmostEqual(d.ratio, 0.3, delta=0.01)
 
 
 class DecideTests(unittest.TestCase):
     """After a drift, the rerun's row is last and the drifted row is the same model's
-    previous prose row. The earlier median is taken from the rows before the drifted one."""
+    previous prose row. The earlier median is taken from the rows before the drifted one.
+
+    Judged in meter dollars/1%: the earlier median is $0.979 (SONNET_0939) and the
+    drifted reading is $1.132 (SONNET_1433). The rerun rows below are pure cache-write,
+    so their dollars/1% is tpp * $2.5/1e6 (the sonnet cache_write price)."""
 
     def _rows(self, rerun_tpp):
         return [SONNET_0939, SONNET_1433, row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", rerun_tpp, ticks=2)]
 
     def test_rerun_agreeing_with_the_median_makes_the_drifted_row_an_outlier(self):
-        v = decide(self._rows(470000))
+        v = decide(self._rows(391541), PRICES)  # $0.979/1%, agrees with the earlier median
         self.assertEqual(v.verdict, "outlier")
         self.assertEqual(v.outlier_ts, SONNET_1433["ts"])
-        self.assertAlmostEqual(v.median, 467778.6, delta=0.1)
-        self.assertAlmostEqual(v.first, 579818.67, delta=0.1)
-        self.assertEqual(v.rerun, 470000)
+        self.assertAlmostEqual(v.median, usd_per_pct(SONNET_0939, PRICES["claude-sonnet-5"]), delta=1e-6)
+        self.assertAlmostEqual(v.first, usd_per_pct(SONNET_1433, PRICES["claude-sonnet-5"]), delta=1e-6)
+        self.assertAlmostEqual(v.rerun, 391541 * 2.5e-6, delta=1e-9)
 
     def test_rerun_agreeing_with_the_drifted_row_is_a_change(self):
-        v = decide(self._rows(590000))
+        v = decide(self._rows(452755), PRICES)  # $1.132/1%, agrees with the drifted reading
         self.assertEqual(v.verdict, "change")
         self.assertIsNone(v.outlier_ts)
-        self.assertEqual(round(v.ratio * 100), 25)  # mean of the two readings against the median
+        self.assertEqual(round(v.ratio * 100), 16)  # mean of the two readings against the median
         self.assertEqual(v.direction, "increased")
 
     def test_change_downwards(self):
         rows = [row("2026-09-05T00:00:00+00:00", "claude-sonnet-5", 100000),
                 row("2026-09-06T00:00:00+00:00", "claude-sonnet-5", 70000),
                 row("2026-09-06T02:00:00+00:00", "claude-sonnet-5", 72000, ticks=2)]
-        v = decide(rows)
+        v = decide(rows, PRICES)
         self.assertEqual((v.verdict, v.direction), ("change", "decreased"))
 
     def test_rerun_agreeing_with_neither_is_inconclusive_and_flags_nothing(self):
-        v = decide(self._rows(800000))
+        v = decide(self._rows(1174622), PRICES)  # about 3x the earlier median in dollars
         self.assertEqual(v.verdict, "inconclusive")
         self.assertIsNone(v.outlier_ts)
 
     def test_rerun_closer_to_the_median_wins_when_it_agrees_with_both(self):
-        # 530k is within 15% of both 467.8k (+13%) and 579.8k (-9%): the earlier
-        # median is the null hypothesis, so the drifted row is the outlier
-        v = decide(self._rows(530000))
+        # 417,557 tpp ($1.044/1%) is within 15% of both the median and the drifted
+        # reading: the earlier median is the null hypothesis, so the drifted row is
+        # the outlier
+        v = decide(self._rows(417557), PRICES)
         self.assertEqual(v.verdict, "outlier")
 
     def test_rerun_on_a_different_model_is_an_error(self):
         rows = [SONNET_0939, SONNET_1433, row("2026-09-06T16:00:00+00:00", "claude-opus-5", 200000)]
         with self.assertRaises(ValueError):
-            decide(rows)
+            decide(rows, PRICES)
 
     def test_no_earlier_median_is_an_error(self):
         rows = [SONNET_1433, row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 470000)]
         with self.assertRaises(ValueError):
-            decide(rows)
+            decide(rows, PRICES)
+
+    def test_model_with_no_price_is_an_error(self):
+        rows = [row("2026-09-05T00:00:00+00:00", "claude-haiku-4-5", 100000),
+                row("2026-09-06T00:00:00+00:00", "claude-haiku-4-5", 100000),
+                row("2026-09-06T02:00:00+00:00", "claude-haiku-4-5", 100000, ticks=2)]
+        with self.assertRaises(ValueError):
+            decide(rows, PRICES)
 
 
 class MarkOutlierTests(unittest.TestCase):
@@ -349,9 +397,10 @@ class CliTests(unittest.TestCase):
     def test_flags_rerun_targets_the_drifted_rows_model_with_two_ticks(self):
         rc, out, _, _ = self._run(["flags", "--rerun"], [SONNET_0939, SONNET_1433])
         self.assertEqual(rc, 0)
-        # the smaller of the median and the drifted reading, so the burst cannot
-        # overshoot whichever of the two turns out to be true
-        self.assertEqual(out.strip(), "--model claude-sonnet-5 --expect-tokens-per-pct 467779 --ticks 2")
+        # the smaller of the median and the drifted reading in dollars, converted
+        # back to tokens through the drifted (newest) row's own class split, so the
+        # burst cannot overshoot whichever of the two turns out to be true
+        self.assertEqual(out.strip(), "--model claude-sonnet-5 --expect-tokens-per-pct 501424 --ticks 2")
 
     def test_flags_rerun_after_a_downward_drift_uses_the_lower_reading(self):
         rows = [row("2026-09-06T00:00:00+00:00", "claude-sonnet-5", 100000),
@@ -363,12 +412,13 @@ class CliTests(unittest.TestCase):
         rc, out, _, _ = self._run(["check"], [SONNET_0939, SONNET_1433])
         self.assertEqual(rc, 10)
         self.assertTrue(out.startswith("drift claude-sonnet-5 "), out)
-        self.assertIn("579819", out)
-        self.assertIn("467779", out)
-        self.assertIn("+24%", out)
+        self.assertIn("$1.132/1%", out)
+        self.assertIn("$0.979/1%", out)
+        self.assertIn("+16%", out)
 
     def test_check_reports_ok_with_exit_0(self):
-        rc, out, _, _ = self._run(["check"], [SONNET_0939, row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 480000)])
+        # $1.00/1% against a median of $0.979/1% (+2%): well within band
+        rc, out, _, _ = self._run(["check"], [SONNET_0939, row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 400000)])
         self.assertEqual(rc, 0)
         self.assertTrue(out.startswith("ok claude-sonnet-5 "), out)
 
@@ -380,7 +430,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
 
     def test_decide_outlier_marks_the_row_and_says_so(self):
-        rows = [SONNET_0939, SONNET_1433, row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 470000, ticks=2)]
+        rows = [SONNET_0939, SONNET_1433, row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 391541, ticks=2)]
         rc, out, _, text = self._run(["decide"], rows)
         self.assertEqual(rc, 0)
         self.assertTrue(out.startswith("outlier claude-sonnet-5 "), out)
@@ -388,7 +438,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual([r.get("outlier", False) for r in lines], [False, True, False])
 
     def test_decide_change_marks_nothing(self):
-        rows = [SONNET_0939, SONNET_1433, row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 590000, ticks=2)]
+        rows = [SONNET_0939, SONNET_1433, row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 452755, ticks=2)]
         rc, out, _, text = self._run(["decide"], rows)
         self.assertEqual(rc, 0)
         self.assertTrue(out.startswith("change claude-sonnet-5 "), out)

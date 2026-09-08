@@ -1,5 +1,6 @@
 """Read subscription utilization from the Claude OAuth usage endpoint."""
 from __future__ import annotations
+import functools
 import json
 import time
 import urllib.error
@@ -33,21 +34,39 @@ def parse_usage(body: dict, now: datetime) -> Utilization:
 
 
 RETRY_429_S = (30, 60, 120, 240, 480)
+RETRY_429_MAX_S = 1200  # 20 minutes: doubling backoff caps here once RETRY_429_S is exhausted
 
 
-def _default_fetch(url: str, headers: dict, sleep: Callable[[float], None] = time.sleep) -> dict:
-    """GET the usage endpoint; on 429 back off and retry, honouring Retry-After when present."""
+def _default_fetch(url: str, headers: dict, sleep: Callable[[float], None] = time.sleep,
+                    max_retries: int | None = None) -> dict:
+    """GET the usage endpoint; on 429 back off and retry, honouring Retry-After when present.
+
+    The first five waits are RETRY_429_S (30, 60, ..., 480 s); after that the wait keeps
+    doubling, capped at RETRY_429_MAX_S (20 minutes), and retries continue indefinitely
+    (`max_retries=None`, the default) rather than re-raising: a scheduled probe with a
+    wall-clock deadline supplies a `sleep` that raises once the deadline is gone (see
+    tracker/probe.py's `deadline_sleep`), which is the only thing that should stop this
+    loop. A caller with no deadline of its own must pass a `max_retries` bound so a run
+    cannot spin forever (see `read_usage`'s default fetch below). Non-429 HTTP errors
+    still raise immediately.
+    """
     req = urllib.request.Request(url, headers=headers)
-    for wait in (*RETRY_429_S, None):
+    wait = RETRY_429_S[0]
+    attempt = 0
+    while True:
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.loads(r.read().decode())
         except urllib.error.HTTPError as e:
-            if e.code != 429 or wait is None:
+            if e.code != 429:
                 raise
+            if max_retries is not None and attempt >= max_retries:
+                raise
+            wait = RETRY_429_S[attempt] if attempt < len(RETRY_429_S) else min(wait * 2, RETRY_429_MAX_S)
             ra = e.headers.get("Retry-After") if e.headers else None
-            sleep(max(float(ra), wait) if ra and ra.isdigit() else wait)
-    raise AssertionError("unreachable")
+            actual_wait = min(max(float(ra), wait), RETRY_429_MAX_S) if ra and ra.isdigit() else wait
+            sleep(actual_wait)
+            attempt += 1
 
 
 def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = None,
@@ -57,7 +76,11 @@ def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = Non
         raise FileNotFoundError(f"no credentials at {creds}")
     token = json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
     headers = {"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"}
-    body = (fetch or _default_fetch)(USAGE_URL, headers)
+    # No caller-supplied deadline here, so the default fetch is bounded: it retries a
+    # 429 up to len(RETRY_429_S) extra times (matching the old fixed schedule's length)
+    # rather than spinning forever, unlike tracker/probe.py's deadline-bounded fetch.
+    default_fetch = functools.partial(_default_fetch, max_retries=len(RETRY_429_S))
+    body = (fetch or default_fetch)(USAGE_URL, headers)
     return parse_usage(body, (now or (lambda: datetime.now(timezone.utc)))())
 
 

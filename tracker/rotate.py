@@ -13,14 +13,18 @@ from `history/probes.jsonl` (the same rows the publisher reads) and `data/prices
           earlier median and the drifted reading as the expectation, so the opening
           burst cannot overshoot whichever of the two turns out to be true.
   check   drift check of the newest row against the median of that model's last four
-          usable prose rows: exit 10 and `drift ...` when it is more than 15% away,
-          exit 0 and `ok ...` otherwise (including when there is nothing to compare).
+          usable prose rows, compared in meter dollars per 1% (tracker.publish.usd_per_pct)
+          rather than raw tokens, since rows on the same model with different token-class
+          splits can differ wildly in tokens/1% while agreeing in dollars/1%: exit 10 and
+          `drift ...` when it is more than 15% away, exit 0 and `ok ...` otherwise
+          (including when there is nothing to compare).
   decide  after the rerun: the newest row is the rerun, the previous prose row is the
-          drifted one, both on the same model. A rerun within 15% of the earlier median
-          makes the drifted row an outlier, flagged in place with `"outlier": true`; a
-          rerun within 15% of the drifted reading instead is a change (two agreeing
-          readings that both differ from the earlier median); anything else is
-          inconclusive and flags nothing. Prints the verdict for the alert.
+          drifted one, both on the same model. Compared in meter dollars per 1%, same as
+          check. A rerun within 15% of the earlier median makes the drifted row an
+          outlier, flagged in place with `"outlier": true`; a rerun within 15% of the
+          drifted reading instead is a change (two agreeing readings that both differ
+          from the earlier median); anything else is inconclusive and flags nothing.
+          Prints the verdict for the alert.
 
 Expectation is the tokens per 1% the probe assumes before it starts, and it comes from
 the dollar invariant in tracker.publish rather than from the target model's own rows:
@@ -123,26 +127,31 @@ class Drift:
     drifted: bool
 
 
-def _earlier_median(rows: list[dict], model: str, before: datetime) -> float | None:
-    prior = [r for r in usable_rows(rows) if r["model"] == model and _ts(r) < before]
+def _earlier_median(rows: list[dict], model: str, before: datetime, prices: dict) -> float | None:
+    prior = [r for r in usable_rows(rows) if r["model"] == model and _ts(r) < before and r["model"] in prices]
     if not prior:
         return None
-    return median(r["tokens_per_pct"] for r in prior[-MEDIAN_ROWS:])
+    return median(usd_per_pct(r, prices[r["model"]]) for r in prior[-MEDIAN_ROWS:])
 
 
-def check_drift(rows: list[dict]) -> Drift | None:
-    """Compare the newest row with the median of its model's last four usable prose rows.
+def check_drift(rows: list[dict], prices: dict) -> Drift | None:
+    """Compare the newest row with the median meter dollars/1% of its model's last four
+    usable prose rows.
 
-    None when there is no row, or the newest row is not prose (an output run is never
-    drift-checked). A first row for a model has no median and cannot drift.
+    None when there is no row, the newest row is not prose (an output run is never
+    drift-checked), or the newest row's model has no price. A first row for a model
+    has no median and cannot drift.
     """
     if not rows:
         return None
     last = _by_ts(rows)[-1]
     if not is_prose(last):
         return None
-    value = float(last["tokens_per_pct"])
-    base = _earlier_median(rows, last["model"], _ts(last))
+    price = prices.get(last["model"])
+    if price is None:
+        return None
+    value = usd_per_pct(last, price)
+    base = _earlier_median(rows, last["model"], _ts(last), prices)
     if base is None:
         return Drift(last["model"], last["ts"], value, None, None, False)
     ratio = value / base - 1
@@ -167,10 +176,10 @@ def _agrees(a: float, b: float) -> bool:
     return abs(a / b - 1) <= DRIFT_THRESHOLD
 
 
-def decide(rows: list[dict]) -> Verdict:
+def decide(rows: list[dict], prices: dict) -> Verdict:
     """Judge a drifted row by its rerun. The newest prose row is the rerun; the prose
     row before it is the drifted one; both must be on the same model, and that model
-    must have an earlier usable median. Raises ValueError otherwise."""
+    must have a price and an earlier usable median. Raises ValueError otherwise."""
     prose = prose_rows(rows)
     if len(prose) < 2:
         raise ValueError("decide needs a drifted row and its rerun")
@@ -178,10 +187,13 @@ def decide(rows: list[dict]) -> Verdict:
     if first["model"] != rerun["model"]:
         raise ValueError(f"rerun row is on {rerun['model']} but the row before it is on {first['model']}")
     model = rerun["model"]
-    base = _earlier_median(rows, model, _ts(first))
+    price = prices.get(model)
+    if price is None:
+        raise ValueError(f"no price for {model}")
+    base = _earlier_median(rows, model, _ts(first), prices)
     if base is None:
         raise ValueError(f"no earlier usable prose row on {model} to judge against")
-    f, r = float(first["tokens_per_pct"]), float(rerun["tokens_per_pct"])
+    f, r = usd_per_pct(first, price), usd_per_pct(rerun, price)
     ratio = (f + r) / 2 / base - 1
     direction = "increased" if ratio > 0 else "decreased"
     if _agrees(r, base):
@@ -255,11 +267,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.command == "flags":
         if a.rerun:
-            d = check_drift(rows)
+            d = check_drift(rows, prices)
             if d is None or d.median is None:
                 print("flags --rerun: newest row is not a prose row with an earlier median", file=sys.stderr)
                 return 1
-            print(f"--model {d.model} --expect-tokens-per-pct {round(min(d.median, d.value))} --ticks {RERUN_TICKS}")
+            # Convert the dollar median back to tokens through the drifted row's own
+            # split, same as expectation does, so the burst size is still a token count.
+            drifted = _by_ts(rows)[-1]
+            price = prices[d.model]
+            per_token = blended_price_per_token(_split(drifted), price) * price.get("meter_weight", 1.0)
+            tokens = round(min(d.median, d.value) / per_token)
+            print(f"--model {d.model} --expect-tokens-per-pct {tokens} --ticks {RERUN_TICKS}")
             return 0
         model = a.model or next_model(rows)
         e = expectation(rows, model, prices)
@@ -270,20 +288,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if a.command == "check":
-        d = check_drift(rows)
+        d = check_drift(rows, prices)
         if d is None:
             print("ok: no prose row to check")
             return 0
         if d.median is None:
-            print(f"ok {d.model} {d.value:.0f}: no earlier prose row to compare")
+            print(f"ok {d.model} ${d.value:.3f}/1%: no earlier prose row to compare")
             return 0
         word = "drift" if d.drifted else "ok"
-        print(f"{word} {d.model} {d.value:.0f} against median {d.median:.0f} ({_pct(d.ratio or 0.0)})")
+        print(f"{word} {d.model} ${d.value:.3f}/1% against median ${d.median:.3f}/1% ({_pct(d.ratio or 0.0)})")
         return EXIT_DRIFT if d.drifted else 0
 
     if a.command == "decide":
         try:
-            v = decide(rows)
+            v = decide(rows, prices)
             if v.outlier_ts:
                 mark_outlier(a.history, v.outlier_ts)
         except (OSError, ValueError) as e:
@@ -292,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
         detail = {"outlier": f"rerun agreed with the median; row {v.first_ts} flagged outlier",
                   "change": f"rerun agreed with the drifted reading; {v.direction} {_pct(v.ratio)} against the median",
                   "inconclusive": "rerun agreed with neither the median nor the drifted reading; nothing flagged"}
-        print(f"{v.verdict} {v.model} first {v.first:.0f} rerun {v.rerun:.0f} median {v.median:.0f}: "
+        print(f"{v.verdict} {v.model} first ${v.first:.3f}/1% rerun ${v.rerun:.3f}/1% median ${v.median:.3f}/1%: "
               f"{detail[v.verdict]}")
         return 0
     return 1

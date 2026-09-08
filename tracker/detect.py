@@ -9,14 +9,21 @@ it to the median of up to the previous LOOKBACK readings (fewer, down to
 MIN_HISTORY, near the start of the series).
 
 There is no persist-days requirement the way a noisy daily series would need
-one. A 5-tick probe already measures a window to about one prompt in ten, so
-a single reading crossing the threshold is precise enough to call a step: one
-data point is not a blip here the way one noisy calendar day would be.
+one, but a single reading is still not enough to call a step on its own: a
+model's first row, or an early-tick run, can land far enough from the median
+to look like a step and then settle back next time (real series: 1.081,
+1.132, 0.682, 1.118 -- the third reading alone looked like a 34% drop, but
+the fourth was back in band). So a candidate reading at index i only fires
+once the *next* reading also lands more than threshold from i's own base, in
+the same direction -- two agreeing readings, not one. The event still keeps
+reading i's date and percent; the confirming reading is not itself a new
+candidate. A reading with no later reading yet (the newest in the series)
+can therefore never fire on its own -- it is unconfirmed until the next probe.
 
 Once fired, detection re-arms only once a later reading returns to within
 threshold of the (then-current) median. That stops one real step from firing
 an event on every subsequent reading while the series sits on its new
-plateau.
+plateau. A candidate that fails to confirm leaves the armed state unchanged.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -46,9 +53,14 @@ def detect_changes(readings: list[tuple[datetime, float]], threshold: float = 0.
             continue
         ts, value = ordered[i]
         ratio = value / base - 1
-        if armed and abs(ratio) > threshold:
-            events.append(ChangeEvent(ts.date(), "increased" if ratio > 0 else "decreased", round(abs(ratio) * 100)))
-            armed = False
+        if armed and abs(ratio) > threshold and i + 1 < len(ordered):
+            _, next_value = ordered[i + 1]
+            next_ratio = next_value / base - 1
+            confirmed = abs(next_ratio) > threshold and (next_ratio > 0) == (ratio > 0)
+            if confirmed:
+                events.append(ChangeEvent(ts.date(), "increased" if ratio > 0 else "decreased",
+                                          round(abs(ratio) * 100)))
+                armed = False
         elif not armed and abs(ratio) <= threshold:
             armed = True
     return events

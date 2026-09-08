@@ -391,6 +391,10 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
             {"week_ending": "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0},
             {"week_ending": "2026-09-11", "windows": 6.5, "five_hour_pct": 300.0, "seven_day_pct": 46.0},
             {"week_ending": "2026-09-18", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
+            # confirming week: detect_changes now needs the next reading to also
+            # cross the threshold, in the same direction, before the 2026-09-18
+            # step fires (see tracker/detect.py)
+            {"week_ending": "2026-09-25", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
         ]}
         passive = dict(PASSIVE, weekly_windows=weekly)
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
@@ -409,6 +413,9 @@ class LastChangeScopeTests(unittest.TestCase):
         {"week_ending": "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0},
         {"week_ending": "2026-09-11", "windows": 6.5, "five_hour_pct": 300.0, "seven_day_pct": 46.0},
         {"week_ending": "2026-09-18", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
+        # confirming week: see tracker/detect.py -- a step needs a next reading
+        # past the same base, in the same direction, before it fires.
+        {"week_ending": "2026-09-25", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
     ]
 
     def test_newer_weekly_event_beats_an_older_window_event(self):
