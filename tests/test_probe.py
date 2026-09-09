@@ -329,7 +329,7 @@ def concurrent_runner(tokens=20_000, parallel_indexes=()):
 # pre-run estimate (5,000 words at 3.47 tokens per word = 17,350) sizes the very first
 # burst to floor(0.8 * 100k / 17,350) = 4 as well.
 EXPECT = 100_000
-WORDS = 5_000
+WORDS = 2_400  # 2,400 x 3.47 + FIXED_PROMPT_TOKENS = 19,808 per prompt: first burst floor(0.8 * 100k / 19,808) = 4
 
 
 def burst_probe(read, run, **kw):
@@ -345,15 +345,36 @@ def bursts(r):
 
 
 class PromptSizeTests(unittest.TestCase):
-    def test_one_prompt_is_a_tenth_of_a_tick(self):
-        from tracker.probe import payload_words_for, TOKENS_PER_WORD
-        self.assertEqual(payload_words_for(117_897), round(117_897 / 10 / TOKENS_PER_WORD))
-        self.assertEqual(payload_words_for(117_897), 3398)
+    def test_one_prompt_is_a_twelfth_of_a_tick_after_fixed_overhead(self):
+        # 527,647 is roughly the last published Sonnet rate: large enough that the
+        # target survives subtracting FIXED_PROMPT_TOKENS without hitting MIN_PAYLOAD_WORDS,
+        # so this checks the un-clamped formula end to end.
+        from tracker.probe import payload_words_for, TOKENS_PER_WORD, PROMPTS_PER_TICK, FIXED_PROMPT_TOKENS
+        expect = 527_647
+        words = payload_words_for(expect)
+        self.assertEqual(words, round((expect / PROMPTS_PER_TICK - FIXED_PROMPT_TOKENS) / TOKENS_PER_WORD))
+        self.assertEqual(words, 9_363)
+        total_tokens = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        self.assertAlmostEqual(total_tokens / expect, 1 / PROMPTS_PER_TICK, places=3)
 
     def test_prompt_size_is_clamped_to_the_word_range(self):
         from tracker.probe import payload_words_for
-        self.assertEqual(payload_words_for(467_779), 12_000)
-        self.assertEqual(payload_words_for(20_000), 1_500)
+        self.assertEqual(payload_words_for(20_000_000), 12_000)
+        self.assertEqual(payload_words_for(20_000), 500)
+
+    def test_low_expectation_keeps_at_least_eight_prompts_per_span(self):
+        # 166,705 is the Fable rate that produced the early-tick bug on 2026-09-09. After
+        # the fixed overhead the payload is small (about 695 words) but not clamped, so a
+        # span is 12 prompts at expectation and still >= 8 when the true rate is 30% lower.
+        from tracker.probe import payload_words_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS, MIN_PAYLOAD_WORDS
+        words = payload_words_for(166_705)
+        self.assertGreater(words, MIN_PAYLOAD_WORDS)
+        per_prompt = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        self.assertGreaterEqual(int(0.7 * 166_705 // per_prompt), 8)
+        # At the 113k actually measured that day the clamp applies and the span is still >= 8.
+        words = payload_words_for(113_303)
+        self.assertEqual(words, MIN_PAYLOAD_WORDS)
+        self.assertGreaterEqual(int(113_303 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS)), 8)
 
     def test_output_prompt_takes_a_reply_size(self):
         from tracker.probe import output_prompt, OUTPUT_REPLY_WORDS
@@ -386,7 +407,7 @@ class BurstFirstSpanTests(unittest.TestCase):
 
     def test_burst_size_uses_the_observed_tokens_per_prompt_once_seen(self):
         # 40k per prompt: a 2.5-prompt span, so bursts after the first are floor(0.8*2.5)=2;
-        # the first burst is sized from the word estimate (17,350): floor(0.8*100k/17,350)=4.
+        # the first burst is sized from the word estimate plus overhead (19,808): floor(0.8*100k/19,808)=4.
         r = burst_probe(util_seq([10, 10, 11, 11, 12]), concurrent_runner(tokens=40_000), ticks=1, skip=0)
         self.assertEqual(bursts(r), [4, None, 2, None])
 
@@ -590,16 +611,18 @@ class CliTests(unittest.TestCase):
         return rc, captured
 
     def test_defaults_are_three_ticks_skip_one_and_the_expectation_sizes_the_prompt(self):
+        # 117,897 is a low enough expectation that the fixed per-prompt overhead leaves
+        # less than MIN_PAYLOAD_WORDS (500) of budget per prompt, so sizing clamps to it.
         rc, c = self._capture(["--model", "claude-fable-5-1", "--expect-tokens-per-pct", "117897"])
         self.assertEqual(rc, 4)
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"]), (3, 1, 60))
         self.assertEqual(c["expect_tokens_per_pct"], 117897.0)
-        self.assertEqual(c["payload_words"], 3398)
-        self.assertGreaterEqual(len(c["prompt_text"].split()), 3398)
-        self.assertLess(len(c["prompt_text"].split()), 3398 + 40)
+        self.assertEqual(c["payload_words"], 500)
+        self.assertGreaterEqual(len(c["prompt_text"].split()), 500)
+        self.assertLess(len(c["prompt_text"].split()), 500 + 40)
 
     def test_flags_reach_run_tick_probe(self):
-        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "468000",
+        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000",
                                "--ticks", "2", "--skip", "0", "--settle", "30"])
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"], c["payload_words"]), (2, 0, 30.0, 12_000))
 
@@ -613,3 +636,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(c["payload"], "output")
         self.assertEqual(c["payload_words"], 4_000)
         self.assertIn("4,000 words", c["prompt_text"])
+
+
+class InitialBurstTests(unittest.TestCase):
+    def test_first_burst_counts_the_fixed_overhead_per_prompt(self):
+        # Before any prompt has run, a prompt is estimated as payload plus the fixed
+        # overhead; at the Fable expectation of 166,705 the burst is 80% of a 12-prompt
+        # span, about 9, where the payload-only estimate would have fired 55.
+        from tracker.probe import _burst_size, payload_words_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS
+        words = payload_words_for(166_705)
+        k = _burst_size(166_705, 0.8, [], words, room=100)
+        expected = int(0.8 * 166_705 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS))
+        self.assertEqual(k, expected)
+        self.assertLessEqual(k, 10)
+
+
+class LowExpectationRefusalTests(unittest.TestCase):
+    def test_expectation_too_low_for_eight_prompts_is_refused(self):
+        from tracker.probe import (FIXED_PROMPT_TOKENS, MIN_PAYLOAD_WORDS, MIN_PROMPTS_PER_SPAN,
+                                   TOKENS_PER_WORD, payload_words_for)
+        floor_prompt = MIN_PAYLOAD_WORDS * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        too_low = floor_prompt * (MIN_PROMPTS_PER_SPAN - 1)
+        self.assertEqual(payload_words_for(too_low), MIN_PAYLOAD_WORDS)
+        self.assertLess(too_low / floor_prompt, MIN_PROMPTS_PER_SPAN)
+        fine = floor_prompt * MIN_PROMPTS_PER_SPAN
+        self.assertGreaterEqual(fine / (payload_words_for(fine) * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS),
+                                MIN_PROMPTS_PER_SPAN)
