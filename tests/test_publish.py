@@ -118,6 +118,8 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(sonnet["api_value_per_window"], opus["api_value_per_window"])
         self.assertEqual(opus["source"], "derived")
         self.assertEqual(sonnet["source"], "probe")
+        self.assertIsNone(opus["probed_at"])
+        self.assertEqual(sonnet["probed_at"], "2026-09-05T08:00:00+00:00")
         latest = probe(5, "claude-sonnet-5", 420000)
         api_value = usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100
         expected_opus_tpw = round(api_value / blended_price_per_token(PASSIVE["split"], PRICES["claude-opus-5"]))
@@ -133,6 +135,37 @@ class BuildTests(unittest.TestCase):
         opus_hist = [h for h in j["history"]["claude-opus-5"] if h["date"] >= "2026-09-01"]
         self.assertTrue(all(h["source"] == "probe" for h in sonnet_hist))
         self.assertTrue(all(h["source"] == "derived" for h in opus_hist))
+
+    def test_each_probed_model_publishes_its_own_probe_source(self):
+        # All three models are probed in rotation, one per 12 hours -- each has
+        # its own probe rows even on days it wasn't the one probed most recently.
+        prices = {**PRICES, "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25,
+                                                  "cache_write": 12.5, "meter_weight": 2.0}}
+        rows = [probe(1, "claude-sonnet-5", 420000), probe(2, "claude-opus-5", 420000),
+                probe(3, "claude-fable-5-1", 420000), probe(4, "claude-sonnet-5", 420000)]
+        now = datetime(2026, 9, 4, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, prices, now)
+        for model, expected_ts in [("claude-sonnet-5", "2026-09-04T08:00:00+00:00"),
+                                    ("claude-opus-5", "2026-09-02T08:00:00+00:00"),
+                                    ("claude-fable-5-1", "2026-09-03T08:00:00+00:00")]:
+            self.assertEqual(j["rates"][model]["source"], "probe", model)
+            self.assertEqual(j["rates"][model]["probed_at"], expected_ts, model)
+
+    def test_probe_accounts_lists_distinct_accounts_on_usable_rows(self):
+        rows = [probe(1, "claude-sonnet-5", 420000, account="dave"),
+                probe(2, "claude-sonnet-5", 420000, account="jwork"),
+                dict(probe(3, "claude-sonnet-5", 420000, account="dave"), outlier=True)]
+        now = datetime(2026, 9, 2, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual(j["probe_accounts"], ["dave", "jwork"])
+
+    def test_model_with_only_an_outlier_row_publishes_derived_with_null_probed_at(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        rows.append(dict(probe(5, "claude-opus-5", 420000), outlier=True))
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual(j["rates"]["claude-opus-5"]["source"], "derived")
+        self.assertIsNone(j["rates"]["claude-opus-5"]["probed_at"])
 
     def test_outlier_rows_are_skipped_everywhere(self):
         # The rotation's drift check flags a lone outlier in place (tracker.rotate);
@@ -375,6 +408,41 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertNotEqual(ww["max20"]["current"], self.PASSIVE_WEEKLY["current"])
         # max5 is untouched by any of this -- it is frozen passive-era history.
         self.assertEqual([h["week_ending"] for h in ww["max5"]["history"]], ["2026-08-14"])
+
+    def test_max20_history_carries_the_partial_flag_from_probe_weekly_windows(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        for r, (fhb, fha, sdb, sda, wk) in zip(rows, [
+            (10.0, 40.0, 10.0, 15.0, "2026-08-28T03:59:59+00:00"),
+            (10.0, 45.0, 10.0, 16.0, "2026-08-28T03:59:59+00:00"),
+            (10.0, 50.0, 10.0, 15.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 55.0, 10.0, 16.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 30.0, 10.0, 20.0, "2026-09-11T03:59:59+00:00"),  # newest week, incomplete
+        ]):
+            r["five_hour_before"], r["five_hour_after"] = fhb, fha
+            r["seven_day_before"], r["seven_day_after"] = sdb, sda
+            r["seven_day_resets_at"] = wk
+        passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        by_week = {h["week_ending"]: h["partial"] for h in j["weekly_windows"]["max20"]["history"]}
+        self.assertEqual(by_week, {"2026-08-28": False, "2026-09-04": False, "2026-09-11": True})
+
+    def test_passive_partial_flags_are_recomputed_from_the_publish_time(self):
+        # A lagging passive.json from before the flag existed: the open week is
+        # flagged partial against the publisher's own `now`, the rest complete.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        # 09-04 carries a stale partial=True from a passive.json written while that week
+        # was open; it must come out False against this publish's now.
+        weekly = {"current": 6.46, "history": [dict(h) for h in self.PASSIVE_WEEKLY["history"][:-1]]
+                  + [dict(self.PASSIVE_WEEKLY["history"][-1], partial=True)]
+                  + [{"week_ending": "2026-09-11", "windows": 5.7, "five_hour_pct": 245.0, "seven_day_pct": 43.0}]}
+        passive = dict(PASSIVE, weekly_windows=weekly)
+        now = datetime(2026, 9, 9, 5, 30, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        for series in ("passive", "max5", "max20", "pro"):
+            for h in j["weekly_windows"][series]["history"]:
+                self.assertIn("partial", h, series)
+                self.assertEqual(h["partial"], h["week_ending"] >= "2026-09-09", (series, h["week_ending"]))
 
     def test_no_weekly_event_on_real_max20_history(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
