@@ -40,9 +40,21 @@ class WeeklyWindowsTests(unittest.TestCase):
         now = datetime(2027, 1, 1, tzinfo=timezone.utc)
         result = weekly_windows(rows, now=now)
         self.assertEqual(result["history"], [
-            {"week_ending": "2026-09-04", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0},
+            {"week_ending": "2026-09-04", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0,
+             "partial": False},
         ])
         self.assertEqual(result["current"], 6.0)
+
+    def test_partial_true_when_seven_day_reset_still_ahead_of_now(self):
+        rows = [
+            {"ts": "t0", "five_hour": 10.0, "five_resets_at": "2026-09-06T16:59:59+00:00",
+             "seven_day": 20.0, "seven_resets_at": "2026-09-04T03:59:59+00:00"},
+            {"ts": "t1", "five_hour": 70.0, "five_resets_at": "2026-09-06T16:59:59+00:00",
+             "seven_day": 30.0, "seven_resets_at": "2026-09-04T03:59:59+00:00"},
+        ]
+        now = datetime(2026, 9, 1, tzinfo=timezone.utc)  # before the 09-04 reset
+        result = weekly_windows(rows, now=now)
+        self.assertEqual(result["history"][0]["partial"], True)
 
     def test_thin_week_skipped(self):
         rows = [
@@ -160,7 +172,8 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
         now = datetime(2027, 1, 1, tzinfo=timezone.utc)
         result = probe_weekly_windows(rows, now=now)
         self.assertEqual(result["history"], [
-            {"week_ending": "2026-09-04", "windows": 5.5, "five_hour_pct": 55.0, "seven_day_pct": 10.0},
+            {"week_ending": "2026-09-04", "windows": 5.5, "five_hour_pct": 55.0, "seven_day_pct": 10.0,
+             "partial": False},
         ])
         self.assertEqual(result["current"], 5.5)
 
@@ -170,7 +183,8 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
         now = datetime(2027, 1, 1, tzinfo=timezone.utc)
         result = probe_weekly_windows(rows, now=now)
         self.assertEqual(result["history"], [
-            {"week_ending": "2026-09-06", "windows": 2.5, "five_hour_pct": 25.0, "seven_day_pct": 10.0},
+            {"week_ending": "2026-09-06", "windows": 2.5, "five_hour_pct": 25.0, "seven_day_pct": 10.0,
+             "partial": False},
         ])
 
     def test_current_excludes_incomplete_week(self):
@@ -179,6 +193,13 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
         result = probe_weekly_windows(rows, now=now)
         self.assertEqual(len(result["history"]), 1)
         self.assertIsNone(result["current"])
+        self.assertTrue(result["history"][0]["partial"])
+
+    def test_partial_false_once_week_ending_is_in_the_past(self):
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 20.0, "2026-09-04T03:59:59+00:00")]
+        now = datetime(2026, 9, 10, tzinfo=timezone.utc)  # well after the week ended
+        result = probe_weekly_windows(rows, now=now)
+        self.assertFalse(result["history"][0]["partial"])
 
 
 if __name__ == "__main__":

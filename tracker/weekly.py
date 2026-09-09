@@ -72,6 +72,8 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
     `current` is the median of the last two COMPLETE weeks in the history
     (a week is complete once its seven-day reset time is in the past); the
     newest, still-open week is kept in history but never counted as current.
+    Each history row carries `"partial"`: true when its seven-day reset is
+    still in the future, so a consumer never has to infer it from dates.
     """
     now = now or datetime.now(timezone.utc)
     buckets: dict[str, dict] = {}
@@ -107,6 +109,7 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
     current = round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
 
     for h in history:
+        h["partial"] = datetime.fromisoformat(h["_resets_at"]) > now
         del h["_resets_at"]
 
     return {"current": current, "history": history}
@@ -149,7 +152,8 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     with d5=21, d7=3 (windows=7.0) purely from that rounding.
 
     `current` is the median of the last two COMPLETE weeks (a week is complete
-    once its week-ending date is in the past).
+    once its week-ending date is in the past). Each history row carries
+    `"partial"`: true when its week-ending date is today or later.
     """
     now = now or datetime.now(timezone.utc)
     buckets: dict[str, dict] = {}
@@ -179,6 +183,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
                 "windows": round(b["d5"] / b["d7"], 2),
                 "five_hour_pct": round(b["d5"], 1),
                 "seven_day_pct": round(b["d7"], 1),
+                "partial": date.fromisoformat(week_key) >= now.date(),
             })
 
     complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]

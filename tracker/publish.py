@@ -106,6 +106,18 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     it is a step function, not an interpolation, and the page should never
     draw a dot on a held or derived day.
 
+    `rates[model]["source"]` is a separate, coarser signal: "probe" when this
+    model has at least one usable prose row anywhere in the history (all
+    three models are probed in rotation, one per 12 hours, so each has its
+    own probe rows even on days it was not the one actually probed), else
+    "derived". `rates[model]["probed_at"]` is that model's own latest usable
+    prose row's timestamp, or null when it has never been probed.
+
+    Top-level `probe_accounts` is the sorted list of distinct `account` tags
+    (tracker/probe.py's --account names, e.g. "dave", "jono") carried on
+    usable prose rows -- which accounts actually did the probing, not which
+    were merely configured.
+
     Every history day also carries `api_value_per_window`: the regime's
     held dollar value itself, identical across models on any given day, so
     the page can show dollars per window with the same step treatment as
@@ -153,6 +165,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         regime_values.setdefault(regime_index(d), []).append(v)
 
     latest_row = max(probe_rows, key=lambda r: r["ts"])
+    latest_row_per_model: dict[str, dict] = {}
+    for r in probe_rows:
+        m = r["model"]
+        if m not in latest_row_per_model or r["ts"] > latest_row_per_model[m]["ts"]:
+            latest_row_per_model[m] = r
+    probe_accounts = sorted({r["account"] for r in probe_rows if r.get("account")})
     first_probe_day = min(by_day_value)
     # A missing/lagging passive.json is allowed (it arrives from masterrig), so fall back to
     # the latest probe row's own class split rather than blowing up on an empty split.
@@ -173,8 +191,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     for model, price in prices.items():
         blended = blended_price_per_token(passive_split, price)
         weight = price.get("meter_weight", 1.0)
+        model_probe = latest_row_per_model.get(model)
         rates[model] = {"tokens_per_window": round(current_regime_value / (blended * weight)),
-                        "source": "probe" if model == latest_row["model"] else "derived",
+                        "source": "probe" if model_probe is not None else "derived",
+                        "probed_at": model_probe["ts"] if model_probe is not None else None,
                         "probe_effort": latest_row["effort"],
                         "split": passive_split,
                         "api_value_per_window": round(api_value_per_window, 2)}
@@ -243,6 +263,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "last_sample_at": last_sample,
         "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
+        "probe_accounts": probe_accounts,
         "plan_ratios": ratios,
         "rate_basis": "api_value",
         "rates": rates,
