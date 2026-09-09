@@ -1,19 +1,15 @@
 {
- "generated_at": "2026-09-08T01:15:17.231844+00:00",
- "plan_ratio_5x_to_20x": 0.4349,
+ "generated_at": "2026-09-09T01:15:31.470124+00:00",
+ "plan_ratio_5x_to_20x": 0.4468,
  "split": {
   "input": 0.0001,
-  "output": 0.0044,
-  "cache_read": 0.9669,
-  "cache_write": 0.0285
+  "output": 0.0041,
+  "cache_read": 0.9684,
+  "cache_write": 0.0275
  },
  "history": {
-  "2026-08-08": {
-   "tokens_per_pct": 1351598,
-   "interpolated": false
-  },
   "2026-08-09": {
-   "tokens_per_pct": 1530743,
+   "tokens_per_pct": 1426517,
    "interpolated": false
   },
   "2026-08-10": {
@@ -131,12 +127,16 @@
   "2026-09-07": {
    "tokens_per_pct": 1733816,
    "interpolated": false
+  },
+  "2026-09-08": {
+   "tokens_per_pct": 3084828,
+   "interpolated": false
   }
  },
  "session_tokens": {
-  "claude-sonnet-5": 663378,
-  "claude-opus-5": 1582177,
-  "claude-fable-5-1": 10168149
+  "claude-sonnet-5": 670902,
+  "claude-opus-5": 1581607,
+  "claude-fable-5-1": 10249838
  },
  "weekly_windows": {
   "current": 6.46,
@@ -215,9 +215,9 @@
    },
    {
     "week_ending": "2026-09-11",
-    "windows": 5.72,
-    "five_hour_pct": 223.0,
-    "seven_day_pct": 39.0
+    "windows": 5.7,
+    "five_hour_pct": 245.0,
+    "seven_day_pct": 43.0
    }
   ]
  }
