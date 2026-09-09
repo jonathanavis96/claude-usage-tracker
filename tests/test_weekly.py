@@ -1,7 +1,10 @@
+import os
 import unittest
 from datetime import datetime, timezone
 
 from tracker.weekly import parse_rows, probe_weekly_windows, weekly_windows
+
+LIVE_USAGE_LOG = "/home/grafe/.moonlighter/usage_log.jsonl"
 
 
 def row(ts, five, five_resets, seven, seven_resets):
@@ -102,8 +105,12 @@ class WeeklyWindowsTests(unittest.TestCase):
         self.assertEqual(len(result["history"]), 2)
         self.assertEqual(result["current"], 6.0)  # median of the single complete week
 
+    @unittest.skipUnless(os.path.exists(LIVE_USAGE_LOG), "live usage log not present on this machine")
     def test_real_log_matches_hand_validated_ranges(self):
-        with open("/home/grafe/.moonlighter/usage_log.jsonl", encoding="utf-8") as f:
+        # Only complete weeks are asserted here: the in-progress week's total keeps
+        # moving as more of the week's usage lands, so asserting it against a fixed
+        # value makes this test flaky (it drifted from 5.6 to 5.7 within a day).
+        with open(LIVE_USAGE_LOG, encoding="utf-8") as f:
             rows = parse_rows(f)
         result = weekly_windows(rows)
         by_week = {h["week_ending"]: h["windows"] for h in result["history"]}
@@ -114,7 +121,6 @@ class WeeklyWindowsTests(unittest.TestCase):
         for wk in ("2026-08-21", "2026-08-28", "2026-09-04"):
             self.assertGreaterEqual(by_week[wk], 6.3, wk)
             self.assertLessEqual(by_week[wk], 6.8, wk)
-        self.assertAlmostEqual(by_week["2026-09-11"], 5.6, delta=0.1)
 
 
 def probe_row(ts, fhb, fha, sdb, sda, seven_resets=None):

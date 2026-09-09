@@ -11,9 +11,14 @@ Every run needs an expectation, `--expect-tokens-per-pct` (the tokens per 1% the
 assumes before it starts, normally the last published rate for the model). It sizes the
 prompt and the bursts:
 
-Prompt size. `payload_words_for(expectation)` picks the prose payload size so one prompt
-is about a tenth of a tick, clamped to 1,500 to 12,000 words, and the row records it as
-`payload_words`. An output payload keeps its fixed 4,000-word reply and records that.
+Prompt size. `payload_words_for(expectation)` picks the prose payload size so one prompt's
+total tokens — payload plus the fixed per-prompt overhead (`FIXED_PROMPT_TOKENS`: the
+CLI's ~11,480-token system-prefix cache_read plus a few input/output tokens, paid on
+every prompt regardless of payload) — are about a twelfth of a tick (`PROMPTS_PER_TICK`),
+clamped to 1,500 to 12,000 words, and the row records it as `payload_words`. Sizing
+PROMPTS_PER_TICK to 12 rather than 10 keeps a span at 8+ prompts even when the true rate
+runs 30% below the expectation that sized it. An output payload keeps its fixed
+4,000-word reply and records that.
 
 Burst-first spans. Every span, the alignment span included, opens with one burst of
 concurrent prompts sized to 80% of the expected span (expected tokens per 1% over the
@@ -55,7 +60,12 @@ TOKENS_PER_WORD = 3.47  # measured on the prose payload: 12,000 words is about 4
 MIN_PAYLOAD_WORDS = 1500
 MAX_PAYLOAD_WORDS = 12000
 PROBE_PAYLOAD_WORDS = MAX_PAYLOAD_WORDS
-PROMPTS_PER_TICK = 10  # a prompt is sized to a tenth of a tick
+PROMPTS_PER_TICK = 12  # a prompt is sized to a twelfth of a tick
+# Every prompt carries a fixed overhead beyond its own payload: the CLI's system-prefix
+# cache_read plus a handful of input/output tokens. Measured on 2026-09-09
+# (history/probes.jsonl, last two rows, single-prompt readings): cache_read 11,473 +
+# input 2 + output 5 = 11,480 tokens, regardless of payload size.
+FIXED_PROMPT_TOKENS = 11480
 BURST_FRACTION = 0.8  # of the expected span, for the burst that opens each span
 EARLY_BURST_FRACTION = 0.5  # once a tick has arrived inside a burst
 RESET_WAIT_S = 20 * 60  # wait for a window reset this close rather than straddle it
@@ -72,8 +82,17 @@ PROBE_PROMPT = "Below is a long log of routine office notes. Reply with only the
 
 
 def payload_words_for(expect_tokens_per_pct: float) -> int:
-    """Prose payload size so one prompt costs about a tenth of a tick, within the word range."""
-    words = round(expect_tokens_per_pct / PROMPTS_PER_TICK / TOKENS_PER_WORD)
+    """Prose payload size so one prompt's total tokens (payload plus the fixed per-prompt
+    overhead) cost about a twelfth of a tick, within the word range.
+
+    Every prompt also pays FIXED_PROMPT_TOKENS regardless of payload size, so that
+    overhead is subtracted from the per-prompt target before converting the remainder
+    to words. If what's left after subtracting overhead would size below
+    MIN_PAYLOAD_WORDS, MIN_PAYLOAD_WORDS is used instead (the clamp below already
+    covers this, since a negative or tiny target rounds under the minimum).
+    """
+    target_tokens = expect_tokens_per_pct / PROMPTS_PER_TICK - FIXED_PROMPT_TOKENS
+    words = round(target_tokens / TOKENS_PER_WORD)
     return max(MIN_PAYLOAD_WORDS, min(MAX_PAYLOAD_WORDS, words))
 
 

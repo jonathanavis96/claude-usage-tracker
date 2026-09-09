@@ -345,15 +345,30 @@ def bursts(r):
 
 
 class PromptSizeTests(unittest.TestCase):
-    def test_one_prompt_is_a_tenth_of_a_tick(self):
-        from tracker.probe import payload_words_for, TOKENS_PER_WORD
-        self.assertEqual(payload_words_for(117_897), round(117_897 / 10 / TOKENS_PER_WORD))
-        self.assertEqual(payload_words_for(117_897), 3398)
+    def test_one_prompt_is_a_twelfth_of_a_tick_after_fixed_overhead(self):
+        # 527,647 is roughly the last published Sonnet rate: large enough that the
+        # target survives subtracting FIXED_PROMPT_TOKENS without hitting MIN_PAYLOAD_WORDS,
+        # so this checks the un-clamped formula end to end.
+        from tracker.probe import payload_words_for, TOKENS_PER_WORD, PROMPTS_PER_TICK, FIXED_PROMPT_TOKENS
+        expect = 527_647
+        words = payload_words_for(expect)
+        self.assertEqual(words, round((expect / PROMPTS_PER_TICK - FIXED_PROMPT_TOKENS) / TOKENS_PER_WORD))
+        self.assertEqual(words, 9_363)
+        total_tokens = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        self.assertAlmostEqual(total_tokens / expect, 1 / PROMPTS_PER_TICK, places=3)
 
     def test_prompt_size_is_clamped_to_the_word_range(self):
         from tracker.probe import payload_words_for
-        self.assertEqual(payload_words_for(467_779), 12_000)
+        self.assertEqual(payload_words_for(20_000_000), 12_000)
         self.assertEqual(payload_words_for(20_000), 1_500)
+
+    def test_low_expectation_clamps_to_minimum_once_overhead_is_subtracted(self):
+        # 166,705 is the Fable rate that produced the early-tick bug on 2026-09-09: the
+        # fixed per-prompt overhead alone (FIXED_PROMPT_TOKENS) leaves less than
+        # MIN_PAYLOAD_WORDS worth of budget per prompt at PROMPTS_PER_TICK=12, so the
+        # sizing must fall back to MIN_PAYLOAD_WORDS rather than go smaller (or negative).
+        from tracker.probe import payload_words_for, MIN_PAYLOAD_WORDS
+        self.assertEqual(payload_words_for(166_705), MIN_PAYLOAD_WORDS)
 
     def test_output_prompt_takes_a_reply_size(self):
         from tracker.probe import output_prompt, OUTPUT_REPLY_WORDS
@@ -590,16 +605,18 @@ class CliTests(unittest.TestCase):
         return rc, captured
 
     def test_defaults_are_three_ticks_skip_one_and_the_expectation_sizes_the_prompt(self):
+        # 117,897 is a low enough expectation that the fixed per-prompt overhead leaves
+        # less than MIN_PAYLOAD_WORDS of budget per prompt, so sizing clamps to the minimum.
         rc, c = self._capture(["--model", "claude-fable-5-1", "--expect-tokens-per-pct", "117897"])
         self.assertEqual(rc, 4)
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"]), (3, 1, 60))
         self.assertEqual(c["expect_tokens_per_pct"], 117897.0)
-        self.assertEqual(c["payload_words"], 3398)
-        self.assertGreaterEqual(len(c["prompt_text"].split()), 3398)
-        self.assertLess(len(c["prompt_text"].split()), 3398 + 40)
+        self.assertEqual(c["payload_words"], 1500)
+        self.assertGreaterEqual(len(c["prompt_text"].split()), 1500)
+        self.assertLess(len(c["prompt_text"].split()), 1500 + 40)
 
     def test_flags_reach_run_tick_probe(self):
-        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "468000",
+        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000",
                                "--ticks", "2", "--skip", "0", "--settle", "30"])
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"], c["payload_words"]), (2, 0, 30.0, 12_000))
 
