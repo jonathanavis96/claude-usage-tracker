@@ -71,8 +71,9 @@ windows per plan, and change history.
   resolution — a single probe's tick-to-tick timing carries real noise, which
   is why probes average over several ticks and rotation runs get compared
   against a rolling median rather than trusted individually.
-- Probing runs on two dedicated Max 20x accounts (Dave, primary; Jono Work,
-  fallback), not Jonathan's own account.
+- Probing runs on two dedicated Max 20x accounts (Jono Work first, Dave
+  second, skipping either while it has a live `claude` session on the host),
+  not Jonathan's own account.
 - Weekly windows for the live plan come from one passive account's real
   usage, not from a controlled experiment.
 - Pro and Max 5x figures are scaled from Max 20x using Anthropic's published

@@ -118,7 +118,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     prose row's timestamp, or null when it has never been probed.
 
     Top-level `probe_accounts` is the sorted list of distinct `account` tags
-    (tracker/probe.py's --account names, e.g. "dave", "jono") carried on
+    (tracker/probe.py's --account names, e.g. "dave", "jwork") carried on
     usable prose rows -- which accounts actually did the probing, not which
     were merely configured.
 

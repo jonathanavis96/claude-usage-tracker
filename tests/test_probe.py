@@ -125,17 +125,136 @@ class IdleTests(unittest.TestCase):
     def test_busy_when_moved(self):
         self.assertFalse(is_idle(util_seq([7, 8]), lambda s: None))
 
+    def test_busy_process_rejects_an_account_whose_meter_is_flat(self):
+        # The meter check alone passes ([7, 7]); the live claude process on this
+        # account's config dir is what makes it busy.
+        procs = lambda: [(491402, Path("/h/.claude-dave"))]  # noqa: E731
+        self.assertFalse(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
+
+    def test_process_free_account_with_flat_meter_passes(self):
+        # A claude process on some other account does not count against this one.
+        procs = lambda: [(491402, Path("/h/.claude-other"))]  # noqa: E731
+        self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
+
+    def test_busy_process_short_circuits_the_meter_window(self):
+        slept = []
+        reads = []
+        def read():
+            reads.append(1)
+            return Utilization(T0, 7.0, 30.0, "r1")
+        procs = lambda: [(1, Path("/h/.claude-dave"))]  # noqa: E731
+        self.assertFalse(is_idle(read, slept.append, cfg=Path("/h/.claude-dave"), processes=procs))
+        self.assertEqual((slept, reads), ([], []))
+
+    def test_process_that_starts_during_the_meter_window_is_caught_on_the_recheck(self):
+        # No process before the window and a flat meter across it, but a claude
+        # session on this account opened during the 120 s sleep and has not moved the
+        # meter yet: the lister is sampled again after the second read and rejects it.
+        samples = iter([[], [(491402, Path("/h/.claude-dave"))]])
+        calls = []
+        def procs():
+            calls.append(1)
+            return next(samples)
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs)
+        self.assertEqual(reason, "pid 491402")
+        self.assertEqual(len(calls), 2)
+
+    def test_idle_account_samples_the_lister_before_and_after_the_window(self):
+        calls = []
+        def procs():
+            calls.append(1)
+            return []
+        self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
+        self.assertEqual(len(calls), 2)
+
+    def test_busy_pids_matches_config_dirs_by_resolved_path(self):
+        from tracker.probe import busy_pids
+        procs = [(10, Path("/h/.claude-dave")), (11, Path("/h/../h/.claude-dave/")), (12, Path("/h/.claude-javiswork"))]
+        self.assertEqual(busy_pids(Path("/h/.claude-dave"), procs), [10, 11])
+        self.assertEqual(busy_pids(Path("/h/.claude-javiswork"), procs), [12])
+        self.assertEqual(busy_pids(Path("/h/.claude-nobody"), procs), [])
+
     def test_choose_account_falls_back_then_waits(self):
         reads = {"dave": util_seq([7, 8, 8, 8]), "jono": util_seq([3, 4, 4, 4])}
         slept = []
-        acc = choose_account([("dave", Path("/d")), ("jono", Path("/j"))], lambda name: reads[name], slept.append, max_wait_s=3600, retry_s=900)
+        acc = choose_account([("dave", Path("/d")), ("jono", Path("/j"))], lambda name: reads[name], slept.append,
+                             max_wait_s=3600, retry_s=900, processes=lambda: [])
         self.assertEqual(acc, ("dave", Path("/d")))
         self.assertIn(900, slept)
 
     def test_choose_account_gives_up(self):
         reads = {"dave": util_seq([1, 2] * 50)}
-        acc = choose_account([("dave", Path("/d"))], lambda n: reads[n], lambda s: None, max_wait_s=1800, retry_s=900)
+        acc = choose_account([("dave", Path("/d"))], lambda n: reads[n], lambda s: None, max_wait_s=1800, retry_s=900,
+                             processes=lambda: [])
         self.assertIsNone(acc)
+
+    def test_choose_account_rejects_the_account_with_a_live_process_and_logs_its_pid(self):
+        # dave's meter is flat, so the old check would have picked it; the live process
+        # rejects it and jwork (also flat, no process) is chosen instead.
+        reads = {"jwork": util_seq([3, 3]), "dave": util_seq([7, 7])}
+        logged = []
+        procs = lambda: [(491402, Path("/h/.claude-dave")), (1, Path("/h/.claude"))]  # noqa: E731
+        acc = choose_account([("dave", Path("/h/.claude-dave")), ("jwork", Path("/h/.claude-javiswork"))],
+                             lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
+                             processes=procs, log=logged.append)
+        self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
+        self.assertEqual(logged, ["dave busy: pid 491402"])
+
+    def test_choose_account_logs_a_meter_rejection_too(self):
+        reads = {"dave": util_seq([7, 8]), "jwork": util_seq([3, 3])}
+        logged = []
+        acc = choose_account([("dave", Path("/h/.claude-dave")), ("jwork", Path("/h/.claude-javiswork"))],
+                             lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
+                             processes=lambda: [], log=logged.append)
+        self.assertEqual(acc[0], "jwork")
+        self.assertEqual(len(logged), 1)
+        self.assertTrue(logged[0].startswith("dave busy: meter"), logged[0])
+
+    def test_choose_account_prefers_jwork_when_both_are_idle(self):
+        reads = {"jwork": util_seq([3, 3]), "dave": util_seq([7, 7])}
+        acc = choose_account([("jwork", Path("/h/.claude-javiswork")), ("dave", Path("/h/.claude-dave"))],
+                             lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900, processes=lambda: [])
+        self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
+
+
+class ProcessListerTests(unittest.TestCase):
+    """claude_processes reads a /proc-shaped tree; a temp dir stands in for /proc."""
+
+    def _proc(self, d, pid, comm, environ=b"", cmdline=b""):
+        p = Path(d, str(pid))
+        p.mkdir()
+        (p / "comm").write_text(comm + "\n")
+        (p / "environ").write_bytes(environ)
+        (p / "cmdline").write_bytes(cmdline)
+
+    def test_lists_claude_processes_with_config_dir_from_environ(self):
+        from tracker.probe import claude_processes
+        with tempfile.TemporaryDirectory() as d:
+            self._proc(d, 491402, "claude", environ=b"HOME=/h\0CLAUDE_CONFIG_DIR=/h/.claude-dave\0PATH=/bin\0")
+            self._proc(d, 500, "claude", environ=b"HOME=/h\0")  # default config dir, no var
+            self._proc(d, 600, "bash", environ=b"CLAUDE_CONFIG_DIR=/h/.claude-dave\0")  # not claude
+            Path(d, "self").mkdir()  # non-numeric entries are skipped
+            Path(d, "meminfo").write_text("")
+            self.assertEqual(claude_processes(Path(d)), [(491402, Path("/h/.claude-dave"))])
+
+    def test_falls_back_to_the_command_line(self):
+        from tracker.probe import claude_processes
+        with tempfile.TemporaryDirectory() as d:
+            self._proc(d, 7, "claude", environ=b"HOME=/h\0",
+                       cmdline=b"env\0CLAUDE_CONFIG_DIR=/h/.claude-javiswork\0claude\0")
+            self.assertEqual(claude_processes(Path(d)), [(7, Path("/h/.claude-javiswork"))])
+
+    def test_unreadable_entries_and_a_missing_proc_are_skipped(self):
+        from tracker.probe import claude_processes
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "8").mkdir()  # no comm/environ files at all
+            Path(d, "9").mkdir()  # a process that renamed itself with non-UTF-8 bytes
+            Path(d, "9", "comm").write_bytes(b"cl\xffude\n")
+            Path(d, "9", "environ").write_bytes(b"CLAUDE_CONFIG_DIR=/x\0")
+            self.assertEqual(claude_processes(Path(d)), [])
+            self.assertEqual(claude_processes(Path(d, "nope")), [])
+
 
 class AppendTests(unittest.TestCase):
     def test_append_writes_jsonl(self):
@@ -625,6 +744,38 @@ class CliTests(unittest.TestCase):
         rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000",
                                "--ticks", "2", "--skip", "0", "--settle", "30"])
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"], c["payload_words"]), (2, 0, 30.0, 12_000))
+
+    def test_default_accounts_are_jwork_then_dave(self):
+        import tracker.probe as probe_mod
+        seen = {}
+        orig = probe_mod.choose_account
+        def fake_choose(accounts, *a, **k):
+            seen["accounts"] = accounts
+            return None
+        probe_mod.choose_account = fake_choose
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                prices = Path(d, "prices.json")
+                prices.write_text(json.dumps(self.PRICES))
+                rc = probe_mod.main(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000",
+                                     "--prices", str(prices)])
+        finally:
+            probe_mod.choose_account = orig
+        self.assertEqual(rc, 3)
+        home = Path.home()
+        self.assertEqual(seen["accounts"], [("jwork", home / ".claude-javiswork"), ("dave", home / ".claude-dave")])
+
+    def test_help_names_the_default_order(self):
+        import io
+        import contextlib
+        import tracker.probe as probe_mod
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            probe_mod.main(["--help"])
+        text = " ".join(out.getvalue().split())
+        self.assertIn("jwork", text)
+        self.assertNotIn("jono", text)
+        self.assertLess(text.index("jwork"), text.index("dave"))
 
     def test_expectation_is_required(self):
         with self.assertRaises(SystemExit):

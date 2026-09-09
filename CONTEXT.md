@@ -132,5 +132,5 @@ One email to Jonathan, sent by the tracker through the site's send endpoint, for
 _Avoid_: notification, ping, warning email
 
 **Probe account**:
-A subscription account used only for probing. Dave is primary; Jono Work is the fallback.
+A subscription account used only for probing. Jono Work (`jwork`, `~/.claude-javiswork`) is tried first and Dave (`~/.claude-dave`) second; an account with a live `claude` process on this host is skipped before its meter is read.
 _Avoid_: test account, alt
