@@ -146,6 +146,28 @@ class IdleTests(unittest.TestCase):
         self.assertFalse(is_idle(read, slept.append, cfg=Path("/h/.claude-dave"), processes=procs))
         self.assertEqual((slept, reads), ([], []))
 
+    def test_process_that_starts_during_the_meter_window_is_caught_on_the_recheck(self):
+        # No process before the window and a flat meter across it, but a claude
+        # session on this account opened during the 120 s sleep and has not moved the
+        # meter yet: the lister is sampled again after the second read and rejects it.
+        samples = iter([[], [(491402, Path("/h/.claude-dave"))]])
+        calls = []
+        def procs():
+            calls.append(1)
+            return next(samples)
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs)
+        self.assertEqual(reason, "pid 491402")
+        self.assertEqual(len(calls), 2)
+
+    def test_idle_account_samples_the_lister_before_and_after_the_window(self):
+        calls = []
+        def procs():
+            calls.append(1)
+            return []
+        self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
+        self.assertEqual(len(calls), 2)
+
     def test_busy_pids_matches_config_dirs_by_resolved_path(self):
         from tracker.probe import busy_pids
         procs = [(10, Path("/h/.claude-dave")), (11, Path("/h/../h/.claude-dave/")), (12, Path("/h/.claude-javiswork"))]

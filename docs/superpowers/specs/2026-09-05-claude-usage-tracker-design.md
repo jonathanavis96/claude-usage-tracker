@@ -17,9 +17,11 @@ The visual target is `docs/mockup.html` in this repo (approved 2026-09-05).
 
 ### Primary: the fixed probe
 
-A cron job on `ssh gs` measures **tokens per percent tick**. It runs as
-the Dave account (credentials in that host's `.claude-dave` directory) and
-falls back to the Jono Work account (`.claude-javiswork`) when Dave is busy. Both are on Max 20x, the
+A cron job on `ssh gs` measures **tokens per percent tick**. It tries the
+Jono Work account (`jwork`, credentials in that host's `.claude-javiswork`
+directory) first and the Dave account (`.claude-dave`) second; an account
+with a live `claude` process on that host is skipped before its meter is
+read. Both are on Max 20x, the
 same plan as Jonathan's own account, so probe and passive figures are directly
 comparable. The prompt, model and effort never change, so the tokens per
 prompt are constant within noise, and the only thing that can move the tick
@@ -43,9 +45,11 @@ workload and of whether masterrig is on.
   from the `--output-format json` usage block, utilization readings, tick
   times, and derived tokens per 1% of window.
 - Other usage on the account between ticks would corrupt a probe, so the
-  account must be idle while a probe runs. The probe reads utilization twice,
-  2 minutes apart, on the Dave account; if it moved, it tries the Jono Work
-  account the same way. If both are busy it sleeps 15 minutes and retries, up
+  account must be idle while a probe runs. For each account in order (Jono
+  Work, then Dave) the probe first skips it if a `claude` process on the host
+  carries its config dir, then reads utilization twice, 2 minutes apart, and
+  rejects it if the meter moved or a process appeared meanwhile. If both are
+  busy it sleeps 15 minutes and retries, up
   to 4 hours, then gives up for that slot and logs it. During the run it aborts
   if a tick arrives faster than its own prompts can explain.
 - Each probe row records which account it ran on. Both are Max 20x, so the

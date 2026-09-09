@@ -430,11 +430,21 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     two reads `window_s` apart must agree on the 5-hour percent within the same window
     (`"meter moved 7% -> 8%"`, `"window reset"`). The meter check alone is too weak on
     its own host: a busy account that is between prompts for two minutes passes it.
+
+    The process list is sampled again once the meter check passes: a session opened
+    during the sleep has not necessarily moved the meter yet, and would otherwise be
+    accepted just as it starts spending. Without `cfg` and `processes` only the meter
+    is consulted.
     """
-    if cfg is not None and processes is not None:
+    def process_reason() -> str | None:
+        if cfg is None or processes is None:
+            return None
         pids = busy_pids(cfg, processes())
-        if pids:
-            return "pid " + ", ".join(str(p) for p in pids)
+        return "pid " + ", ".join(str(p) for p in pids) if pids else None
+
+    reason = process_reason()
+    if reason is not None:
+        return reason
     a = read()
     sleep(window_s)
     b = read()
@@ -442,7 +452,7 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
         return "window reset"
     if a.five_hour != b.five_hour:
         return f"meter moved {a.five_hour:g}% -> {b.five_hour:g}%"
-    return None
+    return process_reason()
 
 
 def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
