@@ -649,3 +649,16 @@ class InitialBurstTests(unittest.TestCase):
         expected = int(0.8 * 166_705 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS))
         self.assertEqual(k, expected)
         self.assertLessEqual(k, 10)
+
+
+class LowExpectationRefusalTests(unittest.TestCase):
+    def test_expectation_too_low_for_eight_prompts_is_refused(self):
+        from tracker.probe import (FIXED_PROMPT_TOKENS, MIN_PAYLOAD_WORDS, MIN_PROMPTS_PER_SPAN,
+                                   TOKENS_PER_WORD, payload_words_for)
+        floor_prompt = MIN_PAYLOAD_WORDS * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        too_low = floor_prompt * (MIN_PROMPTS_PER_SPAN - 1)
+        self.assertEqual(payload_words_for(too_low), MIN_PAYLOAD_WORDS)
+        self.assertLess(too_low / floor_prompt, MIN_PROMPTS_PER_SPAN)
+        fine = floor_prompt * MIN_PROMPTS_PER_SPAN
+        self.assertGreaterEqual(fine / (payload_words_for(fine) * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS),
+                                MIN_PROMPTS_PER_SPAN)

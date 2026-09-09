@@ -59,6 +59,7 @@ MIN_TICK_USD = 0.40
 TOKENS_PER_WORD = 3.47  # measured on the prose payload: 12,000 words is about 42k tokens
 MIN_PAYLOAD_WORDS = 500  # low enough that a span keeps >= 8 prompts down to about 106k tokens per 1%
 MAX_PAYLOAD_WORDS = 12000
+MIN_PROMPTS_PER_SPAN = 8  # below this the +-1 prompt quantisation exceeds the drift tolerance
 PROBE_PAYLOAD_WORDS = MAX_PAYLOAD_WORDS
 PROMPTS_PER_TICK = 12  # a prompt is sized to a twelfth of a tick
 # Every prompt carries a fixed overhead beyond its own payload: the CLI's system-prefix
@@ -443,6 +444,15 @@ def main(argv: list[str] | None = None) -> int:
         builder = output_prompt
     else:
         words = payload_words_for(a.expect_tokens_per_pct)
+        per_prompt = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        if a.expect_tokens_per_pct / per_prompt < MIN_PROMPTS_PER_SPAN:
+            # The fixed CLI overhead alone caps how many prompts fit in one tick, so a
+            # low expectation cannot be sized into a well-averaged span. Say so loudly
+            # rather than publish a noisy rate.
+            print(f"expectation {a.expect_tokens_per_pct:.0f} tokens per 1% fits fewer than "
+                  f"{MIN_PROMPTS_PER_SPAN} prompts per tick at the minimum payload; "
+                  f"quantisation would exceed the published tolerance", file=sys.stderr)
+            return 4
         builder = lambda salt, i: probe_prompt(salt, i, words)  # noqa: E731
     home = Path.home()
     accounts = [tuple(x.split("=", 1)) for x in a.account] or [("dave", home / ".claude-dave"), ("jono", home / ".claude-javiswork")]
