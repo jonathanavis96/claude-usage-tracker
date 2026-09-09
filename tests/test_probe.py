@@ -329,7 +329,7 @@ def concurrent_runner(tokens=20_000, parallel_indexes=()):
 # pre-run estimate (5,000 words at 3.47 tokens per word = 17,350) sizes the very first
 # burst to floor(0.8 * 100k / 17,350) = 4 as well.
 EXPECT = 100_000
-WORDS = 5_000
+WORDS = 2_400  # 2,400 x 3.47 + FIXED_PROMPT_TOKENS = 19,808 per prompt: first burst floor(0.8 * 100k / 19,808) = 4
 
 
 def burst_probe(read, run, **kw):
@@ -401,7 +401,7 @@ class BurstFirstSpanTests(unittest.TestCase):
 
     def test_burst_size_uses_the_observed_tokens_per_prompt_once_seen(self):
         # 40k per prompt: a 2.5-prompt span, so bursts after the first are floor(0.8*2.5)=2;
-        # the first burst is sized from the word estimate (17,350): floor(0.8*100k/17,350)=4.
+        # the first burst is sized from the word estimate plus overhead (19,808): floor(0.8*100k/19,808)=4.
         r = burst_probe(util_seq([10, 10, 11, 11, 12]), concurrent_runner(tokens=40_000), ticks=1, skip=0)
         self.assertEqual(bursts(r), [4, None, 2, None])
 
@@ -630,3 +630,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(c["payload"], "output")
         self.assertEqual(c["payload_words"], 4_000)
         self.assertIn("4,000 words", c["prompt_text"])
+
+
+class InitialBurstTests(unittest.TestCase):
+    def test_first_burst_counts_the_fixed_overhead_per_prompt(self):
+        # Before any prompt has run, a prompt is estimated as payload plus the fixed
+        # overhead; the Fable expectation of 166,705 with the 1,500-word minimum payload
+        # would otherwise burst 25 prompts instead of about 7.
+        from tracker.probe import _burst_size, payload_words_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS
+        words = payload_words_for(166_705)
+        k = _burst_size(166_705, 0.8, [], words, room=100)
+        expected = int(0.8 * 166_705 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS))
+        self.assertEqual(k, expected)
+        self.assertLessEqual(k, 8)

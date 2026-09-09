@@ -356,8 +356,8 @@ def _burst_size(expect_tokens_per_pct: float | None, fraction: float, prompt_tot
     """How many prompts open the span concurrently: 1 means a single prompt.
 
     The burst is `fraction` of the expected span in prompts: `expect_tokens_per_pct` over
-    the mean tokens per prompt seen so far, or over the payload's word estimate before any
-    prompt has run. Without an expectation there is nothing to size it from, so no burst.
+    the mean tokens per prompt seen so far, or over the payload's word estimate plus the
+    fixed per-prompt overhead before any prompt has run. Without an expectation there is nothing to size it from, so no burst.
     `room` is the prompts left under `max_prompts`.
     """
     if expect_tokens_per_pct is None:
@@ -365,7 +365,7 @@ def _burst_size(expect_tokens_per_pct: float | None, fraction: float, prompt_tot
     if prompt_totals:
         per_prompt = sum(prompt_totals) / len(prompt_totals)
     else:
-        per_prompt = payload_words * TOKENS_PER_WORD
+        per_prompt = payload_words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
     if per_prompt <= 0:
         return 1
     k = min(int(fraction * expect_tokens_per_pct // per_prompt), room)
