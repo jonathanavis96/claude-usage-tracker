@@ -236,10 +236,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         # account, which probes on max20) replace passive max20 weeks from the
         # first probe week on, same concatenation rule as before.
         passive_history = passive_weekly.get("history", [])
-        # A lagging passive.json from before the flag existed carries no `partial`;
-        # backfill it here so every published weekly row honours the contract.
+        # passive.json may lag: it can predate the flag, or carry a `partial` from
+        # when its newest week was still open. Recompute the flag against this
+        # publish's own time so every published weekly row honours the contract.
         for h in passive_history:
-            h.setdefault("partial", date.fromisoformat(h["week_ending"]) >= now.date())
+            h["partial"] = date.fromisoformat(h["week_ending"]) >= now.date()
         probe_history = probe_weekly["history"]
         max5_history = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max5"]
         passive_max20 = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max20"]

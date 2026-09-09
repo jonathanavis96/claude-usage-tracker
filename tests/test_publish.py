@@ -427,11 +427,14 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         by_week = {h["week_ending"]: h["partial"] for h in j["weekly_windows"]["max20"]["history"]}
         self.assertEqual(by_week, {"2026-08-28": False, "2026-09-04": False, "2026-09-11": True})
 
-    def test_passive_rows_without_partial_are_backfilled_from_the_publish_time(self):
+    def test_passive_partial_flags_are_recomputed_from_the_publish_time(self):
         # A lagging passive.json from before the flag existed: the open week is
         # flagged partial against the publisher's own `now`, the rest complete.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        weekly = {"current": 6.46, "history": [dict(h) for h in self.PASSIVE_WEEKLY["history"]]
+        # 09-04 carries a stale partial=True from a passive.json written while that week
+        # was open; it must come out False against this publish's now.
+        weekly = {"current": 6.46, "history": [dict(h) for h in self.PASSIVE_WEEKLY["history"][:-1]]
+                  + [dict(self.PASSIVE_WEEKLY["history"][-1], partial=True)]
                   + [{"week_ending": "2026-09-11", "windows": 5.7, "five_hour_pct": 245.0, "seven_day_pct": 43.0}]}
         passive = dict(PASSIVE, weekly_windows=weekly)
         now = datetime(2026, 9, 9, 5, 30, tzinfo=timezone.utc)
