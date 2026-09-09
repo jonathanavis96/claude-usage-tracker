@@ -3,3 +3,5 @@ __pycache__/
 out/
 .cron.lock
 .notified-change
+.playwright-mcp/
+*.png
