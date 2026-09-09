@@ -85,7 +85,8 @@ windows per plan, and change history.
 
 ## Running it
 
-Tests:
+Tests (one test reads a usage log that exists only on the machine that
+records it, and is skipped elsewhere):
 
 ```
 python3 -m unittest discover -s tests
@@ -102,10 +103,12 @@ Running a probe directly spends real subscription allowance on whichever
 account it uses — it is not a no-op. See `tracker/probe.py`'s `argparse`
 setup for the full flag list; the required ones are `--model` and
 `--expect-tokens-per-pct` (the assumed tokens-per-1% rate, used to size the
-prompts and bursts):
+prompts and bursts). Without `--out history/probes.jsonl` the row lands in a
+separate `probes.jsonl` in the working directory and never enters the rotation
+or the published page:
 
 ```
-python3 -m tracker.probe --model claude-sonnet-5 --expect-tokens-per-pct 500000
+python3 -m tracker.probe --model claude-sonnet-5 --expect-tokens-per-pct 500000 --out history/probes.jsonl
 ```
 
 Publishing the public JSON from current history:
