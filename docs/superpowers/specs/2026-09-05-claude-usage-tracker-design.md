@@ -18,9 +18,8 @@ The visual target is `docs/mockup.html` in this repo (approved 2026-09-05).
 ### Primary: the fixed probe
 
 A cron job on `ssh gs` measures **tokens per percent tick**. It runs as
-`dclaude` (dave@greenscape.systems, credentials in that host's `.claude-dave`
-directory) and falls back to `wclaude` (jono@greenscape.systems,
-`.claude-javiswork`) when the Dave account is busy. Both are on Max 20x, the
+the Dave account (credentials in that host's `.claude-dave` directory) and
+falls back to the Jono Work account (`.claude-javiswork`) when Dave is busy. Both are on Max 20x, the
 same plan as Jonathan's own account, so probe and passive figures are directly
 comparable. The prompt, model and effort never change, so the tokens per
 prompt are constant within noise, and the only thing that can move the tick
