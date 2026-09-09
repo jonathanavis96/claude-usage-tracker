@@ -1,393 +1,1063 @@
 {
  "_meta": {
-  "repeats": 3,
-  "started": "2026-09-05T23:31:04.692774+00:00",
+  "repeats": 7,
+  "started": "2026-09-09T11:28:37.136014+00:00",
   "usage_deltas": {
    "claude-sonnet-5/low": 0.0,
    "claude-sonnet-5/medium": 0.0,
    "claude-sonnet-5/high": 0.0,
-   "claude-sonnet-5/xhigh": 0.0,
-   "claude-sonnet-5/max": 1.0,
-   "claude-opus-5/low": 1.0,
-   "claude-opus-5/medium": 0.0,
-   "claude-opus-5/high": 1.0,
-   "claude-opus-5/xhigh": 1.0,
-   "claude-opus-5/max": 1.0,
-   "claude-fable-5-1/low": 1.0,
-   "claude-fable-5-1/medium": 0.0,
-   "claude-fable-5-1/high": 2.0,
-   "claude-fable-5-1/xhigh": 4.0,
-   "claude-fable-5-1/max": 9.0
+   "claude-sonnet-5/xhigh": 1.0,
+   "claude-sonnet-5/max": 13.0,
+   "claude-opus-5/low": -47.0,
+   "claude-opus-5/medium": 2.0,
+   "claude-opus-5/high": 4.0,
+   "claude-opus-5/xhigh": 8.0,
+   "claude-opus-5/max": 5.0,
+   "claude-fable-5-1/low": 2.0,
+   "claude-fable-5-1/medium": 5.0,
+   "claude-fable-5-1/high": 5.0,
+   "claude-fable-5-1/xhigh": 11.0,
+   "claude-fable-5-1/max": 22.0
   },
   "runs": {
    "claude-sonnet-5/low": [
     {
-     "input": 2,
-     "output": 1508,
-     "cache_read": 9669,
-     "cache_write": 4257,
-     "total": 15436
+     "input": 4,
+     "output": 1978,
+     "cache_read": 39590,
+     "cache_write": 1253,
+     "total": 42825
     },
     {
      "input": 2,
-     "output": 1913,
-     "cache_read": 13926,
+     "output": 1713,
+     "cache_read": 19795,
      "cache_write": 0,
-     "total": 15841
+     "total": 21510
     },
     {
      "input": 2,
-     "output": 1638,
-     "cache_read": 13926,
+     "output": 1720,
+     "cache_read": 19795,
      "cache_write": 0,
-     "total": 15566
+     "total": 21517
+    },
+    {
+     "input": 4,
+     "output": 1997,
+     "cache_read": 39590,
+     "cache_write": 1455,
+     "total": 43046
+    },
+    {
+     "input": 2,
+     "output": 1610,
+     "cache_read": 19795,
+     "cache_write": 0,
+     "total": 21407
+    },
+    {
+     "input": 4,
+     "output": 3726,
+     "cache_read": 39590,
+     "cache_write": 2542,
+     "total": 45862
+    },
+    {
+     "input": 4,
+     "output": 1410,
+     "cache_read": 39590,
+     "cache_write": 877,
+     "total": 41881
     }
    ],
    "claude-sonnet-5/medium": [
     {
-     "input": 2,
-     "output": 2398,
-     "cache_read": 0,
-     "cache_write": 13933,
-     "total": 16333
+     "input": 4,
+     "output": 2237,
+     "cache_read": 19802,
+     "cache_write": 21191,
+     "total": 43234
     },
     {
      "input": 2,
-     "output": 3061,
-     "cache_read": 13933,
+     "output": 2033,
+     "cache_read": 19802,
      "cache_write": 0,
-     "total": 16996
+     "total": 21837
+    },
+    {
+     "input": 4,
+     "output": 3329,
+     "cache_read": 39604,
+     "cache_write": 2365,
+     "total": 45302
     },
     {
      "input": 2,
-     "output": 1742,
-     "cache_read": 13933,
+     "output": 2698,
+     "cache_read": 19802,
      "cache_write": 0,
-     "total": 15677
+     "total": 22502
+    },
+    {
+     "input": 2,
+     "output": 2323,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 22127
+    },
+    {
+     "input": 2,
+     "output": 2938,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 22742
+    },
+    {
+     "input": 4,
+     "output": 2144,
+     "cache_read": 39604,
+     "cache_write": 2099,
+     "total": 43851
     }
    ],
    "claude-sonnet-5/high": [
     {
-     "input": 2,
-     "output": 5281,
-     "cache_read": 8683,
-     "cache_write": 5250,
-     "total": 19216
+     "input": 4,
+     "output": 6108,
+     "cache_read": 34031,
+     "cache_write": 10951,
+     "total": 51094
+    },
+    {
+     "input": 4,
+     "output": 5487,
+     "cache_read": 39604,
+     "cache_write": 4615,
+     "total": 49710
     },
     {
      "input": 2,
-     "output": 6001,
-     "cache_read": 13933,
+     "output": 5533,
+     "cache_read": 19802,
      "cache_write": 0,
-     "total": 19936
+     "total": 25337
     },
     {
      "input": 2,
-     "output": 5848,
-     "cache_read": 13933,
+     "output": 4527,
+     "cache_read": 19802,
      "cache_write": 0,
-     "total": 19783
+     "total": 24331
+    },
+    {
+     "input": 2,
+     "output": 7968,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 27772
+    },
+    {
+     "input": 2,
+     "output": 4696,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 24500
+    },
+    {
+     "input": 2,
+     "output": 5768,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 25572
     }
    ],
    "claude-sonnet-5/xhigh": [
     {
      "input": 2,
-     "output": 8617,
+     "output": 7666,
      "cache_read": 0,
-     "cache_write": 13933,
-     "total": 22552
+     "cache_write": 19802,
+     "total": 27470
     },
     {
      "input": 2,
-     "output": 9746,
-     "cache_read": 13933,
+     "output": 7455,
+     "cache_read": 19802,
      "cache_write": 0,
-     "total": 23681
+     "total": 27259
     },
     {
      "input": 2,
-     "output": 8044,
-     "cache_read": 13933,
+     "output": 6645,
+     "cache_read": 19802,
      "cache_write": 0,
-     "total": 21979
+     "total": 26449
+    },
+    {
+     "input": 2,
+     "output": 7797,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 27601
+    },
+    {
+     "input": 2,
+     "output": 6162,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 25966
+    },
+    {
+     "input": 2,
+     "output": 7067,
+     "cache_read": 19802,
+     "cache_write": 0,
+     "total": 26871
+    },
+    {
+     "input": 8,
+     "output": 7667,
+     "cache_read": 90847,
+     "cache_write": 8931,
+     "total": 107453
     }
    ],
    "claude-sonnet-5/max": [
     {
-     "input": 12,
-     "output": 28008,
-     "cache_read": 129678,
-     "cache_write": 37145,
-     "total": 194843
+     "input": 2,
+     "output": 15592,
+     "cache_read": 0,
+     "cache_write": 19802,
+     "total": 35396
     },
     {
      "input": 6,
-     "output": 20885,
-     "cache_read": 47837,
-     "cache_write": 10441,
-     "total": 79169
+     "output": 23951,
+     "cache_read": 78804,
+     "cache_write": 21039,
+     "total": 123800
     },
     {
      "input": 8,
-     "output": 29955,
-     "cache_read": 64409,
-     "cache_write": 16559,
-     "total": 110931
+     "output": 25697,
+     "cache_read": 88629,
+     "cache_write": 10430,
+     "total": 124764
+    },
+    {
+     "input": 12,
+     "output": 24056,
+     "cache_read": 155825,
+     "cache_write": 15768,
+     "total": 195661
+    },
+    {
+     "input": 10,
+     "output": 31586,
+     "cache_read": 194275,
+     "cache_write": 45214,
+     "total": 271085
+    },
+    {
+     "input": 10,
+     "output": 21644,
+     "cache_read": 130079,
+     "cache_write": 20695,
+     "total": 172428
+    },
+    {
+     "input": 8,
+     "output": 23356,
+     "cache_read": 90895,
+     "cache_write": 16892,
+     "total": 131151
     }
    ],
    "claude-opus-5/low": [
     {
      "input": 2,
-     "output": 2457,
-     "cache_read": 8628,
-     "cache_write": 6146,
-     "total": 17233
+     "output": 2299,
+     "cache_read": 0,
+     "cache_write": 14625,
+     "total": 16926
     },
     {
      "input": 2,
-     "output": 3340,
-     "cache_read": 14774,
+     "output": 2750,
+     "cache_read": 14625,
      "cache_write": 0,
-     "total": 18116
+     "total": 17377
     },
     {
      "input": 2,
-     "output": 2648,
-     "cache_read": 14774,
+     "output": 3111,
+     "cache_read": 14625,
      "cache_write": 0,
-     "total": 17424
+     "total": 17738
+    },
+    {
+     "input": 2,
+     "output": 3068,
+     "cache_read": 14625,
+     "cache_write": 0,
+     "total": 17695
+    },
+    {
+     "input": 2,
+     "output": 2506,
+     "cache_read": 14625,
+     "cache_write": 0,
+     "total": 17133
+    },
+    {
+     "input": 2,
+     "output": 2421,
+     "cache_read": 10619,
+     "cache_write": 4008,
+     "total": 17050
+    },
+    {
+     "input": 2,
+     "output": 2858,
+     "cache_read": 14627,
+     "cache_write": 0,
+     "total": 17487
     }
    ],
    "claude-opus-5/medium": [
     {
      "input": 2,
-     "output": 3956,
-     "cache_read": 0,
-     "cache_write": 14774,
-     "total": 18732
+     "output": 4270,
+     "cache_read": 8628,
+     "cache_write": 5999,
+     "total": 18899
     },
     {
      "input": 2,
-     "output": 4391,
-     "cache_read": 14774,
+     "output": 4040,
+     "cache_read": 14627,
      "cache_write": 0,
-     "total": 19167
+     "total": 18669
     },
     {
      "input": 2,
-     "output": 3873,
-     "cache_read": 14774,
+     "output": 4793,
+     "cache_read": 14627,
      "cache_write": 0,
-     "total": 18649
+     "total": 19422
+    },
+    {
+     "input": 2,
+     "output": 3070,
+     "cache_read": 14627,
+     "cache_write": 0,
+     "total": 17699
+    },
+    {
+     "input": 2,
+     "output": 4291,
+     "cache_read": 14627,
+     "cache_write": 0,
+     "total": 18920
+    },
+    {
+     "input": 2,
+     "output": 3685,
+     "cache_read": 14627,
+     "cache_write": 0,
+     "total": 18314
+    },
+    {
+     "input": 2,
+     "output": 5715,
+     "cache_read": 14627,
+     "cache_write": 0,
+     "total": 20344
     }
    ],
    "claude-opus-5/high": [
     {
      "input": 2,
-     "output": 7006,
+     "output": 7324,
      "cache_read": 8628,
-     "cache_write": 6146,
-     "total": 21782
+     "cache_write": 5999,
+     "total": 21953
+    },
+    {
+     "input": 6,
+     "output": 12069,
+     "cache_read": 51975,
+     "cache_write": 12530,
+     "total": 76580
     },
     {
      "input": 2,
-     "output": 9013,
-     "cache_read": 14774,
+     "output": 7567,
+     "cache_read": 14627,
      "cache_write": 0,
-     "total": 23789
+     "total": 22196
     },
     {
-     "input": 8,
-     "output": 9439,
-     "cache_read": 67066,
-     "cache_write": 11189,
-     "total": 87702
+     "input": 6,
+     "output": 11914,
+     "cache_read": 48740,
+     "cache_write": 6470,
+     "total": 67130
+    },
+    {
+     "input": 2,
+     "output": 8400,
+     "cache_read": 10619,
+     "cache_write": 4011,
+     "total": 23032
+    },
+    {
+     "input": 2,
+     "output": 7541,
+     "cache_read": 10619,
+     "cache_write": 4018,
+     "total": 22180
+    },
+    {
+     "input": 2,
+     "output": 7757,
+     "cache_read": 10619,
+     "cache_write": 4034,
+     "total": 22412
     }
    ],
    "claude-opus-5/xhigh": [
     {
-     "input": 6,
-     "output": 14382,
-     "cache_read": 38919,
-     "cache_write": 29133,
-     "total": 82440
+     "input": 2,
+     "output": 12517,
+     "cache_read": 8628,
+     "cache_write": 5997,
+     "total": 27144
+    },
+    {
+     "input": 2,
+     "output": 12767,
+     "cache_read": 14625,
+     "cache_write": 0,
+     "total": 27394
+    },
+    {
+     "input": 2,
+     "output": 11015,
+     "cache_read": 14625,
+     "cache_write": 0,
+     "total": 25642
     },
     {
      "input": 6,
-     "output": 11280,
-     "cache_read": 51417,
-     "cache_write": 8159,
-     "total": 70862
+     "output": 16754,
+     "cache_read": 48916,
+     "cache_write": 18386,
+     "total": 84062
     },
     {
-     "input": 6,
-     "output": 14378,
-     "cache_read": 50354,
-     "cache_write": 10227,
-     "total": 74965
+     "input": 2,
+     "output": 9608,
+     "cache_read": 14628,
+     "cache_write": 0,
+     "total": 24238
+    },
+    {
+     "input": 2,
+     "output": 11436,
+     "cache_read": 14628,
+     "cache_write": 0,
+     "total": 26066
+    },
+    {
+     "input": 4,
+     "output": 13429,
+     "cache_read": 29256,
+     "cache_write": 10287,
+     "total": 52976
     }
    ],
    "claude-opus-5/max": [
     {
-     "input": 8,
-     "output": 15289,
-     "cache_read": 66627,
-     "cache_write": 16826,
-     "total": 98750
+     "input": 6,
+     "output": 12851,
+     "cache_read": 38288,
+     "cache_write": 28985,
+     "total": 80130
     },
     {
      "input": 6,
-     "output": 18212,
-     "cache_read": 49708,
-     "cache_write": 17295,
-     "total": 85221
+     "output": 16313,
+     "cache_read": 53577,
+     "cache_write": 11456,
+     "total": 81352
     },
     {
      "input": 10,
-     "output": 17963,
-     "cache_read": 109684,
-     "cache_write": 15080,
-     "total": 142737
+     "output": 19818,
+     "cache_read": 100560,
+     "cache_write": 13202,
+     "total": 133590
+    },
+    {
+     "input": 6,
+     "output": 16171,
+     "cache_read": 56624,
+     "cache_write": 13571,
+     "total": 86372
+    },
+    {
+     "input": 6,
+     "output": 17454,
+     "cache_read": 56113,
+     "cache_write": 13140,
+     "total": 86713
+    },
+    {
+     "input": 8,
+     "output": 15091,
+     "cache_read": 73157,
+     "cache_write": 16079,
+     "total": 104335
+    },
+    {
+     "input": 12,
+     "output": 15917,
+     "cache_read": 112336,
+     "cache_write": 16150,
+     "total": 144415
     }
    ],
    "claude-fable-5-1/low": [
     {
      "input": 2,
-     "output": 2178,
+     "output": 2407,
      "cache_read": 8628,
-     "cache_write": 7082,
-     "total": 17890
+     "cache_write": 6851,
+     "total": 17888
     },
     {
      "input": 2,
-     "output": 2607,
-     "cache_read": 15710,
+     "output": 2428,
+     "cache_read": 15479,
      "cache_write": 0,
-     "total": 18319
+     "total": 17909
     },
     {
      "input": 2,
-     "output": 2403,
-     "cache_read": 15710,
+     "output": 2174,
+     "cache_read": 15479,
      "cache_write": 0,
-     "total": 18115
+     "total": 17655
+    },
+    {
+     "input": 2,
+     "output": 2334,
+     "cache_read": 15479,
+     "cache_write": 0,
+     "total": 17815
+    },
+    {
+     "input": 2,
+     "output": 1969,
+     "cache_read": 15479,
+     "cache_write": 0,
+     "total": 17450
+    },
+    {
+     "input": 2,
+     "output": 1834,
+     "cache_read": 15479,
+     "cache_write": 0,
+     "total": 17315
+    },
+    {
+     "input": 2,
+     "output": 2060,
+     "cache_read": 15479,
+     "cache_write": 0,
+     "total": 17541
     }
    ],
    "claude-fable-5-1/medium": [
     {
      "input": 2,
-     "output": 3506,
-     "cache_read": 11514,
-     "cache_write": 4196,
-     "total": 19218
+     "output": 3266,
+     "cache_read": 11473,
+     "cache_write": 4006,
+     "total": 18747
     },
     {
      "input": 2,
-     "output": 3578,
-     "cache_read": 15710,
-     "cache_write": 0,
-     "total": 19290
+     "output": 5555,
+     "cache_read": 11473,
+     "cache_write": 4009,
+     "total": 21039
     },
     {
      "input": 2,
-     "output": 5389,
-     "cache_read": 15710,
+     "output": 5289,
+     "cache_read": 15482,
      "cache_write": 0,
-     "total": 21101
+     "total": 20773
+    },
+    {
+     "input": 2,
+     "output": 2190,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 17674
+    },
+    {
+     "input": 2,
+     "output": 2437,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 17921
+    },
+    {
+     "input": 2,
+     "output": 2524,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 18008
+    },
+    {
+     "input": 2,
+     "output": 3184,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 18668
     }
    ],
    "claude-fable-5-1/high": [
     {
      "input": 2,
-     "output": 7808,
-     "cache_read": 11514,
-     "cache_write": 4196,
-     "total": 23520
+     "output": 5831,
+     "cache_read": 11473,
+     "cache_write": 4009,
+     "total": 21315
     },
     {
      "input": 2,
-     "output": 4171,
-     "cache_read": 15710,
+     "output": 5354,
+     "cache_read": 15482,
      "cache_write": 0,
-     "total": 19883
+     "total": 20838
     },
     {
      "input": 2,
-     "output": 5244,
-     "cache_read": 15710,
+     "output": 8247,
+     "cache_read": 15482,
      "cache_write": 0,
-     "total": 20956
+     "total": 23731
+    },
+    {
+     "input": 34,
+     "output": 4232,
+     "cache_read": 30964,
+     "cache_write": 1848,
+     "total": 37078
+    },
+    {
+     "input": 2,
+     "output": 6210,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 21694
+    },
+    {
+     "input": 2,
+     "output": 6239,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 21723
+    },
+    {
+     "input": 2,
+     "output": 5762,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 21246
     }
    ],
    "claude-fable-5-1/xhigh": [
     {
      "input": 2,
-     "output": 17394,
-     "cache_read": 11514,
-     "cache_write": 4196,
-     "total": 33106
-    },
-    {
-     "input": 34,
-     "output": 21118,
-     "cache_read": 31420,
-     "cache_write": 18017,
-     "total": 70589
+     "output": 13505,
+     "cache_read": 11473,
+     "cache_write": 4009,
+     "total": 28989
     },
     {
      "input": 2,
-     "output": 17366,
-     "cache_read": 15710,
+     "output": 18160,
+     "cache_read": 15482,
      "cache_write": 0,
-     "total": 33078
+     "total": 33644
+    },
+    {
+     "input": 98,
+     "output": 20456,
+     "cache_read": 86225,
+     "cache_write": 17494,
+     "total": 124273
+    },
+    {
+     "input": 2,
+     "output": 19247,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 34731
+    },
+    {
+     "input": 2,
+     "output": 12412,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 27896
+    },
+    {
+     "input": 2,
+     "output": 17845,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 33329
+    },
+    {
+     "input": 2,
+     "output": 14032,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 29516
     }
    ],
    "claude-fable-5-1/max": [
     {
-     "input": 66,
-     "output": 31577,
-     "cache_read": 56484,
-     "cache_write": 26462,
-     "total": 114589
+     "input": 162,
+     "output": 22686,
+     "cache_read": 126883,
+     "cache_write": 16539,
+     "total": 166270
+    },
+    {
+     "input": 34,
+     "output": 21521,
+     "cache_read": 30964,
+     "cache_write": 6160,
+     "total": 58679
+    },
+    {
+     "input": 130,
+     "output": 45646,
+     "cache_read": 158139,
+     "cache_write": 40794,
+     "total": 244709
+    },
+    {
+     "input": 34,
+     "output": 27141,
+     "cache_read": 30964,
+     "cache_write": 23759,
+     "total": 81898
     },
     {
      "input": 66,
-     "output": 29334,
-     "cache_read": 61302,
-     "cache_write": 16689,
-     "total": 107391
+     "output": 31421,
+     "cache_read": 69732,
+     "cache_write": 25453,
+     "total": 126672
     },
     {
-     "input": 98,
-     "output": 24702,
-     "cache_read": 93390,
-     "cache_write": 18061,
-     "total": 136251
+     "input": 2,
+     "output": 27210,
+     "cache_read": 15482,
+     "cache_write": 0,
+     "total": 42694
     }
    ]
   },
-  "failed": [],
-  "finished": "2026-09-06T01:04:28.866832+00:00"
+  "failed": [
+   {
+    "cell": "claude-fable-5-1/max",
+    "error": "[Errno 2] No such file or directory: 'claude'"
+   }
+  ],
+  "finished": "2026-09-09T14:53:22.399540+00:00",
+  "cell_rule": "median over all runs of each run's meter-dollar value (per class: tokens x list price x class_weight / 1e6, summed, x meter_weight); tokens = median total tokens over all runs",
+  "cells": {
+   "claude-sonnet-5/low": {
+    "median_tokens": 41881,
+    "median_usd": 0.035499,
+    "runs": 7,
+    "turns": [
+     2,
+     1,
+     1,
+     2,
+     1,
+     2,
+     2
+    ],
+    "spread_usd": 2.4694
+   },
+   "claude-sonnet-5/medium": {
+    "median_tokens": 22742,
+    "median_usd": 0.052528,
+    "runs": 7,
+    "turns": [
+     2,
+     1,
+     2,
+     1,
+     1,
+     1,
+     2
+    ],
+    "spread_usd": 2.3968
+   },
+   "claude-sonnet-5/high": {
+    "median_tokens": 25572,
+    "median_usd": 0.107788,
+    "runs": 7,
+    "turns": [
+     2,
+     2,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.7248
+   },
+   "claude-sonnet-5/xhigh": {
+    "median_tokens": 27259,
+    "median_usd": 0.138154,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     4
+    ],
+    "spread_usd": 1.6321
+   },
+   "claude-sonnet-5/max": {
+    "median_tokens": 131151,
+    "median_usd": 0.499488,
+    "runs": 7,
+    "turns": [
+     1,
+     3,
+     4,
+     6,
+     5,
+     5,
+     4
+    ],
+    "spread_usd": 2.1821
+   },
+   "claude-opus-5/low": {
+    "median_tokens": 17377,
+    "median_usd": 0.139315,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.6227
+   },
+   "claude-opus-5/medium": {
+    "median_tokens": 18899,
+    "median_usd": 0.200418,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.8182
+   },
+   "claude-opus-5/high": {
+    "median_tokens": 22412,
+    "median_usd": 0.379597,
+    "runs": 7,
+    "turns": [
+     1,
+     3,
+     1,
+     3,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.8613
+   },
+   "claude-opus-5/xhigh": {
+    "median_tokens": 27144,
+    "median_usd": 0.581838,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     3,
+     1,
+     1,
+     2
+    ],
+    "spread_usd": 2.0318
+   },
+   "claude-opus-5/max": {
+    "median_tokens": 86713,
+    "median_usd": 0.840856,
+    "runs": 7,
+    "turns": [
+     3,
+     3,
+     5,
+     3,
+     3,
+     4,
+     6
+    ],
+    "spread_usd": 1.316
+   },
+   "claude-fable-5-1/low": {
+    "median_tokens": 17655,
+    "median_usd": 0.19955,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.802
+   },
+   "claude-fable-5-1/medium": {
+    "median_tokens": 18668,
+    "median_usd": 0.290451,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 2.7511
+   },
+   "claude-fable-5-1/high": {
+    "median_tokens": 21694,
+    "median_usd": 0.56279,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     17,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.8107
+   },
+   "claude-fable-5-1/xhigh": {
+    "median_tokens": 33329,
+    "median_usd": 1.60994,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     49,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.8575
+   },
+   "claude-fable-5-1/max": {
+    "median_tokens": 104285,
+    "median_usd": 2.600274,
+    "runs": 6,
+    "turns": [
+     81,
+     17,
+     65,
+     17,
+     33,
+     1
+    ],
+    "spread_usd": 2.3041
+   }
+  },
+  "recomputed_from": "data/effort_matrix.json",
+  "recomputed": "2026-09-09T15:46:06.274807+00:00"
  },
  "claude-sonnet-5": {
-  "low": 15566,
-  "medium": 16333,
-  "high": 19783,
-  "xhigh": 22552,
-  "max": 110931
+  "low": 41881,
+  "medium": 22742,
+  "high": 25572,
+  "xhigh": 27259,
+  "max": 131151
  },
  "claude-opus-5": {
-  "low": 17424,
-  "medium": 18732,
-  "high": 23789,
-  "xhigh": 74965,
-  "max": 98750
+  "low": 17377,
+  "medium": 18899,
+  "high": 22412,
+  "xhigh": 27144,
+  "max": 86713
  },
  "claude-fable-5-1": {
-  "low": 18115,
-  "medium": 19290,
-  "high": 20956,
-  "xhigh": 33106,
-  "max": 114589
+  "low": 17655,
+  "medium": 18668,
+  "high": 21694,
+  "xhigh": 33329,
+  "max": 104285
+ },
+ "usd": {
+  "claude-sonnet-5": {
+   "low": 0.035499,
+   "medium": 0.052528,
+   "high": 0.107788,
+   "xhigh": 0.138154,
+   "max": 0.499488
+  },
+  "claude-opus-5": {
+   "low": 0.139315,
+   "medium": 0.200418,
+   "high": 0.379597,
+   "xhigh": 0.581838,
+   "max": 0.840856
+  },
+  "claude-fable-5-1": {
+   "low": 0.19955,
+   "medium": 0.290451,
+   "high": 0.56279,
+   "xhigh": 1.60994,
+   "max": 2.600274
+  }
  }
 }
