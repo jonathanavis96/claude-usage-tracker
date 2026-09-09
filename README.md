@@ -13,8 +13,8 @@ token counts. The public page is at
 idle Max 20x account until the 5-hour meter has ticked forward a chosen
 number of whole percent, then reports tokens spent per 1%. Prompts are unique
 per run so nothing gets served from cache by accident, and each span opens
-with a burst of concurrent prompts sized to the expected span so the reading
-doesn't get stuck waiting on a single slow prompt. See `tracker/probe.py` for
+with a burst of concurrent prompts sized to most of the expected span so a
+probe finishes in minutes rather than an hour. See `tracker/probe.py` for
 the mechanics (burst sizing, alignment, reset handling).
 
 **The dollar invariant.** Anthropic's meter tracks API list value, not raw
@@ -22,8 +22,8 @@ token count. That means one model's probe result, combined with
 `data/prices.json`, is enough to derive every other model's rate — a probe
 on Sonnet tells you Opus and Fable too, once each token class's price and
 "class weight" (how much harder the meter charges that class relative to
-list price) are applied. Only Sonnet 5 is probed on a schedule; the rest are
-derived. Detail and the measurements behind the class weights: `docs/spike-2026-09.md`.
+list price) are applied. All three models are probed in rotation; on any
+given day the two not probed are derived from the day's reading. Detail and the measurements behind the class weights: `docs/spike-2026-09.md`.
 
 **Passive split.** The probe's own traffic is cache-write heavy, which isn't
 what a real coding session looks like. A separate passive join, run against
@@ -88,7 +88,7 @@ windows per plan, and change history.
 Tests:
 
 ```
-python3 -m pytest
+python3 -m unittest discover -s tests
 ```
 
 Dry run of the rotation (which model is next, and what expectation it would
