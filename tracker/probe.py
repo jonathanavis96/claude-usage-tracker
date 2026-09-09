@@ -15,7 +15,7 @@ Prompt size. `payload_words_for(expectation)` picks the prose payload size so on
 total tokens — payload plus the fixed per-prompt overhead (`FIXED_PROMPT_TOKENS`: the
 CLI's ~11,480-token system-prefix cache_read plus a few input/output tokens, paid on
 every prompt regardless of payload) — are about a twelfth of a tick (`PROMPTS_PER_TICK`),
-clamped to 1,500 to 12,000 words, and the row records it as `payload_words`. Sizing
+clamped to 500 to 12,000 words, and the row records it as `payload_words`. Sizing
 PROMPTS_PER_TICK to 12 rather than 10 keeps a span at 8+ prompts even when the true rate
 runs 30% below the expectation that sized it. An output payload keeps its fixed
 4,000-word reply and records that.
@@ -57,7 +57,7 @@ CLASSES = ("input", "output", "cache_read", "cache_write")
 MIN_TICK_USD = 0.40
 
 TOKENS_PER_WORD = 3.47  # measured on the prose payload: 12,000 words is about 42k tokens
-MIN_PAYLOAD_WORDS = 1500
+MIN_PAYLOAD_WORDS = 500  # low enough that a span keeps >= 8 prompts down to about 106k tokens per 1%
 MAX_PAYLOAD_WORDS = 12000
 PROBE_PAYLOAD_WORDS = MAX_PAYLOAD_WORDS
 PROMPTS_PER_TICK = 12  # a prompt is sized to a twelfth of a tick

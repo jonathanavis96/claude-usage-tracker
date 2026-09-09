@@ -360,15 +360,21 @@ class PromptSizeTests(unittest.TestCase):
     def test_prompt_size_is_clamped_to_the_word_range(self):
         from tracker.probe import payload_words_for
         self.assertEqual(payload_words_for(20_000_000), 12_000)
-        self.assertEqual(payload_words_for(20_000), 1_500)
+        self.assertEqual(payload_words_for(20_000), 500)
 
-    def test_low_expectation_clamps_to_minimum_once_overhead_is_subtracted(self):
-        # 166,705 is the Fable rate that produced the early-tick bug on 2026-09-09: the
-        # fixed per-prompt overhead alone (FIXED_PROMPT_TOKENS) leaves less than
-        # MIN_PAYLOAD_WORDS worth of budget per prompt at PROMPTS_PER_TICK=12, so the
-        # sizing must fall back to MIN_PAYLOAD_WORDS rather than go smaller (or negative).
-        from tracker.probe import payload_words_for, MIN_PAYLOAD_WORDS
-        self.assertEqual(payload_words_for(166_705), MIN_PAYLOAD_WORDS)
+    def test_low_expectation_keeps_at_least_eight_prompts_per_span(self):
+        # 166,705 is the Fable rate that produced the early-tick bug on 2026-09-09. After
+        # the fixed overhead the payload is small (about 695 words) but not clamped, so a
+        # span is 12 prompts at expectation and still >= 8 when the true rate is 30% lower.
+        from tracker.probe import payload_words_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS, MIN_PAYLOAD_WORDS
+        words = payload_words_for(166_705)
+        self.assertGreater(words, MIN_PAYLOAD_WORDS)
+        per_prompt = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        self.assertGreaterEqual(int(0.7 * 166_705 // per_prompt), 8)
+        # At the 113k actually measured that day the clamp applies and the span is still >= 8.
+        words = payload_words_for(113_303)
+        self.assertEqual(words, MIN_PAYLOAD_WORDS)
+        self.assertGreaterEqual(int(113_303 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS)), 8)
 
     def test_output_prompt_takes_a_reply_size(self):
         from tracker.probe import output_prompt, OUTPUT_REPLY_WORDS
@@ -606,14 +612,14 @@ class CliTests(unittest.TestCase):
 
     def test_defaults_are_three_ticks_skip_one_and_the_expectation_sizes_the_prompt(self):
         # 117,897 is a low enough expectation that the fixed per-prompt overhead leaves
-        # less than MIN_PAYLOAD_WORDS of budget per prompt, so sizing clamps to the minimum.
+        # less than MIN_PAYLOAD_WORDS (500) of budget per prompt, so sizing clamps to it.
         rc, c = self._capture(["--model", "claude-fable-5-1", "--expect-tokens-per-pct", "117897"])
         self.assertEqual(rc, 4)
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"]), (3, 1, 60))
         self.assertEqual(c["expect_tokens_per_pct"], 117897.0)
-        self.assertEqual(c["payload_words"], 1500)
-        self.assertGreaterEqual(len(c["prompt_text"].split()), 1500)
-        self.assertLess(len(c["prompt_text"].split()), 1500 + 40)
+        self.assertEqual(c["payload_words"], 500)
+        self.assertGreaterEqual(len(c["prompt_text"].split()), 500)
+        self.assertLess(len(c["prompt_text"].split()), 500 + 40)
 
     def test_flags_reach_run_tick_probe(self):
         rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000",
@@ -635,11 +641,11 @@ class CliTests(unittest.TestCase):
 class InitialBurstTests(unittest.TestCase):
     def test_first_burst_counts_the_fixed_overhead_per_prompt(self):
         # Before any prompt has run, a prompt is estimated as payload plus the fixed
-        # overhead; the Fable expectation of 166,705 with the 1,500-word minimum payload
-        # would otherwise burst 25 prompts instead of about 7.
+        # overhead; at the Fable expectation of 166,705 the burst is 80% of a 12-prompt
+        # span, about 9, where the payload-only estimate would have fired 55.
         from tracker.probe import _burst_size, payload_words_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS
         words = payload_words_for(166_705)
         k = _burst_size(166_705, 0.8, [], words, room=100)
         expected = int(0.8 * 166_705 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS))
         self.assertEqual(k, expected)
-        self.assertLessEqual(k, 8)
+        self.assertLessEqual(k, 10)
