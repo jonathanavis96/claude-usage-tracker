@@ -8,7 +8,7 @@
     "meter_weight": 1.0,
     "class_weight": {
       "input": 1.0,
-      "output": 2.02,
+      "output": 1.8,
       "cache_read": 1.0,
       "cache_write": 1.0
     }
@@ -21,7 +21,7 @@
     "meter_weight": 1.0,
     "class_weight": {
       "input": 1.0,
-      "output": 2.02,
+      "output": 1.8,
       "cache_read": 1.0,
       "cache_write": 1.0
     }
@@ -34,18 +34,18 @@
     "meter_weight": 1.0,
     "class_weight": {
       "input": 1.0,
-      "output": 2.02,
+      "output": 1.8,
       "cache_read": 1.0,
       "cache_write": 1.0
     }
   },
   "_output_weight": {
     "output_row": "2026-09-06T12:06:58.599078+00:00",
-    "prose_row": "2026-09-08T00:02:08.316146+00:00",
-    "value": 2.02,
-    "previous": 1.95,
+    "prose_row": "2026-09-09T00:14:11.932199+00:00",
+    "value": 1.8,
+    "previous": 2.02,
     "applied": true,
-    "computed_at": "2026-09-08T05:30:12+00:00",
+    "computed_at": "2026-09-09T05:30:13+00:00",
     "guard": 0.3
   }
 }
