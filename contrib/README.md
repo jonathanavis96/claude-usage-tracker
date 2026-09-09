@@ -150,7 +150,7 @@ rm ~/.claude-usage-contrib.json ~/.claude-usage-contrib.log
 ## Check for yourself
 
 Nothing here asks you to trust a description. The whole client is
-[`contrib/sample.py`](sample.py): about 300 lines, standard library only,
+[`contrib/sample.py`](sample.py): about 400 lines, standard library only,
 no imports from the rest of this repo. Read it, or paste it to your own
 Claude and ask what leaves the machine. The only outbound calls are the one
 GET to the usage endpoint with your token and, only after you approve, one
