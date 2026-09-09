@@ -35,20 +35,31 @@ def parse_rows(lines: Iterable[str]) -> list[dict | None]:
         except (json.JSONDecodeError, TypeError):
             rows.append(None)
             continue
-        fh = d.get("five_hour") or {}
-        sd = d.get("seven_day") or {}
-        if (not d.get("ts") or fh.get("utilization") is None or fh.get("resets_at") is None
-                or sd.get("utilization") is None or sd.get("resets_at") is None):
-            rows.append(None)
-            continue
-        rows.append({
-            "ts": d["ts"],
-            "five_hour": float(fh["utilization"]),
-            "five_resets_at": fh["resets_at"],
-            "seven_day": float(sd["utilization"]),
-            "seven_resets_at": sd["resets_at"],
-        })
+        rows.append(parse_row(d))
     return rows
+
+
+def parse_row(d: dict) -> dict | None:
+    """One parsed usage_log row (the shape parse_rows returns), or None to skip it.
+
+    A contributed sample (contrib/sample.py) carries the same `ts`, `five_hour`
+    and `seven_day` fields, so tracker/contributed.py pairs its rows with the
+    same code.
+    """
+    if not isinstance(d, dict):
+        return None
+    fh = d.get("five_hour") or {}
+    sd = d.get("seven_day") or {}
+    if (not d.get("ts") or fh.get("utilization") is None or fh.get("resets_at") is None
+            or sd.get("utilization") is None or sd.get("resets_at") is None):
+        return None
+    return {
+        "ts": d["ts"],
+        "five_hour": float(fh["utilization"]),
+        "five_resets_at": fh["resets_at"],
+        "seven_day": float(sd["utilization"]),
+        "seven_resets_at": sd["resets_at"],
+    }
 
 
 def _same_five_hour_window(prev: dict, cur: dict) -> bool:
