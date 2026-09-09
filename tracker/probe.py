@@ -398,7 +398,7 @@ def claude_processes(proc: Path = Path("/proc")) -> list[tuple[int, Path]]:
         if not entry.name.isdigit():
             continue
         try:
-            if (entry / "comm").read_text().strip() != CLAUDE_PROCESS_NAME:
+            if (entry / "comm").read_bytes().strip() != CLAUDE_PROCESS_NAME.encode():
                 continue
             words = (entry / "environ").read_bytes().split(b"\0")
             try:

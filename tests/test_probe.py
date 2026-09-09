@@ -249,6 +249,9 @@ class ProcessListerTests(unittest.TestCase):
         from tracker.probe import claude_processes
         with tempfile.TemporaryDirectory() as d:
             Path(d, "8").mkdir()  # no comm/environ files at all
+            Path(d, "9").mkdir()  # a process that renamed itself with non-UTF-8 bytes
+            Path(d, "9", "comm").write_bytes(b"cl\xffude\n")
+            Path(d, "9", "environ").write_bytes(b"CLAUDE_CONFIG_DIR=/x\0")
             self.assertEqual(claude_processes(Path(d)), [])
             self.assertEqual(claude_processes(Path(d, "nope")), [])
 
