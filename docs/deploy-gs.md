@@ -61,6 +61,28 @@ Output probe exit codes are `probe.sh`'s: 0 ok, 3 no idle account, 4 aborted,
 5 lock held. Exits 3 and 4 alert Jonathan; the weight then keeps its current
 value until the next Sunday.
 
+## Contributed meter samples
+
+`daily.sh` runs `tracker.contributed` before `tracker.publish`, inside the
+same `.cron.lock`: it pulls every stored sample from
+`https://alldonesites.com/api/contribute/export` (bearer secret
+`NOTIFY_SEND_SECRET` from `~/.claude-usage-notify.env`, the same one the
+notify step uses; cursor-paginated, 20 s per page, no retries), appends the
+new rows to `history/contributed.jsonl` keyed by `(contributor_id, ts)`
+(append-only, nothing already there is rewritten or dropped), and writes the
+per-plan `contributed` block to `data/contributed.json`. `tracker.publish
+--contributed data/contributed.json` carries that file into the public JSON
+unchanged, beside the probe and passive figures; nothing reads it back into
+them. Both files go into the daily "publisher state" commit on `main` with
+`data/prices.json`. A failed fetch keeps the rows already on disk and logs
+one warning; a failed step is a warning and the publish runs with whatever
+`data/contributed.json` already holds. To rebuild the block from disk without
+touching the site:
+
+```
+cd ~/claude-usage-tracker && python3 -m tracker.contributed --offline --history history/contributed.jsonl --out data/contributed.json
+```
+
 ## Crontab on masterrig
 
 ```
