@@ -107,15 +107,30 @@ The page carries a prompt in a copy box:
 
 The reader pastes it into their own Claude Code. Claude fetches the script,
 runs it in print mode, and the reader sees the payload before anything is
-sent. On yes, the same script posts to the endpoint. No install, no cron,
-nothing left behind except the contributor id file.
+sent. The script prints two things: the readable JSON with a one-line
+explanation per field, and the same body as one compact line, base64 of the
+JSON, prefixed `CUT1:`. Two ways to send, the reader picks:
+
+- Type `approve` (or yes) and Claude runs the script again with `--yes`,
+  which posts it.
+- Copy the compact line into the paste box on the page. The page decodes it,
+  shows the fields again, and posts it. Nothing on their machine talks to the
+  site at all in this case.
+
+Both routes carry the same body and hit the same endpoint. The response
+carries a personal link (`/claude-usage-tracker/me/<contributor id>`) that
+draws that contributor's own tokens per 1% against the fleet median, which
+is the reason to keep contributing. No install, no cron, nothing left
+behind except the contributor id file.
 
 ### Path 2: continuous
 
 Same script, installed on a 30-minute cron (or launchd on macOS). The page's
 second copy box is a prompt that asks Claude to clone the repo, read
-`contrib/README.md`, run the script once in print mode, and only then
-install the schedule. Uninstall is one documented line.
+`contrib/README.md`, run the script once in print mode, wait for `approve`,
+and only then install the schedule. Uninstall is one documented line. A
+continuous contributor's personal link becomes a line rather than a point,
+so "did my meter change, or everyone's?" is answerable from their own page.
 
 ### Why not measure with prompts
 
