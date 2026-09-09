@@ -137,3 +137,31 @@ ssh gs 'cd ~/claude-usage-tracker && PATH=$HOME/.npm-global/bin:$PATH python3 -m
 
 Re-run only when a model is added or effort semantics change; commit the
 resulting `data/effort_matrix.json`.
+
+A run's total token count is not a stable measure of the task: `claude -p`
+sometimes answers in two API turns, and the second re-reads the whole prefix
+(Sonnet low, 7 repeats, 2026-09-09):
+
+```
+input 2, output 1610, cache_read 19795, cache_write 0     total 21407   one turn
+input 4, output 1410, cache_read 39590, cache_write 877   total 41881   two turns
+```
+
+So the totals of a cell split into two clusters and their median is a coin
+toss. Each run is instead valued in meter dollars the way the probe values a
+tick (per class, tokens x list price x class_weight, then x meter_weight from
+`data/prices.json`), where the two runs above are close, and the cell
+publishes the median over all its runs. The matrix cell keeps the median
+total tokens for the page; a top-level `usd` block carries the dollar
+median, `_meta.cell_rule` states the rule, and `_meta.cells` records
+`median_tokens`, `median_usd`, `runs`, `turns` (estimated as `input // 2`)
+and `spread_usd` per cell. The publisher passes `usd` through as
+`effort_usd`. To re-derive a matrix measured before this existed, without
+sending anything:
+
+```
+ssh gs 'cd ~/claude-usage-tracker && python3 -m tracker.calibrate --recompute data/effort_matrix.json'
+```
+
+It prices runs from `--prices` (default `data/prices.json`), rewrites the
+file in place (`--out` to write elsewhere) and stamps `_meta.recomputed_from`.
