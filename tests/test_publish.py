@@ -293,6 +293,20 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(j["api_price_per_mtok"], PRICES)
             self.assertEqual(j["passive_generated_at"], PASSIVE["generated_at"])
 
+    def test_effort_usd_passes_through_beside_effort(self):
+        import json
+        import tempfile
+        now = datetime.now(timezone.utc)
+        row = probe(5, "claude-sonnet-5", 420000)
+        row["ts"] = now.isoformat()
+        usd = {"claude-sonnet-5": {"low": 0.0355, "high": 0.12}, "_note": "dropped"}
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t, rows=[row], effort={**EFFORT, "usd": usd, "_meta": {"cells": {}}})
+            self.assertEqual(self._run(d), 0)
+            j = json.loads((d / "out.json").read_text())
+            self.assertEqual(j["effort"], EFFORT)  # usd and _meta never leak in as models
+            self.assertEqual(j["effort_usd"], {"claude-sonnet-5": {"low": 0.0355, "high": 0.12}})
+
     def test_no_rates_refuses(self):
         with self.assertRaises(ValueError):
             build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, tzinfo=timezone.utc))

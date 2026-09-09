@@ -72,8 +72,12 @@ def _row_split(row: dict) -> dict:
     return {cls: tokens[cls] / total for cls in ("input", "output", "cache_read", "cache_write")}
 
 
-def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime) -> dict:
+def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
+                      effort_usd: dict | None = None) -> dict:
     """Derive every model's rate from one probed model's dollar value.
+
+    `effort` is the calibration matrix's median tokens per task (model -> effort) and
+    `effort_usd` its median meter dollars per task, passed through as `effort_usd`.
 
     Only one model is probed (see bin/probe.sh, weekly cadence). Its
     meter-dollar value per window (list-dollar value x that model's own
@@ -247,6 +251,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "rate_basis": "api_value",
         "rates": rates,
         "effort": effort,
+        "effort_usd": effort_usd or {},
         "api_price_per_mtok": prices,
         "history": history,
         "last_change": last_change,
@@ -339,9 +344,10 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         effort_raw = json.loads(a.effort.read_text())
         if effort_raw.get("_status") == "placeholder":
             raise ValueError(f"{a.effort} is still a placeholder; calibrate it before publishing")
-        effort = {k: v for k, v in effort_raw.items() if not k.startswith("_")}
+        effort = {k: v for k, v in effort_raw.items() if not k.startswith("_") and k != "usd"}
+        effort_usd = {k: v for k, v in effort_raw.get("usd", {}).items() if not k.startswith("_")}
         prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
-        j = build_public_json(probe_rows, passive, effort, prices, now)
+        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
