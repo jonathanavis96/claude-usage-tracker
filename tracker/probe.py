@@ -373,24 +373,110 @@ def _burst_size(expect_tokens_per_pct: float | None, fraction: float, prompt_tot
     return k if k >= 2 else 1
 
 
-def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120) -> bool:
+CLAUDE_PROCESS_NAME = "claude"
+CONFIG_DIR_VAR = "CLAUDE_CONFIG_DIR"
+
+
+def claude_processes(proc: Path = Path("/proc")) -> list[tuple[int, Path]]:
+    """(pid, CLAUDE_CONFIG_DIR) for every live `claude` process on this host.
+
+    The probe runs on the same host as the accounts it measures, so a `claude` process
+    whose environment names an account's config dir is that account in use, whatever
+    its meter says. Processes are found by walking `proc` (normally /proc): a numeric
+    entry whose `comm` is `claude`, with the config dir taken from its `environ` or,
+    failing that, a `CLAUDE_CONFIG_DIR=...` word on its `cmdline`. A `claude` running on
+    the default config dir sets neither and is not listed. Entries that vanish or
+    cannot be read mid-walk are skipped, and a host without /proc lists nothing.
+    """
+    found: list[tuple[int, Path]] = []
+    try:
+        entries = sorted(proc.iterdir())
+    except OSError:
+        return found
+    prefix = f"{CONFIG_DIR_VAR}=".encode()
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            if (entry / "comm").read_text().strip() != CLAUDE_PROCESS_NAME:
+                continue
+            words = (entry / "environ").read_bytes().split(b"\0")
+            try:
+                words += (entry / "cmdline").read_bytes().split(b"\0")
+            except OSError:
+                pass
+        except OSError:
+            continue
+        for word in words:
+            if word.startswith(prefix):
+                found.append((int(entry.name), Path(word[len(prefix):].decode(errors="replace"))))
+                break
+    return found
+
+
+def busy_pids(cfg: Path, processes: list[tuple[int, Path]]) -> list[int]:
+    """The pids among `processes` whose config dir is `cfg` (paths compared resolved)."""
+    target = Path(cfg).expanduser().resolve()
+    return [pid for pid, d in processes if Path(d).expanduser().resolve() == target]
+
+
+def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
+                cfg: Path | None = None,
+                processes: Callable[[], list[tuple[int, Path]]] | None = None) -> str | None:
+    """Why the account is busy, or None when it is idle.
+
+    Two checks, cheapest first. With `cfg` and `processes`, a live `claude` process on
+    that config dir is busy (`"pid 491402"`) and no meter read is spent. Then the meter:
+    two reads `window_s` apart must agree on the 5-hour percent within the same window
+    (`"meter moved 7% -> 8%"`, `"window reset"`). The meter check alone is too weak on
+    its own host: a busy account that is between prompts for two minutes passes it.
+    """
+    if cfg is not None and processes is not None:
+        pids = busy_pids(cfg, processes())
+        if pids:
+            return "pid " + ", ".join(str(p) for p in pids)
     a = read()
     sleep(window_s)
     b = read()
-    return a.five_hour == b.five_hour and _same_window(a, b)
+    if not _same_window(a, b):
+        return "window reset"
+    if a.five_hour != b.five_hour:
+        return f"meter moved {a.five_hour:g}% -> {b.five_hour:g}%"
+    return None
+
+
+def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
+            cfg: Path | None = None,
+            processes: Callable[[], list[tuple[int, Path]]] | None = None) -> bool:
+    """True when `busy_reason` finds nothing: no live process on `cfg` (when given) and a
+    flat meter across `window_s`."""
+    return busy_reason(read, sleep, window_s, cfg, processes) is None
+
+
+def _log_stderr(line: str) -> None:
+    print(line, file=sys.stderr)
 
 
 def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], Callable[[], Utilization]],
                    sleep: Callable[[float], None], max_wait_s: float = 4 * 3600, retry_s: float = 900,
-                   now: Callable[[], datetime] | None = None, deadline: datetime | None = None):
-    """Return the first idle account, or None once the wait or the deadline runs out."""
+                   now: Callable[[], datetime] | None = None, deadline: datetime | None = None,
+                   processes: Callable[[], list[tuple[int, Path]]] = claude_processes,
+                   log: Callable[[str], None] = _log_stderr):
+    """Return the first idle account, or None once the wait or the deadline runs out.
+
+    Each rejection is logged as `<name> busy: <reason>` (`dave busy: pid 491402`,
+    `dave busy: meter moved 7% -> 8%`) so the probe log explains the choice. `processes`
+    is the host process lister (`claude_processes` by default); tests inject one.
+    """
     waited = 0.0
     while True:
         if deadline is not None and now is not None and now() >= deadline:
             return None
         for name, cfg in accounts:
-            if is_idle(read_for(name), sleep):
+            reason = busy_reason(read_for(name), sleep, cfg=cfg, processes=processes)
+            if reason is None:
                 return (name, cfg)
+            log(f"{name} busy: {reason}")
         if waited >= max_wait_s:
             return None
         if deadline is not None and now is not None and now() >= deadline:
@@ -420,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--effort", default="low")
     ap.add_argument("--out", type=Path, default=Path(os.environ.get("PROBE_OUT", "probes.jsonl")))
     ap.add_argument("--account", action="append", default=[],
-                    help="name=config_dir, in priority order; default dave and jono from $HOME")
+                    help="name=config_dir, in priority order; default jwork (~/.claude-javiswork) then dave (~/.claude-dave)")
     ap.add_argument("--max-wait", type=int, default=4 * 3600)
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
     ap.add_argument("--ticks", type=int, default=3, help="measured ticks after the skipped spans (default 3)")
@@ -455,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
             return 4
         builder = lambda salt, i: probe_prompt(salt, i, words)  # noqa: E731
     home = Path.home()
-    accounts = [tuple(x.split("=", 1)) for x in a.account] or [("dave", home / ".claude-dave"), ("jono", home / ".claude-javiswork")]
+    accounts = [tuple(x.split("=", 1)) for x in a.account] or [("jwork", home / ".claude-javiswork"), ("dave", home / ".claude-dave")]
     accounts = [(n, Path(p)) for n, p in accounts]
     account_cfgs = dict(accounts)
 
