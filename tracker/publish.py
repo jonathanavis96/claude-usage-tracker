@@ -344,9 +344,18 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         effort_raw = json.loads(a.effort.read_text())
         if effort_raw.get("_status") == "placeholder":
             raise ValueError(f"{a.effort} is still a placeholder; calibrate it before publishing")
+        prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
+        # The matrix's cells and usd are derived from its stored runs at the prices
+        # in force right now, after update_output_weight above may have changed
+        # class_weight.output: a committed usd block would be stale the moment the
+        # weight moved, and the committed file need not carry one at all. The file
+        # itself is never rewritten here; --recompute does that for human readers.
+        # Only a matrix with no runs (fixtures) uses its stored cells as-is.
+        if effort_raw.get("_meta", {}).get("runs"):
+            from .calibrate import recompute
+            effort_raw = recompute(effort_raw, prices)
         effort = {k: v for k, v in effort_raw.items() if not k.startswith("_") and k != "usd"}
         effort_usd = {k: v for k, v in effort_raw.get("usd", {}).items() if not k.startswith("_")}
-        prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
         j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)

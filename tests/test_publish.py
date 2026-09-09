@@ -307,6 +307,52 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(j["effort"], EFFORT)  # usd and _meta never leak in as models
             self.assertEqual(j["effort_usd"], {"claude-sonnet-5": {"low": 0.0355, "high": 0.12}})
 
+    # Two of the seven live Sonnet low runs (gs, 2026-09-09): one turn and two turns.
+    RUNS = {"claude-sonnet-5/low": [
+        {"input": 2, "output": 1610, "cache_read": 19795, "cache_write": 0, "total": 21407},
+        {"input": 4, "output": 1410, "cache_read": 39590, "cache_write": 877, "total": 41881},
+        {"input": 2, "output": 1713, "cache_read": 19795, "cache_write": 0, "total": 21510},
+    ]}
+
+    def test_effort_usd_is_derived_from_stored_runs_when_the_file_has_no_usd(self):
+        import json
+        import tempfile
+        from tracker.calibrate import recompute
+        now = datetime.now(timezone.utc)
+        row = probe(5, "claude-sonnet-5", 420000)
+        row["ts"] = now.isoformat()
+        # As committed: cells from the old code, runs recorded, no usd block.
+        matrix = {"claude-sonnet-5": {"low": 999}, "_meta": {"runs": self.RUNS}}
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t, rows=[row], effort=matrix)
+            self.assertEqual(self._run(d), 0)
+            j = json.loads((d / "out.json").read_text())
+            expect = recompute(json.loads(json.dumps(matrix)), PRICES)
+            self.assertEqual(j["effort_usd"], expect["usd"])
+            self.assertAlmostEqual(j["effort_usd"]["claude-sonnet-5"]["low"], 0.03164, places=6)  # (6 + 1713*15 + 19795*0.3) / 1e6, the middle run
+            self.assertEqual(j["effort"], {"claude-sonnet-5": {"low": 21510}})  # re-derived, not the stale 999
+
+    def test_price_change_between_publishes_changes_effort_usd_without_touching_the_matrix(self):
+        import json
+        import tempfile
+        now = datetime.now(timezone.utc)
+        row = probe(5, "claude-sonnet-5", 420000)
+        row["ts"] = now.isoformat()
+        matrix = {"claude-sonnet-5": {"low": 21510}, "usd": {"claude-sonnet-5": {"low": 0.1}},
+                  "_meta": {"runs": self.RUNS}}
+        heavier = {**PRICES, "claude-sonnet-5": {**PRICES["claude-sonnet-5"], "class_weight": {"output": 2.0}}}
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t, rows=[row], effort=matrix)
+            before = (d / "effort.json").read_bytes()
+            self.assertEqual(self._run(d), 0)
+            first = json.loads((d / "out.json").read_text())["effort_usd"]["claude-sonnet-5"]["low"]
+            (d / "prices.json").write_text(json.dumps(heavier))
+            self.assertEqual(self._run(d), 0)
+            second = json.loads((d / "out.json").read_text())["effort_usd"]["claude-sonnet-5"]["low"]
+            self.assertNotEqual(first, 0.1)  # the stored usd block is never trusted
+            self.assertGreater(second, first)
+            self.assertEqual((d / "effort.json").read_bytes(), before)
+
     def test_no_rates_refuses(self):
         with self.assertRaises(ValueError):
             build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, tzinfo=timezone.utc))
