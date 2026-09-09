@@ -33,9 +33,23 @@ else
     || { echo "error: could not clone site repo" >&2; exit 1; }
 fi
 
+# Contributed meter samples (tracker/contributed.py): pull every stored sample
+# from the site's export endpoint (bearer secret from the notify env file, never
+# printed), append the new ones to history/contributed.jsonl, and aggregate the
+# per-plan block into data/contributed.json for the publish below. Advisory: a
+# failed fetch or aggregation is a warning and the publish carries on with
+# whatever data/contributed.json already holds (or none).
+python3 -m tracker.contributed \
+  --env-file "$HOME/.claude-usage-notify.env" \
+  --history history/contributed.jsonl \
+  --prices data/prices.json \
+  --out data/contributed.json \
+  || echo "warning: tracker.contributed failed with exit $?, publishing with the previous contributed block" >&2
+
 python3 -m tracker.publish \
   --probes history/probes.jsonl \
   --passive history/passive.json \
+  --contributed data/contributed.json \
   --out "$SITE/website/public/data/claude-usage.json"
 rc=$?
 
@@ -45,15 +59,21 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 # The publisher rewrites data/prices.json when the weekly output run supplied a
-# new output class weight (tracker/weight.py), or to record one it refused. That
-# is tracker state, so it goes back to this repo's branch; the site gets the
-# published JSON below. Advisory: a failed push is a warning, the file is still
-# committed locally and the next pull --rebase --autostash carries it.
+# new output class weight (tracker/weight.py), or to record one it refused, and
+# tracker.contributed above appends to history/contributed.jsonl and rewrites
+# data/contributed.json. That is tracker state, so it goes back to this repo's
+# branch in one commit; the site gets the published JSON below. Advisory: a
+# failed push is a warning, the files are still committed locally and the next
+# pull --rebase --autostash carries them.
 git add data/prices.json
+# Neither contributed file exists until the first successful tracker.contributed run.
+for f in history/contributed.jsonl data/contributed.json; do
+  [ -f "$f" ] && git add "$f"
+done
 if ! git diff --cached --quiet; then
-  git -c user.name=publisher -c user.email=publisher@gs commit -q -m "Output class weight $(date -u +%FT%H:%MZ)"
+  git -c user.name=publisher -c user.email=publisher@gs commit -q -m "Daily publisher state $(date -u +%FT%H:%MZ)"
   if ! git push -q origin "$BRANCH"; then
-    echo "warning: git push of data/prices.json failed, committed locally only" >&2
+    echo "warning: git push of tracker state failed, committed locally only" >&2
   fi
 fi
 

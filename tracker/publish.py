@@ -333,6 +333,23 @@ def _build_events(window_events: list, weekly_events: list) -> list[dict]:
     return sorted(events, key=lambda ev: ev["date"])
 
 
+def load_contributed(path: Path | None) -> dict | None:
+    """data/contributed.json (tracker/contributed.py) as-is, or None when no path is
+    given or the file is absent. An unreadable file is a warning and None: the
+    contributed block is a courtesy on top of the publish, never a reason to fail it."""
+    if path is None or not Path(path).exists():
+        return None
+    try:
+        block = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"warning: contributed block not published, {path} unreadable: {e}", file=sys.stderr)
+        return None
+    if not isinstance(block, dict):
+        print(f"warning: contributed block not published, {path} is not a JSON object", file=sys.stderr)
+        return None
+    return block
+
+
 def write_json(path: Path, obj: dict) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(path).with_suffix(".tmp")
@@ -352,6 +369,8 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"),
                     help="read for every model's price; rewritten when the weekly output run supplies a new output class weight")
     ap.add_argument("--alert-env-file", type=Path, default=ENV_FILE, help="where the refused-weight alert finds its address")
+    ap.add_argument("--contributed", type=Path, default=None,
+                    help="data/contributed.json from tracker.contributed; carried through as the `contributed` block when present")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     now = now or datetime.now(timezone.utc)
@@ -386,6 +405,11 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
+    # Contributed figures sit beside the probe and passive ones; nothing above reads
+    # them, so no existing field changes whether or not the block is present.
+    contributed = load_contributed(a.contributed)
+    if contributed is not None:
+        j["contributed"] = contributed
     write_json(a.out, j)
     print(f"wrote {a.out}: {len(j['rates'])} models, last_change={j['last_change']}")
     return 0

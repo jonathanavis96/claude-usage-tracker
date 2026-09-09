@@ -69,6 +69,23 @@ class TestDeployScriptsSyntax(unittest.TestCase):
         self.assertIn("git add data/prices.json", text)
         self.assertIn('git push -q origin "$BRANCH"', text)
 
+    def test_daily_runs_contributed_before_publish_and_never_lets_it_stop_the_publish(self) -> None:
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        contributed = text.index("python3 -m tracker.contributed")
+        publish = text.index("python3 -m tracker.publish")
+        lock = text.index("flock -w 600 9")
+        self.assertLess(lock, contributed)
+        self.assertLess(contributed, publish)
+        step = text[contributed:publish]
+        self.assertIn("--history history/contributed.jsonl", step)
+        self.assertIn("--out data/contributed.json", step)
+        self.assertIn('--env-file "$HOME/.claude-usage-notify.env"', step)
+        # Advisory: the step's failure is caught on the same command, not left to fail the script.
+        self.assertIn("|| echo \"warning: tracker.contributed failed", step)
+        self.assertIn("--contributed data/contributed.json", text[publish:])
+        commit = text.index('git -c user.name=publisher')
+        self.assertIn("history/contributed.jsonl data/contributed.json", text[publish:commit])
+
 
 class TestDailyNotifyChange(unittest.TestCase):
     """Run bin/daily.sh's notify_change function in isolation."""

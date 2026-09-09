@@ -575,3 +575,73 @@ class LastChangeScopeTests(unittest.TestCase):
         self.assertGreater(window_events[-1]["date"], weekly_events[-1]["date"])
         self.assertEqual(j["last_change"]["scope"], "window")
         self.assertEqual(j["last_change"]["date"], window_events[-1]["date"])
+
+
+class ContributedBlockTests(unittest.TestCase):
+    """tracker.publish --contributed carries data/contributed.json through untouched."""
+
+    def _files(self, d):
+        import json
+        from pathlib import Path
+        d = Path(d)
+        (d / "probes.jsonl").write_text(json.dumps(probe(5, "claude-sonnet-5", 420000)) + "\n")
+        (d / "passive.json").write_text(json.dumps(PASSIVE))
+        (d / "effort.json").write_text(json.dumps(EFFORT))
+        (d / "prices.json").write_text(json.dumps(PRICES))
+        return d
+
+    def _run(self, d, *extra):
+        from tracker.publish import main
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        return main(["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"),
+                     "--effort", str(d / "effort.json"), "--prices", str(d / "prices.json"),
+                     "--out", str(d / "out.json"), *extra], now=now)
+
+    def test_block_is_carried_through_unchanged(self):
+        import json
+        import tempfile
+        block = {"updated_at": "2026-09-05T05:30:00+00:00",
+                 "max20": {"contributors": 2, "samples": 9,
+                           "tokens_per_pct": {"claude-sonnet-5": {"median": 410000, "spread": 0.2, "contributors": 2, "samples": 7}},
+                           "usd_per_pct": {"claude-sonnet-5": {"median": 0.97, "spread": 0.1, "contributors": 2, "samples": 7}},
+                           "weekly_windows": {"measured": 27.5, "reason": None, "contributors": 2, "dropped": 0, "weeks": 3}},
+                 "max5": {"contributors": 0, "samples": 0, "tokens_per_pct": {}, "usd_per_pct": {},
+                          "weekly_windows": {"measured": None, "reason": "no samples", "contributors": 0, "dropped": 0, "weeks": 0}},
+                 "pro": {"contributors": 1, "samples": 3, "tokens_per_pct": {}, "usd_per_pct": {},
+                         "weekly_windows": {"measured": None, "reason": "1 contributor with a complete week; 2 needed",
+                                            "contributors": 1, "dropped": 0, "weeks": 1}}}
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t)
+            (d / "contributed.json").write_text(json.dumps(block))
+            self.assertEqual(self._run(d, "--contributed", str(d / "contributed.json")), 0)
+            j = json.loads((d / "out.json").read_text())
+            self.assertEqual(j["contributed"], block)
+            # Nothing else moves: the same publish without the flag differs only by that key.
+            self.assertEqual(self._run(d), 0)
+            without = json.loads((d / "out.json").read_text())
+            self.assertNotIn("contributed", without)
+            j.pop("contributed")
+            self.assertEqual(j, without)
+
+    def test_block_is_omitted_when_the_file_is_absent(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t)
+            self.assertEqual(self._run(d, "--contributed", str(d / "missing.json")), 0)
+            self.assertNotIn("contributed", json.loads((d / "out.json").read_text()))
+
+    def test_unreadable_block_is_a_warning_not_a_failed_publish(self):
+        import io
+        import json
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t)
+            (d / "contributed.json").write_text("{not json")
+            err = io.StringIO()
+            with mock.patch("sys.stderr", err):
+                rc = self._run(d, "--contributed", str(d / "contributed.json"))
+            self.assertEqual(rc, 0)
+            self.assertNotIn("contributed", json.loads((d / "out.json").read_text()))
+            self.assertIn("contributed block not published", err.getvalue())
