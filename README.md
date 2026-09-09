@@ -111,10 +111,13 @@ or the published page:
 python3 -m tracker.probe --model claude-sonnet-5 --expect-tokens-per-pct 500000 --out history/probes.jsonl
 ```
 
-Publishing the public JSON from current history:
+Publishing the public JSON from current history. Publishing also recomputes
+the output class weight and writes it back to the prices file, so point
+`--prices` at a copy unless you mean to change `data/prices.json`:
 
 ```
-python3 -m tracker.publish --probes history/probes.jsonl --passive history/passive.json --out website/public/data/claude-usage.json
+cp data/prices.json /tmp/prices.json
+python3 -m tracker.publish --probes history/probes.jsonl --passive history/passive.json --prices /tmp/prices.json --out /tmp/claude-usage.json
 ```
 
 In production this all runs unattended on a schedule (probes, the weekly
