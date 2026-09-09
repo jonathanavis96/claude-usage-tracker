@@ -427,6 +427,20 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         by_week = {h["week_ending"]: h["partial"] for h in j["weekly_windows"]["max20"]["history"]}
         self.assertEqual(by_week, {"2026-08-28": False, "2026-09-04": False, "2026-09-11": True})
 
+    def test_passive_rows_without_partial_are_backfilled_from_the_publish_time(self):
+        # A lagging passive.json from before the flag existed: the open week is
+        # flagged partial against the publisher's own `now`, the rest complete.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        weekly = {"current": 6.46, "history": [dict(h) for h in self.PASSIVE_WEEKLY["history"]]
+                  + [{"week_ending": "2026-09-11", "windows": 5.7, "five_hour_pct": 245.0, "seven_day_pct": 43.0}]}
+        passive = dict(PASSIVE, weekly_windows=weekly)
+        now = datetime(2026, 9, 9, 5, 30, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        for series in ("passive", "max5", "max20", "pro"):
+            for h in j["weekly_windows"][series]["history"]:
+                self.assertIn("partial", h, series)
+                self.assertEqual(h["partial"], h["week_ending"] >= "2026-09-09", (series, h["week_ending"]))
+
     def test_no_weekly_event_on_real_max20_history(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)

@@ -129,7 +129,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # independent of the passive log -- taken from every row regardless of the
     # outlier/class-weighting filter below, since that filter is about dollar
     # value, not the five-hour/seven-day deltas this measures.
-    probe_weekly = probe_weekly_windows(probe_rows)
+    probe_weekly = probe_weekly_windows(probe_rows, now=now)
 
     # Output rows (the weekly Fable weight run, payload "output") measure the meter's
     # class weighting, not the limit, and a row flagged `outlier` by the rotation's
@@ -236,6 +236,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         # account, which probes on max20) replace passive max20 weeks from the
         # first probe week on, same concatenation rule as before.
         passive_history = passive_weekly.get("history", [])
+        # A lagging passive.json from before the flag existed carries no `partial`;
+        # backfill it here so every published weekly row honours the contract.
+        for h in passive_history:
+            h.setdefault("partial", date.fromisoformat(h["week_ending"]) >= now.date())
         probe_history = probe_weekly["history"]
         max5_history = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max5"]
         passive_max20 = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max20"]
