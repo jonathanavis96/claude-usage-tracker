@@ -1,19 +1,19 @@
 {
- "generated_at": "2026-09-09T01:15:31.470124+00:00",
- "plan_ratio_5x_to_20x": 0.4468,
+ "generated_at": "2026-09-10T01:15:22.550237+00:00",
+ "plan_ratio_5x_to_20x": 0.4504,
  "split": {
   "input": 0.0001,
-  "output": 0.0041,
-  "cache_read": 0.9684,
-  "cache_write": 0.0275
+  "output": 0.0043,
+  "cache_read": 0.9689,
+  "cache_write": 0.0267
  },
  "history": {
   "2026-08-09": {
-   "tokens_per_pct": 1426517,
+   "tokens_per_pct": 1072286,
    "interpolated": false
   },
   "2026-08-10": {
-   "tokens_per_pct": 2437855,
+   "tokens_per_pct": 2457630,
    "interpolated": false
   },
   "2026-08-11": {
@@ -131,12 +131,20 @@
   "2026-09-08": {
    "tokens_per_pct": 3084828,
    "interpolated": false
+  },
+  "2026-09-09": {
+   "tokens_per_pct": 3017051,
+   "interpolated": false
+  },
+  "2026-09-10": {
+   "tokens_per_pct": 1600574,
+   "interpolated": false
   }
  },
  "session_tokens": {
-  "claude-sonnet-5": 670902,
-  "claude-opus-5": 1581607,
-  "claude-fable-5-1": 10249838
+  "claude-sonnet-5": 614978,
+  "claude-opus-5": 1565736,
+  "claude-fable-5-1": 10331527
  },
  "weekly_windows": {
   "current": 6.46,
@@ -145,79 +153,92 @@
     "week_ending": "2026-06-19",
     "windows": 9.5,
     "five_hour_pct": 532.0,
-    "seven_day_pct": 56.0
+    "seven_day_pct": 56.0,
+    "partial": false
    },
    {
     "week_ending": "2026-06-26",
     "windows": 10.91,
     "five_hour_pct": 742.0,
-    "seven_day_pct": 68.0
+    "seven_day_pct": 68.0,
+    "partial": false
    },
    {
     "week_ending": "2026-07-03",
     "windows": 9.94,
     "five_hour_pct": 527.0,
-    "seven_day_pct": 53.0
+    "seven_day_pct": 53.0,
+    "partial": false
    },
    {
     "week_ending": "2026-07-10",
     "windows": 10.25,
     "five_hour_pct": 533.0,
-    "seven_day_pct": 52.0
+    "seven_day_pct": 52.0,
+    "partial": false
    },
    {
     "week_ending": "2026-07-17",
     "windows": 9.96,
     "five_hour_pct": 498.0,
-    "seven_day_pct": 50.0
+    "seven_day_pct": 50.0,
+    "partial": false
    },
    {
     "week_ending": "2026-07-24",
     "windows": 10.08,
     "five_hour_pct": 373.0,
-    "seven_day_pct": 37.0
+    "seven_day_pct": 37.0,
+    "partial": false
    },
    {
     "week_ending": "2026-07-31",
     "windows": 10.45,
     "five_hour_pct": 491.0,
-    "seven_day_pct": 47.0
+    "seven_day_pct": 47.0,
+    "partial": false
    },
    {
     "week_ending": "2026-08-07",
     "windows": 11.03,
     "five_hour_pct": 397.0,
-    "seven_day_pct": 36.0
+    "seven_day_pct": 36.0,
+    "partial": false
    },
    {
     "week_ending": "2026-08-14",
     "windows": 11.0,
     "five_hour_pct": 506.0,
-    "seven_day_pct": 46.0
+    "seven_day_pct": 46.0,
+    "partial": false
    },
    {
     "week_ending": "2026-08-21",
     "windows": 6.8,
     "five_hour_pct": 381.0,
-    "seven_day_pct": 56.0
+    "seven_day_pct": 56.0,
+    "partial": false
    },
    {
     "week_ending": "2026-08-28",
     "windows": 6.58,
     "five_hour_pct": 250.0,
-    "seven_day_pct": 38.0
+    "seven_day_pct": 38.0,
+    "partial": false
    },
    {
     "week_ending": "2026-09-04",
     "windows": 6.35,
     "five_hour_pct": 324.0,
-    "seven_day_pct": 51.0
+    "seven_day_pct": 51.0,
+    "partial": false
    },
    {
     "week_ending": "2026-09-11",
-    "windows": 5.7,
-    "five_hour_pct": 245.0,
-    "seven_day_pct": 43.0
+    "windows": 5.77,
+    "five_hour_pct": 271.0,
+    "seven_day_pct": 47.0,
+    "partial": true
    }
   ]
  }
