@@ -16,6 +16,10 @@ def util_seq(values, reset="r1"):
         return Utilization(T0, v, 30.0, reset if v is not None else None)
     return read
 
+def state(status="idle", updated_at=1000):
+    from tracker.probe import SessionState
+    return SessionState(status, updated_at)
+
 def runner(tokens=20_000):
     def run(_i=0):
         return RunUsage("claude-sonnet-5", 100, 400, tokens - 500, 0, 0.001, 3.0)
@@ -216,6 +220,255 @@ class IdleTests(unittest.TestCase):
         acc = choose_account([("jwork", Path("/h/.claude-javiswork")), ("dave", Path("/h/.claude-dave"))],
                              lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900, processes=lambda: [])
         self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
+
+
+class SessionStatusTests(unittest.TestCase):
+    """A live claude process only blocks an account when its session is not idle.
+
+    Claude Code writes `<cfg>/sessions/<pid>.json` with a `status` of `idle` at the
+    prompt and `busy` during a turn, so a long-lived interactive session sitting at
+    the prompt no longer counts as the account being in use.
+    """
+
+    DAVE = Path("/h/.claude-dave")
+
+    def _procs(self, *pids):
+        return lambda: [(pid, self.DAVE) for pid in pids]  # noqa: E731
+
+    def test_idle_session_does_not_block_an_account_with_a_flat_meter(self):
+        self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                                processes=self._procs(491402),
+                                session_status=lambda cfg, pid: state("idle")))
+
+    def test_busy_session_blocks_the_account_and_names_the_pid(self):
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: state("busy"))
+        self.assertEqual(reason, "pid 491402")
+
+    def test_a_status_the_reader_cannot_supply_keeps_todays_behaviour(self):
+        # A missing, unreadable or malformed status file all reach busy_reason as None
+        # (a headless run, or a Claude Code too old to write the file): still busy.
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: state(None))
+        self.assertEqual(reason, "pid 491402")
+
+    def test_any_other_status_value_is_busy(self):
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: state("compacting"))
+        self.assertEqual(reason, "pid 491402")
+
+    def test_an_idle_session_without_a_timestamp_is_busy(self):
+        # status idle but no usable statusUpdatedAt: the interval comparison in
+        # SessionWatch.check would be blind for this pid (None on both sides), so the
+        # host cannot vouch for it and it counts as busy.
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: state("idle", None))
+        self.assertEqual(reason, "pid 491402")
+
+    def test_only_the_busy_pids_reach_the_log_line(self):
+        statuses = {1942517: "idle", 2355887: "busy", 2877669: "idle", 2881098: "busy"}
+        reads = {"dave": util_seq([7, 7]), "jwork": util_seq([3, 3])}
+        logged = []
+        acc = choose_account([("dave", self.DAVE), ("jwork", Path("/h/.claude-javiswork"))],
+                             lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
+                             processes=self._procs(*sorted(statuses)),
+                             session_status=lambda cfg, pid: state(statuses[pid]),
+                             log=logged.append)
+        self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
+        self.assertEqual(logged, ["dave busy: pid 2355887, 2881098"])
+
+    def test_an_account_whose_every_session_is_idle_is_picked(self):
+        reads = {"dave": util_seq([7, 7])}
+        logged = []
+        acc = choose_account([("dave", self.DAVE)], lambda n: reads[n], lambda s: None,
+                             max_wait_s=0, retry_s=900, processes=self._procs(1942517, 2877669),
+                             session_status=lambda cfg, pid: state("idle"), log=logged.append)
+        self.assertEqual(acc, ("dave", self.DAVE))
+        self.assertEqual(logged, [])
+
+
+class SessionWatchTests(unittest.TestCase):
+    """`SessionWatch` compares consecutive snapshots, so a turn that starts and finishes
+    entirely inside one prompt-plus-settle interval is still caught."""
+
+    CFG = Path("/h/.claude-dave")
+
+    def _watch(self, snapshots):
+        """A watch whose lister and status reader serve `snapshots` in order, one per
+        snapshot taken: each is a `{pid: SessionState}` mapping."""
+        from tracker.probe import SessionWatch
+        it = iter(snapshots)
+        current = {}
+
+        def processes():
+            nonlocal current
+            current = next(it)
+            return [(pid, self.CFG) for pid in current]
+
+        return SessionWatch(self.CFG, processes, lambda cfg, pid: current[pid])
+
+    def test_idle_in_both_snapshots_with_the_same_stamp_passes(self):
+        w = self._watch([{1942517: state()}, {1942517: state()}])
+        self.assertIsNone(w.snapshot())
+        self.assertIsNone(w.check())
+
+    def test_the_stamp_moving_while_idle_both_times_is_a_turn_that_came_and_went(self):
+        # The P1 Codex found: idle at both samples, but statusUpdatedAt advanced, so a
+        # whole turn ran between them and its spend is in the meter.
+        w = self._watch([{1942517: state(updated_at=1000)}, {1942517: state(updated_at=1500)}])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 1942517 changed status")
+
+    def test_a_session_that_appeared_since_the_last_snapshot_aborts(self):
+        w = self._watch([{1942517: state()}, {1942517: state(), 2355887: state()}])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 2355887 started")
+
+    def test_a_session_that_has_gone_since_the_last_snapshot_aborts(self):
+        w = self._watch([{1942517: state(), 2355887: state()}, {1942517: state()}])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 2355887 exited")
+
+    def test_a_session_already_mid_turn_is_named_as_it_was_before(self):
+        w = self._watch([{1942517: state(status="busy")}])
+        self.assertEqual(w.snapshot(), "pid 1942517")
+
+    def test_a_pid_named_as_not_idle_is_not_also_reported_as_changed(self):
+        w = self._watch([{1942517: state(updated_at=1000)},
+                         {1942517: state(status="busy", updated_at=1500)}])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 1942517")
+
+    def test_every_kind_of_activity_reaches_the_reason_together(self):
+        w = self._watch([{1: state(updated_at=10), 2: state(updated_at=10), 3: state(updated_at=10)},
+                         {1: state(status="busy", updated_at=11), 2: state(updated_at=99),
+                          4: state(updated_at=10)}])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 1; pid 2 changed status; pid 4 started; pid 3 exited")
+
+    def test_an_idle_session_without_a_timestamp_never_reaches_the_interval_check(self):
+        w = self._watch([{1942517: state("idle", None)}, {1942517: state("idle", None)}])
+        self.assertEqual(w.snapshot(), "pid 1942517")
+        self.assertEqual(w.check(), "pid 1942517")
+
+    def test_a_check_with_no_previous_snapshot_applies_only_the_instant_rule(self):
+        w = self._watch([{1942517: state()}])
+        self.assertIsNone(w.check())
+
+
+class SessionStateReaderTests(unittest.TestCase):
+    """The default reader's `statusUpdatedAt` half, against real-shaped files."""
+
+    def _session(self, cfg, pid, body):
+        (cfg / "sessions").mkdir(parents=True, exist_ok=True)
+        (cfg / "sessions" / f"{pid}.json").write_text(body, encoding="utf-8")
+
+    def test_reads_the_stamp_and_returns_none_when_it_is_missing_or_not_a_number(self):
+        from tracker.probe import read_session_status, SessionState
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d)
+            # Shaped like a real file, fields and all (gs, 2026-09-12).
+            self._session(cfg, 2355887, json.dumps(
+                {"pid": 2355887, "sessionId": "25092903-ce5a-486e-9e42-b12a868444fc",
+                 "cwd": "/home/jonathan/code/linkone-website", "version": "2.1.268",
+                 "kind": "interactive", "entrypoint": "cli", "status": "idle",
+                 "updatedAt": 1789225502799, "statusUpdatedAt": 1789225502799}))
+            self._session(cfg, 12, json.dumps({"pid": 12, "status": "busy"}))
+            self._session(cfg, 13, json.dumps({"status": "idle", "statusUpdatedAt": "soon"}))
+            self._session(cfg, 14, json.dumps({"status": "idle", "statusUpdatedAt": True}))
+            self.assertEqual(read_session_status(cfg, 2355887),
+                             SessionState("idle", 1789225502799))
+            self.assertEqual(read_session_status(cfg, 12), SessionState("busy", None))
+            self.assertEqual(read_session_status(cfg, 13), SessionState("idle", None))
+            self.assertEqual(read_session_status(cfg, 14), SessionState("idle", None))
+            self.assertEqual(read_session_status(cfg, 99999), SessionState(None, None))
+
+
+class PreCheckWindowTests(unittest.TestCase):
+    def test_a_session_that_flipped_and_came_back_inside_the_meter_window_is_rejected(self):
+        # Idle before the 120 s window and idle again after it, with a flat meter, but
+        # statusUpdatedAt moved: a turn ran and finished inside the window.
+        from tracker.probe import busy_reason
+        cfg = Path("/h/.claude-dave")
+        snaps = iter([{491402: state(updated_at=1000)}, {491402: state(updated_at=1090)}])
+        current = {}
+
+        def processes():
+            nonlocal current
+            current = next(snaps)
+            return [(pid, cfg) for pid in current]
+
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=cfg, processes=processes,
+                             session_status=lambda c, pid: current[pid])
+        self.assertEqual(reason, "pid 491402 changed status")
+
+
+class SessionStatusReaderTests(unittest.TestCase):
+    """The default reader against a temp dir shaped like `<cfg>/sessions/<pid>.json`."""
+
+    def _session(self, cfg, pid, body):
+        (cfg / "sessions").mkdir(parents=True, exist_ok=True)
+        (cfg / "sessions" / f"{pid}.json").write_text(body, encoding="utf-8")
+
+    def test_reads_the_status_field_and_returns_none_for_anything_it_cannot(self):
+        from tracker.probe import read_session_status
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d)
+            self._session(cfg, 2355887, json.dumps(
+                {"pid": 2355887, "kind": "interactive", "status": "idle",
+                 "statusUpdatedAt": 1789225502799, "version": "2.1.268"}))
+            self._session(cfg, 1942517, json.dumps({"pid": 1942517, "status": "busy"}))
+            self._session(cfg, 11, "{not json")             # malformed
+            self._session(cfg, 12, json.dumps({"pid": 12}))  # no status field
+            self._session(cfg, 13, json.dumps(["idle"]))     # not an object
+            self._session(cfg, 14, json.dumps({"status": 3}))  # status not a string
+            self.assertEqual(read_session_status(cfg, 2355887).status, "idle")
+            self.assertEqual(read_session_status(cfg, 1942517).status, "busy")
+            self.assertIsNone(read_session_status(cfg, 11).status)
+            self.assertIsNone(read_session_status(cfg, 12).status)
+            self.assertIsNone(read_session_status(cfg, 13).status)
+            self.assertIsNone(read_session_status(cfg, 14).status)
+            self.assertIsNone(read_session_status(cfg, 99999).status)  # no file: session gone
+            self.assertIsNone(read_session_status(cfg / "nope", 2355887).status)  # no sessions dir
+
+
+class InProbeBusyGuardTests(unittest.TestCase):
+    """`run_tick_probe`'s optional `busy` check runs after every meter reading, so a
+    session that goes busy mid-probe is caught even when its spend stays inside the
+    burst size (the #19 incident)."""
+
+    def test_a_reason_after_the_second_reading_aborts(self):
+        read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
+        calls = []
+        def busy():
+            calls.append(1)
+            return "pid 2355887" if len(calls) > 2 else None
+        with self.assertRaises(ProbeAbort) as e:
+            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
+                           now=lambda: T0, ticks=1, skip=0, busy=busy)
+        self.assertEqual(str(e.exception), "account not idle: pid 2355887")
+        self.assertEqual(len(calls), 3)
+
+    def test_a_check_that_never_finds_a_reason_leaves_the_probe_unchanged(self):
+        read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
+        calls = []
+        def busy():
+            calls.append(1)
+            return None
+        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
+                           now=lambda: T0, ticks=1, skip=0, busy=busy)
+        self.assertEqual(r.prompts, 7)
+        self.assertEqual((r.tick_from, r.tick_to), (11, 12))
+        self.assertEqual(r.tokens_per_pct, 80_000)
+        self.assertEqual(len(calls), 7)  # once per reading
 
 
 class ProcessListerTests(unittest.TestCase):
