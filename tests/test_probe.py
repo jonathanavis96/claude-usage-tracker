@@ -263,6 +263,16 @@ class SessionStatusTests(unittest.TestCase):
                              session_status=lambda cfg, pid: state("compacting"))
         self.assertEqual(reason, "pid 491402")
 
+    def test_an_idle_session_without_a_timestamp_is_busy(self):
+        # status idle but no usable statusUpdatedAt: the interval comparison in
+        # SessionWatch.check would be blind for this pid (None on both sides), so the
+        # host cannot vouch for it and it counts as busy.
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: state("idle", None))
+        self.assertEqual(reason, "pid 491402")
+
     def test_only_the_busy_pids_reach_the_log_line(self):
         statuses = {1942517: "idle", 2355887: "busy", 2877669: "idle", 2881098: "busy"}
         reads = {"dave": util_seq([7, 7]), "jwork": util_seq([3, 3])}
@@ -343,6 +353,11 @@ class SessionWatchTests(unittest.TestCase):
                           4: state(updated_at=10)}])
         self.assertIsNone(w.snapshot())
         self.assertEqual(w.check(), "pid 1; pid 2 changed status; pid 4 started; pid 3 exited")
+
+    def test_an_idle_session_without_a_timestamp_never_reaches_the_interval_check(self):
+        w = self._watch([{1942517: state("idle", None)}, {1942517: state("idle", None)}])
+        self.assertEqual(w.snapshot(), "pid 1942517")
+        self.assertEqual(w.check(), "pid 1942517")
 
     def test_a_check_with_no_previous_snapshot_applies_only_the_instant_rule(self):
         w = self._watch([{1942517: state()}])

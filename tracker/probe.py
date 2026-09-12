@@ -441,8 +441,10 @@ class SessionState:
     """One interactive session's state as this host last recorded it.
 
     `updated_at` is Claude Code's `statusUpdatedAt` in epoch milliseconds. Either
-    field is None when the file cannot supply it; a None `status` means the host
-    cannot say what the session is doing, which counts as busy.
+    field is None when the file cannot supply it, and either being None counts as
+    busy: a None `status` means the host cannot say what the session is doing, and a
+    None `updated_at` means it cannot tell whether the session has done anything
+    since the last look.
     """
     status: str | None = None
     updated_at: int | None = None
@@ -489,8 +491,16 @@ def not_idle_pids(snapshot: dict[int, SessionState]) -> list[int]:
     status is exactly `idle`, so a missing, unreadable or malformed status file — a
     headless run, or a Claude Code too old to write one — still blocks the account as
     it did before, and so does a status value this code has never heard of.
+
+    An `idle` session also counts as busy when it has no `updated_at`. Without a
+    timestamp the interval comparison in `SessionWatch.check` is blind for that pid --
+    `None` on both sides of every interval reads as "nothing happened" no matter how
+    many turns it ran -- so the host cannot vouch for the session and the check fails
+    closed. Every real file carries the stamp; one that does not is a file this code
+    cannot reason about.
     """
-    return [pid for pid, st in snapshot.items() if st.status != IDLE_STATUS]
+    return [pid for pid, st in snapshot.items()
+            if st.status != IDLE_STATUS or st.updated_at is None]
 
 
 def not_idle_reason(snapshot: dict[int, SessionState]) -> str | None:
@@ -514,6 +524,8 @@ class SessionWatch:
     idle (`pid N`, as the pre-check has always said), when a session's
     `statusUpdatedAt` differs from the previous snapshot (`pid N changed status`), when
     a session is new since it (`pid N started`), or when one has gone (`pid N exited`).
+    A session with no usable `statusUpdatedAt` is already not idle by `not_idle_pids`,
+    so it is named outright rather than compared against a stamp that cannot move.
 
     A vanished session counts as activity on purpose. A session that ran a turn and
     then quit is indistinguishable, from the files left behind, from one that was
