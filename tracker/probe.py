@@ -263,6 +263,9 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     aborts the run with `account not idle: <reason>` and writes no row. It is what makes
     the relaxed pre-check safe: a session that goes busy mid-probe is caught even when
     its spend stays inside the burst size and so never trips the jump check (issue #19).
+    `main` passes `SessionWatch.check`, which compares the session state at this reading
+    with the state at the previous one, so a turn that both starts and finishes between
+    two readings is caught as well as one still running when the meter is read.
     """
     from .publish import tokens_usd
     start = now()
@@ -433,49 +436,141 @@ def busy_pids(cfg: Path, processes: list[tuple[int, Path]]) -> list[int]:
 IDLE_STATUS = "idle"
 
 
-def read_session_status(cfg: Path, pid: int) -> str | None:
-    """Claude Code's own status for `pid`, from `<cfg>/sessions/<pid>.json`.
+@dataclass(frozen=True)
+class SessionState:
+    """One interactive session's state as this host last recorded it.
+
+    `updated_at` is Claude Code's `statusUpdatedAt` in epoch milliseconds. Either
+    field is None when the file cannot supply it; a None `status` means the host
+    cannot say what the session is doing, which counts as busy.
+    """
+    status: str | None = None
+    updated_at: int | None = None
+
+
+def read_session_status(cfg: Path, pid: int) -> SessionState:
+    """Claude Code's own state for `pid`, from `<cfg>/sessions/<pid>.json`.
 
     Claude Code (2.1.267 and later) writes that file for every interactive session,
-    with a `status` of `idle` at the prompt and `busy` during a turn; the file goes
-    away when the process exits. Returns the status string, or None when the file is
-    missing, unreadable, not JSON, not an object, or carries no string `status` —
-    every case in which this host cannot say what the session is doing.
+    with a `status` of `idle` at the prompt and `busy` during a turn (`shell` while it
+    runs a command, and other values as the CLI gains them), plus a `statusUpdatedAt`
+    stamp that moves with every transition. The file goes away when the process exits.
+
+    Returns `SessionState(None, None)` when the file is missing, unreadable, not JSON
+    or not an object, and leaves either field None when that field is absent or of the
+    wrong type — `statusUpdatedAt` must be a plain integer, so a bool (an `int`
+    subclass in Python) does not count.
     """
     try:
         data = json.loads((Path(cfg) / "sessions" / f"{pid}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
-    status = data.get("status") if isinstance(data, dict) else None
-    return status if isinstance(status, str) else None
+        return SessionState()
+    if not isinstance(data, dict):
+        return SessionState()
+    status = data.get("status")
+    stamp = data.get("statusUpdatedAt")
+    return SessionState(status if isinstance(status, str) else None,
+                        stamp if isinstance(stamp, int) and not isinstance(stamp, bool) else None)
 
 
-def not_idle_pids(cfg: Path, processes: list[tuple[int, Path]],
-                  session_status: Callable[[Path, int], str | None] = read_session_status) -> list[int]:
-    """The pids among `processes` on `cfg` that are not sitting idle at their prompt.
+def session_snapshot(cfg: Path, processes: list[tuple[int, Path]],
+                     session_status: Callable[[Path, int], SessionState] = read_session_status,
+                     ) -> dict[int, SessionState]:
+    """The state of every `claude` session on `cfg`, keyed by pid, in lister order."""
+    return {pid: session_status(cfg, pid) for pid in busy_pids(cfg, processes)}
+
+
+def not_idle_pids(snapshot: dict[int, SessionState]) -> list[int]:
+    """The pids in `snapshot` that are not sitting idle at their prompt.
 
     Presence is not activity: Jonathan keeps interactive sessions open on both probe
     accounts for days, and counting those as the account being in use meant the
-    rotation never found an idle account (issue #21). A pid counts as busy unless
-    `session_status` reports exactly `idle` for it, so a missing, unreadable or
-    malformed status file — a headless run, or a Claude Code too old to write one —
-    still blocks the account as it did before.
+    rotation never found an idle account (issue #21). A pid counts as busy unless its
+    status is exactly `idle`, so a missing, unreadable or malformed status file — a
+    headless run, or a Claude Code too old to write one — still blocks the account as
+    it did before, and so does a status value this code has never heard of.
     """
-    return [pid for pid in busy_pids(cfg, processes) if session_status(cfg, pid) != IDLE_STATUS]
+    return [pid for pid, st in snapshot.items() if st.status != IDLE_STATUS]
 
 
-def not_idle_reason(cfg: Path, processes: list[tuple[int, Path]],
-                    session_status: Callable[[Path, int], str | None] = read_session_status) -> str | None:
-    """`"pid 2355887, 2881098"` for the non-idle sessions on `cfg`, or None when there
-    are none. Used both for the pre-check in `busy_reason` and for the in-probe guard."""
-    pids = not_idle_pids(cfg, processes, session_status)
+def not_idle_reason(snapshot: dict[int, SessionState]) -> str | None:
+    """`"pid 2355887, 2881098"` for the non-idle sessions in `snapshot`, or None when
+    every session in it is at its prompt."""
+    pids = not_idle_pids(snapshot)
     return "pid " + ", ".join(str(p) for p in pids) if pids else None
+
+
+class SessionWatch:
+    """The account's session state as of the last look, so two looks can be compared.
+
+    A single status reading is not enough. An interactive session that starts and
+    finishes a whole turn inside one prompt-plus-settle interval is back at `idle` by
+    the time it is sampled, and if its spend moved the meter by no more than the burst
+    size the jump check will not catch it either -- so the row is published with
+    someone else's traffic in it. Comparing consecutive snapshots closes that: a turn
+    that came and went still leaves `statusUpdatedAt` moved.
+
+    `check()` therefore reports activity when any session on the config dir is not
+    idle (`pid N`, as the pre-check has always said), when a session's
+    `statusUpdatedAt` differs from the previous snapshot (`pid N changed status`), when
+    a session is new since it (`pid N started`), or when one has gone (`pid N exited`).
+
+    A vanished session counts as activity on purpose. A session that ran a turn and
+    then quit is indistinguishable, from the files left behind, from one that was
+    closed while sitting at its prompt -- and the two cost very differently. A false
+    abort costs one probe slot, which the next cron slot makes up; a missed turn
+    pollutes a published rate, which calibration then carries forward. So the cheap
+    error is the one to make.
+    """
+
+    def __init__(self, cfg: Path, processes: Callable[[], list[tuple[int, Path]]] = claude_processes,
+                 session_status: Callable[[Path, int], SessionState] = read_session_status) -> None:
+        self.cfg = cfg
+        self.processes = processes
+        self.session_status = session_status
+        self.last: dict[int, SessionState] | None = None
+
+    def _look(self) -> dict[int, SessionState]:
+        return session_snapshot(self.cfg, self.processes(), self.session_status)
+
+    def snapshot(self) -> str | None:
+        """Record the current state as the baseline, and report anything already busy.
+
+        The returned reason is the instant rule only (`pid N` for a session not at its
+        prompt), so a caller can reject an account before spending a meter read.
+        """
+        self.last = self._look()
+        return not_idle_reason(self.last)
+
+    def check(self) -> str | None:
+        """Take a fresh snapshot, compare it with the previous one, and report why the
+        account is not idle -- or None. The fresh snapshot becomes the new baseline, so
+        consecutive calls each cover the interval since the last. Called with no
+        baseline yet, only the instant rule applies.
+        """
+        prev = self.last
+        cur = self._look()
+        self.last = cur
+        clauses = []
+        named = not_idle_pids(cur)
+        if named:
+            clauses.append("pid " + ", ".join(str(p) for p in named))
+        if prev is not None:
+            for pid, st in cur.items():
+                if pid in named:
+                    continue  # already named, and for the stronger reason
+                if pid not in prev:
+                    clauses.append(f"pid {pid} started")
+                elif st.updated_at != prev[pid].updated_at:
+                    clauses.append(f"pid {pid} changed status")
+            clauses += [f"pid {pid} exited" for pid in prev if pid not in cur]
+        return "; ".join(clauses) or None
 
 
 def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
                 cfg: Path | None = None,
                 processes: Callable[[], list[tuple[int, Path]]] | None = None,
-                session_status: Callable[[Path, int], str | None] = read_session_status) -> str | None:
+                session_status: Callable[[Path, int], SessionState] = read_session_status) -> str | None:
     """Why the account is busy, or None when it is idle.
 
     Two checks, cheapest first. With `cfg` and `processes`, a `claude` session on that
@@ -485,20 +580,20 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     (`"meter moved 7% -> 8%"`, `"window reset"`). The meter check alone is too weak on
     its own host: a busy account that is between prompts for two minutes passes it.
 
-    The process list is sampled again once the meter check passes: a session opened
-    during the sleep has not necessarily moved the meter yet, and would otherwise be
-    accepted just as it starts spending. Without `cfg` and `processes` only the meter
-    is consulted. `session_status` is the status reader, injected by tests the same way
-    `processes` is.
+    The session state recorded before the window is compared with a fresh look once the
+    meter check passes, by the `SessionWatch` rule: a session opened during the sleep
+    has not necessarily moved the meter yet, and a session that ran a whole turn inside
+    the window is back at `idle` by the end of it but left `statusUpdatedAt` moved.
+    Either would otherwise be accepted just as it spends. Without `cfg` and `processes`
+    only the meter is consulted. `processes` and `session_status` are the host lister
+    and the status reader; tests inject both.
     """
-    def process_reason() -> str | None:
-        if cfg is None or processes is None:
-            return None
-        return not_idle_reason(cfg, processes(), session_status)
-
-    reason = process_reason()
-    if reason is not None:
-        return reason
+    watch = (SessionWatch(cfg, processes, session_status)
+             if cfg is not None and processes is not None else None)
+    if watch is not None:
+        reason = watch.snapshot()
+        if reason is not None:
+            return reason
     a = read()
     sleep(window_s)
     b = read()
@@ -506,13 +601,13 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
         return "window reset"
     if a.five_hour != b.five_hour:
         return f"meter moved {a.five_hour:g}% -> {b.five_hour:g}%"
-    return process_reason()
+    return watch.check() if watch is not None else None
 
 
 def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
             cfg: Path | None = None,
             processes: Callable[[], list[tuple[int, Path]]] | None = None,
-            session_status: Callable[[Path, int], str | None] = read_session_status) -> bool:
+            session_status: Callable[[Path, int], SessionState] = read_session_status) -> bool:
     """True when `busy_reason` finds nothing: no non-idle `claude` session on `cfg` (when
     given) and a flat meter across `window_s`."""
     return busy_reason(read, sleep, window_s, cfg, processes, session_status) is None
@@ -526,7 +621,7 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
                    sleep: Callable[[float], None], max_wait_s: float = 4 * 3600, retry_s: float = 900,
                    now: Callable[[], datetime] | None = None, deadline: datetime | None = None,
                    processes: Callable[[], list[tuple[int, Path]]] = claude_processes,
-                   session_status: Callable[[Path, int], str | None] = read_session_status,
+                   session_status: Callable[[Path, int], SessionState] = read_session_status,
                    log: Callable[[str], None] = _log_stderr):
     """Return the first idle account, or None once the wait or the deadline runs out.
 
@@ -646,16 +741,19 @@ def main(argv: list[str] | None = None) -> int:
         print("probe skipped: no idle account within max wait", file=sys.stderr)
         return 3
     name, cfg = picked
-    # The same process-plus-status check the pre-check used, re-run after every meter
-    # reading: a session that wakes up mid-probe aborts the run instead of polluting it.
-    busy = lambda: not_idle_reason(cfg, claude_processes())  # noqa: E731
+    # The same check the pre-check used, re-run after every meter reading and compared
+    # with the state at the previous one, so a session that wakes up mid-probe aborts
+    # the run instead of polluting it -- even if its whole turn fits between readings.
+    # The baseline is taken here, as close to the first prompt as we can get it.
+    watch = SessionWatch(cfg)
+    watch.snapshot()
     try:
         salt = clock().isoformat()
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
                            lambda i: run_prompt(builder(salt, i), a.model, a.effort, cfg),
                            time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks,
                            payload=a.payload, skip=a.skip, expect_tokens_per_pct=a.expect_tokens_per_pct,
-                           payload_words=words, settle_s=a.settle, busy=busy)
+                           payload_words=words, settle_s=a.settle, busy=watch.check)
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
         return 4
