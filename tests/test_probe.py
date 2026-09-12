@@ -218,6 +218,129 @@ class IdleTests(unittest.TestCase):
         self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
 
 
+class SessionStatusTests(unittest.TestCase):
+    """A live claude process only blocks an account when its session is not idle.
+
+    Claude Code writes `<cfg>/sessions/<pid>.json` with a `status` of `idle` at the
+    prompt and `busy` during a turn, so a long-lived interactive session sitting at
+    the prompt no longer counts as the account being in use.
+    """
+
+    DAVE = Path("/h/.claude-dave")
+
+    def _procs(self, *pids):
+        return lambda: [(pid, self.DAVE) for pid in pids]  # noqa: E731
+
+    def test_idle_session_does_not_block_an_account_with_a_flat_meter(self):
+        self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                                processes=self._procs(491402),
+                                session_status=lambda cfg, pid: "idle"))
+
+    def test_busy_session_blocks_the_account_and_names_the_pid(self):
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: "busy")
+        self.assertEqual(reason, "pid 491402")
+
+    def test_a_status_the_reader_cannot_supply_keeps_todays_behaviour(self):
+        # A missing, unreadable or malformed status file all reach busy_reason as None
+        # (a headless run, or a Claude Code too old to write the file): still busy.
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: None)
+        self.assertEqual(reason, "pid 491402")
+
+    def test_any_other_status_value_is_busy(self):
+        from tracker.probe import busy_reason
+        reason = busy_reason(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
+                             processes=self._procs(491402),
+                             session_status=lambda cfg, pid: "compacting")
+        self.assertEqual(reason, "pid 491402")
+
+    def test_only_the_busy_pids_reach_the_log_line(self):
+        statuses = {1942517: "idle", 2355887: "busy", 2877669: "idle", 2881098: "busy"}
+        reads = {"dave": util_seq([7, 7]), "jwork": util_seq([3, 3])}
+        logged = []
+        acc = choose_account([("dave", self.DAVE), ("jwork", Path("/h/.claude-javiswork"))],
+                             lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
+                             processes=self._procs(*sorted(statuses)),
+                             session_status=lambda cfg, pid: statuses[pid],
+                             log=logged.append)
+        self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
+        self.assertEqual(logged, ["dave busy: pid 2355887, 2881098"])
+
+    def test_an_account_whose_every_session_is_idle_is_picked(self):
+        reads = {"dave": util_seq([7, 7])}
+        logged = []
+        acc = choose_account([("dave", self.DAVE)], lambda n: reads[n], lambda s: None,
+                             max_wait_s=0, retry_s=900, processes=self._procs(1942517, 2877669),
+                             session_status=lambda cfg, pid: "idle", log=logged.append)
+        self.assertEqual(acc, ("dave", self.DAVE))
+        self.assertEqual(logged, [])
+
+
+class SessionStatusReaderTests(unittest.TestCase):
+    """The default reader against a temp dir shaped like `<cfg>/sessions/<pid>.json`."""
+
+    def _session(self, cfg, pid, body):
+        (cfg / "sessions").mkdir(parents=True, exist_ok=True)
+        (cfg / "sessions" / f"{pid}.json").write_text(body, encoding="utf-8")
+
+    def test_reads_the_status_field_and_returns_none_for_anything_it_cannot(self):
+        from tracker.probe import read_session_status
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d)
+            self._session(cfg, 2355887, json.dumps(
+                {"pid": 2355887, "kind": "interactive", "status": "idle",
+                 "statusUpdatedAt": 1789225502799, "version": "2.1.268"}))
+            self._session(cfg, 1942517, json.dumps({"pid": 1942517, "status": "busy"}))
+            self._session(cfg, 11, "{not json")             # malformed
+            self._session(cfg, 12, json.dumps({"pid": 12}))  # no status field
+            self._session(cfg, 13, json.dumps(["idle"]))     # not an object
+            self._session(cfg, 14, json.dumps({"status": 3}))  # status not a string
+            self.assertEqual(read_session_status(cfg, 2355887), "idle")
+            self.assertEqual(read_session_status(cfg, 1942517), "busy")
+            self.assertIsNone(read_session_status(cfg, 11))
+            self.assertIsNone(read_session_status(cfg, 12))
+            self.assertIsNone(read_session_status(cfg, 13))
+            self.assertIsNone(read_session_status(cfg, 14))
+            self.assertIsNone(read_session_status(cfg, 99999))  # no file: session gone
+            self.assertIsNone(read_session_status(cfg / "nope", 2355887))  # no sessions dir
+
+
+class InProbeBusyGuardTests(unittest.TestCase):
+    """`run_tick_probe`'s optional `busy` check runs after every meter reading, so a
+    session that goes busy mid-probe is caught even when its spend stays inside the
+    burst size (the #19 incident)."""
+
+    def test_a_reason_after_the_second_reading_aborts(self):
+        read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
+        calls = []
+        def busy():
+            calls.append(1)
+            return "pid 2355887" if len(calls) > 2 else None
+        with self.assertRaises(ProbeAbort) as e:
+            run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
+                           now=lambda: T0, ticks=1, skip=0, busy=busy)
+        self.assertEqual(str(e.exception), "account not idle: pid 2355887")
+        self.assertEqual(len(calls), 3)
+
+    def test_a_check_that_never_finds_a_reason_leaves_the_probe_unchanged(self):
+        read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
+        calls = []
+        def busy():
+            calls.append(1)
+            return None
+        r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
+                           now=lambda: T0, ticks=1, skip=0, busy=busy)
+        self.assertEqual(r.prompts, 7)
+        self.assertEqual((r.tick_from, r.tick_to), (11, 12))
+        self.assertEqual(r.tokens_per_pct, 80_000)
+        self.assertEqual(len(calls), 7)  # once per reading
+
+
 class ProcessListerTests(unittest.TestCase):
     """claude_processes reads a /proc-shaped tree; a temp dir stands in for /proc."""
 

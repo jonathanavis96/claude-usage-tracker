@@ -104,12 +104,14 @@ a different account with no access to either repo; never use it for these.
 ## Accounts
 
 The probe tries Jono Work (`jwork`, `~/.claude-javiswork`) first and Dave
-(`~/.claude-dave`) second. An account with a live `claude` process on this host
-is skipped before its meter is read (the probe log says which pid), then the
-meter must hold flat for 120 s. Both are Max 20x and monitor-owned: never run
-`/logout` in either directory. Jonathan's own account is never probed. `claude`
-lives at `~/.npm-global/bin/claude`, which the wrappers add to `PATH` because
-cron does not.
+(`~/.claude-dave`) second. An account with a `claude` session on this host that
+is not idle (per its `sessions/<pid>.json`) is skipped before its meter is read
+(the probe log says which pid), then the meter must hold flat for 120 s. A
+session sitting at the prompt does not block the account; the probe re-checks
+after every meter reading and aborts if one goes busy while it runs. Both are
+Max 20x and monitor-owned: never run `/logout` in either directory. Jonathan's
+own account is never probed. `claude` lives at `~/.npm-global/bin/claude`, which
+the wrappers add to `PATH` because cron does not.
 
 ## Checking it
 

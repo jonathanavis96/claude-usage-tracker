@@ -230,7 +230,8 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                    deadline: datetime | None = None, usd_per_token: dict | None = None,
                    ticks: int = 3, payload: str = "prose", skip: int = 1,
                    expect_tokens_per_pct: float | None = None,
-                   payload_words: int = PROBE_PAYLOAD_WORDS) -> ProbeResult:
+                   payload_words: int = PROBE_PAYLOAD_WORDS,
+                   busy: Callable[[], str | None] | None = None) -> ProbeResult:
     """Send prompts until the 5-hour meter has advanced `ticks` percent past the first
     measured tick, and report tokens spent over that whole span.
 
@@ -257,6 +258,11 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     If the window resets within `RESET_WAIT_S` of the start, the probe sleeps until just
     after the reset; a meter reading 0.0 there is taken as the first tick (`reset_start`),
     so no alignment span is spent. Any other reading falls back to normal alignment.
+
+    `busy` is the account-not-idle guard, checked after every meter reading: a reason
+    aborts the run with `account not idle: <reason>` and writes no row. It is what makes
+    the relaxed pre-check safe: a session that goes busy mid-probe is caught even when
+    its spend stays inside the burst size and so never trips the jump check (issue #19).
     """
     from .publish import tokens_usd
     start = now()
@@ -316,6 +322,10 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         print(f"prompt {prompts}{f' (burst of {k})' if k > 1 else ''}: five_hour={cur.five_hour} "
               f"resets_at={cur.five_hour_resets_at} spent=input={batch['input']} output={batch['output']} "
               f"cache_read={batch['cache_read']} cache_write={batch['cache_write']}", file=sys.stderr)
+        if busy is not None:
+            reason = busy()
+            if reason is not None:
+                raise ProbeAbort(f"account not idle: {reason}")
         if not _same_window(last, cur):
             raise ProbeAbort("window reset during probe")
         jump = (cur.five_hour or 0) - (last.five_hour or 0)
@@ -420,27 +430,71 @@ def busy_pids(cfg: Path, processes: list[tuple[int, Path]]) -> list[int]:
     return [pid for pid, d in processes if Path(d).expanduser().resolve() == target]
 
 
+IDLE_STATUS = "idle"
+
+
+def read_session_status(cfg: Path, pid: int) -> str | None:
+    """Claude Code's own status for `pid`, from `<cfg>/sessions/<pid>.json`.
+
+    Claude Code (2.1.267 and later) writes that file for every interactive session,
+    with a `status` of `idle` at the prompt and `busy` during a turn; the file goes
+    away when the process exits. Returns the status string, or None when the file is
+    missing, unreadable, not JSON, not an object, or carries no string `status` —
+    every case in which this host cannot say what the session is doing.
+    """
+    try:
+        data = json.loads((Path(cfg) / "sessions" / f"{pid}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    status = data.get("status") if isinstance(data, dict) else None
+    return status if isinstance(status, str) else None
+
+
+def not_idle_pids(cfg: Path, processes: list[tuple[int, Path]],
+                  session_status: Callable[[Path, int], str | None] = read_session_status) -> list[int]:
+    """The pids among `processes` on `cfg` that are not sitting idle at their prompt.
+
+    Presence is not activity: Jonathan keeps interactive sessions open on both probe
+    accounts for days, and counting those as the account being in use meant the
+    rotation never found an idle account (issue #21). A pid counts as busy unless
+    `session_status` reports exactly `idle` for it, so a missing, unreadable or
+    malformed status file — a headless run, or a Claude Code too old to write one —
+    still blocks the account as it did before.
+    """
+    return [pid for pid in busy_pids(cfg, processes) if session_status(cfg, pid) != IDLE_STATUS]
+
+
+def not_idle_reason(cfg: Path, processes: list[tuple[int, Path]],
+                    session_status: Callable[[Path, int], str | None] = read_session_status) -> str | None:
+    """`"pid 2355887, 2881098"` for the non-idle sessions on `cfg`, or None when there
+    are none. Used both for the pre-check in `busy_reason` and for the in-probe guard."""
+    pids = not_idle_pids(cfg, processes, session_status)
+    return "pid " + ", ".join(str(p) for p in pids) if pids else None
+
+
 def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
                 cfg: Path | None = None,
-                processes: Callable[[], list[tuple[int, Path]]] | None = None) -> str | None:
+                processes: Callable[[], list[tuple[int, Path]]] | None = None,
+                session_status: Callable[[Path, int], str | None] = read_session_status) -> str | None:
     """Why the account is busy, or None when it is idle.
 
-    Two checks, cheapest first. With `cfg` and `processes`, a live `claude` process on
-    that config dir is busy (`"pid 491402"`) and no meter read is spent. Then the meter:
-    two reads `window_s` apart must agree on the 5-hour percent within the same window
+    Two checks, cheapest first. With `cfg` and `processes`, a `claude` session on that
+    config dir which is not idle per its `sessions/<pid>.json` is busy (`"pid 491402"`,
+    listing only the pids judged busy) and no meter read is spent. Then the meter: two
+    reads `window_s` apart must agree on the 5-hour percent within the same window
     (`"meter moved 7% -> 8%"`, `"window reset"`). The meter check alone is too weak on
     its own host: a busy account that is between prompts for two minutes passes it.
 
     The process list is sampled again once the meter check passes: a session opened
     during the sleep has not necessarily moved the meter yet, and would otherwise be
     accepted just as it starts spending. Without `cfg` and `processes` only the meter
-    is consulted.
+    is consulted. `session_status` is the status reader, injected by tests the same way
+    `processes` is.
     """
     def process_reason() -> str | None:
         if cfg is None or processes is None:
             return None
-        pids = busy_pids(cfg, processes())
-        return "pid " + ", ".join(str(p) for p in pids) if pids else None
+        return not_idle_reason(cfg, processes(), session_status)
 
     reason = process_reason()
     if reason is not None:
@@ -457,10 +511,11 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
 
 def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
             cfg: Path | None = None,
-            processes: Callable[[], list[tuple[int, Path]]] | None = None) -> bool:
-    """True when `busy_reason` finds nothing: no live process on `cfg` (when given) and a
-    flat meter across `window_s`."""
-    return busy_reason(read, sleep, window_s, cfg, processes) is None
+            processes: Callable[[], list[tuple[int, Path]]] | None = None,
+            session_status: Callable[[Path, int], str | None] = read_session_status) -> bool:
+    """True when `busy_reason` finds nothing: no non-idle `claude` session on `cfg` (when
+    given) and a flat meter across `window_s`."""
+    return busy_reason(read, sleep, window_s, cfg, processes, session_status) is None
 
 
 def _log_stderr(line: str) -> None:
@@ -471,19 +526,23 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
                    sleep: Callable[[float], None], max_wait_s: float = 4 * 3600, retry_s: float = 900,
                    now: Callable[[], datetime] | None = None, deadline: datetime | None = None,
                    processes: Callable[[], list[tuple[int, Path]]] = claude_processes,
+                   session_status: Callable[[Path, int], str | None] = read_session_status,
                    log: Callable[[str], None] = _log_stderr):
     """Return the first idle account, or None once the wait or the deadline runs out.
 
     Each rejection is logged as `<name> busy: <reason>` (`dave busy: pid 491402`,
-    `dave busy: meter moved 7% -> 8%`) so the probe log explains the choice. `processes`
-    is the host process lister (`claude_processes` by default); tests inject one.
+    `dave busy: meter moved 7% -> 8%`) so the probe log explains the choice; a pid
+    reason names only the sessions judged busy. `processes` is the host process lister
+    (`claude_processes` by default) and `session_status` the per-session status reader
+    (`read_session_status`); tests inject both.
     """
     waited = 0.0
     while True:
         if deadline is not None and now is not None and now() >= deadline:
             return None
         for name, cfg in accounts:
-            reason = busy_reason(read_for(name), sleep, cfg=cfg, processes=processes)
+            reason = busy_reason(read_for(name), sleep, cfg=cfg, processes=processes,
+                                 session_status=session_status)
             if reason is None:
                 return (name, cfg)
             log(f"{name} busy: {reason}")
@@ -587,13 +646,16 @@ def main(argv: list[str] | None = None) -> int:
         print("probe skipped: no idle account within max wait", file=sys.stderr)
         return 3
     name, cfg = picked
+    # The same process-plus-status check the pre-check used, re-run after every meter
+    # reading: a session that wakes up mid-probe aborts the run instead of polluting it.
+    busy = lambda: not_idle_reason(cfg, claude_processes())  # noqa: E731
     try:
         salt = clock().isoformat()
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
                            lambda i: run_prompt(builder(salt, i), a.model, a.effort, cfg),
                            time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks,
                            payload=a.payload, skip=a.skip, expect_tokens_per_pct=a.expect_tokens_per_pct,
-                           payload_words=words, settle_s=a.settle)
+                           payload_words=words, settle_s=a.settle, busy=busy)
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
         return 4
