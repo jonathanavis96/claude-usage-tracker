@@ -91,8 +91,11 @@ def _abort_explanation(why: str, parsed: dict) -> str:
     readings = parsed["readings"]
     if why.startswith("window reset during probe"):
         due = _reset_clock(readings[0]["reset"]) if readings else "its scheduled time"
+        # The reset reading is whatever the first prompt of the new window left on the
+        # meter: usually 0%, but a heavy prompt can land at 1% or more.
+        after = _pct(readings[-1]["fh"]) if readings else "0%"
         return (f"Then the account's 5-hour usage window reset (it was due at {due}) and the "
-                f"meter dropped to 0%. A measurement cannot span a reset, so the probe threw "
+                f"meter dropped to {after}. A measurement cannot span a reset, so the probe threw "
                 f"the run away.\n\n"
                 f"Why it was not avoided: at start the probe waits only for a reset that is "
                 f"less than {RESET_WAIT_MIN} minutes away. This run began further out than "

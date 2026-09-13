@@ -63,6 +63,14 @@ class TestSummary(unittest.TestCase):
         self.assertIn("nothing needs fixing by hand", s)
         self.assertNotIn("Traceback", s)
 
+    def test_window_reset_reports_the_meter_value_the_new_window_started_on(self):
+        log = RESET_LOG.replace("prompt 43: five_hour=0.0", "prompt 43: five_hour=1.0")
+        s = summary("claude-sonnet-5", 4, "Rotation run", log)
+        self.assertIn("meter dropped to 1%", s)
+        self.assertIn("from 7% to 9%", s)
+        s0 = summary("claude-sonnet-5", 4, "Rotation run", RESET_LOG)
+        self.assertIn("meter dropped to 0%", s0)
+
     def test_old_log_format_without_timestamps_still_parses_and_a_jump_names_the_intruder(self):
         s = summary("claude-sonnet-5", 4, "Drift rerun", OLD_JUMP_LOG)
         self.assertIn("Drift rerun for Sonnet 5", s)
