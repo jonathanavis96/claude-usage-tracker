@@ -93,6 +93,17 @@ class TestSummary(unittest.TestCase):
         self.assertIn(".credentials.json has probably expired", s)
         self.assertIn("this needs a look", s)
 
+    def test_crash_reports_an_exception_class_without_an_error_suffix(self):
+        log = CRASH_LOG.replace("urllib.error.HTTPError: HTTP Error 401: Unauthorized",
+                                "tracker.probe.ProbeAbort: deadline")
+        s = summary("claude-sonnet-5", 1, "Rotation run", log)
+        self.assertIn("Last error: tracker.probe.ProbeAbort: deadline", s)
+        self.assertNotIn("no Python error line", s)
+        log = CRASH_LOG.replace("urllib.error.HTTPError: HTTP Error 401: Unauthorized",
+                                "subprocess.TimeoutExpired: Command '['claude']' timed out after 600 seconds")
+        s = summary("claude-sonnet-5", 1, "Rotation run", log)
+        self.assertIn("Last error: subprocess.TimeoutExpired: Command", s)
+
     def test_refusal_before_any_account_is_explained(self):
         log = "expectation 40000 tokens per 1% fits fewer than 8 prompts per tick at the minimum payload; quantisation would exceed the published tolerance\n"
         s = summary("claude-opus-5", 4, "Rotation run", log)

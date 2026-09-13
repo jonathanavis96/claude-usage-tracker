@@ -31,6 +31,10 @@ READING_RE = re.compile(
 BUSY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) busy: (?P<why>.+)$")
 ABORT_RE = re.compile(r"^(?:\S+Z )?probe aborted on (?P<name>\w+): (?P<why>.+)$")
 WAIT_RE = re.compile(r"^(?:\S+Z )?window resets in (?P<s>\d+)s: waiting for it")
+# A traceback ends with the exception line: the first unindented line after the
+# "Traceback" header. Matching on that position rather than the class name catches
+# probe.ProbeAbort and subprocess.TimeoutExpired, which carry no Error/Exception suffix.
+TRACEBACK_HEADER = "Traceback (most recent call last):"
 EXC_RE = re.compile(r"^(?:[\w.]+\.)?\w*(?:Error|Exception|Exit|Interrupt)\b.*$")
 
 
@@ -58,9 +62,15 @@ def _reset_clock(stamp: str) -> str:
 
 def _parse(log_text: str) -> dict:
     readings, busy, abort, waited, exc = [], [], None, None, None
+    in_traceback = False
     for raw in log_text.splitlines():
         line = raw.rstrip()
-        if (m := READING_RE.match(line)):
+        if line == TRACEBACK_HEADER:
+            in_traceback = True
+        elif in_traceback and line and not line.startswith(" "):
+            in_traceback = False
+            exc = line
+        elif (m := READING_RE.match(line)):
             readings.append(m.groupdict())
         elif (m := BUSY_RE.match(line)):
             busy.append((m.group("name"), m.group("why")))
