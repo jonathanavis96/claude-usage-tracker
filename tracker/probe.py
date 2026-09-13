@@ -44,7 +44,7 @@ import random
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 from .usage_api import Utilization, same_reset
@@ -204,6 +204,12 @@ class ProbeResult:
     seven_day_resets_at: str | None = None
 
 
+def _stamp(t: datetime) -> str:
+    """`12:31:07Z`: every progress line carries the clock, so a log read after the fact
+    can say when the meter moved and how long a gap between prompts really was."""
+    return t.astimezone(timezone.utc).strftime("%H:%M:%SZ")
+
+
 def _same_window(a: Utilization, b: Utilization) -> bool:
     if not same_reset(a.five_hour_resets_at, b.five_hour_resets_at):
         return False
@@ -266,7 +272,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     tick_from: int | None = None  # the tick at which measurement started
     to_reset = _seconds_until_reset(before, now())
     if to_reset is not None and 0 <= to_reset <= RESET_WAIT_S:
-        print(f"window resets in {to_reset:.0f}s: waiting for it", file=sys.stderr)
+        print(f"{_stamp(now())} window resets in {to_reset:.0f}s: waiting for it", file=sys.stderr)
         sleep(to_reset + RESET_MARGIN_S)
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
@@ -313,7 +319,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if k > 1:
             reading["burst"] = k
         readings.append(reading)
-        print(f"prompt {prompts}{f' (burst of {k})' if k > 1 else ''}: five_hour={cur.five_hour} "
+        print(f"{_stamp(now())} prompt {prompts}{f' (burst of {k})' if k > 1 else ''}: five_hour={cur.five_hour} "
               f"resets_at={cur.five_hour_resets_at} spent=input={batch['input']} output={batch['output']} "
               f"cache_read={batch['cache_read']} cache_write={batch['cache_write']}", file=sys.stderr)
         if not _same_window(last, cur):
@@ -464,7 +470,7 @@ def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], win
 
 
 def _log_stderr(line: str) -> None:
-    print(line, file=sys.stderr)
+    print(f"{_stamp(datetime.now(timezone.utc))} {line}", file=sys.stderr)
 
 
 def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], Callable[[], Utilization]],

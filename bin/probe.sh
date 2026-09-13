@@ -70,13 +70,19 @@ commit_history() {
   fi
 }
 
-# report_failure <model> <rc> <what>: the alerts for a probe that wrote no row.
+# report_failure <model> <rc> <what>: the alerts for a probe that wrote no row. The
+# body is composed by tracker/report.py: a plain-language summary (did it run, why it
+# stopped, whether anything needs a hand) with the raw log tail underneath. Any exit
+# code other than the two documented ones is a crash and is reported as such, so an
+# uncaught traceback can no longer fail silently.
 report_failure() {
+  local body
+  body="$(python3 -m tracker.report --model "$1" --rc "$2" --what "$3" --log "$PROBE_LOG" 2>&1)" \
+    || body="$(printf '%s: tracker.probe exited %s. (tracker.report failed: %s)\n\nLast lines:\n%s\n' "$3" "$2" "$body" "$(tail -n 20 "$PROBE_LOG")")"
   case "$2" in
-    3) alert_jonathan "Probe skipped: no idle account for $1" \
-         "$(printf '%s: tracker.probe exited 3 (no idle account within the wait).\n\nLast lines:\n%s\n' "$3" "$(tail -n 20 "$PROBE_LOG")")" ;;
-    4) alert_jonathan "Probe aborted on $1" \
-         "$(printf '%s: tracker.probe exited 4 (window reset or a jump it could not explain). No row was written.\n\nLast lines:\n%s\n' "$3" "$(tail -n 20 "$PROBE_LOG")")" ;;
+    3) alert_jonathan "Probe skipped: no idle account for $1" "$body" ;;
+    4) alert_jonathan "Probe aborted on $1" "$body" ;;
+    *) alert_jonathan "Probe crashed on $1 (exit $2)" "$body" ;;
   esac
 }
 
