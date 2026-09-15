@@ -86,6 +86,20 @@ _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured
 
 _Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it); `max20` is the live plan -- probe weeks replace passive `max20` weeks from the first probe week on, and it is the only series change detection runs on. `pro` has no measurement of its own, so it publishes `max5`'s figures again (same 5x-ratio era) with `"assumed": true`; `max20` and `max5` carry `"assumed": false`.
 
+**Stretch**:
+One gs account's meter movement of at least 10%, pooled from consecutive same-window readings of that account's own meter log, with the meter dollars that account's own transcripts spent across it. The unit of passive measurement on gs (tracker/join.py `build_stretches`). Whole-percent rounding carries one point per separate window piece, so a 10% stretch reads to about ±10% and a busy day's pooled stretches to a few percent.
+_Avoid_: interval (masterrig's 1% unit in the same module), span (a probe term)
+
+**Capture**:
+A stretch's meter dollars per 1% over its account's reference (the median of that account's recent accepted stretches): the share of the meter's movement that the account's transcripts on gs account for. 1.0 is complete capture.
+
+**Unaccounted traffic**:
+Meter movement a stretch's transcripts do not explain: the stretch reads more than 15% below its account's reference even allowing for rounding. It comes from using the account off gs or from broken transcript collection, is withheld, is kept for inspection, and is never published as a rate. Its mirror, **surplus**, is transcripts the meter did not count, from a transcript directory another account also writes to.
+_Avoid_: missing tokens, leakage
+
+**Level shift**:
+A run of withheld stretches that agree with each other at a new level. It is what a genuine limit change looks like, and also what steady off-gs use looks like, so it stays withheld until the other gs account or a probe steps the same way; only then is it a change and the reference rebased (tracker/capture.py).
+
 **Session**:
 One transcript file's worth of turns (a subagent's own transcript counts as its own session). `session_tokens[model]` is the median cumulative tokens of a real session on that model over the last 30 days; the page's "about N sessions per window" unit.
 _Avoid_: task, conversation, run
