@@ -19,13 +19,13 @@
   "usd_per_pct": {
    "claude-fable-5-1": {
     "contributors": 1,
-    "median": 1.9463,
+    "median": 1.2646,
     "samples": 1,
     "spread": null
    },
    "claude-sonnet-5": {
     "contributors": 1,
-    "median": 0.0751,
+    "median": 0.0587,
     "samples": 1,
     "spread": null
    }
@@ -67,5 +67,5 @@
    "weeks": 0
   }
  },
- "updated_at": "2026-09-15T05:30:12+00:00"
+ "updated_at": "2026-09-15T23:44:23+00:00"
 }
