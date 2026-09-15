@@ -1,5 +1,7 @@
+import json
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from tracker.publish import build_public_json, usd_per_pct, blended_price_per_token
 
 def probe(day, model, tpp, account="dave"):
@@ -11,6 +13,30 @@ PASSIVE = {"generated_at": "2026-09-05T20:00:00+00:00", "plan_ratio_5x_to_20x": 
            "split": {"input": 0.062, "output": 0.021, "cache_read": 0.907, "cache_write": 0.010},
            "history": {"2026-08-01": {"tokens_per_pct": 100000, "interpolated": False}}}
 EFFORT = {"claude-sonnet-5": {"low": 900000, "high": 2520000}}
+
+
+def window(window_ending, d5, d7):
+    return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 else None,
+            "five_hour_pct": d5, "seven_day_pct": d7}
+
+
+# history/passive.json's max20 weeks as published on 2026-09-15 (issue #25): the
+# open 09-18 week blends pre- and post-cut days to 5.43.
+ISSUE_25_WEEKS = [
+    {"week_ending": "2026-08-28", "windows": 6.58, "five_hour_pct": 250.0, "seven_day_pct": 38.0},
+    {"week_ending": "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0},
+    {"week_ending": "2026-09-11", "windows": 6.02, "five_hour_pct": 373.0, "seven_day_pct": 62.0},
+    {"week_ending": "2026-09-18", "windows": 5.43, "five_hour_pct": 114.0, "seven_day_pct": 21.0},
+]
+# The per-window points the issue quotes from masterrig's raw log for the same span.
+ISSUE_25_BY_WINDOW = [
+    window("2026-09-10T21:29:00+00:00", 72.0, 11.0),
+    window("2026-09-12T16:30:00+00:00", 17.0, 3.0),
+    window("2026-09-12T21:30:00+00:00", 27.0, 5.0),
+    window("2026-09-14T16:30:00+00:00", 37.0, 8.0),
+    window("2026-09-14T21:30:00+00:00", 17.0, 4.0),
+    window("2026-09-15T16:30:00+00:00", 27.0, 6.0),
+]
 PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75},
           "claude-opus-5": {"input": 7.5, "output": 37.5, "cache_read": 0.75, "cache_write": 9.375}}
 
@@ -429,7 +455,7 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual([h["week_ending"] for h in ww["max5"]["history"]], ["2026-08-14"])
         self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]], ["2026-08-28", "2026-09-04"])
         self.assertEqual(ww["passive"], self.PASSIVE_WEEKLY)
-        self.assertEqual(ww["probe"], {"current": None, "history": []})
+        self.assertEqual(ww["probe"], {"current": None, "history": [], "by_window": []})
         self.assertEqual(ww["max20"]["current"], self.PASSIVE_WEEKLY["current"])
         self.assertFalse(ww["max20"]["assumed"])
         self.assertFalse(ww["max5"]["assumed"])
@@ -449,9 +475,9 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         for r, (fhb, fha, sdb, sda, wk) in zip(rows, [
             (10.0, 40.0, 10.0, 15.0, "2026-08-28T03:59:59+00:00"),
             (10.0, 45.0, 10.0, 16.0, "2026-08-28T03:59:59+00:00"),
-            (10.0, 50.0, 10.0, 15.0, "2026-09-04T03:59:59+00:00"),
-            (10.0, 55.0, 10.0, 16.0, "2026-09-04T03:59:59+00:00"),
-            (10.0, 30.0, 10.0, 20.0, "2026-09-11T03:59:59+00:00"),  # newest week, incomplete
+            (10.0, 50.0, 10.0, 16.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 55.0, 10.0, 17.0, "2026-09-04T03:59:59+00:00"),
+            (10.0, 70.0, 10.0, 20.0, "2026-09-11T03:59:59+00:00"),  # newest week, incomplete
         ]):
             r["five_hour_before"], r["five_hour_after"] = fhb, fha
             r["seven_day_before"], r["seven_day_after"] = sdb, sda
@@ -512,60 +538,167 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
         self.assertIsNone(j["last_change"])
 
-    def test_weekly_event_fires_on_a_synthetic_max20_drop(self):
+    def test_calendar_week_rows_alone_never_produce_a_weekly_event(self):
+        # A passive.json from before the per-window series existed: the weekly
+        # rows still publish, but detection only runs on `by_window` -- the
+        # calendar-week series blends a mid-week step away (issue #25), so it is
+        # not detected on at all rather than detected on badly.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         weekly = {"current": 6.46, "history": [
             {"week_ending": "2026-08-28", "windows": 6.58, "five_hour_pct": 250.0, "seven_day_pct": 38.0},
             {"week_ending": "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0},
             {"week_ending": "2026-09-11", "windows": 6.5, "five_hour_pct": 300.0, "seven_day_pct": 46.0},
             {"week_ending": "2026-09-18", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
-            # confirming week: detect_changes now needs the next reading to also
-            # cross the threshold, in the same direction, before the 2026-09-18
-            # step fires (see tracker/detect.py)
             {"week_ending": "2026-09-25", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
         ]}
         passive = dict(PASSIVE, weekly_windows=weekly)
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
+        self.assertIsNone(j["last_change"])
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.46)  # median of the last two complete weeks
+
+    def test_issue_25_weekly_cut_is_published_from_the_data_as_it_stood_on_2026_09_15(self):
+        # The real series: calendar weeks as published (the open 09-18 week
+        # blending to 5.43) and the per-window points quoted in issue #25.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
+        passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": ISSUE_25_BY_WINDOW})
+        now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
         weekly_change_events = [e for e in j["events"] if e.get("scope") == "weekly"]
-        self.assertEqual(len(weekly_change_events), 1)
-        self.assertEqual(weekly_change_events[0]["date"], "2026-09-18")
-        self.assertEqual(j["last_change"]["scope"], "weekly")
-        self.assertEqual(j["last_change"]["date"], "2026-09-18")
-        self.assertEqual(j["last_change"]["direction"], "decreased")
+        self.assertEqual(weekly_change_events, [
+            {"date": "2026-09-14", "kind": "change", "scope": "weekly", "label": "Weekly limit changed -26%"}])
+        self.assertEqual(j["last_change"], {"date": "2026-09-14", "direction": "decreased", "percent": 26,
+                                            "model": "all", "scope": "weekly"})
+        # `current` follows the post-cut level (81/18), not the two pre-cut weeks.
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 4.5)
+        # The calendar-week rows are untouched: the chart still gets them.
+        self.assertEqual([h["windows"] for h in j["weekly_windows"]["max20"]["history"]], [6.58, 6.35, 6.02, 5.43])
+        self.assertEqual(j["weekly_windows"]["passive"]["by_window"], ISSUE_25_BY_WINDOW)
+
+    def test_max20_current_is_the_pooled_trailing_fortnight_of_the_regime(self):
+        # No change detected: current pools the last 14 days of per-window
+        # points (anchored on the newest point), not the median of two weeks.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
+        by_window = ([window("2026-08-2%dT10:00:00+00:00" % d, 65.0, 10.0) for d in range(0, 6)]   # 6.5, >14 days old
+                     + [window("2026-09-%02dT10:00:00+00:00" % d, 60.0, 10.0) for d in range(4, 15)])  # 6.0
+        passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": by_window})
+        now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.0)
+
+    def test_per_window_points_from_before_the_plan_change_stay_out_of_max20(self):
+        # Max 5x windows (about 11) right up to PLAN_CHANGE, then Max 20x at 6.5:
+        # the plan change is Jonathan's, not Anthropic's, and must not fire.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        by_window = ([window("2026-08-%02dT10:00:00+00:00" % d, 110.0, 10.0) for d in range(10, 19)]
+                     + [window("2026-08-%02dT10:00:00+00:00" % d, 65.0, 10.0) for d in range(19, 31)])
+        passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.PASSIVE_WEEKLY["history"],
+                                                "by_window": by_window})
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.5)
+        self.assertEqual(j["weekly_windows"]["max5"]["current"], 10.91)
+
+    def test_probe_runs_per_window_points_are_published_but_stay_out_of_the_max20_series(self):
+        # The real 2026-09-14/15 probe rows: each run moves the seven-day meter
+        # by a point or none, so pooling them in only adds rounding (see
+        # _max20_window_points). They publish under probe.by_window and change
+        # neither the event nor current.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
+        for r, (fhb, fha, sdb, sda) in zip(rows[-3:], [(0.0, 5.0, 94.0, 95.0), (5.0, 9.0, 95.0, 95.0), (0.0, 5.0, 0.0, 1.0)]):
+            r["five_hour_before"], r["five_hour_after"] = fhb, fha
+            r["seven_day_before"], r["seven_day_after"] = sdb, sda
+        passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": ISSUE_25_BY_WINDOW})
+        now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        self.assertEqual([p["windows"] for p in j["weekly_windows"]["probe"]["by_window"]], [5.0, None, 5.0])
+        self.assertEqual(j["last_change"]["percent"], 26)
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 4.5)
+
+    def test_probe_runs_alone_cannot_set_current(self):
+        # A passive.json without by_window plus the probe runs above: six points
+        # of seven-day movement is rounding, not a level. current stays the
+        # weekly rows' median rather than the runs' pooled 46/6.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
+        for r, (fhb, fha, sdb, sda) in zip(rows[-3:], [(0.0, 5.0, 94.0, 95.0), (5.0, 9.0, 95.0, 95.0), (0.0, 5.0, 0.0, 1.0)]):
+            r["five_hour_before"], r["five_hour_after"] = fhb, fha
+            r["seven_day_before"], r["seven_day_after"] = sdb, sda
+        passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS})
+        now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.18)  # median of 6.35 and 6.02
+        self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
+
+
+# weekly_windows() over the real ~/.moonlighter/usage_log.jsonl on masterrig as it
+# stood on 2026-09-15: the weekly_windows block passive.json carries once masterrig
+# runs the per-window code, every five-hour window from 2026-06-13.
+REAL_WEEKLY = json.loads((Path(__file__).parent / "fixtures" / "passive_weekly_windows_2026-09-15.json")
+                         .read_text(encoding="utf-8"))
+
+
+class RealLogTests(unittest.TestCase):
+    def _publish(self, until: str) -> dict:
+        """The public JSON from the real log's windows ending before `until` (an ISO prefix)."""
+        weekly = dict(REAL_WEEKLY, by_window=[w for w in REAL_WEEKLY["by_window"] if w["window_ending"] < until])
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
+        return build_public_json(rows, dict(PASSIVE, weekly_windows=weekly), EFFORT, PRICES,
+                                 datetime(2026, 9, 15, 21, 0, tzinfo=timezone.utc))
+
+    def test_the_real_log_publishes_one_weekly_change_the_14_sep_cut(self):
+        # The acceptance test for the vote floor: through the real publish path,
+        # the 84 max20 windows from 2026-08-19 to 09-15 give exactly one event.
+        # At a floor of 3 they gave four: +38% 08-23 and +27% 09-03, each voted
+        # by a d7=6 window, -23% 08-28, which only read as a candidate against
+        # the base the false 08-23 regime left behind, and then this one.
+        j = self._publish("2026-09-16")
+        self.assertEqual([e for e in j["events"] if e["scope"] == "weekly"], [
+            {"date": "2026-09-14", "kind": "change", "scope": "weekly", "label": "Weekly limit changed -29%"}])
+        self.assertEqual(j["last_change"], {"date": "2026-09-14", "direction": "decreased", "percent": 29,
+                                            "model": "all", "scope": "weekly"})
+
+    def test_max20_current_follows_the_cut_from_the_publish_that_detects_it(self):
+        # Before the second post-cut window lands nothing has fired, and current
+        # is the trailing fortnight (6.23, mostly pre-cut). From the publish that
+        # detects the cut it is the new regime's own level: 54/12 = 4.5 on 09-14,
+        # 82/18 = 4.56 on 09-15, where the two-complete-weeks median (6.18) would
+        # overstate the week's capacity by 36%.
+        self.assertEqual(REAL_WEEKLY["current"], 6.18)
+        for until, fired, current in [("2026-09-14T17", False, 6.23), ("2026-09-14T22", True, 4.5),
+                                      ("2026-09-16", True, 4.56)]:
+            with self.subTest(until=until):
+                j = self._publish(until)
+                self.assertEqual(j["last_change"] is not None, fired)
+                self.assertEqual(j["weekly_windows"]["max20"]["current"], current)
 
 
 class LastChangeScopeTests(unittest.TestCase):
-    WEEKLY_MAX20 = [
-        {"week_ending": "2026-08-28", "windows": 6.58, "five_hour_pct": 250.0, "seven_day_pct": 38.0},
-        {"week_ending": "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0},
-        {"week_ending": "2026-09-11", "windows": 6.5, "five_hour_pct": 300.0, "seven_day_pct": 46.0},
-        {"week_ending": "2026-09-18", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
-        # confirming week: see tracker/detect.py -- a step needs a next reading
-        # past the same base, in the same direction, before it fires.
-        {"week_ending": "2026-09-25", "windows": 4.0, "five_hour_pct": 260.0, "seven_day_pct": 65.0},
-    ]
+    # The real 2026-09-13 cut (issue #25), which detects as a weekly event dated 2026-09-14.
+    WEEKLY_MAX20 = {"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": ISSUE_25_BY_WINDOW}
 
     def test_newer_weekly_event_beats_an_older_window_event(self):
         # Window event fires around 2026-09-05 (early Sept rows); the weekly
-        # event is dated 2026-09-18, later, so it must win last_change.
+        # event is dated 2026-09-14, later, so it must win last_change.
         rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
                 + [probe(d, "claude-sonnet-5", 300000) for d in range(6, 10)])
-        passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.WEEKLY_MAX20})
-        now = datetime(2026, 9, 10, tzinfo=timezone.utc)
+        passive = dict(PASSIVE, weekly_windows=self.WEEKLY_MAX20)
+        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         window_events = [e for e in j["events"] if e.get("scope") == "window"]
         self.assertTrue(window_events)
-        self.assertLess(window_events[-1]["date"], "2026-09-18")
+        self.assertLess(window_events[-1]["date"], "2026-09-14")
         self.assertEqual(j["last_change"]["scope"], "weekly")
-        self.assertEqual(j["last_change"]["date"], "2026-09-18")
+        self.assertEqual(j["last_change"]["date"], "2026-09-14")
 
     def test_older_weekly_event_loses_to_a_newer_window_event(self):
-        # Same weekly step (dated 2026-09-18), but now the window event is
-        # pushed later than it, past 2026-09-18, so the window event must win.
+        # Same weekly step (dated 2026-09-14), but now the window event is
+        # pushed later than it, past 2026-09-14, so the window event must win.
         rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 21)]
                 + [probe(d, "claude-sonnet-5", 300000) for d in range(21, 26)])
-        passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.WEEKLY_MAX20})
+        passive = dict(PASSIVE, weekly_windows=self.WEEKLY_MAX20)
         now = datetime(2026, 9, 25, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         window_events = [e for e in j["events"] if e.get("scope") == "window"]

@@ -5,13 +5,15 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
-from .detect import detect_changes
+from .detect import MIN_POOL_D7, current_regime_points, detect_changes, detect_weighted_changes, pooled_windows
 from .passive import PLAN_CHANGE
 from .rows import usable_rows
 from .weekly import probe_weekly_windows
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
 MAX_SAMPLE_AGE_DAYS = 10
+WEEKLY_CURRENT_DAYS = 14
+FIVE_HOURS = timedelta(hours=5)
 
 
 def load_probes(path: Path) -> list[dict]:
@@ -239,6 +241,18 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         # plan, gets a probe series and change detection. Probe weeks (the Dave
         # account, which probes on max20) replace passive max20 weeks from the
         # first probe week on, same concatenation rule as before.
+        #
+        # The weekly rows are what the page charts. Detection and max20's
+        # `current` do NOT run on them: a calendar week blends a mid-week step
+        # into its average (the 2026-09-13 cut published as a -14.5% open week
+        # and could not have fired before 2026-10-02, issue #25). They run on
+        # the passive per-window series `by_window` instead, each point
+        # weighted by its own seven-day movement (tracker/detect.py:
+        # detect_weighted_changes, _max20_window_points for why the probe
+        # runs' own points stay out). A passive.json from before that series
+        # existed publishes its weekly rows as before, with no weekly
+        # detection and the old two-complete-weeks median as current, until
+        # masterrig's next passive run.
         passive_history = passive_weekly.get("history", [])
         # passive.json may lag: it can predate the flag, or carry a `partial` from
         # when its newest week was still open. Recompute the flag against this
@@ -253,11 +267,14 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
             max20_history = [h for h in passive_max20 if h["week_ending"] < first_probe_week] + probe_history
         else:
             max20_history = list(passive_max20)
-        weekly_readings = [(datetime.fromisoformat(h["week_ending"]), h["windows"]) for h in max20_history]
-        weekly_events = detect_changes(weekly_readings)
+        max20_points = _max20_window_points(passive_weekly.get("by_window", []))
+        weekly_events = detect_weighted_changes(max20_points)
+        max20_current = _regime_current(max20_points)
+        if max20_current is None:
+            max20_current = _weekly_current(max20_history, now)
         max5_current = _weekly_current(max5_history, now)
         weekly_windows = {
-            "max20": {"current": _weekly_current(max20_history, now), "history": max20_history, "assumed": False},
+            "max20": {"current": max20_current, "history": max20_history, "assumed": False},
             "max5": {"current": max5_current, "history": max5_history, "assumed": False},
             # Pro has no measurement of its own yet: publish max5's frozen figures
             # as a stand-in (same 5x-ratio era) flagged "assumed" so the page can
@@ -307,8 +324,62 @@ def _plan_for_week(week_ending: str) -> str | None:
 
 
 def _weekly_current(history: list[dict], now: datetime) -> float | None:
+    """Median of the last two complete weeks: max5's figure, and max20's only when
+    no per-window series has arrived yet (see _regime_current)."""
     complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]
     return round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
+
+
+def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float]]:
+    """The live plan's per-window series as (window_ending, d5, d7), oldest first.
+
+    Passive windows are Jonathan's own account, so only those that START
+    after PLAN_CHANGE are max20: a window straddling or preceding the plan
+    change would read at the Max 5x ratio (about 11 against 6.5) and, as the
+    first base of the max20 series, would fire Jonathan's own plan move as an
+    Anthropic cut. The whole of PLAN_CHANGE day is excluded, not just windows
+    before it, because the change is dated to a day and not an hour.
+
+    The probe runs' own per-window points (`weekly_windows.probe.by_window`)
+    are published for the record but deliberately NOT pooled in here, even
+    though the probe accounts are on the same plan. A 3-tick run moves the
+    seven-day meter by one whole point or none, so each of its points is
+    pure rounding (d7 = 1 read against a true movement anywhere in 0.5-1.5),
+    and a fortnight of runs adds a handful of points of d7 next to a passive
+    window's eight or eleven: measured against the real 2026-09-13 cut,
+    pooling them in moved the base enough to report -31% for what the
+    passive windows alone put at -26%, without adding any information a
+    detector could use. Their weekly rows still replace the passive weeks in
+    the chart series once a probe week clears the floors (probe_weekly_windows).
+    """
+    points = [(datetime.fromisoformat(p["window_ending"]), p["five_hour_pct"], p["seven_day_pct"])
+              for p in passive_points if (datetime.fromisoformat(p["window_ending"]) - FIVE_HOURS).date() > PLAN_CHANGE]
+    return sorted(points, key=lambda p: p[0])
+
+
+def _regime_current(points: list[tuple[datetime, float, float]]) -> float | None:
+    """max20's `current`: the pooled ratio of the current regime's newest
+    WEEKLY_CURRENT_DAYS of per-window points, anchored on the newest point.
+
+    Pooled (total d5 over total d7) rather than a median of weeks, and bounded
+    by the regime rather than by calendar weeks, so that once a change is
+    detected `current` is the post-change level from the day it fires instead
+    of the median of two pre-change weeks for another fortnight (issue #25: the
+    page's sessions-per-week and dollars-per-week derive from it). With no
+    change in the series it is simply the trailing fortnight. None when that
+    fortnight holds less than MIN_POOL_D7 of seven-day movement (a series that
+    has only just started, or a passive log that has gone quiet): too little
+    to state a level from, and the caller falls back to the weekly rows.
+    """
+    regime = current_regime_points(points)
+    if not regime:
+        return None
+    since = regime[-1][0] - timedelta(days=WEEKLY_CURRENT_DAYS)
+    recent = [p for p in regime if p[0] >= since]
+    if sum(p[2] for p in recent) < MIN_POOL_D7:
+        return None
+    pooled = pooled_windows(recent)
+    return round(pooled, 2) if pooled is not None else None
 
 
 def _latest_change_with_scope(window_events: list, weekly_events: list) -> dict | None:
