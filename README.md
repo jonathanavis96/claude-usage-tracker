@@ -34,9 +34,14 @@ into a "tokens per window" number that means something for actual use.
 **Weekly windows.** How many 5-hour windows the 7-day limit actually holds is
 measured, not assumed to be 28. It comes from two independent sources: the
 passive log (pairing 5-hour and 7-day meter movement within the same window)
-and each probe row's own before/after reads, both bucketed by week. See the
-`weekly_windows` vocabulary in `CONTEXT.md` for how the two series are kept
-separate per plan.
+and each probe row's own before/after reads, both bucketed by week for the
+chart and by 5-hour window for change detection. A step in the weekly cap is
+detected on the per-window points, weighted by how far the 7-day meter moved
+in each, and dated by the first window at the new level; a calendar-week
+series blends a mid-week step away (the 2026-09-13 cut read as -14.5% on
+weeks and -26% on windows). See the `weekly_windows` vocabulary in
+`CONTEXT.md` for how the two series are kept separate per plan and
+`tracker/detect.py` for the detection rules.
 
 **Rotation.** Scheduled probes rotate Sonnet, Opus, Fable in a fixed order
 (historically every 12 hours; see `docs/deploy-gs.md` for the current
