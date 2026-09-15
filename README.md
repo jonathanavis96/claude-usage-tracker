@@ -34,9 +34,14 @@ into a "tokens per window" number that means something for actual use.
 **Weekly windows.** How many 5-hour windows the 7-day limit actually holds is
 measured, not assumed to be 28. It comes from two independent sources: the
 passive log (pairing 5-hour and 7-day meter movement within the same window)
-and each probe row's own before/after reads, both bucketed by week. See the
-`weekly_windows` vocabulary in `CONTEXT.md` for how the two series are kept
-separate per plan.
+and each probe row's own before/after reads, both bucketed by week for the
+chart and by 5-hour window for change detection. A step in the weekly cap is
+detected on the per-window points, weighted by how far the 7-day meter moved
+in each, and dated by the first window at the new level; a calendar-week
+series blends a mid-week step away (the 2026-09-13 cut read as -14.5% on
+weeks and -29% on windows). See the `weekly_windows` vocabulary in
+`CONTEXT.md` for how the two series are kept separate per plan and
+`tracker/detect.py` for the detection rules.
 
 **Rotation.** Scheduled probes rotate Sonnet, Opus, Fable in a fixed order
 (historically every 12 hours; see `docs/deploy-gs.md` for the current
@@ -103,13 +108,15 @@ python3 -m tracker.rotate plan
 Running a probe directly spends real subscription allowance on whichever
 account it uses — it is not a no-op. See `tracker/probe.py`'s `argparse`
 setup for the full flag list; the required ones are `--model` and
-`--expect-tokens-per-pct` (the assumed tokens-per-1% rate, used to size the
-prompts and bursts). Without `--out history/probes.jsonl` the row lands in a
-separate `probes.jsonl` in the working directory and never enters the rotation
-or the published page:
+`--expect-usd-per-pct` (the assumed meter dollars per 1%, which sizes the
+prompt on the model's own prices and, through it, the bursts; an output run
+takes `--expect-tokens-per-pct` instead, since its reply size is fixed).
+Without `--out history/probes.jsonl` the row lands in a separate
+`probes.jsonl` in the working directory and never enters the rotation or the
+published page:
 
 ```
-python3 -m tracker.probe --model claude-sonnet-5 --expect-tokens-per-pct 500000 --out history/probes.jsonl
+python3 -m tracker.probe --model claude-sonnet-5 --expect-usd-per-pct 0.96 --out history/probes.jsonl
 ```
 
 Publishing the public JSON from current history. Publishing also recomputes

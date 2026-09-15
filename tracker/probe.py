@@ -7,17 +7,28 @@ prompt counts (and therefore very different tokens-per-1%) between one tick and 
 Summing spend over several ticks and dividing by the total percent advanced averages that
 lag out. Defaults: 3 measured ticks (`--ticks`), after 1 skipped span (`--skip`).
 
-Every run needs an expectation, `--expect-tokens-per-pct` (the tokens per 1% the probe
-assumes before it starts, normally the last published rate for the model). It sizes the
-prompt and the bursts:
+Every run needs an expectation. A prose run takes it in meter dollars per 1%,
+`--expect-usd-per-pct` (the dollar invariant's median, from tracker.rotate), and sizes
+the prompt from it; the tokens per 1% that size the bursts follow from the prompt. An
+output run takes `--expect-tokens-per-pct` directly: its reply is a fixed 4,000 words,
+so the expectation only sizes the bursts.
 
-Prompt size. `payload_words_for(expectation)` picks the prose payload size so one prompt's
-total tokens — payload plus the fixed per-prompt overhead (`FIXED_PROMPT_TOKENS`: the
-CLI's ~11,480-token system-prefix cache_read plus a few input/output tokens, paid on
-every prompt regardless of payload) — are about a twelfth of a tick (`PROMPTS_PER_TICK`),
-clamped to 500 to 12,000 words, and the row records it as `payload_words`. Sizing
-PROMPTS_PER_TICK to 12 rather than 10 keeps a span at 8+ prompts even when the true rate
-runs 30% below the expectation that sized it. An output payload keeps its fixed
+Prompt size. `payload_words_for(usd_per_pct, price)` picks the prose payload so one
+prompt is worth about a twelfth of a tick (`PROMPTS_PER_TICK`) in meter dollars on the
+model's own prices: the payload's cache_write plus the fixed per-prompt overhead
+(`FIXED_PROMPT_SPLIT`: the CLI's ~11,473-token system-prefix cache_read plus a few
+input/output tokens, paid on every prompt regardless of payload), clamped to 500 to
+12,000 words, and the row records it as `payload_words`. Sizing in dollars rather than
+tokens matters because the overhead is cache_read and the payload is cache_write: a
+token count converted through the previous row's class split sized a payload whose own
+split was different, so its dollar value was not the twelfth it was meant to be, and
+the next conversion moved it again (issue #24). Dollars and the price table fix the
+size for a given expectation whatever the last row looked like. Sizing PROMPTS_PER_TICK
+to 12 rather than 10 keeps a span at 8+ prompts even when the true rate runs 30% below
+the expectation that sized it. `tokens_per_pct_for(words)` is then the token
+expectation: PROMPTS_PER_TICK prompts of that size, overhead included, so the burst
+sizing below sees a self-consistent twelve-prompt span. The row records both
+(`expect_usd_per_pct`, `expect_tokens_per_pct`). An output payload keeps its fixed
 4,000-word reply and records that.
 
 Burst-first spans. Every span, the alignment span included, opens with one burst of
@@ -49,6 +60,7 @@ from pathlib import Path
 from typing import Callable
 from .usage_api import Utilization, same_reset
 from .cli_run import RunUsage
+from .publish import class_weight, meter_usd, tokens_usd
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
 
@@ -65,8 +77,12 @@ PROMPTS_PER_TICK = 12  # a prompt is sized to a twelfth of a tick
 # Every prompt carries a fixed overhead beyond its own payload: the CLI's system-prefix
 # cache_read plus a handful of input/output tokens. Measured on 2026-09-09
 # (history/probes.jsonl, last two rows, single-prompt readings): cache_read 11,473 +
-# input 2 + output 5 = 11,480 tokens, regardless of payload size.
-FIXED_PROMPT_TOKENS = 11480
+# input 2 + output 5 = 11,480 tokens, regardless of payload size. Kept per class
+# because the classes are priced apart: the overhead is nearly all cache_read, the
+# payload is all cache_write, and sizing the payload in dollars needs the overhead's
+# dollar value at the model's own cache_read rate, not its token count.
+FIXED_PROMPT_SPLIT = {"input": 2, "output": 5, "cache_read": 11473, "cache_write": 0}
+FIXED_PROMPT_TOKENS = sum(FIXED_PROMPT_SPLIT.values())
 BURST_FRACTION = 0.8  # of the expected span, for the burst that opens each span
 EARLY_BURST_FRACTION = 0.5  # once a tick has arrived inside a burst
 RESET_WAIT_S = 20 * 60  # wait for a window reset this close rather than straddle it
@@ -82,19 +98,45 @@ _TAILS = ("before the holiday", "after the audit", "ahead of schedule", "during 
 PROBE_PROMPT = "Below is a long log of routine office notes. Reply with only the word DONE.\n\n"
 
 
-def payload_words_for(expect_tokens_per_pct: float) -> int:
-    """Prose payload size so one prompt's total tokens (payload plus the fixed per-prompt
-    overhead) cost about a twelfth of a tick, within the word range.
+def payload_words_for(usd_per_pct: float, price: dict) -> int:
+    """Prose payload size so one prompt is worth a PROMPTS_PER_TICK-th of `usd_per_pct`
+    in meter dollars on `price` (the model's data/prices.json entry), within the word
+    range.
 
-    Every prompt also pays FIXED_PROMPT_TOKENS regardless of payload size, so that
-    overhead is subtracted from the per-prompt target before converting the remainder
-    to words. If what's left after subtracting overhead would size below
-    MIN_PAYLOAD_WORDS, MIN_PAYLOAD_WORDS is used instead (the clamp below already
-    covers this, since a negative or tiny target rounds under the minimum).
+    Meter dollars are list dollars times class_weight times the model's meter_weight
+    (tracker.publish.usd_per_pct), and `usd_per_pct` is in those units, so the target
+    is divided by meter_weight first. The fixed per-prompt overhead is priced at the
+    model's own rates (FIXED_PROMPT_SPLIT through meter_usd) and comes off the target;
+    what is left is bought as cache_write at TOKENS_PER_WORD per word. A target the
+    overhead alone exceeds rounds under MIN_PAYLOAD_WORDS and is clamped to it: the
+    prompt then costs more than its twelfth, and main() refuses the run when that
+    leaves fewer than MIN_PROMPTS_PER_SPAN prompts per tick.
     """
-    target_tokens = expect_tokens_per_pct / PROMPTS_PER_TICK - FIXED_PROMPT_TOKENS
-    words = round(target_tokens / TOKENS_PER_WORD)
+    target = usd_per_pct / PROMPTS_PER_TICK / price.get("meter_weight", 1.0)
+    per_word = price["cache_write"] * class_weight(price, "cache_write") * TOKENS_PER_WORD / 1e6
+    words = round((target - meter_usd(FIXED_PROMPT_SPLIT, price)) / per_word)
     return max(MIN_PAYLOAD_WORDS, min(MAX_PAYLOAD_WORDS, words))
+
+
+def prompt_tokens_for(words: int) -> float:
+    """Tokens one prose prompt of `words` spends: payload plus the fixed overhead."""
+    return words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+
+
+def tokens_per_pct_for(words: int) -> float:
+    """The token expectation that goes with a `words` payload: PROMPTS_PER_TICK prompts
+    of it, overhead included. Derived from the payload rather than handed in so the
+    burst sizing (_burst_size) always sees the twelve-prompt span the payload was cut
+    for, whatever dollar figure sized it."""
+    return PROMPTS_PER_TICK * prompt_tokens_for(words)
+
+
+def prompt_meter_usd(words: int, price: dict) -> float:
+    """Meter dollars one prose prompt of `words` costs on `price`, meter_weight applied:
+    the inverse of payload_words_for, used to say how many prompts a tick will take."""
+    tokens = dict(FIXED_PROMPT_SPLIT)
+    tokens["cache_write"] += round(words * TOKENS_PER_WORD)
+    return meter_usd(tokens, price) * price.get("meter_weight", 1.0)
 
 
 def probe_prompt(salt: str, index: int, words: int = PROBE_PAYLOAD_WORDS) -> str:
@@ -202,6 +244,9 @@ class ProbeResult:
     # from the last reading (`cur`, at exit) rather than the first, since that
     # is the reading closest to the moment the run's d7 is attributed.
     seven_day_resets_at: str | None = None
+    # The meter dollars per 1% that sized a prose payload (None for an output run or a
+    # row from before dollar sizing); expect_tokens_per_pct is derived from it.
+    expect_usd_per_pct: float | None = None
 
 
 def _stamp(t: datetime) -> str:
@@ -236,7 +281,8 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                    deadline: datetime | None = None, usd_per_token: dict | None = None,
                    ticks: int = 3, payload: str = "prose", skip: int = 1,
                    expect_tokens_per_pct: float | None = None,
-                   payload_words: int = PROBE_PAYLOAD_WORDS) -> ProbeResult:
+                   payload_words: int = PROBE_PAYLOAD_WORDS,
+                   expect_usd_per_pct: float | None = None) -> ProbeResult:
     """Send prompts until the 5-hour meter has advanced `ticks` percent past the first
     measured tick, and report tokens spent over that whole span.
 
@@ -246,8 +292,8 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     run: every sleep is charged against it and the probe aborts once it passes.
     `usd_per_token` is the model's entry from data/prices.json (USD per million tokens);
     when given, a span our own prompts cannot pay for is rejected rather than published
-    as a rate. `payload` and `payload_words` are recorded on the result only; the actual
-    prompt text comes from `run`, not from this function.
+    as a rate. `payload`, `payload_words` and `expect_usd_per_pct` are recorded on the
+    result only; the actual prompt text comes from `run`, not from this function.
 
     `skip` discards the first `skip` spans after alignment: spend only accumulates once
     tick (1+skip) has been seen, and that tick is the result's `tick_from`.
@@ -264,7 +310,6 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     after the reset; a meter reading 0.0 there is taken as the first tick (`reset_start`),
     so no alignment span is spent. Any other reading falls back to normal alignment.
     """
-    from .publish import tokens_usd
     start = now()
     before = read()
     reset_start = False
@@ -353,7 +398,8 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
                                        settle_s=settle_s, expect_tokens_per_pct=expect_tokens_per_pct,
                                        early_tick=early_tick, reset_start=reset_start,
                                        five_hour_before=before.five_hour, five_hour_after=cur.five_hour,
-                                       seven_day_resets_at=cur.seven_day_resets_at)
+                                       seven_day_resets_at=cur.seven_day_resets_at,
+                                       expect_usd_per_pct=expect_usd_per_pct)
         last = cur
     raise ProbeAbort(f"no second tick after {prompts} prompts")
 
@@ -372,7 +418,7 @@ def _burst_size(expect_tokens_per_pct: float | None, fraction: float, prompt_tot
     if prompt_totals:
         per_prompt = sum(prompt_totals) / len(prompt_totals)
     else:
-        per_prompt = payload_words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        per_prompt = prompt_tokens_for(payload_words)
     if per_prompt <= 0:
         return 1
     k = min(int(fraction * expect_tokens_per_pct // per_prompt), room)
@@ -531,30 +577,52 @@ def main(argv: list[str] | None = None) -> int:
                          "output: short prompt asking for ~4,000 words of reply, to measure output-token weight")
     ap.add_argument("--skip", type=int, default=1,
                     help="spans to discard after the first observed tick before measuring starts (default 1)")
-    ap.add_argument("--expect-tokens-per-pct", type=float, required=True,
-                    help="expected tokens per 1%% (the last published rate for the model); sizes the "
-                         "prompt to a tenth of a tick and each span's opening burst to 80%% of the span")
+    expect = ap.add_mutually_exclusive_group(required=True)
+    expect.add_argument("--expect-usd-per-pct", type=float, default=None,
+                        help="prose runs: expected meter dollars per 1%% (tracker.rotate's median); sizes the "
+                             "prompt to a twelfth of a tick and, through it, each span's opening burst to "
+                             "80%% of the span")
+    expect.add_argument("--expect-tokens-per-pct", type=float, default=None,
+                        help="output runs: expected tokens per 1%%; sizes each span's opening burst to 80%% "
+                             "of the span (the reply size is fixed)")
     ap.add_argument("--settle", type=float, default=60,
                     help="seconds to wait after a prompt returns before reading the meter (default 60)")
     a = ap.parse_args(argv)
     if a.skip < 0 or a.settle < 0 or a.ticks < 1:
         ap.error("--skip and --settle must not be negative and --ticks must be at least 1")
-    if a.expect_tokens_per_pct <= 0:
+    if a.payload == "output" and a.expect_tokens_per_pct is None:
+        ap.error("--payload output takes --expect-tokens-per-pct (its reply size is fixed)")
+    if a.payload == "prose" and a.expect_usd_per_pct is None:
+        ap.error("a prose run takes --expect-usd-per-pct (the payload is sized in meter dollars)")
+    if a.expect_usd_per_pct is not None and a.expect_usd_per_pct <= 0:
+        ap.error("--expect-usd-per-pct must be positive")
+    if a.expect_tokens_per_pct is not None and a.expect_tokens_per_pct <= 0:
         ap.error("--expect-tokens-per-pct must be positive")
+    prices = json.loads(a.prices.read_text(encoding="utf-8"))
+    usd_per_token = prices.get(a.model)
+    if usd_per_token is None:
+        print(f"no price for {a.model} in {a.prices}", file=sys.stderr)
+        return 4
+    expect_usd: float | None = a.expect_usd_per_pct
     if a.payload == "output":
+        assert a.expect_tokens_per_pct is not None  # ap.error above has exited otherwise
         words = OUTPUT_REPLY_WORDS
+        expect_tokens: float = a.expect_tokens_per_pct
         builder = output_prompt
     else:
-        words = payload_words_for(a.expect_tokens_per_pct)
-        per_prompt = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
-        if a.expect_tokens_per_pct / per_prompt < MIN_PROMPTS_PER_SPAN:
+        assert expect_usd is not None  # ap.error above has exited otherwise
+        words = payload_words_for(expect_usd, usd_per_token)
+        prompts_per_tick = expect_usd / prompt_meter_usd(words, usd_per_token)
+        if prompts_per_tick < MIN_PROMPTS_PER_SPAN:
             # The fixed CLI overhead alone caps how many prompts fit in one tick, so a
             # low expectation cannot be sized into a well-averaged span. Say so loudly
             # rather than publish a noisy rate.
-            print(f"expectation {a.expect_tokens_per_pct:.0f} tokens per 1% fits fewer than "
-                  f"{MIN_PROMPTS_PER_SPAN} prompts per tick at the minimum payload; "
+            # "fits fewer than" is what tracker.report keys its plain-language summary on.
+            print(f"expectation ${expect_usd:.3f} per 1% fits fewer than {MIN_PROMPTS_PER_SPAN} prompts per "
+                  f"tick at the minimum payload ({prompts_per_tick:.1f}); "
                   f"quantisation would exceed the published tolerance", file=sys.stderr)
             return 4
+        expect_tokens = tokens_per_pct_for(words)
         builder = lambda salt, i: probe_prompt(salt, i, words)  # noqa: E731
     home = Path.home()
     accounts = [tuple(x.split("=", 1)) for x in a.account] or [("jwork", home / ".claude-javiswork"), ("dave", home / ".claude-dave")]
@@ -564,11 +632,6 @@ def main(argv: list[str] | None = None) -> int:
     def clock():
         return datetime.now(timezone.utc)
 
-    prices = json.loads(a.prices.read_text(encoding="utf-8"))
-    usd_per_token = prices.get(a.model)
-    if usd_per_token is None:
-        print(f"no price for {a.model} in {a.prices}", file=sys.stderr)
-        return 4
     # One wall-clock budget for the whole run: waiting for an idle account and the probe
     # itself share it, so a slow start cannot push the probe into the next cron slot.
     deadline = clock() + timedelta(seconds=a.max_wait)
@@ -598,8 +661,8 @@ def main(argv: list[str] | None = None) -> int:
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
                            lambda i: run_prompt(builder(salt, i), a.model, a.effort, cfg),
                            time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks,
-                           payload=a.payload, skip=a.skip, expect_tokens_per_pct=a.expect_tokens_per_pct,
-                           payload_words=words, settle_s=a.settle)
+                           payload=a.payload, skip=a.skip, expect_tokens_per_pct=expect_tokens,
+                           payload_words=words, settle_s=a.settle, expect_usd_per_pct=expect_usd)
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
         return 4
