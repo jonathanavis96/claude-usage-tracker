@@ -9,8 +9,7 @@
 # Fable prose row and writes data/prices.json, or refuses and alerts Jonathan
 # when the new weight is more than 30% from the current one.
 #
-# Exit codes bubble up from tracker.probe: 0 ok, 3 no idle account (busy, or at or
-# above 90% of its weekly limit -- tracker.probe.WEEKLY_CEILING), 4 aborted.
+# Exit codes bubble up from tracker.probe: 0 ok, 3 no idle account, 4 aborted.
 # Exit 5 is this wrapper's own: another tracker job holds the lock.
 # A failed push is logged but does not change the exit code (cron mail should
 # reflect the probe's own success/failure, not a transient git hiccup) --

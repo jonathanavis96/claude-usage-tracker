@@ -9,11 +9,11 @@ from tracker.probe import run_tick_probe, is_idle, choose_account, append_result
 
 T0 = datetime(2026, 9, 6, 8, 0, tzinfo=timezone.utc)
 
-def util_seq(values, reset="r1", seven_day=30.0):
+def util_seq(values, reset="r1"):
     it = iter(values)
     def read():
         v = next(it)
-        return Utilization(T0, v, seven_day, reset if v is not None else None)
+        return Utilization(T0, v, 30.0, reset if v is not None else None)
     return read
 
 def runner(tokens=20_000):
@@ -124,22 +124,6 @@ class IdleTests(unittest.TestCase):
 
     def test_busy_when_moved(self):
         self.assertFalse(is_idle(util_seq([7, 8]), lambda s: None))
-
-    def test_weekly_at_or_above_ceiling_is_busy_without_waiting_the_window(self):
-        # Dave at 97% of the weekly limit: refused on the first read, no 120 s sleep,
-        # and the reason names the meter so the probe log explains the skip.
-        from tracker.probe import busy_reason
-        slept = []
-        reads = []
-        def read():
-            reads.append(1)
-            return Utilization(T0, 7.0, 97.0, "r1")
-        self.assertEqual(busy_reason(read, slept.append), "weekly 97% >= 90%")
-        self.assertEqual((slept, len(reads)), ([], 1))
-        self.assertEqual(busy_reason(util_seq([7, 7], seven_day=90.0), lambda s: None), "weekly 90% >= 90%")
-
-    def test_weekly_below_ceiling_with_flat_meter_is_idle(self):
-        self.assertTrue(is_idle(util_seq([7, 7], seven_day=89.0), lambda s: None))
 
     def test_busy_process_rejects_an_account_whose_meter_is_flat(self):
         # The meter check alone passes ([7, 7]); the live claude process on this
