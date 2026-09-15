@@ -1,5 +1,7 @@
+import json
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from tracker.publish import build_public_json, usd_per_pct, blended_price_per_token
 
 def probe(day, model, tpp, account="dave"):
@@ -629,6 +631,48 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.18)  # median of 6.35 and 6.02
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
+
+
+# weekly_windows() over the real ~/.moonlighter/usage_log.jsonl on masterrig as it
+# stood on 2026-09-15: the weekly_windows block passive.json carries once masterrig
+# runs the per-window code, every five-hour window from 2026-06-13.
+REAL_WEEKLY = json.loads((Path(__file__).parent / "fixtures" / "passive_weekly_windows_2026-09-15.json")
+                         .read_text(encoding="utf-8"))
+
+
+class RealLogTests(unittest.TestCase):
+    def _publish(self, until: str) -> dict:
+        """The public JSON from the real log's windows ending before `until` (an ISO prefix)."""
+        weekly = dict(REAL_WEEKLY, by_window=[w for w in REAL_WEEKLY["by_window"] if w["window_ending"] < until])
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
+        return build_public_json(rows, dict(PASSIVE, weekly_windows=weekly), EFFORT, PRICES,
+                                 datetime(2026, 9, 15, 21, 0, tzinfo=timezone.utc))
+
+    def test_the_real_log_publishes_one_weekly_change_the_14_sep_cut(self):
+        # The acceptance test for the vote floor: through the real publish path,
+        # the 84 max20 windows from 2026-08-19 to 09-15 give exactly one event.
+        # At a floor of 3 they gave four: +38% 08-23 and +27% 09-03, each voted
+        # by a d7=6 window, -23% 08-28, which only read as a candidate against
+        # the base the false 08-23 regime left behind, and then this one.
+        j = self._publish("2026-09-16")
+        self.assertEqual([e for e in j["events"] if e["scope"] == "weekly"], [
+            {"date": "2026-09-14", "kind": "change", "scope": "weekly", "label": "Weekly limit changed -29%"}])
+        self.assertEqual(j["last_change"], {"date": "2026-09-14", "direction": "decreased", "percent": 29,
+                                            "model": "all", "scope": "weekly"})
+
+    def test_max20_current_follows_the_cut_from_the_publish_that_detects_it(self):
+        # Before the second post-cut window lands nothing has fired, and current
+        # is the trailing fortnight (6.23, mostly pre-cut). From the publish that
+        # detects the cut it is the new regime's own level: 54/12 = 4.5 on 09-14,
+        # 82/18 = 4.56 on 09-15, where the two-complete-weeks median (6.18) would
+        # overstate the week's capacity by 36%.
+        self.assertEqual(REAL_WEEKLY["current"], 6.18)
+        for until, fired, current in [("2026-09-14T17", False, 6.23), ("2026-09-14T22", True, 4.5),
+                                      ("2026-09-16", True, 4.56)]:
+            with self.subTest(until=until):
+                j = self._publish(until)
+                self.assertEqual(j["last_change"] is not None, fired)
+                self.assertEqual(j["weekly_windows"]["max20"]["current"], current)
 
 
 class LastChangeScopeTests(unittest.TestCase):

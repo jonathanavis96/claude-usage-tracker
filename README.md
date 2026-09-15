@@ -39,7 +39,7 @@ chart and by 5-hour window for change detection. A step in the weekly cap is
 detected on the per-window points, weighted by how far the 7-day meter moved
 in each, and dated by the first window at the new level; a calendar-week
 series blends a mid-week step away (the 2026-09-13 cut read as -14.5% on
-weeks and -26% on windows). See the `weekly_windows` vocabulary in
+weeks and -29% on windows). See the `weekly_windows` vocabulary in
 `CONTEXT.md` for how the two series are kept separate per plan and
 `tracker/detect.py` for the detection rules.
 

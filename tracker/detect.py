@@ -59,15 +59,15 @@ things follow that the sample detector above gets wrong on it:
    - The base is the pooled ratio of the BASE_DAYS before the candidate,
      within the current regime, and needs MIN_BASE_D7 points of d7 behind
      it before anything can be judged against it.
-   - A point can only be a candidate ("vote") with d7 >= MIN_VOTE_D7, and
-     only if its ratio still lies beyond threshold after conceding half a
-     point of d7 rounding in its favour (d5/(d7-0.5) for a drop, d5/(d7+0.5)
-     for a rise). Half a point is the typical error on the difference of two
-     whole-percent reads; the concession is not a second threshold, it is
-     what stops a d7=3 window that reads 15% low from voting when its true
-     value could easily be 15% high. It scales with the bucket: at d7=8 a
-     point needs to read about 19% low to vote, at d7=3 about 29%, at d7=20
-     about 17%.
+   - A point can only be a candidate ("vote") with d7 >= MIN_VOTE_D7, 7
+     points (why 7: below), and only if its ratio still lies beyond
+     threshold after conceding half a point of d7 rounding in its favour
+     (d5/(d7-0.5) for a drop, d5/(d7+0.5) for a rise). Half a point is the
+     typical error on the difference of two whole-percent reads; the
+     concession is not a second threshold, it is what stops a window that
+     reads 15% low from voting when its true value could as easily sit on
+     the base. It scales with the bucket: at the floor a point needs to read
+     about 21% low to vote, at d7=14 about 18%, at d7=20 about 17%.
    - The candidate confirms once the points from it onward pool to at least
      MIN_POOL_D7 of d7 across at least MIN_POOL_POINTS windows AND that pool,
      with the same half-point concession, still lies beyond threshold from
@@ -83,15 +83,53 @@ things follow that the sample detector above gets wrong on it:
      shortest one that confirms, so the event does not drift as later
      windows arrive.
 
+Why the vote floor is 7 points of d7
+------------------------------------
+
+Picked from the real log, not by feel. The detector first shipped with a
+floor of 3. Fed masterrig's whole usage log as it stood on 2026-09-15
+through the publish path (84 max20 windows, 2026-08-19 to 09-15), it
+reported four changes: +38% on 08-23, -23% on 08-28, +27% on 09-03 and the
+real -28% on 09-14. The first and third were voted by d7=6 windows (39/6,
+42/6) against bases pooled mostly from thin windows of 0 to 4 points each,
+and the second (a d7=8 window 12% under the plain fortnight) read as a
+candidate only against the base the false 08-23 regime left behind; the
+calendar weeks over the same span (6.58, 6.35, 6.02) have no step in them.
+Swept over the same log (tests/fixtures/):
+
+    floor  max20, 08-19 to 09-15      max20 to 09-12   max5, 06-13 to 08-14
+    3-4    +38 -23 +27, -28 (09-14)   +38 -23 +27      -20 +21 -26 (July)
+    5-6    +38 -23 +27, -28 (09-14)   +38 -23 +27      none
+    7-8    -29 (09-14)                none             none
+    9      none                       none             none
+
+7 is the lowest floor at which neither flat stretch of the log reports
+anything (max5 is frozen and never detected on in production, which makes
+it a clean out-of-sample check), and it is where the seven-day meter's
+rounding alone stops being able to carry a flat window past threshold: a
+difference of two whole-percent reads can be off by up to a whole point,
+1/6 = 17% of a d7=6 window but 1/7 = 14% of a d7=7 one. The ceiling is the
+real cut: of its three post-cut windows only the first (09-14T16:30, 37/8)
+is heavy enough to vote at all, so a floor of 9 misses it. 8 also passes
+today but has no margin on that side.
+
+The cost is latency. Only 7 of those 84 max20 windows clear the floor,
+about one every four days, so a step waits for the first heavy window after
+it before it can vote; the 09-13 cut had one the next day. A thin window's
+movement is never wasted: it still pools into every base and confirmation.
+
 Regimes replace the arm/re-arm rule: an event starts a new regime at its
 candidate, and every later base is pooled from that regime only, so the
 series does not re-fire while it sits on its new plateau and a second step
 is measured against the new level, not the old one.
 
-Measured against the real 2026-09-13 cut: with the series as it stood on
-2026-09-14 (two post-step windows, d7 = 12) it fires "decreased 26%" dated
-2026-09-14; the calendar-week detector could not have said anything before
-2026-10-02.
+Measured against the real 2026-09-13 cut, on the whole max20 series in the
+log: it fires "decreased 29%" dated 2026-09-14 as soon as the second
+post-cut window closes (09-14T21:30: pool 54/12 = 4.50 against a fortnight
+base of 711/112 = 6.35), and nothing else in the series fires (on the six
+windows quoted in issue #25, whose base is only the three pre-cut ones
+quoted there, it is -26%). The calendar-week detector could not have said
+anything before 2026-10-02.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -102,7 +140,7 @@ MIN_HISTORY = 3
 LOOKBACK = 4
 
 # detect_weighted_changes: all in whole points of seven-day meter movement (d7).
-MIN_VOTE_D7 = 3.0        # a bucket under this is mostly rounding and cannot be a candidate
+MIN_VOTE_D7 = 7.0        # a bucket under this is too noisy to be a candidate (why 7: module docstring)
 MIN_BASE_D7 = 10.0       # a base with less behind it cannot judge a candidate
 MIN_POOL_D7 = 10.0       # post-candidate movement needed to confirm a step
 MIN_POOL_POINTS = 2      # ...spread over at least this many windows

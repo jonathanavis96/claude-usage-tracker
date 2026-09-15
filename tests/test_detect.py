@@ -1,5 +1,7 @@
+import json
 import unittest
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from tracker.detect import current_regime_points, detect_changes, detect_weighted_changes, latest_change, pooled_windows
 
 
@@ -127,6 +129,18 @@ ISSUE_25_WINDOWS = [
     "2026-09-15T16:30 27 6",    # 4.50
 ]
 
+# weekly_windows() over the whole real ~/.moonlighter/usage_log.jsonl as it
+# stood on 2026-09-15 (every five-hour window from 2026-06-13, both plans): the
+# weekly_windows block passive.json carries, by_window included.
+REAL_WEEKLY = json.loads((Path(__file__).parent / "fixtures" / "passive_weekly_windows_2026-09-15.json")
+                         .read_text(encoding="utf-8"))
+
+
+def real_points(start, end):
+    """The real log's (window_ending, d5, d7) points with start <= window_ending < end (ISO prefixes)."""
+    return [(datetime.fromisoformat(w["window_ending"]), w["five_hour_pct"], w["seven_day_pct"])
+            for w in REAL_WEEKLY["by_window"] if start <= w["window_ending"] < end]
+
 
 class WeightedDetectTests(unittest.TestCase):
     def test_issue_25_step_fires_on_the_data_as_it_stood_on_2026_09_15(self):
@@ -160,11 +174,32 @@ class WeightedDetectTests(unittest.TestCase):
                              "2026-09-02T05:00 6 2", "2026-09-02T10:00 60 10", "2026-09-02T15:00 60 10"])
         self.assertEqual(detect_weighted_changes(pts), [])
 
+    def test_a_window_under_the_vote_floor_cannot_vote_even_when_the_pool_after_it_agrees(self):
+        # The real first week of Max 20x. By 08-23T23:29 the base is 52/11 =
+        # 4.73, eleven points of d7 from windows of 0 to 4 each, and that
+        # window reads 39/6 = 6.50, 37% over it; the thin windows after it
+        # (11/1, 8/1, 13/3) pool with it to 72/11 = 6.55 and agree. With a vote
+        # floor of 3 this published "increased 38%", and the regime it opened
+        # is what made 08-28T01:50 (d7=8, -12% on the plain fortnight) read as
+        # a further "decreased 23%". A d7 of 6 is under the floor: no vote.
+        self.assertEqual(detect_weighted_changes(real_points("2026-08-19T03", "2026-08-25T01")), [])
+
+    def test_the_real_logs_flat_max5_stretch_reports_nothing(self):
+        # The longest flat stretch the real log holds: Max 5x from the first
+        # logged window to the end of its last full week, 2026-08-14 (calendar
+        # weeks 9.5-11.0). Production never detects on max5, which is frozen,
+        # so this is an out-of-sample check on the vote floor: at a floor of 3
+        # it reports -20% (07-08), +21% (07-10) and -26% (07-14), at 5 and up
+        # nothing. It stops at 08-14 because from 08-15 the windows already
+        # read at the Max 20x level (61/10 = 6.10, 50/8 = 6.25): a real step.
+        self.assertEqual(detect_weighted_changes(real_points("2026-06-13", "2026-08-15")), [])
+
     def test_a_candidate_that_the_pool_does_not_confirm_is_dropped(self):
-        # One d7=4 window at 3.0 looks like a 50% cut on its own; pooled with the
-        # next window (d7=10 at 6.0) it is 72/14 = 5.14, inside 15% of 6.0.
+        # One d7=8 window at 3.75 is a 37% cut on its own and votes (30/7.5 is
+        # still 33% down); pooled with the next window (d7=10 at 6.0) it is
+        # 90/18 = 5.0, and 90/17.5 = 5.14 is inside 15% of 6.0.
         pts = window_points(["2026-09-01T05:00 60 10", "2026-09-01T10:00 60 10",
-                             "2026-09-02T05:00 12 4", "2026-09-02T10:00 60 10", "2026-09-02T15:00 60 10"])
+                             "2026-09-02T05:00 30 8", "2026-09-02T10:00 60 10", "2026-09-02T15:00 60 10"])
         self.assertEqual(detect_weighted_changes(pts), [])
 
     def test_a_single_heavy_window_cannot_confirm_itself(self):
@@ -174,14 +209,15 @@ class WeightedDetectTests(unittest.TestCase):
         self.assertEqual(detect_weighted_changes(pts), [])
 
     def test_rounding_concession_scales_with_the_bucket_size(self):
-        # d7=8 at 37 (4.62, -24% on a 6.11 base) clears the gate: even with half
-        # a point conceded (37/7.5 = 4.93) it is 19% down. The same ratio at
-        # d7=3 (14/3 = 4.67, conceded 14/2.5 = 5.6, -8%) does not vote.
+        # Both candidates read 4.86 on a 6.11 base, 20% down. Half a point is 4%
+        # of a d7=14 window (68/13.5 = 5.04, still 17.5% down: it votes, and
+        # fires) but 7% of a d7=7 one (34/6.5 = 5.23, 14.3% down: no vote), so
+        # a window at the vote floor has to read further from base to count.
         base = ["2026-09-10T21:29 72 11", "2026-09-12T16:30 17 3", "2026-09-12T21:30 27 5"]
-        strong = window_points(base + ["2026-09-14T16:30 37 8", "2026-09-14T21:30 17 4"])
-        weak = window_points(base + ["2026-09-14T16:30 14 3", "2026-09-14T21:30 17 4"])
-        self.assertEqual(len(detect_weighted_changes(strong)), 1)
-        self.assertEqual(detect_weighted_changes(weak), [])
+        heavy = window_points(base + ["2026-09-14T16:30 68 14", "2026-09-14T21:30 17 4"])
+        at_floor = window_points(base + ["2026-09-14T16:30 34 7", "2026-09-14T21:30 17 4"])
+        self.assertEqual(len(detect_weighted_changes(heavy)), 1)
+        self.assertEqual(detect_weighted_changes(at_floor), [])
 
     def test_base_needs_ten_points_of_seven_day_movement(self):
         pts = window_points(["2026-09-01T05:00 30 5", "2026-09-02T05:00 20 5", "2026-09-02T10:00 20 5",

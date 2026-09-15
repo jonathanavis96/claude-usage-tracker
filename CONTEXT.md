@@ -85,7 +85,7 @@ How many full five-hour windows the seven-day limit holds, measured rather than 
 _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
 
 **Window point**:
-One five-hour window's paired meter movement: `five_hour_pct` (d5) over `seven_day_pct` (d7), keyed by the window's reset time (`window_ending`), with `windows` = d5/d7 or null when the seven-day meter did not move. Its weight is its d7: a point under 3 points of d7 is mostly whole-percent rounding and never votes on its own, but its movement still counts in every pooled figure.
+One five-hour window's paired meter movement: `five_hour_pct` (d5) over `seven_day_pct` (d7), keyed by the window's reset time (`window_ending`), with `windows` = d5/d7 or null when the seven-day meter did not move. Its weight is its d7: a point under 7 points of d7 is too noisy to vote on its own (rounding alone can move a d7=6 ratio by 17%, and on the real log a lower floor fired three false changes), but its movement still counts in every pooled figure.
 _Avoid_: bucket, sample
 
 **Pooled**:
@@ -134,7 +134,7 @@ Two agreeing readings that both differ from the earlier median: the limit moved.
 _Avoid_: shift, event
 
 **Weekly change**:
-A step of more than 15% in weekly windows on the live plan's passive window points (`max20`), dated by the first window at the new level -- a day, not a week ending. A window point with at least 3 points of d7 whose ratio lies beyond threshold from the `Pooled` base (the regime's previous fortnight, at least 10 points of d7) even after conceding half a point of d7 rounding is a candidate; it fires once the points from it onward pool to at least 10 points of d7 over at least two windows and that pool still lies beyond threshold the same way. Never detected on the calendar-week rows: a mid-week step blends into the week's average (the 2026-09-13 cut published as a -14.5% week), and a week-then-confirming-week rule could not have surfaced it for nineteen days. `max5` is frozen and never runs detection, so the Max 5x -> Max 20x plan change itself is never reported as a weekly change. Published as an event with `"scope": "weekly"`. Mechanics and the rounding reasoning: tracker/detect.py.
+A step of more than 15% in weekly windows on the live plan's passive window points (`max20`), dated by the first window at the new level -- a day, not a week ending. A window point with at least 7 points of d7 whose ratio lies beyond threshold from the `Pooled` base (the regime's previous fortnight, at least 10 points of d7) even after conceding half a point of d7 rounding is a candidate; it fires once the points from it onward pool to at least 10 points of d7 over at least two windows and that pool still lies beyond threshold the same way. Never detected on the calendar-week rows: a mid-week step blends into the week's average (the 2026-09-13 cut published as a -14.5% week), and a week-then-confirming-week rule could not have surfaced it for nineteen days. `max5` is frozen and never runs detection, so the Max 5x -> Max 20x plan change itself is never reported as a weekly change. Published as an event with `"scope": "weekly"`. Mechanics and the rounding reasoning: tracker/detect.py.
 _Avoid_: plan change (that is Jonathan's own subscription move, not a measured step)
 
 **Alert**:
