@@ -256,12 +256,19 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day") -> list
     for account in report.get("accounts", {}).values():
         groups: dict[str, list[dict]] = {}
         for s in account["stretches"]:
-            if s["status"] == ACCEPTED:
-                key = s["end"][:10] if by == "day" else s["end"]
-                groups.setdefault(key, []).append(s)
+            if s["status"] != ACCEPTED:
+                continue
+            # A stretch with a model these prices do not cover is left out whole:
+            # valuing that model at $0 would deflate the reading and look like a
+            # cheaper meter, and the stretch's percent is spent on it all the same.
+            valued = {m: bundle_meter_usd(m, tok, prices) for m, tok in s["tokens"].items()}
+            if any(v is None for v in valued.values()):
+                continue
+            key = s["end"][:10] if by == "day" else s["end"]
+            groups.setdefault(key, []).append((s, sum(valued.values())))
         for ss in groups.values():
-            usd = sum(bundle_meter_usd(m, tok, prices) or 0.0 for s in ss for m, tok in s["tokens"].items())
-            out.append((datetime.fromisoformat(ss[-1]["end"]), usd / sum(s["delta_pct"] for s in ss) * 100))
+            usd = sum(v for _, v in ss)
+            out.append((datetime.fromisoformat(ss[-1][0]["end"]), usd / sum(s["delta_pct"] for s, _ in ss) * 100))
     return sorted(out)
 
 

@@ -103,6 +103,22 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn(datetime.fromisoformat(held["end"]), [t for t, _ in readings])
         self.assertEqual([round(v, 6) for _, v in passive_dollar_readings(cut, PRICES)], [50.0])
 
+    def test_a_stretch_with_a_model_the_prices_do_not_cover_is_left_out_not_valued_at_zero(self):
+        # Review finding on #41: `bundle_meter_usd(...) or 0.0` made an unpriced model's
+        # spend read as $0, deflating the day's reading. Now the stretch is dropped whole.
+        import copy
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1))
+        tainted = copy.deepcopy(r)
+        stretch = tainted["accounts"]["dave"]["stretches"][3]
+        stretch["tokens"]["claude-haiku-4-5-20251001"] = {"input": 5_000_000, "output": 0, "cache_read": 0, "cache_write": 0}
+        full = passive_dollar_readings(r, PRICES, by="stretch")
+        readings = passive_dollar_readings(tainted, PRICES, by="stretch")
+        self.assertEqual(len(readings), len(full) - 1)
+        self.assertNotIn(datetime.fromisoformat(stretch["end"]), [t for t, _ in readings])
+        self.assertEqual([round(v, 6) for _, v in passive_dollar_readings(tainted, PRICES)], [50.0])
+
     def test_published_readings_are_meter_dollars_per_window_at_the_prices_they_are_published_with(self):
         with tempfile.TemporaryDirectory() as d:
             home = dave_home(Path(d))
