@@ -42,29 +42,48 @@ The series is flat from 07 to 14 Sep, agreeing with the probe that the
 five-hour window did not change while the weekly cap stepped down on 13 Sep.
 So this method is usable on its own as a change detector.
 
-The open disagreement
----------------------
-On the same pricing function, probe runs read about $1.00 per 1% for Fable and
-this method reads $2.535 -- a constant factor of 2.5. It is not a class weight:
-setting cache_read's weight to zero still leaves $1.91, and setting output's
-weight to zero still leaves $1.28. Two probe mixes of completely different
-composition agree with each other (cache-write-heavy $1.006, output-heavy
-$1.004), so the probe side is internally corroborated; this side is
-corroborated by 21 consistent readings. Duration does not drive it (a 1-hour
-and a 5-hour window both read $2.6), which rules out the five-hour meter
-decaying as a rolling window.
+The 2.5x against the probe, resolved 2026-09-16
+----------------------------------------------
+With cache_read weighted at list price this method read $2.535 per 1% for
+Fable where probes read $1.00. Neither pipeline's arithmetic was wrong:
 
-Anything the meter charges for that is missing from the transcripts would push
-this number DOWN, not up, so unlogged traffic on the account cannot explain it.
-Settling it needs a controlled burst on masterrig: known traffic through the
-ordinary Claude Code path on this account, with the meter read either side,
-which puts both pipelines on the same traffic.
+- transcript token counts equal the CLI's own modelUsage exactly (ratio 1.000
+  on all eight Dave probe runs that carry readings), and deduplicating by
+  message id first or last changes the masterrig total by 0.04%;
+- the meter never drains between resets (0 of 114 decreases in the masterrig
+  samples fall inside one reset period), so window length cannot matter;
+- on Dave's own meter, read through a probe's readings, the probe's traffic
+  moved it at 1.10 and 0.97 percent per list dollar while concurrent seat
+  traffic (67-80% cache_read by value) moved it at 0.046 and 0.143.
+
+The meter does not charge cache_read. Over 111 windows here (18 Aug to 15
+Sep, $4,759 of list value against 2,214 points) the list value per 1% climbs
+with the window's cache_read share -- median $1.67 at a 25-45% share, $2.69
+at 45-60%, $3.28 at 60-75%, $6.13 above 75% -- while the non-cache_read
+value per 1% stays at $1.11, $1.15, $1.25, $1.43 across the same bins,
+$0.94 in aggregate, and a non-negative least squares fit puts cache_read at
+0.000 in every configuration. The probe payload is 98% cache_write by list
+value, so it never saw the class. data/prices.json now carries
+class_weight.cache_read = 0.
+
+What remains: with cache_read at zero these windows read $1.94 per 1% for
+Fable (n=21) and $2.49 for Opus (n=15) at the current output weight of 1.8,
+or $1.38 and $1.82 with output at 1.0, against the probe's $1.00. The output
+weight rests on one nine-prompt run from 2026-09-06; the Sunday output probe
+is the measurement that settles it. Output and cache_write move together in
+ordinary use (about $0.44 and $0.50 per 1% in every share bin), so these
+windows cannot separate their weights on their own.
+
+The gs lever in docs/handoffs/2026-09-15-resolve-2p5x.md is unusable: on gs,
+~/.claude-jono/projects and ~/.claude-javiswork/projects are symlinks to
+~/.claude/projects, so that directory pools three accounts' transcripts and
+cannot be set against any one meter. Only ~/.claude-dave/projects is a real,
+single-account directory.
 
 Run:  python3 tools/idle_burst.py
 Reads ~/.moonlighter/usage_log.jsonl, the paperclip ceiling log, and the
-transcripts under ~/.claude/projects. Masterrig only -- the transcripts under
-~/.claude on gs belong to Dave's account (moved out of ~/.claude on 2026-08-29)
-and must never be merged into this account's meter.
+transcripts under ~/.claude/projects. Masterrig only -- see above for why the
+gs transcript directory cannot be used.
 """
 import bisect
 import json

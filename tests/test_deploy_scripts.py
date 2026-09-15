@@ -213,9 +213,11 @@ SONNET_0939 = {"ts": "2026-09-06T09:39:26.287942+00:00", "model": "claude-sonnet
                "tokens_per_pct": 467778.6,
                "tokens": {"input": 86, "output": 215, "cache_read": 415767, "cache_write": 1922825},
                "prompts": 48, "tick_from": 1, "tick_to": 6, "elapsed_s": 4742.686796, "account": "dave"}
+# The real 14:33 Sonnet row with cache_write raised from 1,323,388 to 1,337,560 so it
+# still sits 16% above the 09:39 row now that cache_read carries no meter weight.
 SONNET_1433 = {"ts": "2026-09-06T14:33:05.254749+00:00", "model": "claude-sonnet-5", "effort": "low",
-               "tokens_per_pct": 579818.6666666666,
-               "tokens": {"input": 86, "output": 215, "cache_read": 415767, "cache_write": 1323388},
+               "tokens_per_pct": 584542.6666666666,
+               "tokens": {"input": 86, "output": 215, "cache_read": 415767, "cache_write": 1337560},
                "prompts": 63, "tick_from": 5, "tick_to": 8, "elapsed_s": 1569.897585, "payload": "prose",
                "payload_words": 12000, "ticks": 3, "skip": 1, "settle_s": 60, "expect_tokens_per_pct": 468000.0,
                "early_tick": False, "reset_start": False, "account": "dave"}
@@ -321,8 +323,8 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(log[1], "seed")
 
     def test_drift_reruns_with_two_ticks_and_flags_the_outlier(self):
-        # 391,566 tpp is $0.979/1% (real prices.json), agreeing with the earlier median
-        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 391566, ticks=2)
+        # 384,888 tpp is $0.962/1% (real prices.json), agreeing with the earlier median
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 384888, ticks=2)
         proc, args, alerts, rows, log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         self.assertEqual(len(args), 2)
@@ -332,7 +334,7 @@ class TestProbeShFlow(unittest.TestCase):
         expect = round(expectation([SONNET_0939, FABLE], "claude-sonnet-5", prices))
         self.assertIn(f"--model claude-sonnet-5 --expect-tokens-per-pct {expect}", args[0])
         self.assertGreater(expect, 467779)
-        self.assertLess(expect, 579819)
+        self.assertLess(expect, 584543)
         # rerun: same model, 2 ticks, the smaller of the median and the drifted reading
         # (in dollars), converted back to tokens through the drifted row's own split
         price = prices["claude-sonnet-5"]
@@ -340,7 +342,7 @@ class TestProbeShFlow(unittest.TestCase):
         per_token = blended_price_per_token(_split(SONNET_1433), price) * price.get("meter_weight", 1.0)
         rerun_expect = round(min(median_usd, usd_per_pct(SONNET_1433, price)) / per_token)
         self.assertIn(f"--model claude-sonnet-5 --expect-tokens-per-pct {rerun_expect} --ticks 2", args[1])
-        self.assertIn("drift check: drift claude-sonnet-5 $1.132/1% against median $0.979/1% (+16%)", proc.stdout)
+        self.assertIn("drift check: drift claude-sonnet-5 $1.116/1% against median $0.962/1% (+16%)", proc.stdout)
         self.assertIn("decision: outlier claude-sonnet-5", proc.stdout)
         self.assertEqual([r.get("outlier", False) for r in rows], [False, False, True, False])
         self.assertIn("Outlier on claude-sonnet-5", alerts)
@@ -351,8 +353,8 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(log[3], "seed")
 
     def test_drift_confirmed_by_the_rerun_is_a_change_and_flags_nothing(self):
-        # 452,798 tpp is $1.132/1% (real prices.json), agreeing with the drifted reading
-        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 452798, ticks=2)
+        # 446,392 tpp is $1.116/1% (real prices.json), agreeing with the drifted reading
+        rerun = _row("2026-09-06T16:00:00+00:00", "claude-sonnet-5", 446392, ticks=2)
         proc, args, alerts, rows, log = self._run([SONNET_0939, FABLE], [SONNET_1433, rerun])
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         self.assertEqual(len(args), 2)
