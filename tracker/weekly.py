@@ -72,22 +72,49 @@ def _same_weekly_window(prev: dict, cur: dict) -> bool:
     return prev["seven_resets_at"][:13] == cur["seven_resets_at"][:13]
 
 
+def _window_point(window_ending: str, d5: float, d7: float) -> dict:
+    """One per-window point of the `by_window` series (weekly_windows, probe_weekly_windows).
+
+    `windows` is null when the seven-day meter did not move: the point is real
+    five-hour movement that the pooled figures still count, but has no ratio of
+    its own.
+    """
+    return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 > 0 else None,
+            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1)}
+
+
 def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict:
     """Bucket consecutive same-window deltas by week, and turn each week's
 
     total five-hour movement over total seven-day movement into a count of
     five-hour windows the week holds. Returns
     {"current": float|None, "history": [{"week_ending", "windows",
-    "five_hour_pct", "seven_day_pct"}, ...]} sorted ascending by week_ending.
+    "five_hour_pct", "seven_day_pct"}, ...], "by_window": [{"window_ending",
+    "windows", "five_hour_pct", "seven_day_pct"}, ...]}, both series sorted
+    ascending.
 
     `current` is the median of the last two COMPLETE weeks in the history
     (a week is complete once its seven-day reset time is in the past); the
     newest, still-open week is kept in history but never counted as current.
     Each history row carries `"partial"`: true when its seven-day reset is
     still in the future, so a consumer never has to infer it from dates.
+
+    `by_window` is the same paired movement bucketed by five-hour window
+    instead of by week -- one point per window, keyed by the window's reset
+    time (the first sample's `five_resets_at`; later samples in the window
+    may drift by a few seconds). It exists because a calendar week blends a
+    mid-week step in the weekly cap into the week's average, which is how
+    the 2026-09-13 cut published as a -14.5% week and stayed under the
+    detector's threshold (issue #25). Change detection and the live plan's
+    `current` run on this series (tracker/detect.py, tracker/publish.py).
+    It is deliberately NOT thinned by the 50-point weekly floor or by any
+    per-window floor: a thin window is not a vote on its own, but its
+    movement still belongs in the pooled sums, and the detector applies its
+    own weight rules.
     """
     now = now or datetime.now(timezone.utc)
     buckets: dict[str, dict] = {}
+    windows: list[dict] = []
     prev: dict | None = None
     for cur in rows:
         if cur is None:
@@ -102,7 +129,13 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
                 b["d5"] += d5
                 b["d7"] += d7
                 b["resets_at"] = cur["seven_resets_at"]
+                if windows and _same_five_hour_window(windows[-1], cur):
+                    windows[-1]["d5"] += d5
+                    windows[-1]["d7"] += d7
+                else:
+                    windows.append({"five_resets_at": prev["five_resets_at"], "d5": d5, "d7": d7})
         prev = cur
+    by_window = [_window_point(w["five_resets_at"], w["d5"], w["d7"]) for w in windows]
 
     history = []
     for week_key in sorted(buckets):
@@ -123,7 +156,7 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
         h["partial"] = datetime.fromisoformat(h["_resets_at"]) > now
         del h["_resets_at"]
 
-    return {"current": current, "history": history}
+    return {"current": current, "history": history, "by_window": by_window}
 
 
 def _iso_week_ending(ts: str) -> str:
@@ -165,10 +198,19 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     `current` is the median of the last two COMPLETE weeks (a week is complete
     once its week-ending date is in the past). Each history row carries
     `"partial"`: true when its week-ending date is today or later.
+
+    `by_window` is one point per usable row (same shape as weekly_windows's),
+    keyed by the row's `ts` since a probe row does not record its five-hour
+    reset time: a probe run sits inside one five-hour window by construction
+    (d5 <= 0 rows, which crossed a reset, are already out). It carries every
+    row that clears the sign checks, with no d5/d7 floor -- the floors above
+    are for publishing a week's ratio on its own; per-window points are
+    pooled by weight downstream (tracker/detect.py).
     """
     now = now or datetime.now(timezone.utc)
     buckets: dict[str, dict] = {}
-    for r in rows:
+    by_window: list[dict] = []
+    for r in sorted(rows, key=lambda r: r["ts"]):
         fhb, fha = r.get("five_hour_before"), r.get("five_hour_after")
         sdb, sda = r.get("seven_day_before"), r.get("seven_day_after")
         if fhb is None or fha is None or sdb is None or sda is None:
@@ -179,6 +221,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
         d7 = sda - sdb
         if d7 < 0:
             continue
+        by_window.append(_window_point(r["ts"], d5, d7))
         resets_at = r.get("seven_day_resets_at")
         week_key = resets_at[:10] if resets_at else _iso_week_ending(r["ts"])
         b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0})
@@ -200,4 +243,4 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]
     current = round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
 
-    return {"current": current, "history": history}
+    return {"current": current, "history": history, "by_window": by_window}

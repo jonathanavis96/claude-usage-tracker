@@ -47,6 +47,50 @@ class WeeklyWindowsTests(unittest.TestCase):
              "partial": False},
         ])
         self.assertEqual(result["current"], 6.0)
+        self.assertEqual(result["by_window"], [
+            {"window_ending": "2026-09-06T16:59:59+00:00", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0},
+        ])
+
+    def test_by_window_keeps_one_point_per_five_hour_window(self):
+        # Three windows inside one week: the week's row pools them (114/21), the
+        # per-window points keep each one, including a thin d7=1 window and a
+        # window whose seven-day meter did not move at all (windows: null) --
+        # neither is a vote on its own but both are real movement the pooled
+        # figures need (tracker/detect.py). A pair across a five-hour reset is
+        # not a point.
+        def r(ts, five, five_resets, seven):
+            return {"ts": ts, "five_hour": five, "five_resets_at": five_resets,
+                    "seven_day": seven, "seven_resets_at": "2026-09-18T03:59:59+00:00"}
+        rows = [
+            r("a", 10.0, "2026-09-14T16:30:00+00:00", 40.0), r("b", 47.0, "2026-09-14T16:30:00+00:00", 48.0),
+            r("c", 5.0, "2026-09-14T21:30:00+00:00", 48.0), r("d", 22.0, "2026-09-14T21:30:01+00:00", 52.0),
+            r("e", 2.0, "2026-09-15T02:30:00+00:00", 52.0), r("f", 5.0, "2026-09-15T02:30:00+00:00", 52.0),
+            r("g", 1.0, "2026-09-15T16:30:00+00:00", 60.0), r("h", 58.0, "2026-09-15T16:30:00+00:00", 69.0),
+        ]
+        now = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        result = weekly_windows(rows, now=now)
+        self.assertEqual(result["history"], [
+            {"week_ending": "2026-09-18", "windows": 5.43, "five_hour_pct": 114.0, "seven_day_pct": 21.0,
+             "partial": False},
+        ])
+        self.assertEqual(result["by_window"], [
+            {"window_ending": "2026-09-14T16:30:00+00:00", "windows": 4.62, "five_hour_pct": 37.0, "seven_day_pct": 8.0},
+            {"window_ending": "2026-09-14T21:30:00+00:00", "windows": 4.25, "five_hour_pct": 17.0, "seven_day_pct": 4.0},
+            {"window_ending": "2026-09-15T02:30:00+00:00", "windows": None, "five_hour_pct": 3.0, "seven_day_pct": 0.0},
+            {"window_ending": "2026-09-15T16:30:00+00:00", "windows": 6.33, "five_hour_pct": 57.0, "seven_day_pct": 9.0},
+        ])
+
+    def test_by_window_is_not_thinned_by_the_weekly_floor(self):
+        # Under the 50-point weekly floor the week is dropped, but its windows stay.
+        rows = [
+            {"ts": "t0", "five_hour": 10.0, "five_resets_at": "2026-09-06T16:59:59+00:00",
+             "seven_day": 20.0, "seven_resets_at": "2026-09-04T03:59:59+00:00"},
+            {"ts": "t1", "five_hour": 30.0, "five_resets_at": "2026-09-06T16:59:59+00:00",
+             "seven_day": 24.0, "seven_resets_at": "2026-09-04T03:59:59+00:00"},
+        ]
+        result = weekly_windows(rows)
+        self.assertEqual(result["history"], [])
+        self.assertEqual(len(result["by_window"]), 1)
 
     def test_partial_true_when_seven_day_reset_still_ahead_of_now(self):
         rows = [
@@ -144,25 +188,31 @@ def probe_row(ts, fhb, fha, sdb, sda, seven_resets=None):
 class ProbeWeeklyWindowsTests(unittest.TestCase):
     def test_rows_missing_five_hour_fields_are_skipped(self):
         rows = [{"ts": "2026-09-01T00:00:00+00:00", "seven_day_before": 10.0, "seven_day_after": 12.0}]
-        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": [], "by_window": []})
 
     def test_negative_five_hour_delta_skipped_as_reset_crossing(self):
         rows = [probe_row("2026-09-01T00:00:00+00:00", 90.0, 5.0, 10.0, 12.0)]
-        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": [], "by_window": []})
 
     def test_negative_seven_day_delta_skipped(self):
         rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 40.0, 12.0, 10.0)]
-        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": [], "by_window": []})
 
     def test_below_min_five_hour_pct_skipped(self):
         rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 15.0, 10.0, 12.0)]
-        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+        result = probe_weekly_windows(rows)
+        self.assertEqual((result["current"], result["history"]), (None, []))
+        # ...from the weekly rows only: the run is still one per-window point.
+        self.assertEqual(result["by_window"], [
+            {"window_ending": "2026-09-01T00:00:00+00:00", "windows": 2.5, "five_hour_pct": 5.0, "seven_day_pct": 2.0},
+        ])
 
     def test_below_min_seven_day_pct_skipped(self):
         # d5=21, d7=3: a real jump seen live (windows=7.0) that turned out to be
         # noise from d7's +-33% quantisation at only 3 whole points of movement.
         rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 31.0, 10.0, 13.0)]
-        self.assertEqual(probe_weekly_windows(rows), {"current": None, "history": []})
+        result = probe_weekly_windows(rows)
+        self.assertEqual((result["current"], result["history"]), (None, []))
 
     def test_at_min_seven_day_pct_published(self):
         rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 50.0, 10.0, 20.0)]
