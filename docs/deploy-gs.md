@@ -57,7 +57,7 @@ takes the same `.cron.lock` as the other jobs, so it never overlaps a
 rotation probe; the 06:00 slot sits between the 00:00 and 12:00 rotation
 runs, and a run that starts within 20 minutes of a window reset waits for it.
 
-Output probe exit codes are `probe.sh`'s: 0 ok, 3 no idle account, 4 aborted,
+Output probe exit codes are `probe.sh`'s: 0 ok, 3 no usable account, 4 aborted,
 5 lock held. Exits 3 and 4 alert Jonathan; the weight then keeps its current
 value until the next Sunday.
 
@@ -117,7 +117,10 @@ account's `sessions/` directory (inotify) for session files created or removed
 between readings, so a session that starts, runs a turn and exits entirely
 between two readings aborts the run too; the probe's own `claude -p` prompts
 write session files as well and are told apart by pid. An account whose
-`sessions/` directory cannot be watched is not probed (exit 4). Both are Max 20x and monitor-owned:
+`sessions/` directory cannot be watched is not probed (exit 4). An account whose
+seven-day meter reads above 90% is passed over too, logged as
+`<name> weekly: ...` rather than `busy`, and every account whose meter is read
+logs its weekly figure (`<name> weekly meter N%`). Both are Max 20x and monitor-owned:
 never run `/logout` in either directory. Jonathan's own account is never probed.
 `claude` lives at `~/.npm-global/bin/claude`, which the wrappers add to `PATH`
 because cron does not.
@@ -129,7 +132,8 @@ ssh gs 'tail -20 ~/.paperclip/ops/claude-usage-probe.log ~/.paperclip/ops/claude
 ssh gs 'tail -3 ~/claude-usage-tracker/history/probes.jsonl'
 ```
 
-Probe exit codes: 0 ok, 3 no idle account within the wait, 4 aborted (window
+Probe exit codes: 0 ok, 3 no usable account within the wait (each was busy, or
+its weekly meter read above 90%), 4 aborted (window
 reset or a jump the probe cannot explain), 5 another tracker job held the
 checkout's .cron.lock. A run costs about 1% of the account's 5-hour
 window.
