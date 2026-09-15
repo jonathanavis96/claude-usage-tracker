@@ -364,6 +364,138 @@ class SessionWatchTests(unittest.TestCase):
         self.assertIsNone(w.check())
 
 
+class SessionLifecycleTests(unittest.TestCase):
+    """A session that starts and exits between two readings is in neither snapshot: its
+    `sessions/<pid>.json` is created and removed inside the interval. The watch's
+    `lifecycle` source is the record of those transitions, drained once per look."""
+
+    CFG = Path("/h/.claude-dave")
+
+    def _watch(self, snapshots, drains, own=()):
+        """`snapshots` as in SessionWatchTests; `drains` is what the lifecycle source
+        returns on each drain, in order: a list of pids, or None for a lost record."""
+        from tracker.probe import SessionWatch
+        it = iter(snapshots)
+        record = iter(drains)
+        current = {}
+
+        def processes():
+            nonlocal current
+            current = next(it)
+            return [(pid, self.CFG) for pid in current]
+
+        return SessionWatch(self.CFG, processes, lambda cfg, pid: current[pid],
+                            lifecycle=lambda: next(record), own=set(own))
+
+    def test_a_session_that_started_and_exited_between_readings_is_caught(self):
+        # The P1 on PR #22: no trace in either snapshot, but its file came and went.
+        w = self._watch([{1942517: state()}, {1942517: state()}], [[], [2881098, 2881098]])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 2881098 started and exited")
+
+    def test_the_probes_own_prompts_leave_no_reason(self):
+        # Every `claude -p` the probe sends writes and removes a session file too.
+        w = self._watch([{}, {}], [[], [375674, 375674, 375701, 375701]], own=[375674, 375701])
+        self.assertIsNone(w.snapshot())
+        self.assertIsNone(w.check())
+
+    def test_a_session_alive_at_either_reading_is_left_to_the_snapshot_rule(self):
+        w = self._watch([{1942517: state()}, {1942517: state(), 2355887: state()}],
+                        [[], [2355887, 1942517]])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 2355887 started")
+
+    def test_a_lost_record_fails_closed(self):
+        w = self._watch([{}, {}], [[], None])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "session watch lost events")
+
+    def test_what_came_and_went_before_the_baseline_is_not_counted(self):
+        w = self._watch([{}, {}], [[2881098, 2881098], []])
+        self.assertIsNone(w.snapshot())
+        self.assertIsNone(w.check())
+
+    def test_each_check_covers_only_its_own_interval(self):
+        w = self._watch([{}, {}, {}], [[], [2881098], []])
+        self.assertIsNone(w.snapshot())
+        self.assertEqual(w.check(), "pid 2881098 started and exited")
+        self.assertIsNone(w.check())
+
+
+class SessionDirEventsTests(unittest.TestCase):
+    """The default lifecycle source against a real directory: the kernel keeps the
+    record between drains, so nothing depends on when the drain happens."""
+
+    def test_reports_the_pid_of_every_session_file_created_or_removed(self):
+        from tracker.probe import SessionDirEvents
+        with tempfile.TemporaryDirectory() as d:
+            sessions = Path(d, "sessions")
+            sessions.mkdir()
+            (sessions / "1942517.json").write_text("{}")  # before the watch: not reported
+            events = SessionDirEvents(Path(d))
+            try:
+                (sessions / "2881098.9f2c.key").write_text("")
+                (sessions / "2881098.json").write_text("{}")
+                (sessions / "1942517.json").write_text('{"status": "busy"}')  # a write, not a transition
+                (sessions / "notes.txt").write_text("")  # not a session's file
+                (sessions / "2881098.json").unlink()
+                (sessions / "2881098.9f2c.key").unlink()
+                self.assertEqual(events(), [2881098, 2881098, 2881098, 2881098])
+                self.assertEqual(events(), [])  # drained
+            finally:
+                events.close()
+
+    def test_the_record_is_lost_when_the_directory_goes(self):
+        from tracker.probe import SessionDirEvents
+        with tempfile.TemporaryDirectory() as d:
+            sessions = Path(d, "sessions")
+            sessions.mkdir()
+            events = SessionDirEvents(Path(d))
+            try:
+                sessions.rmdir()
+                self.assertIsNone(events())
+            finally:
+                events.close()
+
+    def test_a_closed_watch_vouches_for_nothing(self):
+        from tracker.probe import SessionDirEvents
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "sessions").mkdir()
+            events = SessionDirEvents(Path(d))
+            events.close()
+            self.assertIsNone(events())
+
+    def test_a_missing_sessions_dir_cannot_be_watched(self):
+        from tracker.probe import SessionDirEvents
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(OSError):
+                SessionDirEvents(Path(d))
+
+
+class ChildTrackerTests(unittest.TestCase):
+    """The runner main hands run_prompt: it keeps the pid of every process it spawns."""
+
+    def test_records_the_pid_and_returns_stdout(self):
+        import sys
+        from tracker.probe import ChildTracker
+        children = ChildTracker()
+        out = children([sys.executable, "-c", "import os, sys; print(os.getpid(), sys.stdin.read())"],
+                       "DONE", dict(__import__("os").environ))
+        pid, text = out.split()
+        self.assertEqual(text, "DONE")
+        self.assertEqual(children.pids, {int(pid)})
+
+    def test_a_failed_run_raises_with_the_stderr_tail(self):
+        import sys
+        from tracker.probe import ChildTracker
+        children = ChildTracker()
+        with self.assertRaises(RuntimeError) as e:
+            children([sys.executable, "-c", "import sys; sys.stderr.write('no auth'); sys.exit(2)"],
+                     "", dict(__import__("os").environ))
+        self.assertEqual(str(e.exception), "claude exited 2: no auth")
+        self.assertEqual(len(children.pids), 1)
+
+
 class SessionStateReaderTests(unittest.TestCase):
     """The default reader's `statusUpdatedAt` half, against real-shaped files."""
 
@@ -588,7 +720,7 @@ class PayloadCliTests(unittest.TestCase):
         def fake_read_usage(cfg, fetch=None):
             return Utilization(T0, 10.0, 30.0, "r1")
 
-        def fake_run_prompt(prompt_text, model, effort, cfg):
+        def fake_run_prompt(prompt_text, model, effort, cfg, runner=None):
             captured["prompt"] = prompt_text
             return RunUsage(model, 10, 10, 10, 0, 0.001, 3.0)
 
@@ -607,6 +739,7 @@ class PayloadCliTests(unittest.TestCase):
         usage_api_mod.read_usage = fake_read_usage
         try:
             with tempfile.TemporaryDirectory() as d:
+                Path(d, "sessions").mkdir()  # main watches it for the run's whole length
                 prices = Path(d, "prices.json")
                 prices.write_text(json.dumps(
                     {"claude-fable": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}}))
@@ -981,7 +1114,7 @@ class CliTests(unittest.TestCase):
     PRICES = {"claude-sonnet-5": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1},
               "claude-fable-5-1": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}}
 
-    def _capture(self, argv):
+    def _capture(self, argv, sessions=True):
         import tracker.probe as probe_mod
         import tracker.cli_run as cli_run_mod
         import tracker.usage_api as usage_api_mod
@@ -993,8 +1126,9 @@ class CliTests(unittest.TestCase):
             captured["prompt"] = run(0) and captured["prompt_text"]
             raise ProbeAbort("stop-test")
 
-        def fake_run_prompt(prompt_text, model, effort, cfg):
+        def fake_run_prompt(prompt_text, model, effort, cfg, runner=None):
             captured["prompt_text"] = prompt_text
+            captured["runner"] = runner
             return RunUsage(model, 1, 1, 1, 0, 0.0, 1.0)
 
         orig = (probe_mod.choose_account, probe_mod.run_tick_probe, cli_run_mod.run_prompt, usage_api_mod.read_usage)
@@ -1004,6 +1138,9 @@ class CliTests(unittest.TestCase):
         usage_api_mod.read_usage = lambda cfg, fetch=None: Utilization(T0, 10.0, 30.0, "r1")
         try:
             with tempfile.TemporaryDirectory() as d:
+                if sessions:
+                    Path(d, "sessions").mkdir()
+                captured["cfg"] = Path(d)
                 prices = Path(d, "prices.json")
                 prices.write_text(json.dumps(self.PRICES))
                 rc = probe_mod.main(argv + ["--account", f"dave={d}", "--prices", str(prices)])
@@ -1083,6 +1220,28 @@ class CliTests(unittest.TestCase):
     def test_expectation_is_required(self):
         with self.assertRaises(SystemExit):
             self._capture(["--model", "claude-sonnet-5"])
+
+    def test_the_guard_watches_session_files_and_knows_the_probes_own_prompts(self):
+        from tracker.probe import SessionDirEvents, SessionWatch, ChildTracker
+        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0"])
+        self.assertEqual(rc, 4)
+        watch = c["busy"].__self__
+        self.assertIsInstance(watch, SessionWatch)
+        self.assertIsInstance(watch.lifecycle, SessionDirEvents)
+        self.assertEqual(watch.lifecycle.path, c["cfg"] / "sessions")
+        self.assertIsInstance(c["runner"], ChildTracker)
+        self.assertIs(c["runner"].pids, watch.own)
+        self.assertIsNone(watch.lifecycle())  # closed once the run is over
+
+    def test_an_account_whose_sessions_dir_cannot_be_watched_is_not_probed(self):
+        import io
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0"], sessions=False)
+        self.assertEqual(rc, 4)
+        self.assertNotIn("busy", c)  # no prompt was sent
+        self.assertIn("probe aborted on dave: cannot watch", err.getvalue())
 
     def test_output_payload_keeps_its_fixed_reply_size(self):
         rc, c = self._capture(["--model", "claude-fable-5-1", "--payload", "output",

@@ -50,14 +50,19 @@ no alignment span (`reset_start` on the row): 0 is the first tick.
 (default 60). The row records it as `"settle_s"`.
 """
 from __future__ import annotations
+import ctypes
 import json
+import os
 import random
+import re
+import struct
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Collection
 from .usage_api import Utilization, same_reset
 from .cli_run import RunUsage
 from .publish import class_weight, meter_usd, tokens_usd
@@ -317,7 +322,9 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     its spend stays inside the burst size and so never trips the jump check (issue #19).
     `main` passes `SessionWatch.check`, which compares the session state at this reading
     with the state at the previous one, so a turn that both starts and finishes between
-    two readings is caught as well as one still running when the meter is read.
+    two readings is caught as well as one still running when the meter is read, and
+    drains the record of session files created or removed in between, so a session that
+    itself starts and exits between two readings is caught too.
     """
     start = now()
     before = read()
@@ -507,10 +514,15 @@ class SessionState:
 def read_session_status(cfg: Path, pid: int) -> SessionState:
     """Claude Code's own state for `pid`, from `<cfg>/sessions/<pid>.json`.
 
-    Claude Code (2.1.267 and later) writes that file for every interactive session,
-    with a `status` of `idle` at the prompt and `busy` during a turn (`shell` while it
-    runs a command, and other values as the CLI gains them), plus a `statusUpdatedAt`
-    stamp that moves with every transition. The file goes away when the process exits.
+    Claude Code (2.1.267 and later) writes that file for every session, with a `status`
+    of `idle` at the prompt and `busy` during a turn (`shell` while it runs a command,
+    and other values as the CLI gains them), plus a `statusUpdatedAt` stamp that moves
+    with every transition. A headless `claude -p` writes one too (`entrypoint`
+    `sdk-cli`), so the probe's own prompts do. The file is created before the
+    session's first request -- 0.4 s after exec for `claude -p`, 1.2 s for an
+    interactive start, with no `status` for its first few hundred milliseconds -- and
+    removed when the process exits, whether by `/exit` or by SIGTERM. Status changes
+    rewrite it in place. (All measured on gs with 2.1.272, 2026-09-15.)
 
     Returns `SessionState(None, None)` when the file is missing, unreadable, not JSON
     or not an object, and leaves either field None when that field is absent or of the
@@ -543,8 +555,9 @@ def not_idle_pids(snapshot: dict[int, SessionState]) -> list[int]:
     accounts for days, and counting those as the account being in use meant the
     rotation never found an idle account (issue #21). A pid counts as busy unless its
     status is exactly `idle`, so a missing, unreadable or malformed status file — a
-    headless run, or a Claude Code too old to write one — still blocks the account as
-    it did before, and so does a status value this code has never heard of.
+    session in the moments before it has written a status, or a Claude Code too old to
+    write one — still blocks the account as it did before, and so does a status value
+    this code has never heard of.
 
     An `idle` session also counts as busy when it has no `updated_at`. Without a
     timestamp the interval comparison in `SessionWatch.check` is blind for that pid --
@@ -587,24 +600,46 @@ class SessionWatch:
     abort costs one probe slot, which the next cron slot makes up; a missed turn
     pollutes a published rate, which calibration then carries forward. So the cheap
     error is the one to make.
+
+    Two snapshots still miss a session that lives only between them: one started, used
+    for a turn and exited inside a single prompt-plus-settle interval is in neither,
+    and its `sessions/<pid>.json` is gone before the second look. What it cannot avoid
+    is creating and removing that file. So with a `lifecycle` source (SessionDirEvents,
+    in `main`) `check()` also drains the record of every session file created or
+    removed since the previous look, and names a pid that neither snapshot holds
+    (`pid N started and exited`). A pid in either snapshot is already judged by the
+    rules above. The pids in `own` -- the probe's own `claude -p` prompts, each of
+    which writes and removes a session file of its own (ChildTracker) -- are not
+    activity. A record that cannot vouch for the interval (None) is reported as
+    `session watch lost events`: it fails closed, as a session without a stamp does.
     """
 
     def __init__(self, cfg: Path, processes: Callable[[], list[tuple[int, Path]]] = claude_processes,
-                 session_status: Callable[[Path, int], SessionState] = read_session_status) -> None:
+                 session_status: Callable[[Path, int], SessionState] = read_session_status,
+                 lifecycle: Callable[[], list[int] | None] | None = None,
+                 own: Collection[int] = ()) -> None:
         self.cfg = cfg
         self.processes = processes
         self.session_status = session_status
+        self.lifecycle = lifecycle
+        self.own = own
         self.last: dict[int, SessionState] | None = None
 
     def _look(self) -> dict[int, SessionState]:
         return session_snapshot(self.cfg, self.processes(), self.session_status)
 
+    def _drain(self) -> list[int] | None:
+        return self.lifecycle() if self.lifecycle is not None else []
+
     def snapshot(self) -> str | None:
         """Record the current state as the baseline, and report anything already busy.
 
         The returned reason is the instant rule only (`pid N` for a session not at its
-        prompt), so a caller can reject an account before spending a meter read.
+        prompt), so a caller can reject an account before spending a meter read. The
+        lifecycle record is drained and dropped first, so the next check covers exactly
+        the interval from this look.
         """
+        self._drain()
         self.last = self._look()
         return not_idle_reason(self.last)
 
@@ -616,6 +651,11 @@ class SessionWatch:
         """
         prev = self.last
         cur = self._look()
+        # Drained after the look, never before: a session that starts after the look
+        # and exits before the drain is then in the record and not in `cur`, so it is
+        # caught at this reading. Drained first, it would wait for the next reading --
+        # and after the reading that completes a run there is none.
+        came_and_went = self._drain()
         self.last = cur
         clauses = []
         named = not_idle_pids(cur)
@@ -630,7 +670,131 @@ class SessionWatch:
                 elif st.updated_at != prev[pid].updated_at:
                     clauses.append(f"pid {pid} changed status")
             clauses += [f"pid {pid} exited" for pid in prev if pid not in cur]
+            if came_and_went is None:
+                clauses.append("session watch lost events")
+            else:
+                clauses += [f"pid {pid} started and exited" for pid in dict.fromkeys(came_and_went)
+                            if pid not in prev and pid not in cur and pid not in self.own]
         return "; ".join(clauses) or None
+
+
+# inotify(7) event bits, from <sys/inotify.h>.
+IN_MOVED_FROM = 0x40
+IN_MOVED_TO = 0x80
+IN_CREATE = 0x100
+IN_DELETE = 0x200
+IN_DELETE_SELF = 0x400
+IN_MOVE_SELF = 0x800
+IN_UNMOUNT = 0x2000
+IN_Q_OVERFLOW = 0x4000
+IN_IGNORED = 0x8000
+_INOTIFY_EVENT = struct.Struct("iIII")  # wd, mask, cookie, len; then the name, NUL-padded to len
+_SESSION_FILE = re.compile(r"(\d+)\.")  # `<pid>.json`, `<pid>.<hash>.key`
+
+
+class SessionDirEvents:
+    """The record of session files created or removed in `<cfg>/sessions` since the last
+    drain, kept by the kernel (inotify) rather than sampled.
+
+    Calling it drains the record: the pid of each `<pid>.json` or `<pid>.<hash>.key`
+    created, removed, or renamed in or out, one entry per event, in order. It returns
+    None when the record cannot vouch for the interval: the kernel's queue overflowed
+    (16,384 events by default on gs; one prompt makes four), the directory itself was
+    removed, moved or unmounted, or the watch is closed. Once lost it stays lost.
+
+    Why not poll the process list faster instead: sampling narrows the gap between two
+    looks but never closes it. A session shorter than the period is missed, and a
+    poller the host starves falls back, silently, to the endpoint comparison this
+    exists to fix. The kernel queues these events whether or not anyone is reading, so
+    draining once per reading sees the whole interval, with no thread. Status changes
+    rewrite a session file in place and are not events here; a session alive at both
+    readings is SessionWatch's stamp comparison's to judge.
+
+    Linux only, like `claude_processes`. Raises OSError when the watch cannot be set up
+    (no `sessions` dir, inotify limits reached); `main` then refuses the run rather
+    than probe with no record.
+    """
+
+    _MASK = IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF
+    _LOST = IN_Q_OVERFLOW | IN_IGNORED | IN_DELETE_SELF | IN_MOVE_SELF | IN_UNMOUNT
+
+    def __init__(self, cfg: Path) -> None:
+        self.path = Path(cfg) / "sessions"
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.inotify_add_watch.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32)
+        fd = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+        if fd < 0:
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err))
+        if libc.inotify_add_watch(fd, os.fsencode(self.path), self._MASK) < 0:
+            err = ctypes.get_errno()
+            os.close(fd)
+            raise OSError(err, os.strerror(err), str(self.path))
+        self.fd: int | None = fd
+        self.lost = False
+
+    def __call__(self) -> list[int] | None:
+        if self.fd is None:
+            return None
+        pids: list[int] = []
+        while True:
+            try:
+                buf = os.read(self.fd, 65536)
+            except BlockingIOError:
+                break
+            at = 0
+            while at < len(buf):
+                _, mask, _, size = _INOTIFY_EVENT.unpack_from(buf, at)
+                start = at + _INOTIFY_EVENT.size
+                name = buf[start:start + size].split(b"\0", 1)[0].decode(errors="replace")
+                at = start + size
+                if mask & self._LOST:
+                    self.lost = True
+                m = _SESSION_FILE.match(name)
+                if m:
+                    pids.append(int(m.group(1)))
+        return None if self.lost else pids
+
+    def close(self) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+class ChildTracker:
+    """The runner `main` hands `run_prompt`: it spawns each `claude -p` itself, so the pid
+    of every prompt the probe sends is known.
+
+    The probe's own prompts are sessions on the same config dir -- a `claude -p` writes
+    and removes `sessions/<pid>.json` like any other (read_session_status) -- so the
+    lifecycle record fills with them and SessionWatch has to tell them from someone
+    else's. The pid comes from Popen as the process starts and is kept for the whole
+    run, and the record is only read at the next reading, after the prompt has
+    returned, so no prompt of ours is ever unaccounted for when it is read. (A pid is
+    not reused within a run in practice: pid_max is 4,194,304 on gs.) A burst adds from
+    several threads at once; `set.add` is atomic under the GIL.
+
+    Otherwise it is cli_run's default runner: the prompt on stdin, 900 s per prompt,
+    and a nonzero exit raised with the tail of stderr.
+    """
+
+    def __init__(self, timeout_s: float = 900) -> None:
+        self.pids: set[int] = set()
+        self.timeout_s = timeout_s
+
+    def __call__(self, argv: list[str], prompt: str, env: dict) -> str:
+        with subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, env=env) as p:
+            self.pids.add(p.pid)
+            try:
+                out, err = p.communicate(prompt, timeout=self.timeout_s)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.communicate()
+                raise
+        if p.returncode != 0:
+            raise RuntimeError(f"claude exited {p.returncode}: {err[-500:]}")
+        return out
 
 
 def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
@@ -653,6 +817,10 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     Either would otherwise be accepted just as it spends. Without `cfg` and `processes`
     only the meter is consulted. `processes` and `session_status` are the host lister
     and the status reader; tests inject both.
+
+    The pre-check keeps no lifecycle record (SessionDirEvents), unlike the probe. A
+    session that starts and exits inside the window has spent before the probe's first
+    prompt, and anything spent then lands in the alignment span, which is discarded.
     """
     watch = (SessionWatch(cfg, processes, session_status)
              if cfg is not None and processes is not None else None)
@@ -826,14 +994,23 @@ def main(argv: list[str] | None = None) -> int:
     name, cfg = picked
     # The same check the pre-check used, re-run after every meter reading and compared
     # with the state at the previous one, so a session that wakes up mid-probe aborts
-    # the run instead of polluting it -- even if its whole turn fits between readings.
+    # the run instead of polluting it -- even if its whole turn fits between readings,
+    # and even if the session itself starts and exits between them (the lifecycle
+    # record of <cfg>/sessions, in which our own prompts are known by pid).
     # The baseline is taken here, as close to the first prompt as we can get it.
-    watch = SessionWatch(cfg)
+    children = ChildTracker()
+    try:
+        events = SessionDirEvents(cfg)
+    except OSError as e:
+        print(f"probe aborted on {name}: cannot watch {Path(cfg) / 'sessions'}: {e.strerror or e}",
+              file=sys.stderr)
+        return 4
+    watch = SessionWatch(cfg, lifecycle=events, own=children.pids)
     watch.snapshot()
     try:
         salt = clock().isoformat()
         r = run_tick_probe(a.model, a.effort, PROBE_PROMPT, lambda: read_usage(cfg, fetch=fetch),
-                           lambda i: run_prompt(builder(salt, i), a.model, a.effort, cfg),
+                           lambda i: run_prompt(builder(salt, i), a.model, a.effort, cfg, runner=children),
                            time.sleep, clock, deadline=deadline, usd_per_token=usd_per_token, ticks=a.ticks,
                            payload=a.payload, skip=a.skip, expect_tokens_per_pct=expect_tokens,
                            payload_words=words, settle_s=a.settle, expect_usd_per_pct=expect_usd,
@@ -841,6 +1018,8 @@ def main(argv: list[str] | None = None) -> int:
     except ProbeAbort as e:
         print(f"probe aborted on {name}: {e}", file=sys.stderr)
         return 4
+    finally:
+        events.close()
     append_result(a.out, r, account=name)
     print(f"{name} {a.model} {a.effort}: {r.tokens_per_pct:.0f} tokens per 1% ({r.prompts} prompts, "
           f"ticks {r.tick_from}->{r.tick_to}, skip {r.skip}, {r.payload_words} words, settle {r.settle_s:g}s"
