@@ -446,8 +446,10 @@ def claude_processes(proc: Path = Path("/proc")) -> list[tuple[int, Path]]:
     """(pid, CLAUDE_CONFIG_DIR) for every live `claude` process on this host.
 
     The probe runs on the same host as the accounts it measures, so a `claude` process
-    whose environment names an account's config dir is that account in use, whatever
-    its meter says. Processes are found by walking `proc` (normally /proc): a numeric
+    whose environment names an account's config dir is a session on that account.
+    Whether it is in use is that session's own status, not its presence (issue #21:
+    `busy_reason` reads `<cfg>/sessions/<pid>.json`); this only lists the candidates.
+    Processes are found by walking `proc` (normally /proc): a numeric
     entry whose `comm` is `claude`, with the config dir taken from its `environ` or,
     failing that, a `CLAUDE_CONFIG_DIR=...` word on its `cmdline`. A `claude` running on
     the default config dir sets neither and is not listed. Entries that vanish or
