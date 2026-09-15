@@ -37,8 +37,9 @@ if ! flock -n 9; then
 fi
 
 # Parity gate: run on even ISO weeks only. Week 38 of 2026 (the first even week
-# after this landed) runs; week 39 skips. `date +%V` is the ISO week number.
-if [ $(( $(date -u +%V) % 2 )) -ne 0 ]; then
+# after this landed) runs; week 39 skips. `date +%V` is the ISO week number,
+# zero-padded, so `10#` keeps bash from reading 08 and 09 as octal.
+if [ $(( 10#$(date -u +%V) % 2 )) -ne 0 ]; then
   echo "output probe skipped: odd ISO week $(date -u +%V), fortnightly cadence" >&2
   exit 0
 fi
