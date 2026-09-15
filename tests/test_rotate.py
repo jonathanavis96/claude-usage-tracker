@@ -15,7 +15,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from tracker.publish import blended_price_per_token, usd_per_pct
+from tracker.probe import (FIXED_PROMPT_SPLIT, MAX_PAYLOAD_WORDS, MIN_PAYLOAD_WORDS, PROMPTS_PER_TICK,
+                           TOKENS_PER_WORD, payload_words_for, tokens_per_pct_for)
+from tracker.publish import meter_usd, usd_per_pct
 from tracker.rotate import (DRIFT_THRESHOLD, ROTATION, check_drift, decide, expectation,
                             main, mark_outlier, next_model, prose_rows, usable_rows)
 
@@ -59,6 +61,21 @@ def write_prices(tmp: str) -> Path:
     p = Path(tmp) / "prices.json"
     p.write_text(json.dumps(dict(PRICES, _source="test")), encoding="utf-8")
     return p
+
+
+def probe_row(ts, model, words, usd_per_pct, ticks=3):
+    """The row a probe on `model` with a `words` payload writes when the meter charges
+    `usd_per_pct` meter dollars per 1%: every prompt is the payload's cache_write plus the
+    fixed per-prompt overhead (tracker.probe.FIXED_PROMPT_SPLIT), and the span holds as
+    many such prompts as pay for `ticks` percent at that rate."""
+    price = PRICES[model]
+    per_prompt = dict(FIXED_PROMPT_SPLIT)
+    per_prompt["cache_write"] += round(words * TOKENS_PER_WORD)
+    prompts = ticks * usd_per_pct / (meter_usd(per_prompt, price) * price.get("meter_weight", 1.0))
+    tokens = {c: round(n * prompts) for c, n in per_prompt.items()}
+    return {"ts": ts, "model": model, "effort": "low", "tokens_per_pct": sum(tokens.values()) / ticks,
+            "tokens": tokens, "prompts": round(prompts), "tick_from": 2, "tick_to": 2 + ticks,
+            "elapsed_s": 100.0, "payload": "prose", "payload_words": words, "account": "dave"}
 
 
 class RowFilterTests(unittest.TestCase):
@@ -105,51 +122,58 @@ class NextModelTests(unittest.TestCase):
 
 
 class ExpectationTests(unittest.TestCase):
+    """The expectation is meter dollars per 1% (the invariant); the payload and the token
+    expectation that sizes the bursts both follow from it and the target model's price
+    alone, never from the previous row's class split (issue #24)."""
+
     def test_same_model_round_trips_its_own_reading(self):
-        # one Sonnet row; Sonnet's expectation is that row's own tokens per 1%
-        self.assertAlmostEqual(expectation([SONNET_0939], "claude-sonnet-5", PRICES), 467778.6, delta=1)
+        e = expectation([SONNET_0939], "claude-sonnet-5", PRICES)
+        self.assertAlmostEqual(e.usd_per_pct, usd_per_pct(SONNET_0939, PRICES["claude-sonnet-5"]), delta=1e-9)
+        self.assertEqual(e.payload_words, payload_words_for(e.usd_per_pct, PRICES["claude-sonnet-5"]))
+        self.assertEqual(e.tokens_per_pct, tokens_per_pct_for(e.payload_words))
 
-    def test_other_model_comes_through_the_dollar_invariant(self):
-        # Opus at 2.5x Sonnet's prices on every class: same meter dollars buy 2.5x fewer tokens
-        e = expectation([SONNET_0939], "claude-opus-5", PRICES)
-        self.assertAlmostEqual(e, 467778.6 / 2.5, delta=1)
-        # and explicitly: median dollars / (blended price of the probe split x meter weight)
-        split = {c: SONNET_0939["tokens"][c] / sum(SONNET_0939["tokens"].values()) for c in SONNET_0939["tokens"]}
-        want = usd_per_pct(SONNET_0939, PRICES["claude-sonnet-5"]) / blended_price_per_token(split, PRICES["claude-opus-5"])
-        self.assertAlmostEqual(e, want, delta=1e-6)
+    def test_other_model_gets_the_same_dollars_and_its_own_payload(self):
+        # the dollar median is model-agnostic; Opus at 2.5x Sonnet's cache_write price
+        # gets a smaller payload for the same twelfth of a tick
+        sonnet = expectation([SONNET_0939], "claude-sonnet-5", PRICES)
+        opus = expectation([SONNET_0939], "claude-opus-5", PRICES)
+        self.assertEqual(opus.usd_per_pct, sonnet.usd_per_pct)
+        self.assertEqual(opus.payload_words, payload_words_for(opus.usd_per_pct, PRICES["claude-opus-5"]))
+        self.assertLess(opus.payload_words, sonnet.payload_words)
+        self.assertEqual(opus.tokens_per_pct, tokens_per_pct_for(opus.payload_words))
 
-    def test_meter_weight_of_the_target_model_divides(self):
+    def test_meter_weight_of_the_target_model_shrinks_its_payload_not_the_dollars(self):
         prices = json.loads(json.dumps(PRICES))
         prices["claude-fable-5-1"]["meter_weight"] = 2.0
         heavy = expectation([SONNET_0939], "claude-fable-5-1", prices)
         light = expectation([SONNET_0939], "claude-fable-5-1", PRICES)
-        self.assertAlmostEqual(heavy, light / 2, delta=1e-6)
+        self.assertEqual(heavy.usd_per_pct, light.usd_per_pct)
+        self.assertEqual(heavy.payload_words, payload_words_for(light.usd_per_pct, prices["claude-fable-5-1"]))
+        self.assertLess(heavy.payload_words, light.payload_words)
 
     def test_median_of_the_last_four_usable_rows_in_dollars(self):
         # five Sonnet rows; the oldest is out of the lookback, the median of the last
-        # four (100k, 100k, 100k, 900k) is 100k
+        # four (100k, 100k, 100k, 900k tokens/1%, all cache_write) is 100k x $2.5/1e6
         rows = [row(f"2026-09-0{i}T00:00:00+00:00", "claude-sonnet-5", v)
                 for i, v in enumerate([5000, 100000, 100000, 900000, 100000], start=1)]
-        self.assertAlmostEqual(expectation(rows, "claude-sonnet-5", PRICES), 100000, delta=1)
+        self.assertAlmostEqual(expectation(rows, "claude-sonnet-5", PRICES).usd_per_pct, 100000 * 2.5e-6, delta=1e-9)
 
     def test_outlier_and_output_rows_are_ignored(self):
         rows = [row("2026-09-01T00:00:00+00:00", "claude-sonnet-5", 100000),
                 row("2026-09-02T00:00:00+00:00", "claude-sonnet-5", 900000, outlier=True),
                 row("2026-09-03T00:00:00+00:00", "claude-sonnet-5", 30000, payload="output")]
-        self.assertAlmostEqual(expectation(rows, "claude-sonnet-5", PRICES), 100000, delta=1)
+        self.assertAlmostEqual(expectation(rows, "claude-sonnet-5", PRICES).usd_per_pct, 100000 * 2.5e-6, delta=1e-9)
 
-    def test_split_comes_from_the_target_models_own_latest_row_when_it_has_one(self):
-        # Fable's own prose traffic is a different class mix than Sonnet's (shorter
-        # payload, so more cache read per cache write); its expectation uses its own mix.
-        fable = row("2026-09-02T00:00:00+00:00", "claude-fable-5-1", 100000)
-        fable["tokens"] = {"input": 0, "output": 0, "cache_read": 150000, "cache_write": 150000}
-        sonnet = row("2026-09-03T00:00:00+00:00", "claude-sonnet-5", 468000)
-        e = expectation([fable, sonnet], "claude-fable-5-1", PRICES)
-        from statistics import median
-        dollars = median([usd_per_pct(fable, PRICES["claude-fable-5-1"]), usd_per_pct(sonnet, PRICES["claude-sonnet-5"])])
-        want = dollars / blended_price_per_token({"input": 0, "output": 0, "cache_read": 0.5, "cache_write": 0.5},
-                                                 PRICES["claude-fable-5-1"])
-        self.assertAlmostEqual(e, want, delta=1e-6)
+    def test_payload_does_not_depend_on_the_previous_rows_class_split(self):
+        # Two histories reading the same meter dollars per 1% on Fable, one from a
+        # 12,000-word payload and one from a 500-word one (cache_read about 27% against
+        # 87% of the tokens): the next Fable probe is sized the same from either. The
+        # old token conversion divided the dollars by each history's own blended price
+        # and sized the second history's payload 18x the first's.
+        big = probe_row("2026-09-02T00:00:00+00:00", "claude-fable-5-1", 12000, 0.96)
+        small = probe_row("2026-09-02T00:00:00+00:00", "claude-fable-5-1", 500, 0.96)
+        self.assertEqual(expectation([big], "claude-fable-5-1", PRICES).payload_words,
+                         expectation([small], "claude-fable-5-1", PRICES).payload_words)
 
     def test_no_usable_rows_is_none(self):
         self.assertIsNone(expectation([], "claude-sonnet-5", PRICES))
@@ -158,7 +182,47 @@ class ExpectationTests(unittest.TestCase):
 
     def test_rows_for_unpriced_models_are_skipped(self):
         rows = [row("2026-09-01T00:00:00+00:00", "claude-haiku-4-5", 5), SONNET_0939]
-        self.assertAlmostEqual(expectation(rows, "claude-sonnet-5", PRICES), 467778.6, delta=1)
+        self.assertAlmostEqual(expectation(rows, "claude-sonnet-5", PRICES).usd_per_pct,
+                               usd_per_pct(SONNET_0939, PRICES["claude-sonnet-5"]), delta=1e-9)
+
+
+class PayloadConvergenceTests(unittest.TestCase):
+    """Regression for issue #24. Each generation sizes a payload from the history, the
+    probe writes the row a meter charging a constant METER dollars per 1% would give
+    for that payload, and the next generation is sized from the history with that row
+    in it. The size must settle, not chase the previous row's class split: sized in
+    tokens through that split, a smaller payload raised the cache_read share of the
+    next row, which changed the blended price the next expectation was divided by,
+    which resized the payload again -- Fable flipped between MIN_PAYLOAD_WORDS and
+    about 8,900 words every generation and Opus swung by a third for six or more."""
+    METER = 0.96  # meter dollars per 1%: where the real rows cluster (0.68-1.13)
+    GENERATIONS = 6
+
+    def _generations(self, model):
+        rows = [probe_row("2026-09-01T00:00:00+00:00", "claude-sonnet-5", 12000, self.METER)]
+        sizes = []
+        for g in range(self.GENERATIONS):
+            e = expectation(rows, model, PRICES)
+            sizes.append(e.payload_words)
+            rows.append(probe_row(f"2026-09-{g + 2:02d}T00:00:00+00:00", model, e.payload_words, self.METER))
+        return sizes
+
+    def test_payload_size_is_a_fixed_point_for_every_model(self):
+        for model in ROTATION:
+            sizes = self._generations(model)
+            # feeding a generation's own row back returns the same size (a word of
+            # rounding allowed), and the fixed point is a real size, not a clamp
+            self.assertLessEqual(max(sizes) - min(sizes), 1, (model, sizes))
+            self.assertGreater(min(sizes), MIN_PAYLOAD_WORDS, (model, sizes))
+            self.assertLess(max(sizes), MAX_PAYLOAD_WORDS, (model, sizes))
+
+    def test_every_generation_prices_one_prompt_at_a_twelfth_of_a_tick(self):
+        for model in ROTATION:
+            for words in self._generations(model):
+                per_prompt = dict(FIXED_PROMPT_SPLIT)
+                per_prompt["cache_write"] += round(words * TOKENS_PER_WORD)
+                self.assertAlmostEqual(PROMPTS_PER_TICK * meter_usd(per_prompt, PRICES[model]), self.METER,
+                                       delta=self.METER * 0.005, msg=model)
 
 
 class DriftTests(unittest.TestCase):
@@ -365,9 +429,13 @@ class CliTests(unittest.TestCase):
         lines = out.splitlines()
         self.assertEqual(len(lines), 3)
         for model in ROTATION:
-            self.assertTrue(any(f"--model {model} --expect-tokens-per-pct " in ln for ln in lines), model)
-        self.assertIn("--model claude-sonnet-5 --expect-tokens-per-pct 467779", out)
-        self.assertIn("--model claude-opus-5 --expect-tokens-per-pct 187111", out)
+            self.assertTrue(any(f"--model {model} --expect-usd-per-pct " in ln for ln in lines), model)
+        # the one Sonnet row is $0.9789/1%, and the dollars are the same for every model;
+        # the dry run also says what that buys: the payload and the token expectation
+        self.assertIn("--model claude-sonnet-5 --expect-usd-per-pct 0.9789", out)
+        self.assertIn("--model claude-opus-5 --expect-usd-per-pct 0.9789", out)
+        self.assertIn(f"{payload_words_for(0.978852, PRICES['claude-opus-5'])} words", out)
+        self.assertIn("tokens per 1%", out)
         self.assertEqual(sum("next" in ln for ln in lines), 1)
         self.assertIn("next", next(ln for ln in lines if "claude-opus-5" in ln))
 
@@ -382,11 +450,11 @@ class CliTests(unittest.TestCase):
 
     def test_flags_prints_one_shell_splittable_line_for_the_next_model(self):
         rc, out, _, _ = self._run(["flags"], [SONNET_0939])
-        self.assertEqual((rc, out.strip()), (0, "--model claude-opus-5 --expect-tokens-per-pct 187111"))
+        self.assertEqual((rc, out.strip()), (0, "--model claude-opus-5 --expect-usd-per-pct 0.9789"))
 
     def test_flags_for_a_named_model(self):
         rc, out, _, _ = self._run(["flags", "--model", "claude-sonnet-5"], [SONNET_0939])
-        self.assertEqual((rc, out.strip()), (0, "--model claude-sonnet-5 --expect-tokens-per-pct 467779"))
+        self.assertEqual((rc, out.strip()), (0, "--model claude-sonnet-5 --expect-usd-per-pct 0.9789"))
 
     def test_flags_with_no_usable_history_fails_loudly(self):
         rc, out, err, _ = self._run(["flags"], [])
@@ -397,16 +465,15 @@ class CliTests(unittest.TestCase):
     def test_flags_rerun_targets_the_drifted_rows_model_with_two_ticks(self):
         rc, out, _, _ = self._run(["flags", "--rerun"], [SONNET_0939, SONNET_1433])
         self.assertEqual(rc, 0)
-        # the smaller of the median and the drifted reading in dollars, converted
-        # back to tokens through the drifted (newest) row's own class split, so the
-        # burst cannot overshoot whichever of the two turns out to be true
-        self.assertEqual(out.strip(), "--model claude-sonnet-5 --expect-tokens-per-pct 501424 --ticks 2")
+        # the smaller of the median ($0.979) and the drifted reading ($1.132), in
+        # dollars, so the burst cannot overshoot whichever of the two turns out to be true
+        self.assertEqual(out.strip(), "--model claude-sonnet-5 --expect-usd-per-pct 0.9789 --ticks 2")
 
     def test_flags_rerun_after_a_downward_drift_uses_the_lower_reading(self):
         rows = [row("2026-09-06T00:00:00+00:00", "claude-sonnet-5", 100000),
                 row("2026-09-07T00:00:00+00:00", "claude-sonnet-5", 80000)]
         rc, out, _, _ = self._run(["flags", "--rerun"], rows)
-        self.assertEqual((rc, out.strip()), (0, "--model claude-sonnet-5 --expect-tokens-per-pct 80000 --ticks 2"))
+        self.assertEqual((rc, out.strip()), (0, "--model claude-sonnet-5 --expect-usd-per-pct 0.2000 --ticks 2"))
 
     def test_check_reports_drift_with_exit_10(self):
         rc, out, _, _ = self._run(["check"], [SONNET_0939, SONNET_1433])

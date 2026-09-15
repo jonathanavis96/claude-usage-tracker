@@ -104,7 +104,7 @@ The fixed order in which scheduled probes take turns across models: Sonnet, Opus
 _Avoid_: cycle, schedule, round-robin
 
 **Expectation**:
-The tokens per percent a probe assumes before it starts, used to size its bursts and prompts.
+The meter dollars per percent a probe assumes before it starts: the dollar invariant's median, handed to the probe as is. The probe sizes its prompt from it on the model's own prices, and the tokens per percent that size its bursts follow from that prompt, never from an earlier row's token-class split.
 _Avoid_: estimate, prior, guess
 
 **Drift**:
