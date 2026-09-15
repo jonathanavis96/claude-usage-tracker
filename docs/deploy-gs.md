@@ -83,6 +83,60 @@ touching the site:
 cd ~/claude-usage-tracker && python3 -m tracker.contributed --offline --history history/contributed.jsonl --out data/contributed.json
 ```
 
+## Passive measurement on the gs accounts
+
+Issue #39. Each probe account is joined on its own: its own transcripts
+against its own meter log, valued in the probe's meter dollars
+(`tracker/gs_passive.py`, account mapping in `gs_accounts`), and every
+stretch is judged by the capture-completeness check (`tracker/capture.py`)
+before anything can be published. Nothing runs it on a schedule yet and the
+publisher does not read it yet.
+
+Meter logs, one account per file:
+
+| Account | Meter log | Written by |
+|---|---|---|
+| jwork | `~/.paperclip/ops/gs-usage-ceiling.log` | `gs-usage-ceiling.timer` (greenscape-org `usage-ceiling.py`); jwork only from 2026-09-05T06:14:32Z, when the seat.conf drop-in pointed it at `~/.claude-javiswork`. Before that it read `~/.claude`, another account, and the join ignores it. |
+| dave | `~/.paperclip/ops/claude-usage-meter-dave.log` | `claude-usage-meter-dave.timer` (`tracker.meter_log`), from 2026-09-15 |
+
+The Dave sampler's units are in `deploy/systemd/`. It reads the meter every
+five minutes, never pauses anything, and refuses (exit 2) to write into a
+log that already holds another account. A failed read is an `error` line and
+exit 4, which the unit counts as success. To install on gs:
+
+```
+cp ~/claude-usage-tracker/deploy/systemd/claude-usage-meter-dave.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now claude-usage-meter-dave.timer
+```
+
+(Installed 2026-09-15 before the branch merged, with a drop-in
+`~/.config/systemd/user/claude-usage-meter-dave.service.d/worktree.conf`
+that runs it from the branch's worktree. Delete that drop-in and
+daemon-reload once `main` carries `tracker/meter_log.py`.)
+
+jwork's `projects/` is a symlink to `~/.claude/projects`, shared with
+`~/.claude` and `~/.claude-jono`; the report lists the sharers under
+`shared_with`, and anything they write shows up in the check as surplus.
+
+To run it (read-only; `--until` replays as of a time, `--withhold
+'ACCOUNT:GLOB'` leaves transcripts out to watch the check catch it):
+
+```
+cd ~/claude-usage-tracker && python3 -m tracker.gs_passive --out history/passive-gs.json
+```
+
+Per account the JSON carries every stretch with its status (`accepted`,
+`unaccounted`, `surplus`, `unpriced`, `unjudged`), reference and capture;
+the withheld runs with their kind (`collection_gap`, `level_shift`,
+`unaccounted`, `surplus`) and what corroborated or contradicted them;
+accepted stretches pooled per UTC day; `last_usable_at`; the spread of the
+accepted series; and per-window weekly points. For the publisher,
+`passive_dollar_readings(report, prices)` returns accepted readings as
+(time, meter dollars per window), the shape of its probe `dollar_readings`.
+Do not merge the two series yet: real sessions are ~97% cache reads, and
+until `class_weight.cache_read` is measured the passive level sits well above
+the probe's, so only steps compare.
+
 ## Crontab on masterrig
 
 ```

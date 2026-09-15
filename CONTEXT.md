@@ -96,6 +96,20 @@ _Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x ->
 
 _Current_: `max20.current` is the pooled ratio of the current `Regime`'s window points over the trailing fortnight (anchored on the newest point), so it follows a detected step from the day it fires. It falls back to the median of the last two complete weekly rows only when no window points have arrived (a passive.json from before they existed) or the fortnight holds under 10 points of d7. `max5.current` is always that median.
 
+**Stretch**:
+One gs account's meter movement of at least 10%, pooled from consecutive same-window readings of that account's own meter log, with the meter dollars that account's own transcripts spent across it. The unit of passive measurement on gs (tracker/join.py `build_stretches`). Whole-percent rounding carries one point per separate window piece, so a 10% stretch reads to about ±10% and a busy day's pooled stretches to a few percent.
+_Avoid_: interval (masterrig's 1% unit in the same module), span (a probe term)
+
+**Capture**:
+A stretch's meter dollars per 1% over its account's reference (the median of that account's recent accepted stretches): the share of the meter's movement that the account's transcripts on gs account for. 1.0 is complete capture.
+
+**Unaccounted traffic**:
+Meter movement a stretch's transcripts do not explain: the stretch reads more than 15% below its account's reference even allowing for rounding. It comes from using the account off gs or from broken transcript collection, is withheld, is kept for inspection, and is never published as a rate. Its mirror, **surplus**, is transcripts the meter did not count, from a transcript directory another account also writes to.
+_Avoid_: missing tokens, leakage
+
+**Level shift**:
+A run of withheld stretches that agree with each other at a new level. It is what a genuine limit change looks like, and also what steady off-gs use looks like, so it stays withheld until the other gs account or a probe steps the same way; only then is it a change and the reference rebased (tracker/capture.py).
+
 **Session**:
 One transcript file's worth of turns (a subagent's own transcript counts as its own session). `session_tokens[model]` is the median cumulative tokens of a real session on that model over the last 30 days; the page's "about N sessions per window" unit.
 _Avoid_: task, conversation, run

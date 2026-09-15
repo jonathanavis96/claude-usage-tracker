@@ -1,6 +1,8 @@
+import json
 import unittest
-from datetime import timedelta
-from tracker.samples import parse_moonlighter, parse_ceiling_log, merge_samples
+from datetime import datetime, timedelta, timezone
+from tracker.samples import (MixedAccountLog, merge_samples, parse_ceiling_log, parse_gs_ceiling_log,
+                             parse_meter_log, parse_moonlighter)
 
 ML = ['{"ts": "2026-06-13T00:51:22.743614+02:00", "seven_day": {"utilization": 23.0, "resets_at": "2026-06-19T04:00:00Z"}, "seven_day_sonnet": {"utilization": 5.0, "resets_at": null}, "five_hour": {"utilization": 40.0, "resets_at": "2026-06-13T01:30:00Z"}}',
       '{"ts": "2026-06-13T01:30:02+02:00", "seven_day": {"utilization": 25.0, "resets_at": null}, "seven_day_sonnet": {"utilization": null, "resets_at": null}, "five_hour": {"utilization": null, "resets_at": null}}',
@@ -29,3 +31,53 @@ class SampleTests(unittest.TestCase):
         m = merge_samples(a, b)
         self.assertEqual(len(m), 1)
         self.assertEqual(m[0].source, "ceiling")
+
+
+# gs's own usage-ceiling.py log: a different line format from masterrig's ceiling.
+GS = ['2026-09-05T05:54:05+00:00 HARD CEILING (five-hour) five_hour=100% seven_day=31%',
+      '2026-09-05T05:54:05+00:00   pausing every seat',
+      '2026-09-05T05:54:06+00:00   paused 0 seat(s)',
+      '2026-09-05T06:19:55+00:00 ok five_hour=4% seven_day=19%',
+      '2026-09-05T06:25:25+00:00 usage read FAILED — failing open, nothing paused',
+      '2026-09-05T06:36:05+00:00 warn five_hour=61% seven_day=19% (hard at 80%/90%)']
+
+
+class GsCeilingLogTests(unittest.TestCase):
+    def test_reads_ok_warn_and_hard_ceiling_lines_and_nothing_else(self):
+        s = parse_gs_ceiling_log(GS)
+        self.assertEqual([(x.five_hour, x.seven_day) for x in s], [(100.0, 31.0), (4.0, 19.0), (61.0, 19.0)])
+        self.assertEqual({x.source for x in s}, {"gs-ceiling"})
+        self.assertIsNone(s[0].resets_at)  # this log never records a reset time
+
+    def test_since_drops_the_samples_another_account_wrote(self):
+        # The log read ~/.claude until the 2026-09-05 seat.conf drop-in pointed it at jwork.
+        since = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
+        s = parse_gs_ceiling_log(GS, since=since)
+        self.assertEqual([x.five_hour for x in s], [4.0, 61.0])
+
+    def test_merges_with_the_other_sources(self):
+        self.assertEqual(len(merge_samples(parse_gs_ceiling_log(GS))), 3)
+
+
+def meter_line(ts, five, seven=10.0, identity="aaaa", reset="2026-09-15T23:00:00+00:00"):
+    return json.dumps({"ts": ts, "account": "dave", "identity": identity,
+                       "five_hour": {"utilization": five, "resets_at": reset},
+                       "seven_day": {"utilization": seven, "resets_at": "2026-09-17T23:00:00+00:00"}})
+
+
+class MeterLogTests(unittest.TestCase):
+    def test_reads_resets_and_skips_failed_reads(self):
+        lines = [meter_line("2026-09-15T21:00:00+00:00", 3.0),
+                 json.dumps({"ts": "2026-09-15T21:05:00+00:00", "account": "dave", "identity": "aaaa",
+                             "error": "HTTPError: HTTP Error 429: Too Many Requests"}),
+                 meter_line("2026-09-15T21:10:00+00:00", 4.0)]
+        s = parse_meter_log(lines)
+        self.assertEqual([x.five_hour for x in s], [3.0, 4.0])
+        self.assertEqual(s[0].resets_at, "2026-09-15T23:00:00+00:00")
+        self.assertEqual(s[0].source, "meter")
+
+    def test_a_log_holding_two_accounts_is_refused_not_averaged(self):
+        lines = [meter_line("2026-09-15T21:00:00+00:00", 3.0, identity="aaaa"),
+                 meter_line("2026-09-15T21:05:00+00:00", 40.0, identity="bbbb")]
+        with self.assertRaises(MixedAccountLog):
+            parse_meter_log(lines)
