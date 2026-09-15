@@ -81,10 +81,20 @@ The mix of token classes in Jonathan's own real sessions, used to convert dollar
 _Avoid_: real-world mix, session profile
 
 **Weekly windows**:
-How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). `weekly_windows` publishes both raw series (`passive`, `probe`) plus one `{current, history}` object per plan.
+How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). `weekly_windows` publishes both raw series (`passive`, `probe`) plus one `{current, history}` object per plan. Each raw series also carries the same pairs bucketed by five-hour window (`by_window`, one `Window point` per window); the weekly rows are what the page charts, the window points are what detection and the live plan's `current` run on.
 _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
 
-_Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it); `max20` is the live plan -- probe weeks replace passive `max20` weeks from the first probe week on, and it is the only series change detection runs on. `pro` has no measurement of its own, so it publishes `max5`'s figures again (same 5x-ratio era) with `"assumed": true`; `max20` and `max5` carry `"assumed": false`.
+**Window point**:
+One five-hour window's paired meter movement: `five_hour_pct` (d5) over `seven_day_pct` (d7), keyed by the window's reset time (`window_ending`), with `windows` = d5/d7 or null when the seven-day meter did not move. Its weight is its d7: a point under 7 points of d7 is too noisy to vote on its own (rounding alone can move a d7=6 ratio by 17%, and on the real log a lower floor fired three false changes), but its movement still counts in every pooled figure.
+_Avoid_: bucket, sample
+
+**Pooled**:
+Total d5 over total d7 across a set of window points, as opposed to a median of their individual ratios. Every base, confirmation and `current` on the weekly series is pooled, so a heavy window counts for more than a thin one.
+_Avoid_: average, mean
+
+_Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped, and a passive window point counts as `max20` only when its window starts after `PLAN_CHANGE` day. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it); `max20` is the live plan -- probe weeks replace passive `max20` weeks in its chart rows from the first probe week on, and it is the only plan change detection runs on. `pro` has no measurement of its own, so it publishes `max5`'s figures again (same 5x-ratio era) with `"assumed": true`; `max20` and `max5` carry `"assumed": false`.
+
+_Current_: `max20.current` is the pooled ratio of the current `Regime`'s window points over the trailing fortnight (anchored on the newest point), so it follows a detected step from the day it fires. It falls back to the median of the last two complete weekly rows only when no window points have arrived (a passive.json from before they existed) or the fortnight holds under 10 points of d7. `max5.current` is always that median.
 
 **Stretch**:
 One gs account's meter movement of at least 10%, pooled from consecutive same-window readings of that account's own meter log, with the meter dollars that account's own transcripts spent across it. The unit of passive measurement on gs (tracker/join.py `build_stretches`). Whole-percent rounding carries one point per separate window piece, so a 10% stretch reads to about ±10% and a busy day's pooled stretches to a few percent.
@@ -108,7 +118,7 @@ _Avoid_: task, conversation, run
 A model's published rate computed from another model's probe through the dollar invariant, rather than probed directly.
 
 **Regime**:
-A stretch of history in which the measured limit is held flat, ended by a detected change.
+A stretch of history in which the measured limit is held flat, ended by a detected change. On the weekly series a regime starts at a `Weekly change`'s first window, and every later base is pooled from that regime only.
 _Avoid_: era, level, plateau
 
 ### Operation
@@ -138,7 +148,7 @@ Two agreeing readings that both differ from the earlier median: the limit moved.
 _Avoid_: shift, event
 
 **Weekly change**:
-A step of more than 15% in weekly windows between two consecutive readings of the live plan's series (`max20`), dated by the week ending. Detected the same way as a window `Change`, but on `weekly_windows`'s `max20.history` instead of the five-hour dollar series; `max5` is frozen and never runs detection, so the Max 5x -> Max 20x plan change itself is never reported as a weekly change. Published as an event with `"scope": "weekly"`.
+A step of more than 15% in weekly windows on the live plan's passive window points (`max20`), dated by the first window at the new level -- a day, not a week ending. A window point with at least 7 points of d7 whose ratio lies beyond threshold from the `Pooled` base (the regime's previous fortnight, at least 10 points of d7) even after conceding half a point of d7 rounding is a candidate; it fires once the points from it onward pool to at least 10 points of d7 over at least two windows and that pool still lies beyond threshold the same way. Never detected on the calendar-week rows: a mid-week step blends into the week's average (the 2026-09-13 cut published as a -14.5% week), and a week-then-confirming-week rule could not have surfaced it for nineteen days. `max5` is frozen and never runs detection, so the Max 5x -> Max 20x plan change itself is never reported as a weekly change. Published as an event with `"scope": "weekly"`. Mechanics and the rounding reasoning: tracker/detect.py.
 _Avoid_: plan change (that is Jonathan's own subscription move, not a measured step)
 
 **Alert**:
@@ -146,5 +156,5 @@ One email to Jonathan, sent by the tracker through the site's send endpoint, for
 _Avoid_: notification, ping, warning email
 
 **Probe account**:
-A subscription account used only for probing. Jono Work (`jwork`, `~/.claude-javiswork`) is tried first and Dave (`~/.claude-dave`) second; an account with a live `claude` process on this host is skipped before its meter is read.
+A subscription account used only for probing. Jono Work (`jwork`, `~/.claude-javiswork`) is tried first and Dave (`~/.claude-dave`) second; an account with a `claude` session on this host that is not idle (per its `sessions/<pid>.json`) is skipped before its meter is read. The probe compares each account's session state between readings rather than the status at the moment of sampling, so it aborts on a session that goes busy while it runs and on one whose whole turn fits between two readings; it also keeps the kernel's record of session files created or removed in that `sessions/` directory, so a session that starts and exits between two readings aborts it too (the probe's own `claude -p` prompts write session files as well, and are told apart by pid). An account whose weekly (seven-day) meter reads above 90% is passed over as well, and the log names that reason `weekly`, apart from `busy`.
 _Avoid_: test account, alt

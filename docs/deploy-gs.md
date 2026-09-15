@@ -37,7 +37,7 @@ from that push.
 
 ## Weekly output class weight
 
-`output-probe.sh` runs Sunday 06:00 UTC: a 5-tick Fable 5.1 probe with
+`output-probe.sh` runs every other Sunday 06:00 UTC (the cron line fires weekly; the script exits 0 on odd ISO weeks): a 5-tick Fable 5.1 probe with
 `--payload output`, appended to `history/probes.jsonl` tagged
 `"payload": "output"`. It measures how hard the meter charges output tokens
 against their list price, not the limit, so the publisher keeps output rows
@@ -57,7 +57,7 @@ takes the same `.cron.lock` as the other jobs, so it never overlaps a
 rotation probe; the 06:00 slot sits between the 00:00 and 12:00 rotation
 runs, and a run that starts within 20 minutes of a window reset waits for it.
 
-Output probe exit codes are `probe.sh`'s: 0 ok, 3 no idle account, 4 aborted,
+Output probe exit codes are `probe.sh`'s: 0 ok, 3 no usable account, 4 aborted,
 5 lock held. Exits 3 and 4 alert Jonathan; the weight then keeps its current
 value until the next Sunday.
 
@@ -158,12 +158,26 @@ a different account with no access to either repo; never use it for these.
 ## Accounts
 
 The probe tries Jono Work (`jwork`, `~/.claude-javiswork`) first and Dave
-(`~/.claude-dave`) second. An account with a live `claude` process on this host
-is skipped before its meter is read (the probe log says which pid), then the
-meter must hold flat for 120 s. Both are Max 20x and monitor-owned: never run
-`/logout` in either directory. Jonathan's own account is never probed. `claude`
-lives at `~/.npm-global/bin/claude`, which the wrappers add to `PATH` because
-cron does not.
+(`~/.claude-dave`) second. An account with a `claude` session on this host that
+is not idle (per its `sessions/<pid>.json`) is skipped before its meter is read
+(the probe log says which pid), then the meter must hold flat for 120 s. A
+session sitting at the prompt does not block the account. What is compared is
+the session state between one reading and the next, not the status at the moment
+of sampling: the probe aborts if a session is mid-turn, if its `statusUpdatedAt`
+moved since the previous reading (a whole turn that came and went in between),
+or if one started or exited. That applies across the 120 s meter window as well
+as after every reading during the probe. During the probe it also watches the
+account's `sessions/` directory (inotify) for session files created or removed
+between readings, so a session that starts, runs a turn and exits entirely
+between two readings aborts the run too; the probe's own `claude -p` prompts
+write session files as well and are told apart by pid. An account whose
+`sessions/` directory cannot be watched is not probed (exit 4). An account whose
+seven-day meter reads above 90% is passed over too, logged as
+`<name> weekly: ...` rather than `busy`, and every account whose meter is read
+logs its weekly figure (`<name> weekly meter N%`). Both are Max 20x and monitor-owned:
+never run `/logout` in either directory. Jonathan's own account is never probed.
+`claude` lives at `~/.npm-global/bin/claude`, which the wrappers add to `PATH`
+because cron does not.
 
 ## Checking it
 
@@ -172,7 +186,8 @@ ssh gs 'tail -20 ~/.paperclip/ops/claude-usage-probe.log ~/.paperclip/ops/claude
 ssh gs 'tail -3 ~/claude-usage-tracker/history/probes.jsonl'
 ```
 
-Probe exit codes: 0 ok, 3 no idle account within the wait, 4 aborted (window
+Probe exit codes: 0 ok, 3 no usable account within the wait (each was busy, or
+its weekly meter read above 90%), 4 aborted (window
 reset or a jump the probe cannot explain), 5 another tracker job held the
 checkout's .cron.lock. A run costs about 1% of the account's 5-hour
 window.

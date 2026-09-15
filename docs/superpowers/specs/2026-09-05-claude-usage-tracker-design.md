@@ -20,8 +20,15 @@ The visual target is `docs/mockup.html` in this repo (approved 2026-09-05).
 A cron job on `ssh gs` measures **tokens per percent tick**. It tries the
 Jono Work account (`jwork`, credentials in that host's `.claude-javiswork`
 directory) first and the Dave account (`.claude-dave`) second; an account
-with a live `claude` process on that host is skipped before its meter is
-read. Both are on Max 20x, the
+with a `claude` session on that host that is not idle (per its
+`sessions/<pid>.json`) is skipped before its meter is read. The probe compares
+session state between one reading and the next rather than the status at the
+moment of sampling, so it aborts on a session that goes busy while it runs and
+on one whose whole turn fits between two readings, and it keeps the record of
+session files created or removed in that directory between readings, so a
+session that starts and exits in between aborts it too. An account whose
+seven-day meter reads above 90% is passed over as well, and the log names that
+reason apart from a busy one. Both are on Max 20x, the
 same plan as Jonathan's own account, so probe and passive figures are directly
 comparable. The prompt, model and effort never change, so the tokens per
 prompt are constant within noise, and the only thing that can move the tick

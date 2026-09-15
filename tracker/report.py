@@ -9,7 +9,8 @@ appends the raw log below it for the debugging that the summary cannot do.
 
 The summary is derived only from what the log says. Each explanation names the
 condition that actually tripped (`ProbeAbort` reasons in tracker/probe.py, the
-`<account> busy:` lines from `choose_account`, a Python traceback for a crash), and
+`<account> busy:` and `<account> weekly:` lines from `choose_account`, a Python
+traceback for a crash), and
 an unrecognised log falls back to quoting its last line rather than guessing.
 
 CLI:  python3 -m tracker.report --model M --rc N --what "Rotation run" --log PATH
@@ -29,6 +30,9 @@ READING_RE = re.compile(
     r"^(?:\S+Z )?prompt (?P<n>\d+)(?: \(burst of (?P<k>\d+)\))?: five_hour=(?P<fh>[\d.]+|None) "
     r"resets_at=(?P<reset>\S+)")
 BUSY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) busy: (?P<why>.+)$")
+# An account passed over for its seven-day meter (issue #38). The `<name> weekly meter N%`
+# figure lines have no colon after "weekly" and are not skips.
+WEEKLY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) weekly: (?P<why>.+)$")
 ABORT_RE = re.compile(r"^(?:\S+Z )?probe aborted on (?P<name>\w+): (?P<why>.+)$")
 WAIT_RE = re.compile(r"^(?:\S+Z )?window resets in (?P<s>\d+)s: waiting for it")
 # A traceback ends with the exception line: the first unindented line after the
@@ -61,7 +65,7 @@ def _reset_clock(stamp: str) -> str:
 
 
 def _parse(log_text: str) -> dict:
-    readings, busy, abort, waited, exc = [], [], None, None, None
+    readings, skips, abort, waited, exc = [], [], None, None, None
     in_traceback = False
     for raw in log_text.splitlines():
         line = raw.rstrip()
@@ -73,14 +77,16 @@ def _parse(log_text: str) -> dict:
         elif (m := READING_RE.match(line)):
             readings.append(m.groupdict())
         elif (m := BUSY_RE.match(line)):
-            busy.append((m.group("name"), m.group("why")))
+            skips.append((m.group("name"), "busy", m.group("why")))
+        elif (m := WEEKLY_RE.match(line)):
+            skips.append((m.group("name"), "weekly", m.group("why")))
         elif (m := ABORT_RE.match(line)):
             abort = (m.group("name"), m.group("why"))
         elif (m := WAIT_RE.match(line)):
             waited = int(m.group("s"))
         elif EXC_RE.match(line) and not line.startswith(" "):
             exc = line
-    return {"readings": readings, "busy": busy, "abort": abort, "waited": waited, "exc": exc}
+    return {"readings": readings, "skips": skips, "abort": abort, "waited": waited, "exc": exc}
 
 
 def _progress(readings: list[dict]) -> str:
@@ -149,13 +155,21 @@ def summary(model: str, rc: int, what: str, log_text: str, payload: str = "prose
              "The next scheduled slot tries again on whichever account is idle.")
 
     if rc == 3:
-        names = sorted({n for n, _ in parsed["busy"]})
-        last_why = {n: w for n, w in parsed["busy"]}
-        who = "; ".join(f"{n} was busy ({last_why[n]})" for n in names) if names else \
+        last = {n: (how, why) for n, how, why in parsed["skips"]}
+        said = {"busy": "was busy", "weekly": "was too close to its weekly limit"}
+        who = "; ".join(f"{n} {said[last[n][0]]} ({last[n][1]})" for n in sorted(last)) if last else \
             "the log does not say which accounts were checked"
-        pids = any("pid" in w for _, w in parsed["busy"])
+        pids = any(how == "busy" and "pid" in why for _, how, why in parsed["skips"])
         hint = (" A `pid` reason means a Claude session was running on that account; if "
                 "those sessions are stale, closing them frees the account." if pids else "")
+        if any(how == "weekly" for how, _ in last.values()):
+            # Issue #38: a spent week must not read as the no-idle-account blackout of #21.
+            return (f"Outcome: SKIPPED. {kind} never started, because no account was both idle "
+                    f"and under its weekly limit within the {MAX_WAIT_H}-hour wait. No measurement "
+                    f"was recorded.\n\n"
+                    f"Why each account was skipped: {who}.{hint} A weekly reason clears when that "
+                    f"account's seven-day meter resets.\n\n"
+                    f"What happens next: nothing is broken. {keeps}")
         return (f"Outcome: SKIPPED. {kind} never started, because no account was idle within "
                 f"the {MAX_WAIT_H}-hour wait. No measurement was recorded.\n\n"
                 f"Who was busy: {who}.{hint}\n\n"
