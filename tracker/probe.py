@@ -797,6 +797,42 @@ class ChildTracker:
         return out
 
 
+# A probe account whose seven-day meter reads above this is passed over, as a busy one
+# is (issue #38). On 2026-09-15 dave reached 99% of its weekly limit while in use as a
+# build seat and the rotation had no idea; jwork had been probed at 94% and 95% the day
+# before. 90 and not 95, because the margin has to cover a whole slot, not one prompt:
+# a run moves the five-hour meter 4-7% end to end and the weekly meter by about an
+# eighth of that (6 points weekly against 46 five-hour, summed over the nine history
+# rows with both whole-run reads, 2026-09-07 to 09-15), a drift adds a rerun, and the
+# account's owner keeps working through it. A slot that starts at a 95 reading can
+# leave the owner three points of their week or less; one that starts at 90 leaves about
+# eight. A reading of exactly 90 is allowed.
+WEEKLY_MAX_PCT = 90
+
+
+@dataclass(frozen=True)
+class Skip:
+    """Why choose_account passed over an account. `kind` is `busy` (someone is using it,
+    by busy_reason's checks) or `weekly` (its seven-day meter is too near the cap to
+    spend a run on); `why` is the detail the log line carries after it."""
+    kind: str
+    why: str
+
+
+def weekly_reason(u: Utilization, max_pct: float = WEEKLY_MAX_PCT) -> str | None:
+    """Why `u`'s seven-day meter rules the account out, or None when it has room.
+
+    Above `max_pct` is out and `max_pct` itself is not. A reading with no seven-day
+    figure is out too: the limit is there to keep a nearly spent account from being
+    probed, and an account whose figure cannot be read cannot be shown not to be one.
+    """
+    if u.seven_day is None:
+        return "the usage endpoint reported no seven-day figure"
+    if u.seven_day > max_pct:
+        return f"{u.seven_day:g}% of the seven-day limit used, above {max_pct:g}%"
+    return None
+
+
 def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
                 cfg: Path | None = None,
                 processes: Callable[[], list[tuple[int, Path]]] | None = None,
@@ -821,21 +857,51 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     The pre-check keeps no lifecycle record (SessionDirEvents), unlike the probe. A
     session that starts and exits inside the window has spent before the probe's first
     prompt, and anything spent then lands in the alignment span, which is discarded.
+
+    The weekly meter is not consulted here; choose_account applies that limit through
+    skip_reason, which runs these same checks.
+    """
+    skip = skip_reason(read, sleep, window_s, cfg, processes, session_status, weekly_max_pct=None)
+    return skip.why if skip is not None else None
+
+
+def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
+                cfg: Path | None = None,
+                processes: Callable[[], list[tuple[int, Path]]] | None = None,
+                session_status: Callable[[Path, int], SessionState] = read_session_status,
+                weekly_max_pct: float | None = WEEKLY_MAX_PCT,
+                note: Callable[[str], None] = lambda line: None) -> Skip | None:
+    """Why the account should not be probed now, as a Skip, or None when it can be.
+
+    busy_reason's checks in its order, with the weekly meter between the first meter
+    read and the 120 s window: that reading is already in hand, so the limit costs no
+    extra call to the usage endpoint, and an account it rules out spends no window. The
+    weekly figure goes to `note` as `weekly meter N%` (or `weekly meter not reported`)
+    for every account whose meter is read, so the log shows what each choice was made
+    on. An account the free pid check rejects first is `busy` without a meter read, so
+    its weekly figure is not known. `weekly_max_pct=None` leaves the weekly meter out
+    (busy_reason).
     """
     watch = (SessionWatch(cfg, processes, session_status)
              if cfg is not None and processes is not None else None)
     if watch is not None:
         reason = watch.snapshot()
         if reason is not None:
-            return reason
+            return Skip("busy", reason)
     a = read()
+    if weekly_max_pct is not None:
+        note(f"weekly meter {a.seven_day:g}%" if a.seven_day is not None else "weekly meter not reported")
+        why = weekly_reason(a, weekly_max_pct)
+        if why is not None:
+            return Skip("weekly", why)
     sleep(window_s)
     b = read()
     if not _same_window(a, b):
-        return "window reset"
+        return Skip("busy", "window reset")
     if a.five_hour != b.five_hour:
-        return f"meter moved {a.five_hour:g}% -> {b.five_hour:g}%"
-    return watch.check() if watch is not None else None
+        return Skip("busy", f"meter moved {a.five_hour:g}% -> {b.five_hour:g}%")
+    reason = watch.check() if watch is not None else None
+    return Skip("busy", reason) if reason is not None else None
 
 
 def is_idle(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
@@ -856,25 +922,36 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
                    now: Callable[[], datetime] | None = None, deadline: datetime | None = None,
                    processes: Callable[[], list[tuple[int, Path]]] = claude_processes,
                    session_status: Callable[[Path, int], SessionState] = read_session_status,
-                   log: Callable[[str], None] = _log_stderr):
-    """Return the first idle account, or None once the wait or the deadline runs out.
+                   log: Callable[[str], None] = _log_stderr, weekly_max_pct: float = WEEKLY_MAX_PCT,
+                   skipped: dict[str, Skip] | None = None):
+    """Return the first account fit to probe, or None once the wait or the deadline runs out.
 
-    Each rejection is logged as `<name> busy: <reason>` (`dave busy: pid 491402`,
-    `dave busy: meter moved 7% -> 8%`) so the probe log explains the choice; a pid
-    reason names only the sessions judged busy. `processes` is the host process lister
-    (`claude_processes` by default) and `session_status` the per-session status reader
-    (`read_session_status`); tests inject both.
+    An account is passed over when it is busy (busy_reason's checks) or when its
+    seven-day meter reads above `weekly_max_pct` (issue #38), and each is logged as
+    `<name> <kind>: <why>` -- `dave busy: pid 491402`, `dave busy: meter moved 7% -> 8%`,
+    `dave weekly: 99% of the seven-day limit used, above 90%` -- so the probe log says
+    which reason applied to which account; a pid reason names only the sessions judged
+    busy. Every account whose meter is read also logs `<name> weekly meter N%`, the
+    figure its choice was made on (skip_reason). A weekly skip is retried like a busy
+    one, at one meter read per retry. `skipped`, when given, is filled with each
+    passed-over account's latest Skip, so a caller left with None can say why.
+    `processes` is the host process lister (`claude_processes` by default) and
+    `session_status` the per-session status reader (`read_session_status`); tests
+    inject both.
     """
     waited = 0.0
     while True:
         if deadline is not None and now is not None and now() >= deadline:
             return None
         for name, cfg in accounts:
-            reason = busy_reason(read_for(name), sleep, cfg=cfg, processes=processes,
-                                 session_status=session_status)
-            if reason is None:
+            skip = skip_reason(read_for(name), sleep, cfg=cfg, processes=processes,
+                               session_status=session_status, weekly_max_pct=weekly_max_pct,
+                               note=lambda line, name=name: log(f"{name} {line}"))
+            if skip is None:
                 return (name, cfg)
-            log(f"{name} busy: {reason}")
+            if skipped is not None:
+                skipped[name] = skip
+            log(f"{name} {skip.kind}: {skip.why}")
         if waited >= max_wait_s:
             return None
         if deadline is not None and now is not None and now() >= deadline:
@@ -986,10 +1063,18 @@ def main(argv: list[str] | None = None) -> int:
 
     def read_for(name):
         return lambda: read_usage(account_cfgs[name], fetch=fetch)
+    skipped: dict[str, Skip] = {}
     picked = choose_account(accounts, read_for, time.sleep, max_wait_s=a.max_wait,
-                            now=clock, deadline=deadline)
+                            now=clock, deadline=deadline, skipped=skipped)
     if picked is None:
-        print("probe skipped: no idle account within max wait", file=sys.stderr)
+        # Every account passed over. Busy alone keeps the line it has always had; once a
+        # weekly meter is among the reasons the line says so and names each account's,
+        # so a spent week does not read as the "no idle account" blackout of issue #21.
+        if any(s.kind == "weekly" for s in skipped.values()):
+            why = "; ".join(f"{n} {s.kind}: {s.why}" for n, s in skipped.items())
+            print(f"probe skipped: no usable account within max wait ({why})", file=sys.stderr)
+        else:
+            print("probe skipped: no idle account within max wait", file=sys.stderr)
         return 3
     name, cfg = picked
     # The same check the pre-check used, re-run after every meter reading and compared

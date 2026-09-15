@@ -31,6 +31,16 @@ dave busy: meter moved 7% -> 8%
 probe skipped: no idle account within max wait
 """
 
+# Issue #38: dave passed over for its weekly meter, jwork for a session mid-turn.
+WEEKLY_SKIP_LOG = """00:00:01Z jwork busy: pid 1942517
+00:00:02Z dave weekly meter 99%
+00:00:02Z dave weekly: 99% of the seven-day limit used, above 90%
+00:15:03Z jwork busy: pid 1942517
+00:15:04Z dave weekly meter 99%
+00:15:04Z dave weekly: 99% of the seven-day limit used, above 90%
+probe skipped: no usable account within max wait (jwork busy: pid 1942517; dave weekly: 99% of the seven-day limit used, above 90%)
+"""
+
 CRASH_LOG = """jwork busy: pid 1942517, 2355887, 2877669
 prompt 9 (burst of 9): five_hour=6.0 resets_at=2026-09-13T02:30:00.654543+00:00 spent=input=18 output=45 cache_read=0 cache_write=349385
 prompt 37: five_hour=8.0 resets_at=2026-09-13T02:30:00.243439+00:00 spent=input=2 output=5 cache_read=9669 cache_write=29291
@@ -84,6 +94,15 @@ class TestSummary(unittest.TestCase):
         self.assertIn("dave was busy (meter moved 7% -> 8%)", s)
         self.assertIn("jwork was busy (pid 1942517, 2355887)", s)
         self.assertIn("nothing is broken", s)
+
+    def test_skipped_tells_a_weekly_meter_apart_from_a_busy_account(self):
+        s = summary("claude-opus-5", 3, "Rotation run", WEEKLY_SKIP_LOG)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because no "
+                                     "account was both idle and under its weekly limit within the 4-hour wait."))
+        self.assertIn("dave was too close to its weekly limit (99% of the seven-day limit used, above 90%)", s)
+        self.assertIn("jwork was busy (pid 1942517)", s)
+        self.assertIn("seven-day meter resets", s)
+        self.assertNotIn("Who was busy", s)
 
     def test_crash_quotes_the_exception_and_explains_a_401(self):
         s = summary("claude-sonnet-5", 1, "Rotation run", CRASH_LOG)

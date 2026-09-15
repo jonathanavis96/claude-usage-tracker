@@ -203,7 +203,7 @@ class IdleTests(unittest.TestCase):
                              lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
                              processes=procs, log=logged.append)
         self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
-        self.assertEqual(logged, ["dave busy: pid 491402"])
+        self.assertEqual(logged, ["dave busy: pid 491402", "jwork weekly meter 30%"])
 
     def test_choose_account_logs_a_meter_rejection_too(self):
         reads = {"dave": util_seq([7, 8]), "jwork": util_seq([3, 3])}
@@ -212,14 +212,83 @@ class IdleTests(unittest.TestCase):
                              lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
                              processes=lambda: [], log=logged.append)
         self.assertEqual(acc[0], "jwork")
-        self.assertEqual(len(logged), 1)
-        self.assertTrue(logged[0].startswith("dave busy: meter"), logged[0])
+        self.assertEqual(logged, ["dave weekly meter 30%", "dave busy: meter moved 7% -> 8%",
+                                  "jwork weekly meter 30%"])
 
     def test_choose_account_prefers_jwork_when_both_are_idle(self):
         reads = {"jwork": util_seq([3, 3]), "dave": util_seq([7, 7])}
         acc = choose_account([("jwork", Path("/h/.claude-javiswork")), ("dave", Path("/h/.claude-dave"))],
                              lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900, processes=lambda: [])
         self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
+
+
+def weekly(seven_day, five_hour=7.0):
+    """A meter reader whose every reading has this seven-day figure and a flat five-hour one."""
+    return lambda: Utilization(T0, five_hour, seven_day, "r1")
+
+
+class WeeklyMeterTests(unittest.TestCase):
+    """Issue #38: an account whose seven-day meter reads above WEEKLY_MAX_PCT is passed
+    over as a busy one is, and the log names the weekly meter, not busy, as the reason."""
+
+    DAVE = Path("/h/.claude-dave")
+    JWORK = Path("/h/.claude-javiswork")
+
+    def test_the_limit_is_90_percent(self):
+        from tracker.probe import WEEKLY_MAX_PCT
+        self.assertEqual(WEEKLY_MAX_PCT, 90)
+
+    def test_an_account_above_the_limit_falls_through_to_the_next(self):
+        # 2026-09-15: dave at 99% weekly as a build seat, jwork with room.
+        reads = {"dave": weekly(99.0), "jwork": weekly(42.0)}
+        logged = []
+        acc = choose_account([("dave", self.DAVE), ("jwork", self.JWORK)], lambda n: reads[n],
+                             lambda s: None, max_wait_s=0, retry_s=900, processes=lambda: [],
+                             log=logged.append)
+        self.assertEqual(acc, ("jwork", self.JWORK))
+        self.assertEqual(logged, ["dave weekly meter 99%",
+                                  "dave weekly: 99% of the seven-day limit used, above 90%",
+                                  "jwork weekly meter 42%"])
+
+    def test_90_itself_is_not_above_the_limit(self):
+        acc = choose_account([("dave", self.DAVE)], lambda n: weekly(90.0), lambda s: None,
+                             max_wait_s=0, retry_s=900, processes=lambda: [], log=lambda line: None)
+        self.assertEqual(acc, ("dave", self.DAVE))
+
+    def test_a_weekly_skip_spends_no_meter_window(self):
+        from tracker.probe import skip_reason, Skip
+        slept, reads = [], []
+
+        def read():
+            reads.append(1)
+            return Utilization(T0, 7.0, 99.0, "r1")
+        self.assertEqual(skip_reason(read, slept.append, cfg=self.DAVE, processes=lambda: []),
+                         Skip("weekly", "99% of the seven-day limit used, above 90%"))
+        self.assertEqual((slept, len(reads)), ([], 1))
+
+    def test_an_unreported_weekly_meter_fails_closed(self):
+        from tracker.probe import skip_reason, Skip
+        notes = []
+        self.assertEqual(skip_reason(weekly(None), lambda s: None, note=notes.append),
+                         Skip("weekly", "the usage endpoint reported no seven-day figure"))
+        self.assertEqual(notes, ["weekly meter not reported"])
+
+    def test_busy_and_weekly_are_logged_and_recorded_apart(self):
+        reads = {"dave": weekly(12.0), "jwork": weekly(95.0)}
+        logged, skipped = [], {}
+        acc = choose_account([("dave", self.DAVE), ("jwork", self.JWORK)], lambda n: reads[n],
+                             lambda s: None, max_wait_s=0, retry_s=900,
+                             processes=lambda: [(491402, self.DAVE)], log=logged.append, skipped=skipped)
+        from tracker.probe import Skip
+        self.assertIsNone(acc)
+        self.assertEqual(logged, ["dave busy: pid 491402", "jwork weekly meter 95%",
+                                  "jwork weekly: 95% of the seven-day limit used, above 90%"])
+        self.assertEqual(skipped, {"dave": Skip("busy", "pid 491402"),
+                                   "jwork": Skip("weekly", "95% of the seven-day limit used, above 90%")})
+
+    def test_the_busy_check_on_its_own_does_not_read_the_weekly_meter(self):
+        # busy_reason and is_idle keep their meaning; the limit is choose_account's.
+        self.assertTrue(is_idle(weekly(99.0), lambda s: None))
 
 
 class SessionStatusTests(unittest.TestCase):
@@ -283,7 +352,7 @@ class SessionStatusTests(unittest.TestCase):
                              session_status=lambda cfg, pid: state(statuses[pid]),
                              log=logged.append)
         self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
-        self.assertEqual(logged, ["dave busy: pid 2355887, 2881098"])
+        self.assertEqual(logged, ["dave busy: pid 2355887, 2881098", "jwork weekly meter 30%"])
 
     def test_an_account_whose_every_session_is_idle_is_picked(self):
         reads = {"dave": util_seq([7, 7])}
@@ -292,7 +361,7 @@ class SessionStatusTests(unittest.TestCase):
                              max_wait_s=0, retry_s=900, processes=self._procs(1942517, 2877669),
                              session_status=lambda cfg, pid: state("idle"), log=logged.append)
         self.assertEqual(acc, ("dave", self.DAVE))
-        self.assertEqual(logged, [])
+        self.assertEqual(logged, ["dave weekly meter 30%"])
 
 
 class SessionWatchTests(unittest.TestCase):
@@ -714,7 +783,7 @@ class PayloadCliTests(unittest.TestCase):
         captured = {}
 
         def fake_choose_account(accounts, read_for, sleep, max_wait_s=None, retry_s=None,
-                                now=None, deadline=None):
+                                now=None, deadline=None, skipped=None):
             return accounts[0]
 
         def fake_read_usage(cfg, fetch=None):
@@ -1242,6 +1311,43 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 4)
         self.assertNotIn("busy", c)  # no prompt was sent
         self.assertIn("probe aborted on dave: cannot watch", err.getvalue())
+
+    def _skipped(self, skips):
+        """main's exit and last line when choose_account passes over every account with
+        these reasons (name -> Skip)."""
+        import io
+        import contextlib
+        import tracker.probe as probe_mod
+        orig = probe_mod.choose_account
+
+        def fake_choose(accounts, *a, skipped=None, **k):
+            skipped.update(skips)
+            return None
+        probe_mod.choose_account = fake_choose
+        err = io.StringIO()
+        try:
+            with tempfile.TemporaryDirectory() as d, contextlib.redirect_stderr(err):
+                prices = Path(d, "prices.json")
+                prices.write_text(json.dumps(self.PRICES))
+                rc = probe_mod.main(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0",
+                                     "--prices", str(prices)])
+        finally:
+            probe_mod.choose_account = orig
+        return rc, err.getvalue().strip().splitlines()[-1]
+
+    def test_a_weekly_skip_changes_the_last_line_and_names_every_accounts_reason(self):
+        from tracker.probe import Skip
+        rc, last = self._skipped({"jwork": Skip("busy", "pid 1942517"),
+                                  "dave": Skip("weekly", "99% of the seven-day limit used, above 90%")})
+        self.assertEqual(rc, 3)
+        self.assertEqual(last, "probe skipped: no usable account within max wait (jwork busy: pid 1942517; "
+                               "dave weekly: 99% of the seven-day limit used, above 90%)")
+
+    def test_every_account_busy_keeps_the_no_idle_account_line(self):
+        from tracker.probe import Skip
+        rc, last = self._skipped({"jwork": Skip("busy", "pid 1942517"), "dave": Skip("busy", "pid 491402")})
+        self.assertEqual(rc, 3)
+        self.assertEqual(last, "probe skipped: no idle account within max wait")
 
     def test_output_payload_keeps_its_fixed_reply_size(self):
         rc, c = self._capture(["--model", "claude-fable-5-1", "--payload", "output",
