@@ -86,7 +86,7 @@ report_failure() {
   esac
 }
 
-# The rotation's flags: "--model M --expect-tokens-per-pct N". Word-split on purpose.
+# The rotation's flags: "--model M --expect-usd-per-pct D". Word-split on purpose.
 FLAGS="$(python3 -m tracker.rotate flags --history "$HISTORY")" || exit 1
 # shellcheck disable=SC2086
 set -- $FLAGS

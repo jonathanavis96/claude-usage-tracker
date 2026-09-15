@@ -103,13 +103,15 @@ python3 -m tracker.rotate plan
 Running a probe directly spends real subscription allowance on whichever
 account it uses — it is not a no-op. See `tracker/probe.py`'s `argparse`
 setup for the full flag list; the required ones are `--model` and
-`--expect-tokens-per-pct` (the assumed tokens-per-1% rate, used to size the
-prompts and bursts). Without `--out history/probes.jsonl` the row lands in a
-separate `probes.jsonl` in the working directory and never enters the rotation
-or the published page:
+`--expect-usd-per-pct` (the assumed meter dollars per 1%, which sizes the
+prompt on the model's own prices and, through it, the bursts; an output run
+takes `--expect-tokens-per-pct` instead, since its reply size is fixed).
+Without `--out history/probes.jsonl` the row lands in a separate
+`probes.jsonl` in the working directory and never enters the rotation or the
+published page:
 
 ```
-python3 -m tracker.probe --model claude-sonnet-5 --expect-tokens-per-pct 500000 --out history/probes.jsonl
+python3 -m tracker.probe --model claude-sonnet-5 --expect-usd-per-pct 0.96 --out history/probes.jsonl
 ```
 
 Publishing the public JSON from current history. Publishing also recomputes
