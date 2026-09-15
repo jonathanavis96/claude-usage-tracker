@@ -24,10 +24,6 @@
 # runs on two accounts (2026-09-06 Dave, $0.59 of list value per 1%; 2026-09-15
 # jwork, $0.55-0.60 over two ticks), so weekly is more than it needs. One run is
 # about $3 of list value, 5% of one five-hour window, 45 minutes.
-#
-# tracker.probe needs --expect-tokens-per-pct. For an output payload it only
-# sizes each span's opening burst (the reply is a fixed 4,000 words); the
-# literal below is the 2026-09-06 12:06 Fable output row, 31,724 tokens per 1%.
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.." || exit 1
