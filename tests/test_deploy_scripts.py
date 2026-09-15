@@ -389,6 +389,25 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertIn("Probe skipped: no idle account for claude-opus-5", alerts)
         self.assertEqual(log, ["seed"])
 
+    def test_first_run_failure_body_leads_with_a_plain_language_summary(self):
+        proc, args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[4])
+        self.assertEqual(proc.returncode, 4, proc.stderr + proc.stdout)
+        self.assertIn("Probe aborted on claude-opus-5", alerts)
+        # tracker.report ran for real (the stub only fakes probe and alert): summary first,
+        # the captured probe log under the rule.
+        self.assertIn("Outcome: FAILED. Rotation run for Opus 5 stopped", alerts)
+        self.assertIn("Debug log (last 1 of 1 lines of out/probe-last.log; tracker.probe exit code 4):", alerts)
+        self.assertIn("fake probe 1 rc 4", alerts)
+        self.assertEqual(log, ["seed"])
+
+    def test_an_unknown_exit_code_is_reported_as_a_crash_not_swallowed(self):
+        proc, args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[1])
+        self.assertEqual(proc.returncode, 1, proc.stderr + proc.stdout)
+        self.assertIn("Probe crashed on claude-opus-5 (exit 1)", alerts)
+        self.assertIn("Outcome: CRASHED.", alerts)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(log, ["seed"])
+
     def test_no_usable_history_means_no_flags_and_no_probe(self):
         proc, args, alerts, _rows, _log = self._run([])
         self.assertEqual(proc.returncode, 1)

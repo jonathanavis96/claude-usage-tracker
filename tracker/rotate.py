@@ -3,11 +3,12 @@
 `bin/probe.sh` is a thin caller of this module. Each subcommand answers one question
 from `history/probes.jsonl` (the same rows the publisher reads) and `data/prices.json`:
 
-  plan    dry run: the flags every model in the rotation would be probed with, and
+  plan    dry run: the flags every model in the rotation would be probed with, what
+          they buy (payload words and the token expectation the probe derives), and
           which one is next (the default subcommand).
   next    the next model in the rotation: the one after the last prose row's model,
           in the fixed order Sonnet, Opus, Fable (an empty history starts at Sonnet).
-  flags   `--model M --expect-tokens-per-pct N` for the next model (or `--model`), one
+  flags   `--model M --expect-usd-per-pct D` for the next model (or `--model`), one
           shell-splittable line. `--rerun` gives the flags for the confirmation run
           after a drift: the drifted row's model, `--ticks 2`, and the smaller of the
           earlier median and the drifted reading as the expectation, so the opening
@@ -26,13 +27,25 @@ from `history/probes.jsonl` (the same rows the publisher reads) and `data/prices
           from the earlier median); anything else is inconclusive and flags nothing.
           Prints the verdict for the alert.
 
-Expectation is the tokens per 1% the probe assumes before it starts, and it comes from
-the dollar invariant in tracker.publish rather than from the target model's own rows:
-the median meter-dollar value per 1% of the last four usable prose rows, any model,
-divided by the target model's blended meter price per token for probe traffic (the class
-split of that model's own latest prose row, or of the latest prose row when it has none)
-and by its meter_weight. So Opus and Fable get an expectation before they have ever
-been probed, and every model's expectation moves together when the limit moves.
+Expectation is what the probe assumes before it starts, and it comes from the dollar
+invariant in tracker.publish rather than from the target model's own rows: the median
+meter-dollar value per 1% of the last four usable prose rows, any model. That figure is
+handed to the probe as is (`--expect-usd-per-pct`), which sizes its payload from it on
+the target model's own prices (tracker.probe.payload_words_for) and derives the tokens
+per 1% that size its bursts from the payload (tracker.probe.tokens_per_pct_for);
+`Expectation` carries all three so `plan` can show them. So Opus and Fable get an
+expectation before they have ever been probed, and every model's expectation moves
+together when the limit moves.
+
+Until 2026-09-15 the dollars were converted to tokens here, through the blended price
+of the previous row's class split, and the probe sized its payload from that token
+count. The fixed per-prompt overhead is cache_read and the payload is cache_write, so
+the payload that count bought had a different split from the row that priced it, was
+worth less than the twelfth of a tick it was meant to be, and moved the next
+conversion in turn: Fable's payload flipped between the clamps every generation and
+Opus's 2026-09-15 row read $0.469 per 1% against a median near $0.96 (issue #24).
+Sizing in dollars has no such loop: the same median gives the same payload whatever
+the last row looked like.
 
 Rows are usable when they are prose (no `payload` key, from before the flag existed, or
 `"payload": "prose"`) and not flagged `outlier`; the rules live in tracker/rows.py and the
@@ -47,7 +60,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import median
-from .publish import blended_price_per_token, load_probes, usd_per_pct
+from .probe import payload_words_for, tokens_per_pct_for
+from .publish import load_probes, usd_per_pct
 from .rows import is_output, is_outlier
 
 ROTATION = ("claude-sonnet-5", "claude-opus-5", "claude-fable-5-1")
@@ -55,7 +69,6 @@ DRIFT_THRESHOLD = 0.15
 MEDIAN_ROWS = 4  # the same lookback tracker.detect uses for its plateau median
 RERUN_TICKS = 2
 EXIT_DRIFT = 10
-CLASSES = ("input", "output", "cache_read", "cache_write")
 
 
 def _ts(row: dict) -> datetime:
@@ -91,17 +104,21 @@ def next_model(rows: list[dict]) -> str:
     return ROTATION[(ROTATION.index(last) + 1) % len(ROTATION)]
 
 
-def _split(row: dict) -> dict:
-    tokens = row["tokens"]
-    total = sum(tokens[c] for c in CLASSES)
-    return {c: tokens[c] / total for c in CLASSES}
+@dataclass(frozen=True)
+class Expectation:
+    usd_per_pct: float  # meter dollars per 1%: the invariant median, what the probe is handed
+    payload_words: int  # the prose payload the probe will cut for it on this model's prices
+    tokens_per_pct: float  # the token expectation the probe derives from that payload
 
 
-def expectation(rows: list[dict], model: str, prices: dict) -> float | None:
-    """Tokens per 1% the probe on `model` should expect, through the dollar invariant.
+def expectation(rows: list[dict], model: str, prices: dict) -> Expectation | None:
+    """What the probe on `model` should expect, through the dollar invariant: the median
+    meter dollars per 1% of the last four usable prose rows on any priced model, with
+    the payload and token expectation the probe will derive from it.
 
-    None when no usable prose row on a priced model exists yet: the caller has no
-    basis for a burst size and must say so rather than guess.
+    None when no usable prose row on a priced model exists yet, or `model` has no
+    price: the caller has no basis for a payload or a burst size and must say so
+    rather than guess.
     """
     price = prices.get(model)
     if price is None:
@@ -111,10 +128,8 @@ def expectation(rows: list[dict], model: str, prices: dict) -> float | None:
         return None
     recent = usable[-MEDIAN_ROWS:]
     dollars = median(usd_per_pct(r, prices[r["model"]]) for r in recent)
-    own = [r for r in usable if r["model"] == model]
-    split = _split(own[-1] if own else usable[-1])
-    per_token = blended_price_per_token(split, price) * price.get("meter_weight", 1.0)
-    return dollars / per_token
+    words = payload_words_for(dollars, price)
+    return Expectation(dollars, words, tokens_per_pct_for(words))
 
 
 @dataclass(frozen=True)
@@ -236,6 +251,11 @@ def _pct(ratio: float) -> str:
     return f"{ratio * 100:+.0f}%"
 
 
+def _usd(value: float) -> str:
+    """Four decimals: a hundredth of a cent on a figure near $1, far inside probe noise."""
+    return f"{value:.4f}"
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Rotation, expectation and drift check for bin/probe.sh")
@@ -260,8 +280,9 @@ def main(argv: list[str] | None = None) -> int:
         nxt = next_model(rows)
         for model in ROTATION:
             e = expectation(rows, model, prices)
-            flags = (f"--model {model} --expect-tokens-per-pct {round(e)}" if e is not None
-                     else f"--model {model} --expect-tokens-per-pct (none: no usable prose row)")
+            flags = (f"--model {model} --expect-usd-per-pct {_usd(e.usd_per_pct)}  "
+                     f"# {e.payload_words} words, {round(e.tokens_per_pct)} tokens per 1%" if e is not None
+                     else f"--model {model} --expect-usd-per-pct (none: no usable prose row)")
             print(f"{flags}{'  <- next' if model == nxt else ''}")
         return 0
 
@@ -271,20 +292,14 @@ def main(argv: list[str] | None = None) -> int:
             if d is None or d.median is None:
                 print("flags --rerun: newest row is not a prose row with an earlier median", file=sys.stderr)
                 return 1
-            # Convert the dollar median back to tokens through the drifted row's own
-            # split, same as expectation does, so the burst size is still a token count.
-            drifted = _by_ts(rows)[-1]
-            price = prices[d.model]
-            per_token = blended_price_per_token(_split(drifted), price) * price.get("meter_weight", 1.0)
-            tokens = round(min(d.median, d.value) / per_token)
-            print(f"--model {d.model} --expect-tokens-per-pct {tokens} --ticks {RERUN_TICKS}")
+            print(f"--model {d.model} --expect-usd-per-pct {_usd(min(d.median, d.value))} --ticks {RERUN_TICKS}")
             return 0
         model = a.model or next_model(rows)
         e = expectation(rows, model, prices)
         if e is None:
             print(f"flags: no usable prose row to set an expectation for {model}", file=sys.stderr)
             return 1
-        print(f"--model {model} --expect-tokens-per-pct {round(e)}")
+        print(f"--model {model} --expect-usd-per-pct {_usd(e.usd_per_pct)}")
         return 0
 
     if a.command == "check":

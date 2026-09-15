@@ -716,37 +716,66 @@ def bursts(r):
     return [x.get("burst") for x in r.readings]
 
 
+PRICES = {"claude-sonnet-5": {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5,
+                              "meter_weight": 1.0, "class_weight": {"output": 1.8}},
+          "claude-opus-5": {"input": 5, "output": 25, "cache_read": 0.5, "cache_write": 6.25,
+                            "meter_weight": 1.0, "class_weight": {"output": 1.8}},
+          "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25, "cache_write": 12.5,
+                               "meter_weight": 1.0, "class_weight": {"output": 1.8}}}
+
+
+def prompt_meter_usd(words, price):
+    """Meter dollars one prose prompt of `words` costs on `price`: the payload's cache_write
+    plus the fixed per-prompt overhead, class-weighted, times the model's meter_weight."""
+    from tracker.probe import FIXED_PROMPT_SPLIT, TOKENS_PER_WORD
+    from tracker.publish import meter_usd
+    tokens = dict(FIXED_PROMPT_SPLIT)
+    tokens["cache_write"] += round(words * TOKENS_PER_WORD)
+    return meter_usd(tokens, price) * price.get("meter_weight", 1.0)
+
+
 class PromptSizeTests(unittest.TestCase):
-    def test_one_prompt_is_a_twelfth_of_a_tick_after_fixed_overhead(self):
-        # 527,647 is roughly the last published Sonnet rate: large enough that the
-        # target survives subtracting FIXED_PROMPT_TOKENS without hitting MIN_PAYLOAD_WORDS,
-        # so this checks the un-clamped formula end to end.
-        from tracker.probe import payload_words_for, TOKENS_PER_WORD, PROMPTS_PER_TICK, FIXED_PROMPT_TOKENS
-        expect = 527_647
-        words = payload_words_for(expect)
-        self.assertEqual(words, round((expect / PROMPTS_PER_TICK - FIXED_PROMPT_TOKENS) / TOKENS_PER_WORD))
-        self.assertEqual(words, 9_363)
-        total_tokens = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
-        self.assertAlmostEqual(total_tokens / expect, 1 / PROMPTS_PER_TICK, places=3)
+    """payload_words_for sizes the prose payload in meter dollars (issue #24): one prompt,
+    fixed overhead included, is worth a PROMPTS_PER_TICK-th of the expected tick on the
+    target model's own prices, so the size depends on nothing a previous row measured."""
+
+    def test_fixed_overhead_is_split_by_class(self):
+        from tracker.probe import FIXED_PROMPT_SPLIT, FIXED_PROMPT_TOKENS
+        self.assertEqual(FIXED_PROMPT_SPLIT, {"input": 2, "output": 5, "cache_read": 11473, "cache_write": 0})
+        self.assertEqual(sum(FIXED_PROMPT_SPLIT.values()), FIXED_PROMPT_TOKENS)
+        self.assertEqual(FIXED_PROMPT_TOKENS, 11480)
+
+    def test_one_prompt_is_a_twelfth_of_a_tick_in_meter_dollars(self):
+        # Issue #24's worked example: at $0.95 per 1% Opus gets about 3,380 words and
+        # Fable about 1,754 (3,375 and 1,748 here: the five output tokens of the overhead
+        # carry their 1.8 class weight). Twelve such prompts pay for the tick exactly.
+        from tracker.probe import payload_words_for, PROMPTS_PER_TICK
+        for model, want in (("claude-opus-5", 3375), ("claude-fable-5-1", 1748), ("claude-sonnet-5", 8850)):
+            words = payload_words_for(0.95, PRICES[model])
+            self.assertEqual(words, want, model)
+            self.assertAlmostEqual(PROMPTS_PER_TICK * prompt_meter_usd(words, PRICES[model]), 0.95,
+                                   delta=0.95 * 0.001, msg=model)
 
     def test_prompt_size_is_clamped_to_the_word_range(self):
         from tracker.probe import payload_words_for
-        self.assertEqual(payload_words_for(20_000_000), 12_000)
-        self.assertEqual(payload_words_for(20_000), 500)
+        self.assertEqual(payload_words_for(100.0, PRICES["claude-opus-5"]), 12_000)
+        self.assertEqual(payload_words_for(0.05, PRICES["claude-opus-5"]), 500)
 
-    def test_low_expectation_keeps_at_least_eight_prompts_per_span(self):
-        # 166,705 is the Fable rate that produced the early-tick bug on 2026-09-09. After
-        # the fixed overhead the payload is small (about 695 words) but not clamped, so a
-        # span is 12 prompts at expectation and still >= 8 when the true rate is 30% lower.
-        from tracker.probe import payload_words_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS, MIN_PAYLOAD_WORDS
-        words = payload_words_for(166_705)
-        self.assertGreater(words, MIN_PAYLOAD_WORDS)
-        per_prompt = words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
-        self.assertGreaterEqual(int(0.7 * 166_705 // per_prompt), 8)
-        # At the 113k actually measured that day the clamp applies and the span is still >= 8.
-        words = payload_words_for(113_303)
-        self.assertEqual(words, MIN_PAYLOAD_WORDS)
-        self.assertGreaterEqual(int(113_303 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS)), 8)
+    def test_meter_weight_scales_the_dollar_target(self):
+        # a model the meter charges twice as hard per list dollar gets half the dollars
+        # of payload for the same twelfth of a tick
+        from tracker.probe import payload_words_for
+        heavy = dict(PRICES["claude-opus-5"], meter_weight=2.0)
+        self.assertEqual(payload_words_for(0.95, heavy), payload_words_for(0.475, PRICES["claude-opus-5"]))
+
+    def test_token_expectation_follows_the_payload(self):
+        # the token expectation is what the sized prompt spends, PROMPTS_PER_TICK times
+        # over, so the burst it sizes is 80% of a twelve-prompt span whatever the model
+        from tracker.probe import (FIXED_PROMPT_TOKENS, PROMPTS_PER_TICK, TOKENS_PER_WORD, _burst_size,
+                                   tokens_per_pct_for)
+        self.assertEqual(tokens_per_pct_for(3375), PROMPTS_PER_TICK * (3375 * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS))
+        self.assertEqual(_burst_size(tokens_per_pct_for(3375), 0.8, [], 3375, room=100), 9)
+        self.assertEqual(_burst_size(tokens_per_pct_for(12_000), 0.8, [], 12_000, room=100), 9)
 
     def test_output_prompt_takes_a_reply_size(self):
         from tracker.probe import output_prompt, OUTPUT_REPLY_WORDS
@@ -983,20 +1012,41 @@ class CliTests(unittest.TestCase):
         return rc, captured
 
     def test_defaults_are_three_ticks_skip_one_and_the_expectation_sizes_the_prompt(self):
-        # 117,897 is a low enough expectation that the fixed per-prompt overhead leaves
-        # less than MIN_PAYLOAD_WORDS (500) of budget per prompt, so sizing clamps to it.
-        rc, c = self._capture(["--model", "claude-fable-5-1", "--expect-tokens-per-pct", "117897"])
+        # At $1 per million for every class, $0.15 per 1% leaves a twelfth of a tick
+        # ($0.0125) minus the $0.01148 overhead: under MIN_PAYLOAD_WORDS (500) of budget,
+        # so sizing clamps to it, and the token expectation is what twelve such prompts
+        # spend, not a number handed in.
+        from tracker.probe import tokens_per_pct_for
+        rc, c = self._capture(["--model", "claude-fable-5-1", "--expect-usd-per-pct", "0.15"])
         self.assertEqual(rc, 4)
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"]), (3, 1, 60))
-        self.assertEqual(c["expect_tokens_per_pct"], 117897.0)
         self.assertEqual(c["payload_words"], 500)
+        self.assertEqual(c["expect_tokens_per_pct"], tokens_per_pct_for(500))
         self.assertGreaterEqual(len(c["prompt_text"].split()), 500)
         self.assertLess(len(c["prompt_text"].split()), 500 + 40)
 
     def test_flags_reach_run_tick_probe(self):
-        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000",
+        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0",
                                "--ticks", "2", "--skip", "0", "--settle", "30"])
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"], c["payload_words"]), (2, 0, 30.0, 12_000))
+
+    def test_prose_takes_dollars_and_output_takes_tokens(self):
+        # the payload decides which expectation makes sense: prose is sized from dollars
+        # and derives its tokens; output has a fixed reply and only sizes bursts from tokens
+        with self.assertRaises(SystemExit):
+            self._capture(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000"])
+        with self.assertRaises(SystemExit):
+            self._capture(["--model", "claude-fable-5-1", "--payload", "output", "--expect-usd-per-pct", "1.0"])
+        with self.assertRaises(SystemExit):
+            self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0",
+                           "--expect-tokens-per-pct", "700000"])
+
+    def test_too_few_prompts_per_tick_at_the_minimum_payload_exits_4_before_any_prompt(self):
+        # $0.05 per 1% is under four minimum-payload prompts ($0.013215 each): the span
+        # could not average the meter lag out, so the run refuses without probing
+        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "0.05"])
+        self.assertEqual(rc, 4)
+        self.assertNotIn("payload_words", c)
 
     def test_default_accounts_are_jwork_then_dave(self):
         import tracker.probe as probe_mod
@@ -1010,7 +1060,7 @@ class CliTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d:
                 prices = Path(d, "prices.json")
                 prices.write_text(json.dumps(self.PRICES))
-                rc = probe_mod.main(["--model", "claude-sonnet-5", "--expect-tokens-per-pct", "700000",
+                rc = probe_mod.main(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0",
                                      "--prices", str(prices)])
         finally:
             probe_mod.choose_account = orig
@@ -1045,24 +1095,26 @@ class CliTests(unittest.TestCase):
 class InitialBurstTests(unittest.TestCase):
     def test_first_burst_counts_the_fixed_overhead_per_prompt(self):
         # Before any prompt has run, a prompt is estimated as payload plus the fixed
-        # overhead; at the Fable expectation of 166,705 the burst is 80% of a 12-prompt
-        # span, about 9, where the payload-only estimate would have fired 55.
-        from tracker.probe import _burst_size, payload_words_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS
-        words = payload_words_for(166_705)
-        k = _burst_size(166_705, 0.8, [], words, room=100)
-        expected = int(0.8 * 166_705 // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS))
-        self.assertEqual(k, expected)
-        self.assertLessEqual(k, 10)
+        # overhead; the Fable payload for $0.95 per 1% is about 1,750 words, so the
+        # payload-only estimate would fire a burst of 27 where the span is 12 prompts.
+        from tracker.probe import _burst_size, payload_words_for, tokens_per_pct_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS
+        words = payload_words_for(0.95, PRICES["claude-fable-5-1"])
+        expect = tokens_per_pct_for(words)
+        k = _burst_size(expect, 0.8, [], words, room=100)
+        self.assertEqual(k, int(0.8 * expect // (words * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS)))
+        self.assertEqual(k, 9)
+        self.assertGreater(int(0.8 * expect // (words * TOKENS_PER_WORD)), 20)
 
 
 class LowExpectationRefusalTests(unittest.TestCase):
     def test_expectation_too_low_for_eight_prompts_is_refused(self):
-        from tracker.probe import (FIXED_PROMPT_TOKENS, MIN_PAYLOAD_WORDS, MIN_PROMPTS_PER_SPAN,
-                                   TOKENS_PER_WORD, payload_words_for)
-        floor_prompt = MIN_PAYLOAD_WORDS * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS
+        # The fixed overhead puts a floor under a prompt's cost; dollars per 1% that buy
+        # fewer than MIN_PROMPTS_PER_SPAN floor prompts cannot be sized into a usable span.
+        from tracker.probe import MIN_PAYLOAD_WORDS, MIN_PROMPTS_PER_SPAN, payload_words_for
+        price = PRICES["claude-opus-5"]
+        floor_prompt = prompt_meter_usd(MIN_PAYLOAD_WORDS, price)
         too_low = floor_prompt * (MIN_PROMPTS_PER_SPAN - 1)
-        self.assertEqual(payload_words_for(too_low), MIN_PAYLOAD_WORDS)
+        self.assertEqual(payload_words_for(too_low, price), MIN_PAYLOAD_WORDS)
         self.assertLess(too_low / floor_prompt, MIN_PROMPTS_PER_SPAN)
         fine = floor_prompt * MIN_PROMPTS_PER_SPAN
-        self.assertGreaterEqual(fine / (payload_words_for(fine) * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS),
-                                MIN_PROMPTS_PER_SPAN)
+        self.assertGreaterEqual(fine / prompt_meter_usd(payload_words_for(fine, price), price), MIN_PROMPTS_PER_SPAN)

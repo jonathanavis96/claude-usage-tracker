@@ -14,9 +14,10 @@
 # reflect the probe's own success/failure, not a transient git hiccup) --
 # but the probe row is still lost if push fails, so the log line matters.
 #
-# tracker.probe needs --expect-tokens-per-pct. For an output payload it only
-# sizes each span's opening burst (the reply is a fixed 4,000 words); the
-# literal below is the 2026-09-06 12:06 Fable output row, 31,724 tokens per 1%.
+# An output run takes --expect-tokens-per-pct (a prose run takes dollars and
+# sizes its payload from them; the reply here is a fixed 4,000 words, so the
+# expectation only sizes each span's opening burst). The literal below is the
+# 2026-09-06 12:06 Fable output row, 31,724 tokens per 1%.
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.." || exit 1
@@ -51,12 +52,18 @@ python3 -m tracker.probe --model "$MODEL" --effort low --payload "$PAYLOAD" --ti
   --out history/probes.jsonl --expect-tokens-per-pct "$EXPECT" 2>&1 | tee "$PROBE_LOG"
 rc=${PIPESTATUS[0]}
 
-case "$rc" in
-  3) alert_jonathan "Output probe skipped: no idle account for $MODEL" \
-       "$(printf 'tracker.probe --payload output exited 3 (no idle account within the wait). The output class weight keeps its current value until next Sunday.\n\nLast lines:\n%s\n' "$(tail -n 20 "$PROBE_LOG")")" ;;
-  4) alert_jonathan "Output probe aborted on $MODEL" \
-       "$(printf 'tracker.probe --payload output exited 4 (window reset or a jump it could not explain). No row was written; the output class weight keeps its current value until next Sunday.\n\nLast lines:\n%s\n' "$(tail -n 20 "$PROBE_LOG")")" ;;
-esac
+# The alert body comes from tracker/report.py: a plain-language summary first, the raw
+# log tail underneath. Exit codes other than 3 and 4 are crashes and are reported too.
+if [ "$rc" -ne 0 ]; then
+  body="$(python3 -m tracker.report --model "$MODEL" --rc "$rc" --what "Weekly output probe" \
+            --payload output --log "$PROBE_LOG" 2>&1)" \
+    || body="$(printf 'tracker.probe --payload output exited %s. (tracker.report failed: %s)\n\nLast lines:\n%s\n' "$rc" "$body" "$(tail -n 20 "$PROBE_LOG")")"
+  case "$rc" in
+    3) alert_jonathan "Output probe skipped: no idle account for $MODEL" "$body" ;;
+    4) alert_jonathan "Output probe aborted on $MODEL" "$body" ;;
+    *) alert_jonathan "Output probe crashed on $MODEL (exit $rc)" "$body" ;;
+  esac
+fi
 
 if [ "$rc" -eq 0 ]; then
   git add history/probes.jsonl
