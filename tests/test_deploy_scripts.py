@@ -15,8 +15,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from tracker.publish import blended_price_per_token, usd_per_pct
-from tracker.rotate import _split, expectation
+from tracker.publish import usd_per_pct
+from tracker.rotate import _usd, expectation
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "bin"
@@ -311,7 +311,9 @@ class TestProbeShFlow(unittest.TestCase):
         proc, args, alerts, rows, log = self._run([SONNET_0939], [opus])
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         self.assertEqual(len(args), 1)
-        self.assertIn("--model claude-opus-5 --expect-tokens-per-pct 187111", args[0])
+        # Opus's first run: the dollar median of the one usable row, handed over as is
+        # (#27); the probe sizes its own payload from it on Opus's prices.
+        self.assertIn("--model claude-opus-5 --expect-usd-per-pct 0.9789", args[0])
         self.assertIn("--effort low", args[0])
         self.assertNotIn("--ticks", args[0])
         self.assertIn("drift check: ok claude-opus-5 $1.188/1%: no earlier prose row", proc.stdout)
@@ -329,17 +331,16 @@ class TestProbeShFlow(unittest.TestCase):
         # first run: Sonnet's turn, expectation through the dollar invariant from the
         # median of the Sonnet and Fable dollar values (about $1.03 per 1%)
         prices = {k: v for k, v in json.loads((ROOT / "data" / "prices.json").read_text()).items() if not k.startswith("_")}
-        expect = round(expectation([SONNET_0939, FABLE], "claude-sonnet-5", prices))
-        self.assertIn(f"--model claude-sonnet-5 --expect-tokens-per-pct {expect}", args[0])
-        self.assertGreater(expect, 467779)
-        self.assertLess(expect, 579819)
-        # rerun: same model, 2 ticks, the smaller of the median and the drifted reading
-        # (in dollars), converted back to tokens through the drifted row's own split
+        expect = expectation([SONNET_0939, FABLE], "claude-sonnet-5", prices)
+        self.assertIn(f"--model claude-sonnet-5 --expect-usd-per-pct {_usd(expect.usd_per_pct)}", args[0])
+        self.assertGreater(expect.usd_per_pct, 0.97)
+        self.assertLess(expect.usd_per_pct, 1.10)
+        # rerun: same model, 2 ticks, the smaller of the median and the drifted reading,
+        # in dollars (the probe converts to tokens itself since #27)
         price = prices["claude-sonnet-5"]
         median_usd = usd_per_pct(SONNET_0939, price)
-        per_token = blended_price_per_token(_split(SONNET_1433), price) * price.get("meter_weight", 1.0)
-        rerun_expect = round(min(median_usd, usd_per_pct(SONNET_1433, price)) / per_token)
-        self.assertIn(f"--model claude-sonnet-5 --expect-tokens-per-pct {rerun_expect} --ticks 2", args[1])
+        rerun_usd = min(median_usd, usd_per_pct(SONNET_1433, price))
+        self.assertIn(f"--model claude-sonnet-5 --expect-usd-per-pct {_usd(rerun_usd)} --ticks 2", args[1])
         self.assertIn("drift check: drift claude-sonnet-5 $1.132/1% against median $0.979/1% (+16%)", proc.stdout)
         self.assertIn("decision: outlier claude-sonnet-5", proc.stdout)
         self.assertEqual([r.get("outlier", False) for r in rows], [False, False, True, False])
