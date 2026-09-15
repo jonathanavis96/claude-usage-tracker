@@ -37,7 +37,7 @@ from that push.
 
 ## Weekly output class weight
 
-`output-probe.sh` runs Sunday 06:00 UTC: a 5-tick Fable 5.1 probe with
+`output-probe.sh` runs every other Sunday 06:00 UTC (the cron line fires weekly; the script exits 0 on odd ISO weeks): a 5-tick Fable 5.1 probe with
 `--payload output`, appended to `history/probes.jsonl` tagged
 `"payload": "output"`. It measures how hard the meter charges output tokens
 against their list price, not the limit, so the publisher keeps output rows
