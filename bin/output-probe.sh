@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Weekly on gs (Sunday 06:00 UTC): a 5-tick Fable 5.1 probe with --payload output.
+# Fortnightly on gs (every other Sunday 06:00 UTC; cron fires weekly and the
+# parity gate below skips the odd weeks): a 5-tick Fable 5.1 probe with --payload output.
 # This run does not measure the limit; it measures how hard the 5-hour meter
 # charges output tokens against their list price (the output class weight, see
 # tracker/weight.py and docs/spike-2026-09.md). The row it appends is tagged
@@ -18,6 +19,11 @@
 # sizes its payload from them; the reply here is a fixed 4,000 words, so the
 # expectation only sizes each span's opening burst). The literal below is the
 # 2026-09-06 12:06 Fable output row, 31,724 tokens per 1%.
+#
+# Cadence (2026-09-16): the output class weight is confirmed at about 1.8 by two
+# runs on two accounts (2026-09-06 Dave, $0.59 of list value per 1%; 2026-09-15
+# jwork, $0.55-0.60 over two ticks), so weekly is more than it needs. One run is
+# about $3 of list value, 5% of one five-hour window, 45 minutes.
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.." || exit 1
@@ -28,6 +34,14 @@ exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "output probe skipped: another tracker job holds $LOCK" >&2
   exit 5
+fi
+
+# Parity gate: run on even ISO weeks only. Week 38 of 2026 (the first even week
+# after this landed) runs; week 39 skips. `date +%V` is the ISO week number,
+# zero-padded, so `10#` keeps bash from reading 08 and 09 as octal.
+if [ $(( 10#$(date -u +%V) % 2 )) -ne 0 ]; then
+  echo "output probe skipped: odd ISO week $(date -u +%V), fortnightly cadence" >&2
+  exit 0
 fi
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
