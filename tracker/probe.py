@@ -426,16 +426,24 @@ def busy_pids(cfg: Path, processes: list[tuple[int, Path]]) -> list[int]:
     return [pid for pid, d in processes if Path(d).expanduser().resolve() == target]
 
 
+# An account this far into its seven-day limit is not probed: the probe's own spend
+# would push a nearly spent account over, and the seat that owns it needs the rest.
+WEEKLY_CEILING = 90.0
+
+
 def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
                 cfg: Path | None = None,
                 processes: Callable[[], list[tuple[int, Path]]] | None = None) -> str | None:
     """Why the account is busy, or None when it is idle.
 
-    Two checks, cheapest first. With `cfg` and `processes`, a live `claude` process on
-    that config dir is busy (`"pid 491402"`) and no meter read is spent. Then the meter:
-    two reads `window_s` apart must agree on the 5-hour percent within the same window
-    (`"meter moved 7% -> 8%"`, `"window reset"`). The meter check alone is too weak on
-    its own host: a busy account that is between prompts for two minutes passes it.
+    Three checks, cheapest first. With `cfg` and `processes`, a live `claude` process on
+    that config dir is busy (`"pid 491402"`) and no meter read is spent. Then the weekly
+    meter: an account at or above WEEKLY_CEILING percent of its seven-day limit is
+    refused (`"weekly 97% >= 90%"`) so a probe never lands on a nearly spent account, and
+    the two-minute window is not waited out for it. Then the 5-hour meter: two reads
+    `window_s` apart must agree on the percent within the same window (`"meter moved
+    7% -> 8%"`, `"window reset"`). The meter check alone is too weak on its own host: a
+    busy account that is between prompts for two minutes passes it.
 
     The process list is sampled again once the meter check passes: a session opened
     during the sleep has not necessarily moved the meter yet, and would otherwise be
@@ -452,6 +460,8 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     if reason is not None:
         return reason
     a = read()
+    if a.seven_day is not None and a.seven_day >= WEEKLY_CEILING:
+        return f"weekly {a.seven_day:g}% >= {WEEKLY_CEILING:g}%"
     sleep(window_s)
     b = read()
     if not _same_window(a, b):
