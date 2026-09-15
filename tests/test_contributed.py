@@ -220,7 +220,7 @@ class MergeTests(unittest.TestCase):
             self.assertEqual(merge(p, rows), 0)
             lines = p.read_text().splitlines()
             self.assertEqual(len(lines), 6)
-            keys = {(json.loads(l)["contributor_id"], json.loads(l)["ts"]) for l in lines}
+            keys = {(json.loads(line)["contributor_id"], json.loads(line)["ts"]) for line in lines}
             self.assertEqual(len(keys), 6)
 
     def test_a_changed_copy_of_an_existing_row_is_not_appended(self):
@@ -251,7 +251,7 @@ class MergeTests(unittest.TestCase):
 
 class _Response:
     def __init__(self, lines, header=""):
-        self._body = "".join(json.dumps(l) + "\n" for l in lines).encode()
+        self._body = "".join(json.dumps(line) + "\n" for line in lines).encode()
         self.headers = {"x-next-cursor": header}
         self.status = 200
 
