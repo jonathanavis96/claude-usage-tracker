@@ -1,4 +1,12 @@
-"""Parse the two passive utilization logs on masterrig into Sample rows."""
+"""Parse the passive utilization logs into Sample rows.
+
+masterrig keeps two: moonlighter's usage_log.jsonl and its ceiling's systemd log.
+gs keeps two more, one per probe account: greenscape-org's usage-ceiling.py log,
+which has read jwork's meter since 2026-09-05, and tracker.meter_log's JSONL,
+which reads Dave's. The gs ceiling log records no reset times, so a window
+boundary there can only be inferred from the meter dropping; the meter log
+records them, in moonlighter's own row shape.
+"""
 from __future__ import annotations
 import json
 import re
@@ -7,7 +15,18 @@ from datetime import datetime
 from typing import Iterable
 
 _CEIL = re.compile(r"^(\S+) 5-hour (\d+)% / 7-day (\d+)%")
-_PRIORITY = {"ceiling": 0, "moonlighter": 1}  # lower wins
+_GS_CEIL = re.compile(r"^(\S+) (?:ok|warn|HARD CEILING \([\w-]+\)) five_hour=(\d+)% seven_day=(\d+)%")
+_PRIORITY = {"ceiling": 0, "gs-ceiling": 0, "meter": 0, "moonlighter": 1}  # lower wins
+
+
+class MixedAccountLog(ValueError):
+    """A meter log whose lines name more than one account.
+
+    Two accounts' readings in one file would pair a reading of one meter with a
+    reading of the other and average two different limits into one series, with
+    nothing in the output to show it. So a mixed log is refused outright; the
+    sampler (tracker/meter_log.py) refuses to write one in the first place.
+    """
 
 
 @dataclass(frozen=True)
@@ -19,7 +38,7 @@ class Sample:
     source: str
 
 
-def parse_moonlighter(lines: Iterable[str]) -> list[Sample]:
+def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list[Sample]:
     out = []
     for line in lines:
         try:
@@ -31,7 +50,49 @@ def parse_moonlighter(lines: Iterable[str]) -> list[Sample]:
             continue
         sd = (d.get("seven_day") or {}).get("utilization")
         out.append(Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),
-                          float(sd) if sd is not None else None, fh.get("resets_at"), "moonlighter"))
+                          float(sd) if sd is not None else None, fh.get("resets_at"), source))
+    return out
+
+
+def parse_meter_log(lines: Iterable[str]) -> list[Sample]:
+    """tracker.meter_log's JSONL: moonlighter's row shape plus `account` and `identity`.
+
+    Failed reads are `error` lines with no utilization and are skipped, leaving
+    a gap in the samples. Raises MixedAccountLog when the lines carry more than
+    one `identity`.
+    """
+    lines = list(lines)
+    identities = set()
+    for line in lines:
+        try:
+            ident = json.loads(line).get("identity")
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            continue
+        if ident:
+            identities.add(ident)
+    if len(identities) > 1:
+        raise MixedAccountLog(f"meter log holds {len(identities)} accounts: {sorted(identities)}")
+    return parse_moonlighter(lines, source="meter")
+
+
+def parse_gs_ceiling_log(lines: Iterable[str], since: datetime | None = None) -> list[Sample]:
+    """Reading lines of gs's usage-ceiling.py log (`ok`, `warn` and `HARD CEILING`).
+
+    Everything else in that log (seat pauses, read failures) is skipped. The
+    log has no reset times, so `resets_at` is None and a reset shows only as
+    the meter dropping (tracker/join.py). `since` drops earlier readings: the
+    log has not always read the account it reads now (tracker/gs_passive.py
+    records from when it has).
+    """
+    out = []
+    for line in lines:
+        m = _GS_CEIL.match(line)
+        if not m:
+            continue
+        ts = datetime.fromisoformat(m.group(1))
+        if since is not None and ts < since:
+            continue
+        out.append(Sample(ts, float(m.group(2)), float(m.group(3)), None, "gs-ceiling"))
     return out
 
 

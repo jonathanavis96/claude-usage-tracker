@@ -1,0 +1,14 @@
+[Unit]
+Description=Sample Dave's Claude usage meter into its own log (claude-usage-tracker passive join)
+# jwork's meter is read every five minutes by gs-usage-ceiling.timer (greenscape-org's
+# usage-ceiling.py). This is the same read for Dave, by the tracker's own sampler:
+# usage-ceiling.py hard-codes its log path and pauses seats. One account per log --
+# the sampler refuses (exit 2) to append to a log that holds another account.
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/claude-usage-tracker
+ExecStart=/usr/bin/python3 -m tracker.meter_log --config-dir %h/.claude-dave --account dave --log %h/.paperclip/ops/claude-usage-meter-dave.log
+# Exit 4 means the usage read failed and was logged as a gap; the next tick tries again.
+SuccessExitStatus=0 4
+Nice=10

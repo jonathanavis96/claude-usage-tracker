@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample Dave's Claude usage meter every five minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=claude-usage-meter-dave.service
+
+[Install]
+WantedBy=timers.target
