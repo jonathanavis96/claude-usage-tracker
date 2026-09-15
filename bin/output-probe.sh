@@ -15,6 +15,11 @@
 # reflect the probe's own success/failure, not a transient git hiccup) --
 # but the probe row is still lost if push fails, so the log line matters.
 #
+# An output run takes --expect-tokens-per-pct (a prose run takes dollars and
+# sizes its payload from them; the reply here is a fixed 4,000 words, so the
+# expectation only sizes each span's opening burst). The literal below is the
+# 2026-09-06 12:06 Fable output row, 31,724 tokens per 1%.
+#
 # Cadence (2026-09-16): the output class weight is confirmed at about 1.8 by two
 # runs on two accounts (2026-09-06 Dave, $0.59 of list value per 1%; 2026-09-15
 # jwork, $0.55-0.60 over two ticks), so weekly is more than it needs. One run is
