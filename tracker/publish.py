@@ -263,10 +263,16 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
 
     mix = dict(REFERENCE_MIX["split"])
     verified_days = {ts.date() for ts, _ in verified_readings}
+    # A day with verified readings publishes those alone; any other day publishes its
+    # reset-less readings, labelled. The verified readings are taken from
+    # verified_readings itself: all_readings pools an account's verified and
+    # reset-less stretches of one day into a single value, so it cannot supply them.
+    if evidence_status == "measured":
+        day_readings = verified_readings + [(ts, v) for ts, v in all_readings if ts.date() not in verified_days]
+    else:
+        day_readings = series
     by_day: dict[date, list[float]] = {}
-    for ts, v in (all_readings if evidence_status == "measured" else series):
-        if evidence_status == "measured" and ts.date() in verified_days and (ts, v) not in verified_readings:
-            continue  # a day with verified readings publishes those alone
+    for ts, v in day_readings:
         by_day.setdefault(ts.date(), []).append(v)
 
     rates, history = {}, {}

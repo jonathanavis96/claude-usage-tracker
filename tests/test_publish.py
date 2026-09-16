@@ -382,6 +382,24 @@ class BuildTests(unittest.TestCase):
         self.assertIn("legacy_reset_metadata_missing", r["quality"]["reasons"])
         self.assertEqual({h["quality"] for h in j["history"]["claude-sonnet-5"]}, {"legacy_reset_unverified"})
 
+    def test_a_day_mixing_verified_and_reset_less_stretches_keeps_its_verified_reading(self):
+        # Review of PR 57: jwork's first day on its reset-bearing log also holds that
+        # morning's ceiling-log stretches. The legacy-inclusive readings pool both into
+        # one day value, so the history loop skipped it as "not verified" and never
+        # added the verified one: the day vanished. It must publish its verified
+        # reading alone, measured; a day with only reset-less stretches stays legacy.
+        report = daily_report([15.0] * 5, start_day=1)
+        legacy = daily_report([30.0, 12.0], start_day=5, reset_verified=False)["accounts"]["dave"]["stretches"]
+        legacy[0]["end"] = "2026-09-05T06:00:00+00:00"   # before the verified stretch that day
+        report["accounts"]["dave"]["stretches"] = sorted(report["accounts"]["dave"]["stretches"] + legacy,
+                                                         key=lambda st: st["end"])
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 6, 20, tzinfo=timezone.utc), gs_passive=report)
+        hist = {h["date"]: (h["meter_budget_per_window"], h["quality"], h["readings"]) for h in j["history"]["claude-sonnet-5"]}
+        self.assertEqual(hist["2026-09-05"], (15.0, "measured", 1))
+        self.assertEqual(hist["2026-09-06"], (12.0, "legacy_reset_unverified", 1))
+        self.assertEqual(len(hist), 6)
+        self.assertEqual(j["availability"]["evidence"], "measured")
+
     def test_events_excludes_the_plan_change(self):
         # Jonathan's ruling: the public chart is a step function of the measured limit
         # only -- nothing about his own plan history belongs in it.
