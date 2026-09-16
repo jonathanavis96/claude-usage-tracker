@@ -558,7 +558,12 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     max5_current = _weekly_current(max5_history, now)
     ratios = dict(WEEKLY_WINDOW_RATIOS)
     if max5_regimes and max20_regimes and max20_regimes[0]["windows"]:
-        seam = max5_regimes[-1]["windows"] / max20_regimes[0]["windows"]
+        # Max 5x's level is its best-supported regime, not whichever comes last: the
+        # detector splits a four-day 6.6 tail off the plan move (14-18 Aug, the
+        # PLAN_CHANGE date question), and a seam taken from that tail reads 1.02
+        # where the account's Max 5x era ran 10.9 against Max 20x's 6.5.
+        max5_level = max(max5_regimes, key=lambda r: r.get("points", 0))["windows"]
+        seam = max5_level / max20_regimes[0]["windows"]
         ratios["max5"] = ratios["pro"] = round(seam, 3)
     block = {
         "max20": {"current": estimate["value"] if estimate else None, "current_estimate": estimate,
