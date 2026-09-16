@@ -394,3 +394,16 @@ class SmoothedDetectTests(unittest.TestCase):
         r = self.daily([100] * 8 + [70] * 20)
         ev = detect_smoothed_changes(r)
         self.assertEqual([(e.direction, e.percent) for e in ev], [("decreased", 30)])
+
+    def test_each_step_of_a_staircase_is_measured_against_its_own_neighbours(self):
+        # Review of PR 57, round 2, finding 1: the first split of 100 x5, 50 x5, 25 x5
+        # is taken at the first step, where the side after it still holds the second
+        # step, and its median (37.5) published the 100 -> 50 step as -62%. Each event
+        # now reads the final segments either side of it, as the weekly detector does.
+        for values, expected in (([100] * 5 + [50] * 5 + [25] * 5, [("decreased", 50), ("decreased", 50)]),
+                                 ([25] * 5 + [50] * 5 + [100] * 5, [("increased", 100), ("increased", 100)])):
+            with self.subTest(values=values[::5]):
+                r = self.daily(values)
+                ev = detect_smoothed_changes(r)
+                self.assertEqual([(e.direction, e.percent) for e in ev], expected)
+                self.assertEqual([e.date for e in ev], [r[5][0].date(), r[10][0].date()])

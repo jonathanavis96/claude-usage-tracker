@@ -247,7 +247,7 @@ def detect_smoothed_changes(readings: list[tuple[datetime, float]], threshold: f
     provisional (tracker/publish.py).
     """
     ordered = sorted(readings, key=lambda r: r[0])
-    events: list[ChangeEvent] = []
+    found: list[tuple[int, int, int]] = []  # (lo, split, hi) of each split taken
 
     def segment(lo: int, hi: int) -> None:
         """Binary segmentation using persistent levels on both sides.
@@ -256,7 +256,7 @@ def detect_smoothed_changes(readings: list[tuple[datetime, float]], threshold: f
         rolling window from stealing the onset and prevents the remainder of
         one transition from firing a second event.
         """
-        best: tuple[float, int, float, float] | None = None
+        best: tuple[float, int] | None = None
         whole_values = [v for _, v in ordered[lo:hi]]
         whole_level = median(whole_values) if whole_values else 0
         unsplit_loss = sum(abs(v - whole_level) for v in whole_values)
@@ -276,11 +276,26 @@ def detect_smoothed_changes(readings: list[tuple[datetime, float]], threshold: f
                           + sum(abs(v - after) for v in right))
             score = unsplit_loss - split_loss
             if best is None or score > best[0]:
-                best = (score, split, before, after)
+                best = (score, split)
         if best is None:
             return
-        _, split, before, after = best
+        split = best[1]
+        found.append((lo, split, hi))
         segment(lo, split)
+        segment(split, hi)
+
+    segment(0, len(ordered))
+    starts = sorted({0, *(split for _, split, _ in found)})
+    events: list[ChangeEvent] = []
+    for lo, split, hi in found:
+        # Magnitude from the adjacent final segments, as detect_weighted_changes does:
+        # the side a split was chosen on can still hold a later step, and its median
+        # blends the two (100 x5, 50 x5, 25 x5 read -62% for the first step).
+        n = starts.index(split)
+        before = median(v for _, v in ordered[starts[n - 1]:split])
+        after = median(v for _, v in ordered[split:starts[n + 1] if n + 1 < len(starts) else len(ordered)])
+        if not before:
+            continue
         ratio = after / before - 1
         events.append(ChangeEvent(
             ordered[split][0].date(), "increased" if ratio > 0 else "decreased",
@@ -289,9 +304,6 @@ def detect_smoothed_changes(readings: list[tuple[datetime, float]], threshold: f
             confirmed_at=ordered[min(hi - 1, split + min_points - 1)][0].date(),
             evidence_points=hi - lo,
         ))
-        segment(split, hi)
-
-    segment(0, len(ordered))
     return sorted(events, key=lambda e: e.date)
 
 
