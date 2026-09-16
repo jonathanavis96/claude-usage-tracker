@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-16T17:30:13.105752+00:00",
+ "generated_at": "2026-09-16T18:30:12.847938+00:00",
  "until": null,
  "capture_gate": false,
  "accounts": {
@@ -9,9 +9,9 @@
     "log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "format": "gs-ceiling",
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 2941,
+    "samples": 2952,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-16T17:29:38+00:00"
+    "last": "2026-09-16T18:30:08+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -20,13 +20,13 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1501,
-    "turns": 37364,
+    "files": 1510,
+    "turns": 37834,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1501,
+     "kept": 1510,
      "dropped": 932,
-     "subagent_files": 550
+     "subagent_files": 557
     }
    },
    "stretches": [
@@ -3451,6 +3451,44 @@
      "capture_status": "accepted",
      "reference": 1.2229,
      "capture": 1.1757
+    },
+    {
+     "start": "2026-09-16T16:45:38+00:00",
+     "end": "2026-09-16T18:24:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 23.0393,
+     "usd_per_pct": 2.3039,
+     "bounds": [
+      2.0945,
+      2.5599
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 362,
+       "output": 8904,
+       "cache_read": 2592393,
+       "cache_write": 66994
+      },
+      "claude-opus-5": {
+       "input": 728,
+       "output": 471953,
+       "cache_read": 84030885,
+       "cache_write": 1535918
+      },
+      "claude-sonnet-5": {
+       "input": 80,
+       "output": 12975,
+       "cache_read": 3441180,
+       "cache_write": 88482
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 420,
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 1.2229,
+     "capture": 1.8839
     }
    ],
    "runs": [
@@ -3600,6 +3638,17 @@
      "capture": 1.9761,
      "corroborated_by": [],
      "contradicted_by": []
+    },
+    {
+     "start": "2026-09-16T16:45:38+00:00",
+     "end": "2026-09-16T18:24:39+00:00",
+     "kind": "surplus",
+     "direction": "high",
+     "stretches": 1,
+     "step": 0.8839,
+     "capture": 1.8839,
+     "corroborated_by": [],
+     "contradicted_by": []
     }
    ],
    "daily": [
@@ -3668,36 +3717,36 @@
     },
     {
      "date": "2026-09-16",
-     "usd_per_pct": 1.3057,
-     "delta_pct": 41.0,
-     "stretches": 4,
-     "rounding": 0.122
+     "usd_per_pct": 1.5015,
+     "delta_pct": 51.0,
+     "stretches": 5,
+     "rounding": 0.098
     }
    ],
    "split": {
-    "input": 3.5e-05,
-    "output": 0.003427,
-    "cache_read": 0.971588,
-    "cache_write": 0.024951
+    "input": 3.4e-05,
+    "output": 0.00346,
+    "cache_read": 0.971669,
+    "cache_write": 0.024837
    },
-   "last_usable_at": "2026-09-16T16:45:38+00:00",
+   "last_usable_at": "2026-09-16T18:24:39+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 96,
-     "median": 1.3431,
-     "half_range": 0.8152,
-     "mad": 0.2697,
-     "cv": 0.298
+     "n": 97,
+     "median": 1.3457,
+     "half_range": 0.8136,
+     "mad": 0.2668,
+     "cv": 0.3045
     },
     "daily": {
      "n": 10,
      "median": 1.2754,
-     "half_range": 0.24,
-     "mad": 0.1092,
-     "cv": 0.1397
+     "half_range": 0.2576,
+     "mad": 0.1309,
+     "cv": 0.1512
     }
    },
    "weekly_by_window": [
@@ -3936,10 +3985,10 @@
      "seven_day_pct": 8.0
     },
     {
-     "window_ending": "2026-09-16T17:29:38+00:00",
-     "windows": 4.0,
-     "five_hour_pct": 4.0,
-     "seven_day_pct": 1.0
+     "window_ending": "2026-09-16T18:30:08+00:00",
+     "windows": 4.67,
+     "five_hour_pct": 14.0,
+     "seven_day_pct": 3.0
     }
    ]
   },
@@ -3957,8 +4006,8 @@
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 57,
-    "turns": 87,
+    "files": 61,
+    "turns": 94,
     "withheld_patterns": [],
     "own_sessions": null
    },
