@@ -2,8 +2,10 @@
 
 Nothing here opens a socket: fetch takes a fake urlopen. Fixtures are three
 contributors on two plans (two on max20, one on pro) with two samples each
-inside one five-hour and one seven-day window, so the spans and the weekly
-pairing have something to pair.
+inside one five-hour and one seven-day window, so the weekly pairing has
+something to pair. Every accepted sample is its own point and its own vote
+in the tokens_per_pct/usd_per_pct medians (the pre-2026-09-16-audit rule,
+restored 2026-09-17 by decision, reversing that audit's finding 7).
 """
 import io
 import json
@@ -48,11 +50,6 @@ def week_sample(cid, plan, ts, five, seven, five_tokens, seven_tokens, **kw):
     r = sample(cid, plan, ts, five, seven, five_tokens, **kw)
     r["tokens_since_seven_day_reset"] = seven_tokens
     return r
-
-
-def start(cid, plan, ts, five=0.0, seven=0.0, **kw):
-    """A reading with nothing spent yet: the anchor a later reading's span is measured from."""
-    return sample(cid, plan, ts, five, seven, {}, **kw)
 
 
 def sonnet(cache_write, output=0):
@@ -109,22 +106,30 @@ class FixtureShapeTests(unittest.TestCase):
 
 
 class TokensPerPctTests(unittest.TestCase):
-    # Figures are read from spans between two readings of the same windows, not from
-    # one cumulative snapshot (audit 2026-09-16, finding 14): each test gives a source
-    # a starting reading, and asserts the same arithmetic on the span it opens.
+    # Restored pre-2026-09-16-audit rule (finding 7 reversed by decision): every
+    # accepted sample -- not just a source's newest paired span -- is its own
+    # vote in these medians, each contributor first reduced to the median of
+    # their own samples.
 
     def test_median_across_contributors_of_each_contributors_median(self):
         j = aggregate(fixture_rows(), NOW, PRICES)
         s = j["max20"]["tokens_per_pct"]["claude-sonnet-5"]
-        # A's span reads 600k/60 = 10000, B's 300k/60 = 5000. The cumulative snapshots
-        # (10k and 7.5k on their second readings) overlap their first ones and are not used.
-        self.assertEqual(s["median"], round((10000 + 5000) / 2))
-        self.assertEqual((s["contributors"], s["samples"]), (2, 2))
+        # A: 200k/20 = 10000 and 800k/80 = 10000 -> 10000. B: 300k/20 = 15000 and 600k/80 = 7500 -> 11250.
+        self.assertEqual(s["median"], round((10000 + 11250) / 2))
+        self.assertEqual((s["contributors"], s["samples"]), (2, 4))
+
+    def test_a_single_accepted_sample_produces_a_point_and_a_usd_per_pct_median(self):
+        rows = [sample(A, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0, sonnet(400_000))]
+        j = aggregate(rows, NOW, PRICES)["max20"]
+        # 400k cache_write @ $2.5/M = $1.00 over utilization 50.
+        self.assertEqual(j["usd_per_pct"], {"median": 0.02, "spread": None, "contributors": 1, "samples": 1})
+        self.assertEqual(j["tokens_per_pct"]["claude-sonnet-5"]["median"], 8000)
+        self.assertEqual(len(j["points"]), 1)
+        self.assertEqual(j["points"][0]["usd_per_pct"], 0.02)
+        self.assertEqual(j["missing_reasons"], [])
 
     def test_usd_per_pct_values_tokens_as_publish_does(self):
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"),
-                sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000, output=100_000)),
-                start(B, "max20", "2026-09-02T09:00:00Z"),
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000, output=100_000)),
                 sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000, output=100_000))]
         j = aggregate(rows, NOW, PRICES)
         # 400k cache_write at $2.5/M = $1.00, 100k output at $10/M x class_weight 1.8 = $1.80: $2.80 over 50%.
@@ -134,14 +139,12 @@ class TokensPerPctTests(unittest.TestCase):
     def test_usd_per_pct_applies_meter_weight_and_a_sample_with_an_unpriced_model_is_dropped(self):
         prices = {"claude-sonnet-5": {**PRICES["claude-sonnet-5"], "meter_weight": 2.0}}
         tokens = {**sonnet(400_000), "claude-mystery-9": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1000}}
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"),
-                sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, tokens)]
-        j = aggregate(rows, NOW, prices)
-        # claude-mystery-9 has no price, so the whole span drops for both figures.
+        j = aggregate([sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, tokens)], NOW, prices)
+        # claude-mystery-9 has no price, so the whole sample drops for both figures.
         self.assertIsNone(j["max20"]["usd_per_pct"])
         self.assertEqual(j["max20"]["tokens_per_pct"], {})
-        # The same span without it: $1.00 x meter_weight 2 over 50%.
-        rows += [start(B, "max20", "2026-09-02T09:00:00Z"), sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000))]
+        # The same sample without it: $1.00 x meter_weight 2 over 50%.
+        rows = [sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000))]
         usd = aggregate(rows, NOW, prices)["max20"]["usd_per_pct"]
         self.assertEqual((usd["median"], usd["contributors"]), (0.04, 1))
 
@@ -151,75 +154,61 @@ class TokensPerPctTests(unittest.TestCase):
         # Sonnet's share of the meter: 40 x 1.00/10.00 = 4 -> under the 5-point floor, so no Sonnet figure.
         # Opus's share: 40 x 9.00/10.00 = 36 -> tokens_per_pct 200_000/36.
         tokens = {**sonnet(400_000), "claude-opus-5": {"input": 0, "output": 200_000, "cache_read": 0, "cache_write": 0}}
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"), sample(A, "max20", "2026-09-02T10:00:00Z", 40.0, 10.0, tokens)]
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 40.0, 10.0, tokens)]
         j = aggregate(rows, NOW, PRICES)
         self.assertAlmostEqual(j["max20"]["usd_per_pct"]["median"], 10.0 / 40, places=4)
         self.assertEqual(j["max20"]["tokens_per_pct"]["claude-opus-5"]["median"], round(200_000 / 36))
-        # The summary uses the chart's own slice floor (audit finding 8: one precision rule
-        # for points and aggregates); at 80 points Sonnet's slice is 8 and it has a figure.
         self.assertNotIn("claude-sonnet-5", j["max20"]["tokens_per_pct"])
         doubled = {m: {c: 2 * n for c, n in counts.items()} for m, counts in tokens.items()}
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"), sample(A, "max20", "2026-09-02T10:00:00Z", 80.0, 10.0, doubled)]
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 80.0, 10.0, doubled)]
         self.assertEqual(aggregate(rows, NOW, PRICES)["max20"]["tokens_per_pct"]["claude-sonnet-5"]["median"], 100_000)
 
     def test_spread_is_iqr_over_median_and_null_for_one_contributor(self):
-        rows = [r for cid, t in ((A, 100_000), (B, 200_000), (C, 400_000))
-                for r in (start(cid, "max20", "2026-09-02T09:00:00Z"),
-                          sample(cid, "max20", "2026-09-02T10:00:00Z", 10.0, 10.0, sonnet(t)))]
+        rows = [sample(cid, "max20", "2026-09-02T10:00:00Z", 10.0, 10.0, sonnet(t))
+                for cid, t in ((A, 100_000), (B, 200_000), (C, 400_000))]
         j = aggregate(rows, NOW, PRICES)
         s = j["max20"]["tokens_per_pct"]["claude-sonnet-5"]
         # per-contributor values 10000, 20000, 40000: median 20000, inclusive quartiles 15000 and 30000.
         self.assertEqual(s["median"], 20000)
         self.assertAlmostEqual(s["spread"], 15000 / 20000, places=3)
-        solo = aggregate(rows[:2], NOW, PRICES)["max20"]["tokens_per_pct"]["claude-sonnet-5"]
+        solo = aggregate(rows[:1], NOW, PRICES)["max20"]["tokens_per_pct"]["claude-sonnet-5"]
         self.assertIsNone(solo["spread"])
         self.assertEqual(solo["contributors"], 1)
 
     def test_utilization_floor_drops_samples_under_five_percent(self):
-        rows = [start(A, "max20", "2026-09-02T09:30:00Z"),
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 4.9, 10.0, sonnet(1_000_000)),   # would be 204081/pct
                 sample(A, "max20", "2026-09-02T10:30:00Z", 5.0, 10.0, sonnet(50_000)),
-                start(B, "max20", "2026-09-02T09:00:00Z"),
-                sample(B, "max20", "2026-09-02T10:00:00Z", 4.9, 10.0, sonnet(1_000_000)),   # would be 204081/pct
-                start(C, "max20", "2026-09-02T09:00:00Z"),
-                sample(C, "max20", "2026-09-02T10:00:00Z", 0.0, 10.0, sonnet(1_000_000))]
+                sample(B, "max20", "2026-09-02T10:00:00Z", 0.0, 10.0, sonnet(1_000_000))]
         j = aggregate(rows, NOW, PRICES)
         s = j["max20"]["tokens_per_pct"]["claude-sonnet-5"]
         self.assertEqual(s["median"], 10000)
         self.assertEqual((s["contributors"], s["samples"]), (1, 1))
-        self.assertEqual(j["max20"]["samples"], 6)  # the floor is for the rate, not the sample count
+        self.assertEqual(j["max20"]["samples"], 3)  # the floor is for the rate, not the sample count
 
     def test_zero_token_models_do_not_count(self):
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"),
-                sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0,
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0,
                        {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}})]
         self.assertEqual(aggregate(rows, NOW, PRICES)["max20"]["tokens_per_pct"], {})
 
-    def test_the_newest_span_is_current_and_old_overlapping_snapshots_do_not_outvote_it(self):
-        # Audit finding 14: ten old $1/point readings then a current $0.50/point one
-        # published $1. Hourly readings in one pair of windows: ten spans at $1 per point
-        # ($5.00 of cache writes per 5 points), then one at $0.50.
-        rows, spent, pct = [start(A, "max20", "2026-09-02T00:00:00Z")], 0, 0.0
+    def test_every_accepted_reading_votes_including_older_overlapping_ones(self):
+        # Restored rule: each cumulative reading is its own accepted sample and its own
+        # vote, not just a source's newest span (this is the behaviour the 2026-09-16
+        # audit's finding 7 replaced; reversed here by decision).
+        rows, spent, pct = [], 0, 0.0
         for hour in range(1, 12):
             spent += 2_000_000 if hour <= 10 else 1_000_000
             pct += 5.0
             rows.append(sample(A, "max20", f"2026-09-02T{hour:02d}:00:00Z", pct, 10.0, sonnet(spent)))
-        usd = aggregate(rows, NOW, PRICES)["max20"]["usd_per_pct"]
-        self.assertEqual((usd["median"], usd["samples"]), (0.5, 1))
-
-    def test_a_reading_without_capture_metadata_opens_no_span(self):
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z", seven=10.0, capture=False),
-                sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 12.0, sonnet(400_000), capture=False)]
         j = aggregate(rows, NOW, PRICES)["max20"]
-        self.assertEqual((j["usd_per_pct"], j["tokens_per_pct"], j["points"]), (None, {}, []))
-        self.assertEqual((j["samples"], j["evidence"]["samples_without_capture"]), (2, 2))
-        # The meters alone still pair into the source's weekly estimate.
-        self.assertEqual([e["value"] for e in j["weekly_windows"]["estimates"]], [25.0])
+        self.assertEqual(j["usd_per_pct"]["samples"], 11)
+        self.assertEqual(len(j["points"]), 11)
 
-    def test_reset_jitter_does_not_break_a_span(self):
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z", five_reset="2026-09-02T13:59:59.700000+00:00"),
-                sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000),
-                       five_reset="2026-09-02T14:00:00.200000+00:00")]
-        self.assertEqual(aggregate(rows, NOW, PRICES)["max20"]["tokens_per_pct"]["claude-sonnet-5"]["median"], 8000)
+    def test_a_sample_without_capture_metadata_still_counts_but_is_flagged(self):
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 12.0, sonnet(400_000), capture=False)]
+        j = aggregate(rows, NOW, PRICES)["max20"]
+        self.assertIsNotNone(j["usd_per_pct"])
+        self.assertEqual(len(j["points"]), 1)
+        self.assertEqual(j["evidence"]["samples_without_capture"], 1)
 
 
 class WeeklyWindowsTests(unittest.TestCase):
@@ -340,11 +329,11 @@ class WeeklyWindowsTests(unittest.TestCase):
 
 
 class PointsTests(unittest.TestCase):
-    # One point per span (see TokensPerPctTests); each test opens its span with start().
+    # One point per accepted sample (see TokensPerPctTests).
 
     def test_pseudonym_is_stable_and_never_the_contributor_id(self):
-        rows = [start(A, "max20", "2026-09-02T13:00:00Z"), sample(A, "max20", "2026-09-02T14:00:00Z", 50.0, 10.0, sonnet(100_000)),
-                start(B, "max20", "2026-09-02T09:00:00Z"), sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
+        rows = [sample(A, "max20", "2026-09-02T14:00:00Z", 50.0, 10.0, sonnet(100_000)),
+                sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         by_t = {p["t"]: p["c"] for p in pts}
         self.assertNotEqual(by_t["2026-09-02T10:00:00Z"], by_t["2026-09-02T14:00:00Z"])
@@ -354,32 +343,30 @@ class PointsTests(unittest.TestCase):
         self.assertNotIn(B, json.dumps(pts))
 
     def test_coarse_sample_is_included_with_a_usd_figure(self):
-        # The windows' last span never reached the floor: charted as coarse, not summarised.
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z", seven=10.0),
-                sample(A, "max20", "2026-09-02T10:00:00Z", 4.0, 10.0, sonnet(100_000))]
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 4.0, 10.0, sonnet(100_000))]
         j = aggregate(rows, NOW, PRICES)["max20"]
         pts = j["points"]
         self.assertEqual(len(pts), 1)
         self.assertTrue(pts[0]["coarse"])
         # 100k cache_write @ $2.5/M = $0.25, over utilization 4.
         self.assertAlmostEqual(pts[0]["usd_per_pct"], 0.25 / 4, places=4)
+        # Under the utilization floor, so it does not vote in the summary either.
         self.assertIsNone(j["usd_per_pct"])
 
     def test_unpriced_sample_gives_null_usd_per_pct(self):
         tokens = {"claude-mystery-9": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1000}}
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"), sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, tokens)]
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, tokens)]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(len(pts), 1)
         self.assertIsNone(pts[0]["usd_per_pct"])
         self.assertFalse(pts[0]["coarse"])
 
     def test_unknown_model_work_is_kept_and_withholds_every_monetary_and_per_model_figure(self):
-        # Audit findings 8 and 9: a model the price table does not know still moved the
-        # meter. Its tokens stay in the span's count, and nothing that needs its price is
-        # published: no dollars, no per-model split, and never the combined total under a
-        # model's name.
+        # A model the price table does not know still moved the meter. Its tokens stay
+        # in the sample's count, and nothing that needs its price is published: no
+        # dollars, no per-model split, and never the combined total under a model's name.
         tokens = {**sonnet(400_000), "claude-haiku-4-5": {"input": 0, "output": 40_000, "cache_read": 0, "cache_write": 0}}
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"), sample(A, "max20", "2026-09-02T10:00:00Z", 44.0, 10.0, tokens)]
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 44.0, 10.0, tokens)]
         j = aggregate(rows, NOW, PRICES)["max20"]
         point = j["points"][0]
         self.assertEqual(point["tokens_per_pct"], round(440_000 / 44))
@@ -388,18 +375,15 @@ class PointsTests(unittest.TestCase):
         self.assertEqual((j["usd_per_pct"], j["tokens_per_pct"]), (None, {}))
 
     def test_hourly_thinning_keeps_the_latest_sample_in_the_hour(self):
-        rows = [start(A, "max20", "2026-09-02T09:50:00Z"),
-                sample(A, "max20", "2026-09-02T10:05:00Z", 50.0, 10.0, sonnet(100_000)),
+        rows = [sample(A, "max20", "2026-09-02T10:05:00Z", 50.0, 10.0, sonnet(100_000)),
                 sample(A, "max20", "2026-09-02T10:45:00Z", 60.0, 10.0, sonnet(200_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(len(pts), 1)
         self.assertEqual(pts[0]["t"], "2026-09-02T10:45:00Z")
 
     def test_sample_older_than_31_days_is_excluded(self):
-        old = NOW - timedelta(days=31)
-        rows = [start(A, "max20", (old - timedelta(hours=1)).isoformat().replace("+00:00", "Z")),
-                sample(A, "max20", old.isoformat().replace("+00:00", "Z"), 50.0, 10.0, sonnet(100_000)),
-                start(A, "max20", "2026-09-02T09:00:00Z"),
+        old_ts = (NOW - timedelta(days=31)).isoformat().replace("+00:00", "Z")
+        rows = [sample(A, "max20", old_ts, 50.0, 10.0, sonnet(100_000)),
                 sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(len(pts), 1)
@@ -408,17 +392,14 @@ class PointsTests(unittest.TestCase):
     def test_point_never_claims_weekly_windows_from_two_token_mixes(self):
         # 100k tokens moved the five-hour meter 50% (2,000 per 1%) and the seven-day meter
         # 10% (10,000 per 1%). Their quotient is not published as windows per week.
-        rows = [week_sample(A, "max20", "2026-09-02T09:00:00Z", 0.0, 0.0, {}, {}),
-                week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000), sonnet(100_000))]
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000), sonnet(100_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(pts[0]["tokens_per_pct"], 2000)
         self.assertEqual(pts[0]["tokens_per_pct_week"], 10_000)
         self.assertNotIn("windows", pts[0])
 
     def test_a_meter_under_the_floor_nulls_its_own_side_and_the_quotient(self):
-        rows = [week_sample(A, "max20", "2026-09-02T09:00:00Z", 0.0, 0.0, {}, {}),
-                week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 1.0, sonnet(100_000), sonnet(100_000)),
-                week_sample(B, "max20", "2026-09-02T10:00:00Z", 0.0, 0.0, {}, {}),
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 1.0, sonnet(100_000), sonnet(100_000)),
                 week_sample(B, "max20", "2026-09-02T11:00:00Z", 1.0, 10.0, sonnet(100_000), sonnet(100_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertTrue(all("windows" not in p for p in pts))
@@ -426,7 +407,7 @@ class PointsTests(unittest.TestCase):
         self.assertEqual([p["tokens_per_pct"] for p in pts], [2000, None])
 
     def test_no_seven_day_tokens_leaves_the_weekly_figures_null(self):
-        rows = [start(A, "max20", "2026-09-02T09:00:00Z"), sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(pts[0]["tokens_per_pct"], 2000)
         self.assertIsNone(pts[0]["tokens_per_pct_week"])
@@ -435,8 +416,7 @@ class PointsTests(unittest.TestCase):
     def test_by_model_splits_the_meter_by_dollar_share(self):
         tokens = {"claude-sonnet-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0},
                   "claude-opus-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0}}
-        rows = [week_sample(A, "max20", "2026-09-02T09:00:00Z", 0.0, 0.0, {}, {}),
-                week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         # Opus output is priced 2.5x Sonnet's, so it is charged 5/7 of the 60% meter and
         # Sonnet 2/7. Same tokens, so Sonnet reads 2.5x more per 1%.
@@ -450,16 +430,14 @@ class PointsTests(unittest.TestCase):
                   for m, p in PRICES.items()}
         tokens = {"claude-opus-5": {"input": 0, "output": 1_000_000, "cache_read": 0, "cache_write": 0},
                   "claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 50_000_000, "cache_write": 0}}
-        rows = [week_sample(A, "max20", "2026-09-02T09:00:00Z", 0.0, 0.0, {}, {}),
-                week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
         pts = aggregate(rows, NOW, prices)["max20"]["points"]
         self.assertEqual(list(pts[0]["tokens_per_pct_by_model"]), ["claude-opus-5"])
 
     def test_an_unpriced_model_drops_the_split_whole(self):
         tokens = {"claude-sonnet-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0},
                   "claude-mystery-9": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0}}
-        rows = [week_sample(A, "max20", "2026-09-02T09:00:00Z", 0.0, 0.0, {}, {}),
-                week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertNotIn("tokens_per_pct_by_model", pts[0])
         self.assertNotIn("tokens_per_pct_week_by_model", pts[0])
