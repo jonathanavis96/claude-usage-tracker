@@ -7,7 +7,7 @@ from pathlib import Path
 from statistics import median
 from .capture import ACCEPTED
 from .detect import (MIN_POOL_D7, current_regime_points, detect_changes, detect_smoothed_changes, detect_weighted_changes,
-                     pooled_windows)
+                     pooled_windows, weighted_regimes)
 from .gs_passive import passive_dollar_readings
 from .passive import PLAN_CHANGE
 from .rows import usable_rows
@@ -329,6 +329,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         raise ValueError(f"newest sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
     passive_weekly = passive.get("weekly_windows")
     weekly_windows = None
+    weekly_window_ratios = dict(WEEKLY_WINDOW_RATIOS)
     weekly_events: list = []
     if passive_weekly is not None:
         # The count of five-hour windows a week's cap holds is per plan, not one
@@ -373,27 +374,55 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         if max20_current is None:
             max20_current = _weekly_current(max20_history, now)
         max5_current = _weekly_current(max5_history, now)
+        # Levels, not weekly points. Windows per week is a plan constant, so the honest
+        # series is a step function and every weekly ratio is an estimate of it carrying
+        # several percent of assembly error (weighted_regimes' docstring lists the three
+        # sources). Published alongside the weekly rows rather than instead of them: the
+        # rows are the evidence, the regimes are what the evidence says.
+        max20_regimes = weighted_regimes(max20_points)
+        # max5 is frozen, so the only step its own windows can contain is the plan move
+        # itself, and the detector duly finds one -- dated 2026-08-15, three days before
+        # PLAN_CHANGE (the 15-18 Aug windows pool to 6.42 against 10.83 for 1-14 Aug, so
+        # the account was already on max20; see issue #56). Keep only the regimes before
+        # that first step, which is max5's real level, rather than publishing the plan
+        # move as a limit change on the frozen plan.
+        max5_regimes = weighted_regimes(_max5_window_points(passive_weekly.get("by_window", [])))[:1]
+        # Derive the plan ratio from those two levels rather than the frozen constant when both
+        # exist. The levels are pooled over 183 and 80 windows against the constant's two
+        # calendar-week medians, and deriving it here makes the plan boundary continuous BY
+        # CONSTRUCTION: the last max5 level and the first max20 level are the same limit seen
+        # on two plans, so a step between them would be the account move drawn as a limit move
+        # -- the exact class of error issue #54 was about, one seam further along.
+        ratios_w = dict(WEEKLY_WINDOW_RATIOS)
+        if max5_regimes and max20_regimes and max20_regimes[0]["windows"]:
+            seam = max5_regimes[-1]["windows"] / max20_regimes[0]["windows"]
+            ratios_w["max5"] = ratios_w["pro"] = round(seam, 3)
         weekly_windows = {
-            "max20": {"current": max20_current, "history": max20_history, "assumed": False},
-            "max5": {"current": max5_current, "history": max5_history, "assumed": False},
+            "max20": {"current": max20_current, "history": max20_history, "assumed": False,
+                      "regimes": max20_regimes},
+            "max5": {"current": max5_current, "history": max5_history, "assumed": False,
+                     "regimes": max5_regimes},
             # Pro has no measurement of its own yet: publish max5's frozen figures
             # as a stand-in (same 5x-ratio era) flagged "assumed" so the page can
             # show Pro numbers while labelling them unmeasured.
-            "pro": {"current": max5_current, "history": max5_history, "assumed": True},
+            "pro": {"current": max5_current, "history": max5_history, "assumed": True,
+                    "regimes": max5_regimes},
             "passive": passive_weekly,
             "probe": probe_weekly,
         }
+        weekly_window_ratios = ratios_w
     last_change = _latest_change_with_scope(events, weekly_events)
     out = {
         "generated_at": now.isoformat(),
         "last_sample_at": last_sample,
+        "meter_read_at": _last_meter_read(gs_passive),
         "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
         "instrument": instrument,
         "probe_account_count": probe_account_count,
         "passive_account_count": passive_account_count,
         "plan_ratios": ratios,
-        "weekly_window_ratios": dict(WEEKLY_WINDOW_RATIOS),
+        "weekly_window_ratios": weekly_window_ratios,
         "rate_basis": "api_value",
         "rates": rates,
         "effort": effort,
@@ -460,6 +489,22 @@ def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, flo
     return sorted(points, key=lambda p: p[0])
 
 
+def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float]]:
+    """The frozen plan's per-window series, the mirror of _max20_window_points.
+
+    Only windows that END on or before PLAN_CHANGE: a window straddling the
+    change mixes both plans' ratios and belongs to neither, the same rule
+    _plan_for_week applies to weeks. Max 5x is never detected on in production
+    (it is frozen, and the module docstring of tracker/detect.py uses it as the
+    out-of-sample check that a flat stretch reports nothing), so this exists to
+    give the chart a measured LEVEL for the months before the plan move rather
+    than a level inferred backwards from max20.
+    """
+    points = [(datetime.fromisoformat(p["window_ending"]), p["five_hour_pct"], p["seven_day_pct"])
+              for p in passive_points if datetime.fromisoformat(p["window_ending"]).date() <= PLAN_CHANGE]
+    return sorted(points, key=lambda p: p[0])
+
+
 def _regime_current(points: list[tuple[datetime, float, float]]) -> float | None:
     """max20's `current`: the pooled ratio of the current regime's newest
     WEEKLY_CURRENT_DAYS of per-window points, anchored on the newest point.
@@ -483,6 +528,24 @@ def _regime_current(points: list[tuple[datetime, float, float]]) -> float | None
         return None
     pooled = pooled_windows(recent)
     return round(pooled, 2) if pooled is not None else None
+
+
+def _last_meter_read(gs_passive: dict | None) -> str | None:
+    """When a watched account's meter was last read, newest across accounts.
+
+    This is not `last_sample_at`, which is the end of the newest completed
+    measurement: a stretch closes at an idle bound or a window end, so the meter
+    is read every few minutes while the figure derived from it can be many hours
+    older. The page labels a pill "Last sample", which a reader takes to mean the
+    reading, not the derivation, and neither the old field nor
+    `passive_generated_at` (when a file was rebuilt, on another host) answers that.
+    """
+    stamps = [
+        (a.get("meter") or {}).get("last")
+        for a in ((gs_passive or {}).get("accounts") or {}).values()
+    ]
+    usable = [t for t in stamps if isinstance(t, str) and t]
+    return max(usable) if usable else None
 
 
 def _latest_change_with_scope(window_events: list, weekly_events: list) -> dict | None:

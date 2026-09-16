@@ -41,16 +41,20 @@ PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cach
           "claude-opus-5": {"input": 7.5, "output": 37.5, "cache_read": 0.75, "cache_write": 9.375}}
 
 
-def gs_passive_report(*, account="dave", end, cache_write, delta_pct=10, model="claude-sonnet-5"):
+def gs_passive_report(*, account="dave", end, cache_write, delta_pct=10, model="claude-sonnet-5",
+                      meter_last=None):
     """A minimal tracker.gs_passive.report() shape (issue #39): just enough for
     passive_dollar_readings to read one accepted stretch. `cache_write` tokens at
     PRICES' $3.75/Mtok give (cache_write * 3.75 / 1e6) meter dollars for the
     stretch; dividing by delta_pct and scaling to a full window is
     passive_dollar_readings' own job, not this fixture's."""
-    return {"accounts": {account: {"stretches": [
+    acct = {"stretches": [
         {"status": "accepted", "end": end, "delta_pct": delta_pct,
          "tokens": {model: {"input": 0, "output": 0, "cache_read": 0, "cache_write": cache_write}}},
-    ]}}}
+    ]}
+    if meter_last is not None:
+        acct["meter"] = {"last": meter_last}
+    return {"accounts": {account: acct}}
 
 
 # 352400 cache-write tokens at PRICES' cache_write price is $1.3215, and dividing
@@ -602,6 +606,24 @@ class GuardTests(unittest.TestCase):
     def test_no_rates_refuses(self):
         with self.assertRaises(ValueError):
             build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, tzinfo=timezone.utc))
+
+    def test_meter_read_at_is_the_newest_meter_sample_not_the_newest_measurement(self):
+        # The meter is read every few minutes; a stretch closes at an idle bound or a
+        # window end, so the figure derived from it is routinely hours older. The page
+        # pill says "Last sample", which means the reading.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        report = gs_passive_report(end="2026-09-06T08:00:00+00:00", cache_write=352400,
+                                   meter_last="2026-09-06T19:55:00+00:00")
+        report["accounts"]["jwork"] = {"stretches": [], "meter": {"last": "2026-09-06T19:50:00+00:00"}}
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=report)
+        self.assertEqual(j["meter_read_at"], "2026-09-06T19:55:00+00:00")
+        self.assertEqual(j["last_sample_at"], "2026-09-06T08:00:00+00:00")
+
+    def test_meter_read_at_is_null_without_a_gs_passive_report(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc))
+        self.assertIsNone(j["meter_read_at"])
 
     def test_stale_last_sample_refuses(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
