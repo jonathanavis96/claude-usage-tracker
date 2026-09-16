@@ -97,13 +97,37 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     return [s for s in samples if until is None or s.ts <= until]
 
 
-def transcript_files(account: Account, since: datetime | None, withhold: Iterable[str] = ()) -> list[Path]:
+def transcript_files(account: Account, since: datetime | None,
+                     withhold: Iterable[str] = ()) -> tuple[list[Path], dict | None]:
+    """This account's transcripts, and (kept, dropped) if the pooled-projects filter applied.
+
+    jwork's `projects/` is a symlink shared with the bare `~/.claude` and
+    `~/.claude-jono` config dirs (see the module docstring): a raw glob over it
+    would count those other logins' tokens as jwork's own. Claude Code writes a
+    per-config-dir `<config dir>/session-env/<sessionId>/` for every session it
+    runs under that login, and a transcript's own session id is its filename
+    stem -- the same rule contrib/sample.py's `own_session_filter` applies for
+    the contributed export. Here it fires whenever `projects/` is itself a
+    symlink and the account has a `session-env` directory to filter by; with
+    no `session-env` the filter is a no-op even for a symlinked root, since
+    there is nothing to tell sessions apart with. The second return value is
+    `None` when the filter did not apply, or `{"kept": n, "dropped": m}` when
+    it did, for the account's `transcripts` meta.
+    """
     root = account.config_dir / "projects"
     if not root.exists():
-        return []
+        return [], None
     patterns = list(withhold)
-    return [p for p in transcript_paths(root, since)
+    paths = [p for p in transcript_paths(root, since)
             if not any(fnmatch(str(p.relative_to(root)), pat) for pat in patterns)]
+    if not root.is_symlink():
+        return paths, None
+    session_env = account.config_dir / "session-env"
+    if not session_env.is_dir():
+        return paths, None
+    own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
+    kept = [p for p in paths if p.stem in own_ids]
+    return kept, {"kept": len(kept), "dropped": len(paths) - len(kept)}
 
 
 def shared_with(account: Account, home: Path) -> list[str]:
@@ -208,7 +232,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
     for name, account in accounts.items():
         samples = load_samples(account, until)
         since = samples[0].ts if samples else None
-        files = transcript_files(account, since, withhold.get(name, ())) if samples else []
+        files, own_sessions = transcript_files(account, since, withhold.get(name, ())) if samples else ([], None)
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
         stretches[name] = build_stretches(samples, turns, prices)
         weekly[name] = window_points(samples)
@@ -220,7 +244,8 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                       "last": samples[-1].ts.isoformat() if samples else None},
             "transcripts": {"root": str(root), "resolves_to": str(root.resolve()),
                             "shared_with": shared_with(account, home or account.config_dir.parent),
-                            "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ()))},
+                            "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
+                            "own_sessions": own_sessions},
         }
     checked = check(stretches, probe_readings(list(probe_rows), prices))
     out_accounts = {}
