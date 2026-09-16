@@ -117,6 +117,10 @@ _Avoid_: task, conversation, run
 **Derived rate**:
 A model's published rate computed from another model's probe through the dollar invariant, rather than probed directly.
 
+**Instrument**:
+Which kind of reading measured the currently published figure: `probe` (a scheduled run) or `passive` (a gs account's own transcripts against its own meter, tracker/gs_passive.py). Probes are no longer scheduled as of 2026-09-16 (issue #39); passive is the everyday instrument now, and a probe run by hand still enters the same dollar series and can still be the newest reading. Top-level `instrument` is the newest reading of either kind; a model's own `rates[model].source` is `passive` when the newest reading in its current `Regime` is passive, `probe`/`derived` otherwise, alongside `measured_at` (that reading's own time) and the older `probed_at` (this model's own latest probe row, unaffected by a passive reading).
+_Avoid_: source (already means something narrower, per-model), method
+
 **Regime**:
 A stretch of history in which the measured limit is held flat, ended by a detected change. On the weekly series a regime starts at a `Weekly change`'s first window, and every later base is pooled from that regime only.
 _Avoid_: era, level, plateau
