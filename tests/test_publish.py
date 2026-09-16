@@ -2,6 +2,7 @@ import json
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import ClassVar
 
 from tracker.publish import (
@@ -163,8 +164,9 @@ class BuildTests(unittest.TestCase):
         # One window's published 1:5:20 scaling, labelled as such; nothing about windows per week.
         self.assertEqual(j["plan_ratios"], {"pro": 0.05, "max5": 0.25, "max20": 1.0})
         self.assertEqual(j["plan_ratios_basis"]["kind"], "published_plan_scaling")
-        # The frozen cross-plan weekly ratio is gone: unmeasured is empty (audit finding 6).
-        self.assertEqual(j["weekly_window_ratios"], {})
+        # The frozen cross-plan weekly ratio is published again (restored 2026-09-17,
+        # reverses part of audit finding 6 by Jonathan's decision).
+        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.78, "max5": 1.78, "max20": 1.0})
         self.assertEqual(j["rate_basis"], "meter_budget")
         r = j["rates"]["claude-sonnet-5"]
         self.assertEqual(r["meter_budget_per_window"], 15.0)
@@ -184,13 +186,20 @@ class BuildTests(unittest.TestCase):
         self.assertIsNone(j["last_change"])
         self.assertEqual(j["model_plan_limits"]["claude-sonnet-5"]["pro"]["included"], True)
         hist = j["history"]["claude-sonnet-5"]
-        # History starts at the first reading: nothing held or backfilled before it (finding 12).
-        self.assertEqual(hist[0], {"date": "2026-09-01", "meter_budget_per_window": 15.0,
+        # History is a step function again (restored 2026-09-17, reverses finding 12 by
+        # Jonathan's decision): days before the first reading are held at the first (only)
+        # regime's value, back to PASSIVE's own legacy `history` date.
+        self.assertEqual(hist[0], {"date": "2026-08-01", "meter_budget_per_window": 15.0,
                                    "tokens_per_window": r["tokens_per_window"],
                                    "api_value_per_window": r["api_value_per_window"],
                                    "api_list_value_per_window": r["api_value_per_window"],
-                                   "source": "passive", "quality": "measured", "readings": 1, "interpolated": False})
-        self.assertEqual(len(hist), 5)
+                                   "source": "held", "quality": "measured", "readings": 0, "interpolated": False})
+        self.assertEqual(hist[-1], {"date": "2026-09-05", "meter_budget_per_window": 15.0,
+                                    "tokens_per_window": r["tokens_per_window"],
+                                    "api_value_per_window": r["api_value_per_window"],
+                                    "api_list_value_per_window": r["api_value_per_window"],
+                                    "source": "passive", "quality": "measured", "readings": 1, "interpolated": False})
+        self.assertEqual(len(hist), 36)
 
     def test_fable_is_not_included_on_pro_and_has_half_the_weekly_limit_on_max(self):
         # Audit finding 2: the plan matrix offered Fable allowance Pro does not include, and
@@ -206,20 +215,28 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(all(cell["source_url"].startswith("https://") and cell["as_of"]
                             for model in limits.values() for cell in model.values()))
 
-    def test_no_session_count_is_published(self):
-        # Audit finding 11: sessions per window divided token totals from different mixes;
-        # nothing measures a session's meter cost, so no session figure is published.
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc),
+    def test_session_count_is_published_again(self):
+        # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the page's
+        # "about N sessions" line needs this figure back, passed through from passive.py's
+        # own transcript-derived median, unrelated to the frozen reference_mix below.
+        passive = dict(PASSIVE, session_tokens={"claude-sonnet-5": 410000})
+        j = build_public_json([], passive, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc),
                               gs_passive=daily_report([15.0] * 5))
-        self.assertNotIn("session_tokens", j)
+        self.assertEqual(j["session_tokens"], {"claude-sonnet-5": 410000})
         self.assertEqual(j["rates"]["claude-sonnet-5"]["reference_mix"]["kind"], "derived_scenario")
 
-    def test_history_days_carry_the_days_meter_budget_for_every_model(self):
+    def test_session_tokens_defaults_to_empty_without_a_passive_field(self):
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 5))
+        self.assertEqual(j["session_tokens"], {})
+
+    def test_history_days_carry_the_regimes_meter_budget_for_every_model(self):
         # Every history day carries the meter budget, one figure per day and the same for
         # every model; the API list value is a different unit, the list price of the tokens
         # that budget converts to (finding 1), and with cache reads free to the meter it is
-        # the larger figure. Days are the day's readings, not a held regime level
-        # (finding 5): a step shows where it happened and nowhere else.
+        # the larger figure. With flat readings either side of a step, the regime-held value
+        # (restored 2026-09-17, reverses finding 12) and the day's own reading agree, so this
+        # alone does not distinguish them -- see test_history_is_flat_within_a_regime_even_with_noisy_daily_readings.
         budgets = [15.0] * 10 + [10.5] * 5
         now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
         j = build_public_json([], PASSIVE, EFFORT, CACHE_READ_FREE, now, gs_passive=daily_report(budgets))
@@ -231,6 +248,22 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(all(h["api_value_per_window"] > h["meter_budget_per_window"] for h in sonnet + opus))
         self.assertEqual(sonnet[-1]["meter_budget_per_window"], j["rates"]["claude-sonnet-5"]["meter_budget_per_window"])
         self.assertEqual(j["rates"]["claude-opus-5"]["meter_budget_per_window"], 10.5)
+
+    def test_history_is_flat_within_a_regime_even_with_noisy_daily_readings(self):
+        # Restored 2026-09-17 (reverses finding 12 by Jonathan's decision): Jonathan's own
+        # passive account is noisy 2x-5x day to day, and the live page showed that noise
+        # directly ("so much up and down instead of accurate") once finding 12 made history
+        # the day's own reading. A model with real day-to-day scatter but no detected change
+        # must publish one flat figure throughout, the regime's median, not its raw readings.
+        budgets = [40.0, 38.0, 32.0, 47.0, 48.0, 42.0, 40.0, 36.0, 30.0]
+        now = datetime(2026, 9, 9, 12, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report(budgets))
+        self.assertIsNone(j["last_change"])
+        sonnet = j["history"]["claude-sonnet-5"]
+        passive_days = [h for h in sonnet if h["source"] == "passive"]
+        self.assertEqual(len(passive_days), 9)
+        self.assertEqual({h["meter_budget_per_window"] for h in sonnet}, {median(budgets)})
+        self.assertEqual(j["rates"]["claude-sonnet-5"]["meter_budget_per_window"], median(budgets))
 
     def test_every_priced_model_gets_a_rate_derived_from_the_one_measured_budget(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
@@ -255,7 +288,9 @@ class BuildTests(unittest.TestCase):
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 2, start_day=4))
         for model in ("claude-sonnet-5", "claude-opus-5"):
-            self.assertEqual([(h["date"], h["source"]) for h in j["history"][model]],
+            hist = j["history"][model]
+            self.assertEqual([h["date"] for h in hist if h["source"] not in ("held", "passive")], [])
+            self.assertEqual([(h["date"], h["source"]) for h in hist[-2:]],
                              [("2026-09-04", "passive"), ("2026-09-05", "passive")])
 
     def test_each_probed_model_publishes_its_own_probed_at(self):
@@ -345,7 +380,8 @@ class BuildTests(unittest.TestCase):
         fable_day["tokens"] = {"claude-fable-5-1": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 60_000}}
         now = datetime(2026, 9, 2, 20, 15, tzinfo=timezone.utc)
         j = build_public_json([], PASSIVE, EFFORT, prices, now, gs_passive=report)
-        self.assertEqual([h["meter_budget_per_window"] for h in j["history"]["claude-sonnet-5"]], [15.0, 15.0])
+        hist = j["history"]["claude-sonnet-5"]
+        self.assertEqual([h["meter_budget_per_window"] for h in hist if h["source"] == "passive"], [15.0, 15.0])
 
     def test_fable_derived_tokens_are_half_what_they_would_be_at_weight_one(self):
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
@@ -394,10 +430,14 @@ class BuildTests(unittest.TestCase):
         report["accounts"]["dave"]["stretches"] = sorted(report["accounts"]["dave"]["stretches"] + legacy,
                                                          key=lambda st: st["end"])
         j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 6, 20, tzinfo=timezone.utc), gs_passive=report)
-        hist = {h["date"]: (h["meter_budget_per_window"], h["quality"], h["readings"]) for h in j["history"]["claude-sonnet-5"]}
-        self.assertEqual(hist["2026-09-05"], (15.0, "measured", 1))
-        self.assertEqual(hist["2026-09-06"], (12.0, "legacy_reset_unverified", 1))
-        self.assertEqual(len(hist), 6)
+        hist = {h["date"]: (h["source"], h["quality"], h["readings"]) for h in j["history"]["claude-sonnet-5"]}
+        self.assertEqual(hist["2026-09-05"], ("passive", "measured", 1))
+        self.assertEqual(hist["2026-09-06"], ("passive", "legacy_reset_unverified", 1))
+        # Too few readings (6) to split into a second regime: both days hold the same
+        # regime-wide median, 15.0 -- the point being the verified day was not dropped
+        # from the pool (PR 57's review bug), not that it shows its own value any more
+        # (that changed with finding 12's reversal, restored 2026-09-17).
+        self.assertEqual({h["meter_budget_per_window"] for h in j["history"]["claude-sonnet-5"]}, {15.0})
         self.assertEqual(j["availability"]["evidence"], "measured")
 
     def test_events_excludes_the_plan_change(self):
@@ -457,10 +497,13 @@ class GsPassiveTests(unittest.TestCase):
         self.assertAlmostEqual(r["meter_budget_per_window"], 13.22, delta=0.01)
         # The class split is the frozen reference mix (finding 11), not any account's live one.
         self.assertEqual(r["split"], REFERENCE_MIX["split"])
-        # Probe days are not part of the series and nothing is held before the first
-        # passive day (finding 12): the history is that one day.
-        self.assertEqual([(h["date"], h["source"]) for h in j["history"]["claude-sonnet-5"]],
-                         [("2026-09-06", "passive")])
+        # Probe days are not part of the series: days before the first passive reading
+        # are held at its regime's value, back to PASSIVE's own legacy `history` date
+        # (restored 2026-09-17, reverses finding 12 by Jonathan's decision), never at a
+        # probe day's own value.
+        hist = j["history"]["claude-sonnet-5"]
+        self.assertEqual((hist[-1]["date"], hist[-1]["source"]), ("2026-09-06", "passive"))
+        self.assertEqual([h["date"] for h in hist if h["source"] not in ("held", "passive")], [])
 
     def test_a_passive_series_far_from_the_probe_level_fires_no_change_event(self):
         # The whole point of not joining: a probe steady at 97 next to passive days
@@ -810,16 +853,18 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertFalse(ww["max20"]["assumed"])
         self.assertFalse(ww["max5"]["assumed"])
 
-    def test_pro_publishes_nothing_borrowed_from_max5(self):
-        # Not any more (finding 6): Pro has no measurement of its own, so it publishes
-        # nothing borrowed from Max 5x, and Max 5x has no current figure either.
+    def test_pro_borrows_max5s_current_again(self):
+        # Restored 2026-09-17 (reverses part of finding 6 by Jonathan's decision): Pro
+        # has no measurement of its own, so its `current` is Max 5x's own figure,
+        # `assumed: true`, the same gap-fill pre-2026-09-16 used. Its history and
+        # regimes stay empty -- only `current` is borrowed.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         ww = build_public_json(rows, passive, EFFORT, PRICES, now)["weekly_windows"]
         self.assertEqual((ww["pro"]["current"], ww["pro"]["history"], ww["pro"]["regimes"], ww["pro"]["assumed"]),
-                         (None, [], [], False))
-        self.assertIsNone(ww["max5"]["current"])
+                         (ww["max5"]["current"], [], [], True))
+        self.assertIsNotNone(ww["max5"]["current"])
         self.assertTrue(ww["max5"]["history"])
 
     def test_probe_weeks_publish_beside_passive_max20_weeks_not_in_place_of_them(self):
@@ -975,8 +1020,10 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
         self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.5)
-        # Max 5x keeps its measured level as history (a regime), never as current (finding 6).
-        self.assertIsNone(j["weekly_windows"]["max5"]["current"])
+        # Max 5x's own weekly-row median is published as current again (restored 2026-09-17,
+        # reverses part of finding 6 by Jonathan's decision): the account is not going back to
+        # it, but the last-two-complete-weeks figure is still what the page had.
+        self.assertEqual(j["weekly_windows"]["max5"]["current"], 10.91)
         self.assertEqual([r["windows"] for r in j["weekly_windows"]["max5"]["regimes"]], [11.0])
         self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
