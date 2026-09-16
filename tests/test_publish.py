@@ -196,13 +196,15 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(j["rates"][model]["source"], "probe", model)
             self.assertEqual(j["rates"][model]["probed_at"], expected_ts, model)
 
-    def test_probe_accounts_lists_distinct_accounts_on_usable_rows(self):
+    def test_probe_account_count_counts_distinct_accounts_without_naming_them(self):
         rows = [probe(1, "claude-sonnet-5", 420000, account="dave"),
                 probe(2, "claude-sonnet-5", 420000, account="jwork"),
                 dict(probe(3, "claude-sonnet-5", 420000, account="dave"), outlier=True)]
         now = datetime(2026, 9, 2, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        self.assertEqual(j["probe_accounts"], ["dave", "jwork"])
+        self.assertEqual(j["probe_account_count"], 2)
+        self.assertNotIn("dave", json.dumps(j))
+        self.assertNotIn("jwork", json.dumps(j))
 
     def test_model_with_only_an_outlier_row_publishes_derived_with_null_probed_at(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
@@ -327,7 +329,7 @@ class GsPassiveTests(unittest.TestCase):
         self.assertEqual(j["instrument"], "passive")
         self.assertNotIn("passive_calibration", j)
         self.assertEqual(j["last_sample_at"], "2026-09-06T08:00:00+00:00")
-        self.assertEqual(j["passive_accounts"], ["dave"])
+        self.assertEqual(j["passive_account_count"], 1)
         r = j["rates"]["claude-sonnet-5"]
         self.assertEqual(r["source"], "passive")
         self.assertEqual(r["measured_at"], "2026-09-06T08:00:00+00:00")
@@ -368,7 +370,7 @@ class GsPassiveTests(unittest.TestCase):
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
         self.assertEqual(j["instrument"], "probe")
         self.assertEqual(j["rates"]["claude-sonnet-5"]["source"], "probe")
-        self.assertEqual(j["passive_accounts"], [])
+        self.assertEqual(j["passive_account_count"], 0)
 
     def test_a_gs_passive_report_with_no_priced_reading_falls_back_to_the_probe_series(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
@@ -378,9 +380,9 @@ class GsPassiveTests(unittest.TestCase):
         probe_only = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=empty)
         self.assertEqual(j["instrument"], "probe")
-        self.assertEqual(j["passive_accounts"], [])
-        self.assertEqual({k: v for k, v in j.items() if k != "passive_accounts"},
-                         {k: v for k, v in probe_only.items() if k != "passive_accounts"})
+        self.assertEqual(j["passive_account_count"], 0)
+        self.assertEqual({k: v for k, v in j.items() if k != "passive_account_count"},
+                         {k: v for k, v in probe_only.items() if k != "passive_account_count"})
 
     def test_freshness_guard_is_satisfied_by_a_fresh_passive_reading_when_probes_are_stale(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]  # 2026-09-01..05
@@ -403,8 +405,8 @@ class GsPassiveTests(unittest.TestCase):
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
         self.assertEqual(j["instrument"], "passive")
-        self.assertEqual(j["probe_accounts"], [])
-        self.assertEqual(j["passive_accounts"], ["dave"])
+        self.assertEqual(j["probe_account_count"], 0)
+        self.assertEqual(j["passive_account_count"], 1)
         r = j["rates"]["claude-sonnet-5"]
         self.assertEqual(r["source"], "passive")
         self.assertIsNone(r["probed_at"])
@@ -445,7 +447,7 @@ class GsPassiveTests(unittest.TestCase):
         self.assertIsNotNone(j["last_change"])
         self.assertEqual(j["last_change"]["date"], "2026-09-09")
 
-    def test_passive_accounts_only_lists_accounts_with_an_accepted_stretch(self):
+    def test_passive_account_count_only_counts_accounts_with_an_accepted_stretch(self):
         report = {"accounts": {
             "dave": GS_PASSIVE_MATCHING_PROBE["accounts"]["dave"],
             "jwork": {"stretches": [{"status": "unpriced", "end": "2026-09-06T08:00:00+00:00",
@@ -454,7 +456,7 @@ class GsPassiveTests(unittest.TestCase):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=report)
-        self.assertEqual(j["passive_accounts"], ["dave"])
+        self.assertEqual(j["passive_account_count"], 1)
 
 
 class FailurePathTests(unittest.TestCase):

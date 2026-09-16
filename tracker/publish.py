@@ -231,9 +231,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         m = r["model"]
         if m not in latest_row_per_model or r["ts"] > latest_row_per_model[m]["ts"]:
             latest_row_per_model[m] = r
-    probe_accounts = sorted({r["account"] for r in probe_rows if r.get("account")})
-    passive_accounts = sorted(name for name, acct in (gs_passive or {}).get("accounts", {}).items()
-                              if any(s["status"] == ACCEPTED for s in acct.get("stretches", [])))
+    # Counts, never names. The published JSON is world-readable, and the account names are
+    # the login names of real people's Claude accounts; how many accounts a figure rests on
+    # is the part a reader needs.
+    probe_account_count = len({r["account"] for r in probe_rows if r.get("account")})
+    passive_account_count = sum(1 for acct in (gs_passive or {}).get("accounts", {}).values()
+                                if any(s["status"] == ACCEPTED for s in acct.get("stretches", [])))
     earliest_reading_day = combined[0][0].date()
     first_probe_day = min(by_day_models, default=earliest_reading_day)
     # The class split converts meter dollars to tokens. In passive mode it is the gs
@@ -367,8 +370,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
         "instrument": instrument,
-        "probe_accounts": probe_accounts,
-        "passive_accounts": passive_accounts,
+        "probe_account_count": probe_account_count,
+        "passive_account_count": passive_account_count,
         "plan_ratios": ratios,
         "rate_basis": "api_value",
         "rates": rates,
