@@ -1,6 +1,20 @@
 {
  "max20": {
   "contributors": 2,
+  "points": [
+   {
+    "c": 0,
+    "coarse": false,
+    "t": "2026-09-09T13:16:16Z",
+    "usd_per_pct": 1.3233
+   },
+   {
+    "c": 1,
+    "coarse": true,
+    "t": "2026-09-16T00:11:31Z",
+    "usd_per_pct": 1.7491
+   }
+  ],
   "samples": 2,
   "tokens_per_pct": {
    "claude-fable-5-1": {
@@ -33,6 +47,7 @@
  },
  "max5": {
   "contributors": 0,
+  "points": [],
   "samples": 0,
   "tokens_per_pct": {},
   "usd_per_pct": null,
@@ -50,6 +65,7 @@
  "min_utilization": 5.0,
  "pro": {
   "contributors": 0,
+  "points": [],
   "samples": 0,
   "tokens_per_pct": {},
   "usd_per_pct": null,
@@ -62,5 +78,5 @@
    "with_complete_week": 0
   }
  },
- "updated_at": "2026-09-16T00:44:52+00:00"
+ "updated_at": "2026-09-16T01:06:31+00:00"
 }
