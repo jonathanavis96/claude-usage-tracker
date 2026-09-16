@@ -162,7 +162,13 @@ class PublicationRepairTests(unittest.TestCase):
         self.assertEqual(meter, 2.0)
         self.assertEqual(api, 3.8)
 
-    def test_below_threshold_history_does_not_blend_the_current_estimate(self):
+    def test_below_threshold_history_holds_one_blended_regime(self):
+        # A 100 -> 90 step is under the 15% detection threshold, so no event fires and
+        # the whole 40 days is one regime (tracker/publish.py, restored 2026-09-17,
+        # reverses finding 12 by Jonathan's decision): both `current` and every history
+        # day hold that regime's own median of all 40 readings, 95.0 -- not the last
+        # seven days alone (finding 5's original target, no longer how `current` reads)
+        # and not each day's own reading either.
         stretches = []
         for i, level in enumerate([100] * 20 + [90] * 20):
             # delta=10: input-token list/meter dollars of level/10 produces
@@ -180,8 +186,8 @@ class PublicationRepairTests(unittest.TestCase):
         report = {"accounts": {"a": {"stretches": stretches, "meter": {"last": stretches[-1]["end"]}}}}
         result = build_public_json([], {}, {}, PRICES, T0 + timedelta(days=40), gs_passive=report)
         self.assertEqual(result["events"], [])
-        self.assertEqual(result["rates"][MODEL]["meter_budget_per_window"], 90.0)
-        self.assertEqual({h["meter_budget_per_window"] for h in result["history"][MODEL]}, {90.0, 100.0})
+        self.assertEqual(result["rates"][MODEL]["meter_budget_per_window"], 95.0)
+        self.assertEqual({h["meter_budget_per_window"] for h in result["history"][MODEL]}, {95.0})
 
 
 if __name__ == "__main__":
