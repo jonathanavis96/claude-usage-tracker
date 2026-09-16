@@ -442,6 +442,33 @@ class PooledProjectsTests(unittest.TestCase):
             paths = sample.transcript_paths(cfg / "projects", None)
             self.assertEqual(sample.own_session_filter(paths, cfg), paths)
 
+    def test_ownership_says_filtered_only_when_the_filter_ran(self):
+        # Review of PR 57: the body claimed "filtered_local_transcripts" whenever projects
+        # was pooled or --own-sessions was given, even with no session-env to filter by,
+        # when every transcript, other logins' included, was kept.
+        def ownership(cfg, *flags):
+            out = io.StringIO()
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                rc = sample.main(["--id-file", str(cfg.parent / "id.json"), "--claude-dir", str(cfg), "--plan", "max20",
+                                  "--dry-run", "--print", *flags], usage_fetch=lambda: USAGE, now=NOW, out=out)
+            self.assertEqual(rc, 0)
+            return body_from_print(out.getvalue())["capture"]["ownership"]
+
+        with tempfile.TemporaryDirectory() as t:
+            cfg, _, _ = self._fake_configs(Path(t))
+            self.assertEqual(ownership(cfg), "filtered_local_transcripts")
+            self.assertEqual(ownership(cfg, "--all-sessions"), "local_transcripts_unverified")
+            (cfg / "session-env" / SESSION_A).rmdir()
+            (cfg / "session-env").rmdir()
+            self.assertEqual(ownership(cfg), "local_transcripts_unverified")
+            self.assertEqual(ownership(cfg, "--own-sessions"), "local_transcripts_unverified")
+        with tempfile.TemporaryDirectory() as t:
+            cfg = Path(t) / "cfg"
+            (cfg / "projects").mkdir(parents=True)
+            self.assertEqual(ownership(cfg, "--own-sessions"), "local_transcripts_unverified")
+            (cfg / "session-env" / SESSION_A).mkdir(parents=True)
+            self.assertEqual(ownership(cfg, "--own-sessions"), "filtered_local_transcripts")
+
     def test_token_lookup_follows_claude_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "t"}}))

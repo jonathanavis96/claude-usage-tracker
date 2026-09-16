@@ -223,6 +223,14 @@ def transcript_session_id(path: Path) -> str:
     return path.stem
 
 
+def own_session_filter_applies(cfg: Path, *, force: bool = False, disable: bool = False) -> bool:
+    """Whether own_session_filter actually filters: its one statement of the conditions,
+    so the body's `capture.ownership` can never claim a filter that did not run."""
+    if disable or not (force or _is_pooled_projects(cfg, cfg / "projects")):
+        return False
+    return (cfg / "session-env").is_dir()
+
+
 def own_session_filter(paths: list[Path], cfg: Path, *, force: bool = False, disable: bool = False) -> list[Path]:
     """Drop transcripts that are not this login's own session when the projects
     directory is pooled across accounts.
@@ -235,14 +243,9 @@ def own_session_filter(paths: list[Path], cfg: Path, *, force: bool = False, dis
     off. With no session-env directory the filter is a no-op even if pooled,
     since there is nothing to filter by.
     """
-    if disable:
-        return paths
-    projects = cfg / "projects"
-    if not (force or _is_pooled_projects(cfg, projects)):
+    if not own_session_filter_applies(cfg, force=force, disable=disable):
         return paths
     session_env = cfg / "session-env"
-    if not session_env.is_dir():
-        return paths
     own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
     kept = [p for p in paths if transcript_session_id(p) in own_ids]
     print(f"projects dir is shared with other accounts; kept {len(kept)} of {len(paths)} transcripts "
@@ -444,7 +447,8 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
     paths = own_session_filter(transcript_paths(cfg / "projects", since), cfg,
                                force=a.own_sessions, disable=a.all_sessions)
     turns = list(iter_turns(paths))
-    ownership = "filtered_local_transcripts" if (a.own_sessions or _is_pooled_projects(cfg, cfg / "projects")) and not a.all_sessions else "local_transcripts_unverified"
+    filtered = own_session_filter_applies(cfg, force=a.own_sessions, disable=a.all_sessions)
+    ownership = "filtered_local_transcripts" if filtered else "local_transcripts_unverified"
     body = build_body(contributor_id, plan, plan_source, usage, turns, now, ownership=ownership)
 
     encoded = minify(body)
