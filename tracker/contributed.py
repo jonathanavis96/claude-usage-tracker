@@ -51,7 +51,12 @@ Aggregation rules, per plan (pro, max5, max20):
                           complete week, else null with a `reason`.
   points                  one entry per (thinned) sample from the last
                           POINTS_DAYS days, for the page's per-contributor
-                          scatter/line chart: {"t", "usd_per_pct", "c", "coarse"}.
+                          scatter/line chart: {"t", "usd_per_pct",
+                          "tokens_per_pct", "windows", "c", "coarse"}.
+                          `tokens_per_pct` is every priced model's tokens over the
+                          whole-meter percent, and `windows` is that one sample's
+                          five-hour percent over its seven-day percent (null unless
+                          both meters clear MIN_UTILIZATION).
                           `c` is a per-plan ordinal (0, 1, 2 ...) assigned in
                           order of each contributor's first sample time in the
                           window -- never the contributor id itself. `coarse`
@@ -339,6 +344,28 @@ def _iso_z(ts) -> str | None:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _sample_windows(row: dict) -> float | None:
+    """This one sample's five-hour percent over its seven-day percent: how many
+    five-hour windows a week holds, as that reading sees it.
+
+    One sample is a much coarser read than tracker/weekly.py's paired movement --
+    the seven-day meter steps in whole percents, so a single low reading swings the
+    quotient hard. Both meters have to clear MIN_UTILIZATION before it is worth
+    plotting at all.
+    """
+    five = _utilization(row)
+    seven = (row.get("seven_day") or {}).get("utilization")
+    try:
+        seven = float(seven) if seven is not None else None
+    except (TypeError, ValueError):
+        return None
+    if five is None or seven is None:
+        return None
+    if five < MIN_UTILIZATION or seven < MIN_UTILIZATION:
+        return None
+    return round(five / seven, 3)
+
+
 def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datetime) -> list[dict]:
     """Anonymised per-sample points for the page's contributor chart, see the
     module docstring's `points` entry for the shape and thinning rules."""
@@ -373,13 +400,19 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
             u = _utilization(r)
             coarse = u is None or u < MIN_UTILIZATION
             usd_per_pct = None
+            tokens_per_pct = None
             if u is not None and u > 0:
                 priced = _sample_values(r, prices)
                 if priced is not None:
-                    _, values = priced
+                    present, values = priced
                     total = sum(values.values())
                     usd_per_pct = round(total / u, 4)
-            points.append((dt, {"t": ts_norm, "usd_per_pct": usd_per_pct, "c": c, "coarse": coarse}))
+                    # Combined across every model in the sample, the same convention
+                    # usd_per_pct uses: the whole meter percent bought all of it.
+                    tokens_per_pct = round(sum(sum(cs.values()) for cs in present.values()) / u)
+            points.append((dt, {"t": ts_norm, "usd_per_pct": usd_per_pct,
+                                "tokens_per_pct": tokens_per_pct,
+                                "windows": _sample_windows(r), "c": c, "coarse": coarse}))
 
     points.sort(key=lambda p: p[0])
     if len(points) > MAX_POINTS:

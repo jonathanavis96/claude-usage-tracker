@@ -277,6 +277,18 @@ class PointsTests(unittest.TestCase):
         self.assertEqual(len(pts), 1)
         self.assertEqual(pts[0]["t"], "2026-09-02T10:00:00Z")
 
+    def test_point_carries_tokens_per_pct_and_windows(self):
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual(pts[0]["tokens_per_pct"], 2000)
+        self.assertAlmostEqual(pts[0]["windows"], 5.0, places=3)
+
+    def test_windows_is_null_when_either_meter_is_under_the_floor(self):
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 1.0, sonnet(100_000)),
+                sample(B, "max20", "2026-09-02T11:00:00Z", 1.0, 10.0, sonnet(100_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual([p["windows"] for p in pts], [None, None])
+
     def test_points_are_sorted_by_t_ascending(self):
         pts = aggregate(fixture_rows(), NOW, PRICES)["max20"]["points"]
         self.assertEqual([p["t"] for p in pts], sorted(p["t"] for p in pts))
