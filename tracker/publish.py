@@ -14,6 +14,26 @@ from .rows import usable_rows
 from .weekly import probe_weekly_windows
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
+# How many five-hour windows a week's cap holds, per plan, relative to max20. NOT
+# PLAN_RATIOS_BASE: that one is what a single window is worth in tokens (the published
+# 1:5:20), this one is how many windows a week contains, and the two pull in opposite
+# directions -- Max 5x holds more windows, Max 20x holds bigger ones.
+#
+# Frozen, and measured rather than published by Anthropic: it is one meter divided by
+# another over the same traffic, so whoever generated the usage cancels out. Three
+# independent routes over Jonathan's own 5x-to-20x move agree -- calendar weeks
+# 11.02/6.18 = 1.78, the weeks either side of PLAN_CHANGE 11.00/6.58 = 1.67, and the
+# per-window medians with the seven-day rounding guard applied 9.86/5.67 = 1.74 (80
+# windows against 20). 1.78 is the figure of record.
+#
+# Frozen is the right shape, not a shortcut: max5 is not coming back on this account
+# (see _plan_for_week), so the ratio can never be re-measured here. Recomputing it live
+# from two `current` fields is what issue #54 fixes -- max20's current tracks the newest
+# regime while max5's is a frozen August calendar-week median, so their quotient carries
+# whatever limit change has landed since (2.39 today, being 1.78 x the 14 Sep -29%) and
+# fires a plan move as a limit move. A real Max 5x contributor replaces this with
+# measurement; until then the gap-fill has one constant, not a drifting quotient.
+WEEKLY_WINDOW_RATIOS = {"pro": 1.78, "max5": 1.78, "max20": 1.0}
 MAX_SAMPLE_AGE_DAYS = 10
 WEEKLY_CURRENT_DAYS = 14
 FIVE_HOURS = timedelta(hours=5)
@@ -373,6 +393,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "probe_account_count": probe_account_count,
         "passive_account_count": passive_account_count,
         "plan_ratios": ratios,
+        "weekly_window_ratios": dict(WEEKLY_WINDOW_RATIOS),
         "rate_basis": "api_value",
         "rates": rates,
         "effort": effort,

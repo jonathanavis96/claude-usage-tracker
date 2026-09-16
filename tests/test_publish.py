@@ -115,6 +115,10 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(j["last_sample_at"], "2026-09-05T08:00:00+00:00")
         self.assertEqual(j["plan_measured"], "max20")
         self.assertEqual(j["plan_ratios"], {"pro": 0.05, "max5": 0.25, "max20": 1.0})
+        # Windows a week holds, per plan. A different quantity from plan_ratios above (what one
+        # window is worth), and the page must never confuse the two: it scales its gap-filled
+        # weekly points by this one. Frozen, so a later limit change cannot leak into it.
+        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.78, "max5": 1.78, "max20": 1.0})
         self.assertEqual(j["rate_basis"], "api_value")
         r = j["rates"]["claude-sonnet-5"]
         latest = probe(5, "claude-sonnet-5", 420000)
