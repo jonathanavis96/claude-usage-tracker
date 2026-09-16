@@ -517,7 +517,7 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     figure and the old median is what it showed. `pro` has no measurement of its
     own; its `current` is max5's own figure, `assumed: true`, the same gap-fill
     pre-2026-09-16 used. `weekly_window_ratios` is `WEEKLY_WINDOW_RATIOS` (frozen),
-    overridden with the live seam between max5's last regime and max20's first
+    overridden with the live seam between max5's best-supported regime (most points) and max20's first
     where both exist -- the ratio is windows-per-week, a different quantity from
     `plan_ratios` (one window's worth), and the page must never confuse the two.
     Probe runs' weekly rows are published as their own series and never replace

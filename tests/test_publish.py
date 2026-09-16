@@ -1027,6 +1027,25 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual([r["windows"] for r in j["weekly_windows"]["max5"]["regimes"]], [11.0])
         self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
+    def test_weekly_window_ratio_seam_uses_max5s_best_supported_regime(self):
+        # Max 5x ran about 11 windows a week for nine days, then a short 6.6 tail right
+        # before PLAN_CHANGE (the four-day step the detector splits off the plan move);
+        # Max 20x follows at 6.5. The published ratio is the 11 era over 6.5, not the
+        # tail over 6.5, which would read about 1.0 and collapse Pro and Max 5x onto Max 20x.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        by_window = ([window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(6, 15)]
+                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 66.0, 10.0) for d in range(15, 19)]
+                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 65.0, 10.0) for d in range(19, 31)])
+        passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.PASSIVE_WEEKLY["history"],
+                                                "by_window": by_window})
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        regimes = j["weekly_windows"]["max5"]["regimes"]
+        self.assertEqual([r["windows"] for r in regimes], [11.0, 6.6])
+        self.assertGreater(regimes[0]["points"], regimes[1]["points"])
+        self.assertEqual(j["weekly_windows"]["max20"]["regimes"][0]["windows"], 6.5)
+        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.692, "max5": 1.692, "max20": 1.0})
+
     def test_probe_runs_per_window_points_are_published_but_stay_out_of_the_max20_series(self):
         # The real 2026-09-14/15 probe rows: each run moves the seven-day meter
         # by a point or none, so pooling them in only adds rounding (see
