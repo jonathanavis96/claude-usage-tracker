@@ -25,10 +25,27 @@ from .weekly import probe_weekly_windows
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
 # The published 1:5:20 scaling of ONE five-hour window between plans (Max 5x and Max 20x
 # are five and twenty times Pro's per-session usage). It says nothing about how many
-# windows a week holds on each plan: that is measured per plan in `weekly_windows`, and
-# the frozen cross-plan ratio of weekly windows (1.78) that used to fill Pro and Max 5x
-# from Max 20x is gone (audit 2026-09-16, finding 6).
+# windows a week holds on each plan: that is measured per plan in `weekly_windows`.
 PLAN_RATIOS_SOURCE_URL = "https://support.claude.com/en/articles/11049741-what-is-the-max-plan"
+# How many five-hour windows a week's cap holds, per plan, relative to max20. NOT
+# PLAN_RATIOS_BASE: that one is what a single window is worth in tokens (the published
+# 1:5:20), this one is how many windows a week contains, and the two pull in opposite
+# directions -- Max 5x holds more windows, Max 20x holds bigger ones.
+#
+# Frozen, and measured rather than published by Anthropic: it is one meter divided by
+# another over the same traffic, so whoever generated the usage cancels out. Three
+# independent routes over Jonathan's own 5x-to-20x move agree -- calendar weeks
+# 11.02/6.18 = 1.78, the weeks either side of PLAN_CHANGE 11.00/6.58 = 1.67, and the
+# per-window medians with the seven-day rounding guard applied 9.86/5.67 = 1.74 (80
+# windows against 20). 1.78 is the figure of record.
+#
+# Restored 2026-09-17 by Jonathan's decision (reverses part of audit finding 6): the
+# 2026-09-16 audit deleted this and left `weekly_windows.max5.current`/`.pro.current`
+# null, which made the live page's graphs and top figures look wrong against what
+# Jonathan had before. max5 is not coming back on this account (see _plan_for_week), so
+# the ratio can never be re-measured here; it stays frozen, published beside a live seam
+# ratio derived from the two plans' own regimes where both exist (_weekly_block).
+WEEKLY_WINDOW_RATIOS = {"pro": 1.78, "max5": 1.78, "max20": 1.0}
 MAX_SAMPLE_AGE_DAYS = 10
 WEEKLY_CURRENT_DAYS = 14
 FIVE_HOURS = timedelta(hours=5)
@@ -195,11 +212,33 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     rests on: its readings, stretches, meter movement, window pieces and how many
     stretches the capture check diagnosed (published anyway, CAPTURE_GATE off).
 
-    `meter_budget_per_window` is the median of the current regime's readings in
-    the trailing week (a regime starts at a detected change), so an older level
-    that detection never separated does not blend into it (finding 5). History
-    is one entry per UTC day that has a reading, from the first reading on: the
-    day's median, never held or backfilled (finding 12), with that day's quality.
+    History and `meter_budget_per_window` (restored 2026-09-17, reversing findings 11
+    and 12 by Jonathan's decision: the raw daily series he saw on the live page was
+    "so much up and down instead of accurate" against what he had before). The public
+    `history` is a step function of the measured limit, not the raw daily series:
+    Jonathan's own passive account is noisy 2x-5x day to day (the rolling meter
+    decays), and the public chart must show only what change detection actually
+    found, not that noise. detect_smoothed_changes splits the whole dollar series
+    into regimes; each regime is held flat at the median of the readings inside it,
+    and every model's tokens_per_window for that regime is that same median divided
+    by the model's own blended price times its own meter_weight -- so every model
+    steps on the same dates, just at different levels. Days before the first
+    reading (when passive.json's own legacy `history` reaches further back) are
+    held flat at the first regime's value with `source: "held"`: that legacy record
+    certifies no step larger than what it already shows happened before the gs
+    passive readings started, so nothing in that gap can be measured, only held.
+    A day's `source` is "passive" when the series has a reading that day, "derived"
+    when the day falls in a regime but has no reading of its own, and "held" for
+    the pre-first-reading fill; a day's `quality` is its own reading's
+    ("measured"/"legacy_reset_unverified") where it has one, else the regime's
+    (whether any reading feeding that regime was verified). `interpolated` stays
+    false everywhere -- it is a step function, not an interpolation.
+
+    `rates[model]["meter_budget_per_window"]`/`tokens_per_window`/dollar figures
+    are the CURRENT regime's held value, the same figure the history's newest row
+    for that model carries (the hero shows `rates`, the chart shows `history`; they
+    must agree) -- not a rolling trailing-week median as finding 5 introduced.
+    `evidence`/`quality`/`freshness` keep finding 16's shape and are unaffected.
     Freshness is per metric (`freshness.stale` once the newest reading is older
     than MAX_SAMPLE_AGE_DAYS), not a refusal to publish (finding 16).
 
@@ -223,7 +262,6 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     measured_at = series[-1][0] if series else None
     current = [(ts, v) for ts, v in series
                if (regime_start is None or ts.date() >= regime_start) and ts >= measured_at - timedelta(days=7)]
-    current_value = median(v for _, v in current) if current else None
     stale = measured_at < now - timedelta(days=MAX_SAMPLE_AGE_DAYS) if measured_at else None
 
     stretches = _eligible_stretches(gs_passive, prices, allow_legacy_unverified=evidence_status == "conditional")
@@ -279,15 +317,67 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     for ts, v in day_readings:
         by_day.setdefault(ts.date(), []).append(v)
 
+    # The step function (restored 2026-09-17, findings 11/12): every event
+    # detect_smoothed_changes found over the whole series, not just the newest one,
+    # bounds a regime. `day_readings` (broader than `series`: it fills a measured
+    # day's gap with a legacy reading, see above) is bucketed into those regimes so
+    # a regime's held value pools everything published for its span.
+    regime_starts = sorted({e.date for e in events})
+
+    def regime_index(d: date) -> int:
+        idx = 0
+        for rd in regime_starts:
+            if d >= rd:
+                idx += 1
+            else:
+                break
+        return idx
+
+    regime_values: dict[int, list[float]] = {}
+    regime_dates: dict[int, list[date]] = {}
+    for ts, v in day_readings:
+        idx = regime_index(ts.date())
+        regime_values.setdefault(idx, []).append(v)
+        regime_dates.setdefault(idx, []).append(ts.date())
+    regime_quality = {idx: ("measured" if any(dd in verified_days for dd in dates) else "legacy_reset_unverified")
+                      for idx, dates in regime_dates.items()}
+
+    last_day = now.date()
+    # Days before the first reading are held at the first regime's value: passive.json's
+    # own legacy `history` (tracker/passive.py, masterrig's transcript-derived daily
+    # rates, predating gs_passive) can reach further back than the first gs_passive
+    # reading and is the only other source of an earlier boundary -- never probe rows
+    # (finding 13 stays).
+    first_reading_day = min((ts.date() for ts, _ in day_readings), default=None)
+    first_day = first_reading_day
+    if first_reading_day is not None:
+        # Days before the first reading are held at the first regime's value (above);
+        # a legacy `history` date earlier than that pushes the held fill back further.
+        # With no reading at all there is no regime to hold at, so the legacy date is
+        # never used on its own -- history stays empty, as it already does today.
+        legacy_history_days = [date.fromisoformat(ds) for ds in passive.get("history", {})]
+        if legacy_history_days:
+            first_day = min(first_reading_day, min(legacy_history_days))
+
+    current_regime_idx = None
+    if day_readings:
+        current_regime_idx = regime_index(last_day)
+        if current_regime_idx not in regime_values:
+            # `now` fell before the newest reading's own day (a test fixture, or a
+            # publish run against stale readings): fall back to the newest regime that
+            # actually has evidence, which is what the history's own newest row shows.
+            current_regime_idx = max(regime_values)
+    regime_current_value = median(regime_values[current_regime_idx]) if current_regime_idx is not None else None
+
     rates, history = {}, {}
     for model, price in prices.items():
         per_token = blended_price_per_token(mix, price) * price.get("meter_weight", 1.0)
         api_per_token = blended_api_price_per_token(mix, price)
 
-        window_tokens = _reference_tokens(current_value, per_token)
+        window_tokens = _reference_tokens(regime_current_value, per_token)
         model_probe = latest_row_per_model.get(model)
         rates[model] = {
-            "meter_budget_per_window": round(current_value, 2) if current_value is not None else None,
+            "meter_budget_per_window": round(regime_current_value, 2) if regime_current_value is not None else None,
             "tokens_per_window": window_tokens,
             "api_value_per_window": round(window_tokens * api_per_token, 2) if window_tokens is not None else None,
             "api_list_value_per_window": round(window_tokens * api_per_token, 2) if window_tokens is not None else None,
@@ -311,18 +401,27 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
             "probe_effort": latest_row["effort"] if latest_row is not None else None,
         }
         hist = []
-        for d in sorted(by_day):
-            budget = median(by_day[d])
-            day_tokens = _reference_tokens(budget, per_token)
-            day_api = round(day_tokens * api_per_token, 2) if day_tokens is not None else None
-            hist.append({"date": d.isoformat(), "meter_budget_per_window": round(budget, 2),
-                         "tokens_per_window": day_tokens, "api_value_per_window": day_api,
-                         "api_list_value_per_window": day_api, "source": "passive",
-                         "quality": "measured" if d in verified_days else "legacy_reset_unverified",
-                         "readings": len(by_day[d]), "interpolated": False})
+        if first_day is not None:
+            d = first_day
+            while d <= last_day:
+                idx = regime_index(d)
+                budget = median(regime_values[idx])
+                day_tokens = _reference_tokens(budget, per_token)
+                day_api = round(day_tokens * api_per_token, 2) if day_tokens is not None else None
+                if d in by_day:
+                    day_source, day_quality = "passive", ("measured" if d in verified_days else "legacy_reset_unverified")
+                elif first_reading_day is not None and d < first_reading_day:
+                    day_source, day_quality = "held", regime_quality.get(idx, "legacy_reset_unverified")
+                else:
+                    day_source, day_quality = "derived", regime_quality.get(idx, "legacy_reset_unverified")
+                hist.append({"date": d.isoformat(), "meter_budget_per_window": round(budget, 2),
+                             "tokens_per_window": day_tokens, "api_value_per_window": day_api,
+                             "api_list_value_per_window": day_api, "source": day_source,
+                             "quality": day_quality, "readings": len(by_day.get(d, [])), "interpolated": False})
+                d += timedelta(days=1)
         history[model] = hist
 
-    weekly_windows, weekly_events = _weekly_block(passive.get("weekly_windows"), probe_weekly, now)
+    weekly_windows, weekly_events, weekly_window_ratios = _weekly_block(passive.get("weekly_windows"), probe_weekly, now)
     return {
         "schema_version": 2,
         "generated_at": now.isoformat(),
@@ -339,7 +438,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "plan_ratios": dict(PLAN_RATIOS_BASE),
         "plan_ratios_basis": {"kind": "published_plan_scaling", "scope": "one five-hour window",
                               "source_url": PLAN_RATIOS_SOURCE_URL},
-        "weekly_window_ratios": {},
+        "weekly_window_ratios": weekly_window_ratios,
         "rate_basis": "meter_budget",
         "model_plan_limits": _model_plan_limits(prices),
         "rates": rates,
@@ -350,6 +449,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "weekly_windows": weekly_windows,
         "last_change": _latest_change_with_scope(events, weekly_events),
         "events": _build_events(events, weekly_events),
+        # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the median
+        # session token total per model, from passive.py's own transcript-derived
+        # daily_rates (tracker/turns.py session_tokens_by_model), unrelated to the
+        # frozen reference mix above -- it feeds the page's "about N sessions" line,
+        # not a token-figure conversion.
+        "session_tokens": passive.get("session_tokens", {}),
     }
 
 
@@ -381,22 +486,42 @@ def _repaired(row: dict) -> bool:
     return "pieces" in row
 
 
-def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime) -> tuple[dict, list]:
-    """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
+def _weekly_current(history: list[dict], now: datetime) -> float | None:
+    """Median of the last two complete weeks' `windows` figure.
+
+    Restored 2026-09-17 by Jonathan's decision (reverses part of audit finding 6):
+    `weekly_windows.max5.current` and `.pro.current` (max5's own figure, `assumed`)
+    carry this again, computed from each plan's own weekly rows rather than left
+    null. max20 does not fall back to this any more; it has its own certified
+    `_regime_current` from the per-window series.
+    """
+    complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]
+    return round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
+
+
+def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime) -> tuple[dict, list, dict]:
+    """(`weekly_windows`, weekly change events, `weekly_window_ratios`): per plan, each
+    with its own evidence.
 
     `max20` is the live plan. Its `current` is the pooled ratio of the current
     regime's trailing fortnight of reset-verified, repaired passive window points
     (_regime_current), with its rounding interval, evidence and staleness in
     `current_estimate`; its `regimes` and the weekly events come from
-    tracker/detect.py on the same points. `max5` is history only: its weeks and
-    every regime its own points show, and no current value (audit finding 6: its
-    old median must not be published as current, nor scaled onto max20 across the
-    plan move). Its last regime begins before PLAN_CHANGE, a date taken from the
-    account owner's record rather than from independent metadata, so the plan
-    move itself cannot be told apart from a limit change there; `plan_change`
-    says so. `pro` has no measurement of its own and publishes none. Probe runs'
-    weekly rows are published as their own series and never replace passive weeks
-    (finding 13).
+    tracker/detect.py on the same points. `max5` is history only for regimes and
+    events -- its last regime begins before PLAN_CHANGE, a date taken from the
+    account owner's record rather than from independent metadata, so the plan move
+    itself cannot be told apart from a limit change there; `plan_change` says so.
+    Its `current` (restored 2026-09-17, reverses part of finding 6 by Jonathan's
+    decision) is `_weekly_current` on its own weekly rows -- the account is not
+    going back to Max 5x, so this can never be re-measured, but the page needs a
+    figure and the old median is what it showed. `pro` has no measurement of its
+    own; its `current` is max5's own figure, `assumed: true`, the same gap-fill
+    pre-2026-09-16 used. `weekly_window_ratios` is `WEEKLY_WINDOW_RATIOS` (frozen),
+    overridden with the live seam between max5's last regime and max20's first
+    where both exist -- the ratio is windows-per-week, a different quantity from
+    `plan_ratios` (one window's worth), and the page must never confuse the two.
+    Probe runs' weekly rows are published as their own series and never replace
+    passive weeks (finding 13).
     """
     passive_weekly = dict(passive_weekly or {"current": None, "history": [], "by_window": []})
     # passive.json may lag: it can predate the flag, or carry a `partial` from when its
@@ -428,22 +553,28 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
         max20_availability = {"status": "unavailable", "reason": "insufficient_seven_day_movement"}
     probe = dict(probe_weekly, history=[dict(h, source="probe_paired_deltas", assumed=False)
                                         for h in probe_weekly["history"]])
+    max5_history = [h for h in rows if _plan_for_week(h["week_ending"]) == "max5"]
+    max20_regimes, max5_regimes = regimes(max20_points), regimes(max5_points)
+    max5_current = _weekly_current(max5_history, now)
+    ratios = dict(WEEKLY_WINDOW_RATIOS)
+    if max5_regimes and max20_regimes and max20_regimes[0]["windows"]:
+        seam = max5_regimes[-1]["windows"] / max20_regimes[0]["windows"]
+        ratios["max5"] = ratios["pro"] = round(seam, 3)
     block = {
         "max20": {"current": estimate["value"] if estimate else None, "current_estimate": estimate,
                   "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max20"],
-                  "regimes": regimes(max20_points), "assumed": False, "availability": max20_availability},
-        "max5": {"current": None, "current_estimate": None,
-                 "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max5"],
-                 "regimes": regimes(max5_points), "assumed": False,
+                  "regimes": max20_regimes, "assumed": False, "availability": max20_availability},
+        "max5": {"current": max5_current, "current_estimate": None,
+                 "history": max5_history, "regimes": max5_regimes, "assumed": False,
                  "availability": {"status": "historical_only", "reason": "no_current_max5_measurement"},
                  "plan_change": {"date": PLAN_CHANGE.isoformat(), "source": "account owner's record",
                                  "independently_verified": False}},
-        "pro": {"current": None, "current_estimate": None, "history": [], "regimes": [], "assumed": False,
+        "pro": {"current": max5_current, "current_estimate": None, "history": [], "regimes": [], "assumed": True,
                 "availability": {"status": "unavailable", "reason": "no_pro_measurement"}},
         "passive": passive_weekly,
         "probe": probe,
     }
-    return block, events
+    return block, events, ratios
 
 
 def _window_points(passive_points: list[dict], keep) -> list[tuple[datetime, float, float, int]]:
