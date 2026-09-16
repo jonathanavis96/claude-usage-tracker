@@ -35,8 +35,9 @@ class Sample:
     ts: datetime
     five_hour: float
     seven_day: float | None
-    resets_at: str | None
+    resets_at: str | None  # the five-hour window's reset
     source: str
+    seven_resets_at: str | None = None  # the seven-day window's reset, when the log records it
 
 
 def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list[Sample]:
@@ -49,9 +50,11 @@ def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list
         fh = (d.get("five_hour") or {})
         if fh.get("utilization") is None or not d.get("ts"):
             continue
-        sd = (d.get("seven_day") or {}).get("utilization")
+        seven = d.get("seven_day") or {}
+        sd = seven.get("utilization")
         out.append(Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),
-                          float(sd) if sd is not None else None, fh.get("resets_at"), source))
+                          float(sd) if sd is not None else None, fh.get("resets_at"), source,
+                          seven.get("resets_at")))
     return out
 
 

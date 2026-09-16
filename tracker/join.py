@@ -249,13 +249,17 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
     """Five-hour and seven-day movement per five-hour window, for weekly windows per account.
 
     The pairing rule is tracker/weekly.py's: consecutive readings inside one
-    window pair whenever neither meter fell (a seven-day fall is its weekly
-    reset), whichever of them moved -- a seven-day tick with the five-hour meter
-    still is denominator the ratio needs (audit 2026-09-16, finding 3). A
-    five-hour reset starts a new window; a gap longer than `max_gap` starts a
-    new piece, which joins the window it came from only when the log names that
-    window's reset (without one, a gap could hide a reset, so it starts a new
-    point). The point shape is tracker/weekly.py's `by_window` point.
+    five-hour window and one seven-day window pair whenever neither meter fell,
+    whichever of them moved -- a seven-day tick with the five-hour meter still
+    is denominator the ratio needs (audit 2026-09-16, finding 3). A five-hour
+    reset starts a new window; so does a seven-day reset, recorded or seen as
+    the seven-day meter falling (a pair across a recorded weekly reset is never
+    pooled, even when the new week's meter has already climbed back past the
+    old reading). A gap longer than `max_gap` starts a new piece, which joins
+    the window it came from only when the log names that window's five-hour
+    reset (without one, a gap could hide a reset, so it starts a new point) and
+    no recorded seven-day reset differs. The point shape is tracker/weekly.py's
+    `by_window` point.
     `window_ending` is the window's recorded reset time when the log has one;
     gs's ceiling log records none, so there it is the window's last paired
     reading and `reset_verified` is false.
@@ -267,7 +271,8 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
         if _is_reset(a, b) or b.ts - a.ts >= FIVE_HOURS:
             chain = None
             continue
-        if b.ts - a.ts > max_gap or a.seven_day is None or b.seven_day is None:
+        if (b.ts - a.ts > max_gap or a.seven_day is None or b.seven_day is None
+                or not same_reset(a.seven_resets_at, b.seven_resets_at)):
             chain = None
             continue
         d5, d7 = b.five_hour - a.five_hour, b.seven_day - a.seven_day
@@ -277,11 +282,13 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
         if chain is None:
             last = windows[-1] if windows else None
             if (last is not None and a.resets_at is not None and last["resets_at"] is not None
-                    and same_reset(last["resets_at"], a.resets_at)):
+                    and same_reset(last["resets_at"], a.resets_at)
+                    and same_reset(last["seven_resets_at"], a.seven_resets_at)):
                 chain = last
                 chain["pieces"] += 1
             else:
-                chain = {"resets_at": a.resets_at, "end": b.ts, "d5": 0.0, "d7": 0.0, "pieces": 1}
+                chain = {"resets_at": a.resets_at, "seven_resets_at": a.seven_resets_at, "end": b.ts,
+                         "d5": 0.0, "d7": 0.0, "pieces": 1}
                 windows.append(chain)
         chain["d5"] += d5
         chain["d7"] += d7
