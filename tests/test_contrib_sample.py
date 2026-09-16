@@ -72,7 +72,7 @@ class Fixture:
             rec("m2", in_five, model="claude-sonnet-5", inp=1, out=2, cr=3, cw=4),  # sonnet, both windows
             rec("m3", in_seven_only, inp=100, out=200, cr=0, cw=0),          # opus, seven-day only
             rec("m4", before_both, inp=1000, out=1000, cr=1000, cw=1000),   # outside both
-            rec("m5", in_five, model="claude-haiku-4-5-20251001", inp=7),   # not a canonical model: dropped
+            rec("m5", in_five, model="claude-haiku-4-5-20251001", inp=7),   # not a priced model: kept by its id
             "not json at all",
             json.dumps({"type": "assistant", "timestamp": _iso(in_five), "message": {"id": "m6"}}),  # no usage
         ]) + "\n")
@@ -152,7 +152,14 @@ class BodyTests(unittest.TestCase):
             self.assertEqual(set(body_from_print(out)), {
                 "contributor_id", "plan", "plan_source", "ts", "five_hour", "seven_day",
                 "tokens_since_five_hour_reset", "tokens_since_seven_day_reset", "capture", "client_version"})
-            self.assertEqual(body_from_print(out)["capture"]["ownership"], "configured_profile")
+            # The sub-agent's test named an ownership value the sampler never produces. This
+            # fixture's projects/ is not pooled with another profile and no filter was asked
+            # for, so ownership is the unverified default, and capture carries no path.
+            capture = body_from_print(out)["capture"]
+            self.assertEqual(set(capture), {"collected_at", "five_hour_started_at", "seven_day_started_at", "ownership"})
+            self.assertEqual(capture["ownership"], "local_transcripts_unverified")
+            self.assertEqual(capture["collected_at"], NOW.strftime("%Y-%m-%dT%H:%M:%SZ"))
+            self.assertNotIn(str(f.claude_dir), json.dumps(capture))
 
     def test_body_under_2kb(self):
         with Fixture() as f:
@@ -243,7 +250,20 @@ class PlanTests(unittest.TestCase):
             max_id = body_from_print(second)["contributor_id"]
             self.assertNotEqual(pro_id, max_id)
             stored = json.loads(f.id_file.read_text())
-            self.assertEqual(set(stored["identities"]), {"configured_profile:pro", "configured_profile:max20"})
+            # Keyed locally by a hash of the config dir and its account (never sent), so
+            # one machine's second Claude profile does not share an id (audit finding 14).
+            profiles = {k.rsplit(":", 1)[0] for k in stored["identities"]}
+            self.assertEqual({k.rsplit(":", 1)[1] for k in stored["identities"]}, {"pro", "max20"})
+            self.assertEqual(len(profiles), 1)
+            self.assertRegex(profiles.pop(), r"^[0-9a-f]{64}$")
+            self.assertNotIn(str(f.claude_dir), f.id_file.read_text())
+            other = Path(f.tmp.name) / "claude-other"
+            (other / "projects").mkdir(parents=True)
+            out = io.StringIO()
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                sample.main(["--id-file", str(f.id_file), "--claude-dir", str(other), "--plan", "pro", "--dry-run", "--print"],
+                            usage_fetch=lambda: USAGE, now=NOW, out=out)
+            self.assertNotIn(body_from_print(out.getvalue())["contributor_id"], (pro_id, max_id))
 
     def test_endpoint_plan_wins_and_is_recorded(self):
         usage = dict(USAGE, subscription_type="Claude Max 20x")
