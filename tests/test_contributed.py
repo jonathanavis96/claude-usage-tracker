@@ -234,6 +234,54 @@ class WeeklyWindowsTests(unittest.TestCase):
         self.assertEqual(_weighted_median([(10, 3), (30, 1)]), 10)
 
 
+class PointsTests(unittest.TestCase):
+    def test_ordinal_assigned_by_first_sample_time_never_the_contributor_id(self):
+        # B's first sample precedes A's, so B gets c=0 and A gets c=1.
+        rows = [sample(A, "max20", "2026-09-02T14:00:00Z", 50.0, 10.0, sonnet(100_000)),
+                sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        by_t = {p["t"]: p["c"] for p in pts}
+        self.assertEqual(by_t["2026-09-02T10:00:00Z"], 0)
+        self.assertEqual(by_t["2026-09-02T14:00:00Z"], 1)
+        self.assertNotIn(A, json.dumps(pts))
+        self.assertNotIn(B, json.dumps(pts))
+
+    def test_coarse_sample_is_included_with_a_usd_figure(self):
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 4.0, 10.0, sonnet(100_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual(len(pts), 1)
+        self.assertTrue(pts[0]["coarse"])
+        # 100k cache_write @ $2.5/M = $0.25, over utilization 4.
+        self.assertAlmostEqual(pts[0]["usd_per_pct"], 0.25 / 4, places=4)
+
+    def test_unpriced_sample_gives_null_usd_per_pct(self):
+        tokens = {"claude-mystery-9": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1000}}
+        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, tokens)]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual(len(pts), 1)
+        self.assertIsNone(pts[0]["usd_per_pct"])
+        self.assertFalse(pts[0]["coarse"])
+
+    def test_hourly_thinning_keeps_the_latest_sample_in_the_hour(self):
+        rows = [sample(A, "max20", "2026-09-02T10:05:00Z", 50.0, 10.0, sonnet(100_000)),
+                sample(A, "max20", "2026-09-02T10:45:00Z", 60.0, 10.0, sonnet(200_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual(len(pts), 1)
+        self.assertEqual(pts[0]["t"], "2026-09-02T10:45:00Z")
+
+    def test_sample_older_than_31_days_is_excluded(self):
+        old_ts = (NOW - timedelta(days=31)).isoformat().replace("+00:00", "Z")
+        rows = [sample(A, "max20", old_ts, 50.0, 10.0, sonnet(100_000)),
+                sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual(len(pts), 1)
+        self.assertEqual(pts[0]["t"], "2026-09-02T10:00:00Z")
+
+    def test_points_are_sorted_by_t_ascending(self):
+        pts = aggregate(fixture_rows(), NOW, PRICES)["max20"]["points"]
+        self.assertEqual([p["t"] for p in pts], sorted(p["t"] for p in pts))
+
+
 class MergeTests(unittest.TestCase):
     def test_appends_new_rows_and_dedupes_by_contributor_and_ts(self):
         with tempfile.TemporaryDirectory() as t:
