@@ -36,6 +36,13 @@ def sample(cid, plan, ts, five, seven, tokens=None, five_reset=FIVE_RESET, seven
             "client_version": "contrib-sample/0.1.0", "received_at": ts}
 
 
+def week_sample(cid, plan, ts, five, seven, five_tokens, seven_tokens):
+    """A sample that also carries its tokens since the seven-day reset."""
+    r = sample(cid, plan, ts, five, seven, five_tokens)
+    r["tokens_since_seven_day_reset"] = seven_tokens
+    return r
+
+
 def sonnet(cache_write, output=0):
     return {"claude-sonnet-5": {"input": 0, "output": output, "cache_read": 0, "cache_write": cache_write}}
 
@@ -277,17 +284,32 @@ class PointsTests(unittest.TestCase):
         self.assertEqual(len(pts), 1)
         self.assertEqual(pts[0]["t"], "2026-09-02T10:00:00Z")
 
-    def test_point_carries_tokens_per_pct_and_windows(self):
+    def test_point_carries_both_windows_per_pct_and_their_quotient(self):
+        # 100k tokens moved the five-hour meter 50% (2,000 per 1%); 800k moved the
+        # seven-day meter 10% (80,000 per 1%). A week holds 40 five-hour windows.
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0,
+                            sonnet(100_000), sonnet(800_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual(pts[0]["tokens_per_pct"], 2000)
+        self.assertEqual(pts[0]["tokens_per_pct_week"], 80_000)
+        self.assertAlmostEqual(pts[0]["windows"], 40.0, places=3)
+
+    def test_a_meter_under_the_floor_nulls_its_own_side_and_the_quotient(self):
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 1.0,
+                            sonnet(100_000), sonnet(800_000)),
+                week_sample(B, "max20", "2026-09-02T11:00:00Z", 1.0, 10.0,
+                            sonnet(100_000), sonnet(800_000))]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertEqual([p["windows"] for p in pts], [None, None])
+        self.assertEqual([p["tokens_per_pct_week"] for p in pts], [None, 80_000])
+        self.assertEqual([p["tokens_per_pct"] for p in pts], [2000, None])
+
+    def test_no_seven_day_tokens_leaves_the_weekly_figures_null(self):
         rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(pts[0]["tokens_per_pct"], 2000)
-        self.assertAlmostEqual(pts[0]["windows"], 5.0, places=3)
-
-    def test_windows_is_null_when_either_meter_is_under_the_floor(self):
-        rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 1.0, sonnet(100_000)),
-                sample(B, "max20", "2026-09-02T11:00:00Z", 1.0, 10.0, sonnet(100_000))]
-        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
-        self.assertEqual([p["windows"] for p in pts], [None, None])
+        self.assertIsNone(pts[0]["tokens_per_pct_week"])
+        self.assertIsNone(pts[0]["windows"])
 
     def test_points_are_sorted_by_t_ascending(self):
         pts = aggregate(fixture_rows(), NOW, PRICES)["max20"]["points"]

@@ -52,11 +52,13 @@ Aggregation rules, per plan (pro, max5, max20):
   points                  one entry per (thinned) sample from the last
                           POINTS_DAYS days, for the page's per-contributor
                           scatter/line chart: {"t", "usd_per_pct",
-                          "tokens_per_pct", "windows", "c", "coarse"}.
-                          `tokens_per_pct` is every priced model's tokens over the
-                          whole-meter percent, and `windows` is that one sample's
-                          five-hour percent over its seven-day percent (null unless
-                          both meters clear MIN_UTILIZATION).
+                          "tokens_per_pct", "tokens_per_pct_week", "windows",
+                          "c", "coarse"}. `tokens_per_pct` is the sample's tokens
+                          since the five-hour reset over its five-hour percent and
+                          `tokens_per_pct_week` the same for the seven-day window;
+                          `windows` is their quotient, how many five-hour windows
+                          that reading says a week holds. Each is null when its own
+                          meter is under MIN_UTILIZATION or its token count is zero.
                           `c` is a per-plan ordinal (0, 1, 2 ...) assigned in
                           order of each contributor's first sample time in the
                           window -- never the contributor id itself. `coarse`
@@ -228,8 +230,8 @@ def _utilization(row: dict) -> float | None:
         return None
 
 
-def _model_tokens(row: dict) -> dict[str, dict]:
-    t = row.get("tokens_since_five_hour_reset")
+def _model_tokens(row: dict, field: str = "tokens_since_five_hour_reset") -> dict[str, dict]:
+    t = row.get(field)
     if not isinstance(t, dict):
         return {}
     out = {}
@@ -344,26 +346,26 @@ def _iso_z(ts) -> str | None:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _sample_windows(row: dict) -> float | None:
-    """This one sample's five-hour percent over its seven-day percent: how many
-    five-hour windows a week holds, as that reading sees it.
+def _per_pct_both_windows(row: dict) -> tuple[float | None, float | None]:
+    """(tokens per 1% of the five-hour meter, tokens per 1% of the seven-day meter).
 
-    One sample is a much coarser read than tracker/weekly.py's paired movement --
-    the seven-day meter steps in whole percents, so a single low reading swings the
-    quotient hard. Both meters have to clear MIN_UTILIZATION before it is worth
-    plotting at all.
+    Each side divides that window's own token count by that window's own percent, so
+    neither is polluted by traffic the other window did not see. Either is None when its
+    meter is under MIN_UTILIZATION or its token count is zero -- the meters step in whole
+    percents, so a low reading makes the quotient swing hard.
     """
-    five = _utilization(row)
-    seven = (row.get("seven_day") or {}).get("utilization")
-    try:
-        seven = float(seven) if seven is not None else None
-    except (TypeError, ValueError):
-        return None
-    if five is None or seven is None:
-        return None
-    if five < MIN_UTILIZATION or seven < MIN_UTILIZATION:
-        return None
-    return round(five / seven, 3)
+    def side(meter: str, field: str) -> float | None:
+        u = (row.get(meter) or {}).get("utilization")
+        try:
+            u = float(u) if u is not None else None
+        except (TypeError, ValueError):
+            return None
+        if u is None or u < MIN_UTILIZATION:
+            return None
+        total = sum(sum(c.values()) for c in _model_tokens(row, field).values())
+        return total / u if total > 0 else None
+
+    return side("five_hour", "tokens_since_five_hour_reset"), side("seven_day", "tokens_since_seven_day_reset")
 
 
 def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datetime) -> list[dict]:
@@ -400,19 +402,22 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
             u = _utilization(r)
             coarse = u is None or u < MIN_UTILIZATION
             usd_per_pct = None
-            tokens_per_pct = None
             if u is not None and u > 0:
                 priced = _sample_values(r, prices)
                 if priced is not None:
-                    present, values = priced
-                    total = sum(values.values())
-                    usd_per_pct = round(total / u, 4)
-                    # Combined across every model in the sample, the same convention
-                    # usd_per_pct uses: the whole meter percent bought all of it.
-                    tokens_per_pct = round(sum(sum(cs.values()) for cs in present.values()) / u)
+                    _, values = priced
+                    usd_per_pct = round(sum(values.values()) / u, 4)
+            # Both windows, each normalised by its own tokens. Their quotient is how many
+            # five-hour windows a week holds: the week's capacity over the window's, with
+            # the traffic cancelling on both sides. (A bare five-hour percent over a
+            # seven-day percent is not that -- the seven-day meter also carries a week of
+            # other work, so it understates the count badly.)
+            five, seven = _per_pct_both_windows(r)
+            windows = round(seven / five, 3) if five and seven else None
             points.append((dt, {"t": ts_norm, "usd_per_pct": usd_per_pct,
-                                "tokens_per_pct": tokens_per_pct,
-                                "windows": _sample_windows(r), "c": c, "coarse": coarse}))
+                                "tokens_per_pct": round(five) if five else None,
+                                "tokens_per_pct_week": round(seven) if seven else None,
+                                "windows": windows, "c": c, "coarse": coarse}))
 
     points.sort(key=lambda p: p[0])
     if len(points) > MAX_POINTS:
