@@ -162,7 +162,8 @@ def _reference_tokens(budget: float | None, meter_usd_per_token: float) -> int |
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
-                      effort_usd: dict | None = None, gs_passive: dict | None = None) -> dict:
+                      effort_usd: dict | None = None, gs_passive: dict | None = None,
+                      reference_mix: dict | None = None) -> dict:
     """The public JSON, schema_version 2 (the 2026-09-16 audit's implementation contract).
 
     Rates. The measured quantity is the meter budget: the meter dollars (list
@@ -179,6 +180,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     frozen so that a change in how the watched accounts happen to work does not
     restate every token figure (finding 11); per-model numbers are conversions
     under it, not measurements of each model's cap, and `assumptions` says so.
+    `reference_mix` defaults to this checkout's data/reference_mix.json; an
+    offline rebuild passes its archive's own (tracker/rebuild_offline.py).
 
     Instruments. Only passive readings are published, and only from stretches
     whose meter log carried reset ids (`reset_verified`); those are "measured"
@@ -261,7 +264,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         if m not in latest_row_per_model or r["ts"] > latest_row_per_model[m]["ts"]:
             latest_row_per_model[m] = r
 
-    mix = dict(REFERENCE_MIX["split"])
+    reference_mix = reference_mix or REFERENCE_MIX
+    mix = dict(reference_mix["split"])
     verified_days = {ts.date() for ts, _ in verified_readings}
     # A day with verified readings publishes those alone; any other day publishes its
     # reset-less readings, labelled. The verified readings are taken from
@@ -289,7 +293,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
             "api_list_value_per_window": round(window_tokens * api_per_token, 2) if window_tokens is not None else None,
             "source": "derived_reference_mix" if window_tokens is not None else "unavailable",
             "split": mix,
-            "reference_mix": {k: REFERENCE_MIX[k] for k in ("id", "kind", "source", "as_of", "cache_write_duration")},
+            "reference_mix": {k: reference_mix[k] for k in ("id", "kind", "source", "as_of", "cache_write_duration")},
             "assumptions": {
                 "direct_model_cap_measurement": False,
                 "model_conversion": "meter budget converted on the reference mix with this model's price-table weights",

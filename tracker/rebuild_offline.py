@@ -17,7 +17,15 @@ from .publish import build_public_json, load_probes, write_json
 
 
 def rebuild(root: Path, now: datetime) -> dict:
-    """Compute a public snapshot using only archived inputs below ``root``."""
+    """Compute a public snapshot using only archived inputs below ``root``.
+
+    Every input comes from the archive, the reference token mix included: rates
+    are derived on ``data/reference_mix.json`` below ``root``, not on the mix of
+    the checkout running the command. An archive from before the mix was frozen
+    has none; the running checkout's mix is used then, and ``rebuild`` says so.
+    A missing ``history/probes.jsonl`` is no probe rows (the probes are retired),
+    like every other missing history file.
+    """
     def read(relative: str, default=None):
         path = root / relative
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
@@ -33,15 +41,20 @@ def rebuild(root: Path, now: datetime) -> dict:
         matrix = recompute(matrix, prices)
     effort = {k: v for k, v in matrix.items() if not k.startswith("_") and k != "usd"}
     effort_usd = {k: v for k, v in matrix.get("usd", {}).items() if not k.startswith("_")}
+    mix = read("data/reference_mix.json")
+    if mix is not None and not isinstance(mix, dict):
+        raise TypeError("data/reference_mix.json must contain a reference mix")
+    probes = root / "history/probes.jsonl"
     result = build_public_json(
-        load_probes(root / "history/probes.jsonl"),
+        load_probes(probes) if probes.exists() else [],
         read("history/passive.json", {}), effort, prices, now,
-        effort_usd=effort_usd, gs_passive=read("history/gs-passive.json", {}),
+        effort_usd=effort_usd, gs_passive=read("history/gs-passive.json", {}), reference_mix=mix,
     )
     result["contributed"] = aggregate(load_history(root / "history/contributed.jsonl"), now, prices)
     result["rebuild"] = {
         "mode": "offline_archive",
         "note": "Recomputed from stored evidence; missing reset and capture metadata cannot be recovered.",
+        "reference_mix_source": "archive" if mix is not None else "running_checkout",
     }
     return result
 
