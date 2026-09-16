@@ -480,7 +480,8 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
             if not sys.stdin.isatty():
                 print("not sending: no terminal to ask on (use --yes to send, --dry-run to only look).", file=out)
                 return 0
-            ask = lambda prompt: input(prompt)
+            def ask(prompt):
+                return input(prompt)
         if ask("Send? [y/N] ").strip().lower() not in ("y", "yes"):
             print("not sent.", file=out)
             return 0

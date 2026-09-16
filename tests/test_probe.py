@@ -76,7 +76,8 @@ class JitterTests(unittest.TestCase):
         from tracker.probe import is_idle
         from tracker.usage_api import Utilization
         rs = iter(["2026-09-06T02:29:59.965637+00:00", "2026-09-06T02:30:00.148993+00:00"])
-        read = lambda: Utilization(datetime.now(timezone.utc), 0.0, 0.0, next(rs))
+        def read():
+            return Utilization(datetime.now(timezone.utc), 0.0, 0.0, next(rs))
         self.assertTrue(is_idle(read, lambda s: None))
 
 
@@ -141,12 +142,14 @@ class IdleTests(unittest.TestCase):
     def test_busy_process_rejects_an_account_whose_meter_is_flat(self):
         # The meter check alone passes ([7, 7]); the live claude process on this
         # account's config dir is what makes it busy.
-        procs = lambda: [(491402, Path("/h/.claude-dave"))]
+        def procs():
+            return [(491402, Path("/h/.claude-dave"))]
         self.assertFalse(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
 
     def test_process_free_account_with_flat_meter_passes(self):
         # A claude process on some other account does not count against this one.
-        procs = lambda: [(491402, Path("/h/.claude-other"))]
+        def procs():
+            return [(491402, Path("/h/.claude-other"))]
         self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
 
     def test_busy_process_short_circuits_the_meter_window(self):
@@ -155,7 +158,8 @@ class IdleTests(unittest.TestCase):
         def read():
             reads.append(1)
             return Utilization(T0, 7.0, 30.0, "r1")
-        procs = lambda: [(1, Path("/h/.claude-dave"))]
+        def procs():
+            return [(1, Path("/h/.claude-dave"))]
         self.assertFalse(is_idle(read, slept.append, cfg=Path("/h/.claude-dave"), processes=procs))
         self.assertEqual((slept, reads), ([], []))
 
@@ -207,7 +211,8 @@ class IdleTests(unittest.TestCase):
         # rejects it and jwork (also flat, no process) is chosen instead.
         reads = {"jwork": util_seq([3, 3]), "dave": util_seq([7, 7])}
         logged = []
-        procs = lambda: [(491402, Path("/h/.claude-dave")), (1, Path("/h/.claude"))]
+        def procs():
+            return [(491402, Path("/h/.claude-dave")), (1, Path("/h/.claude"))]
         acc = choose_account([("dave", Path("/h/.claude-dave")), ("jwork", Path("/h/.claude-javiswork"))],
                              lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
                              processes=procs, log=logged.append)

@@ -75,7 +75,8 @@ class FailureTests(unittest.TestCase):
             if effort == "high":
                 raise RuntimeError("boom")
             return RunUsage(model, 1, 2, 3, 4, 0.0, 1.0)
-        read = lambda: Utilization(datetime.now(timezone.utc), 0.0, 0.0, None)
+        def read():
+            return Utilization(datetime.now(timezone.utc), 0.0, 0.0, None)
         seen = []
         m = calibrate(["m"], ["low", "high"], 2, run, read, lambda s: None, checkpoint=lambda x: seen.append(len(x["_meta"]["runs"])))
         self.assertEqual(m["m"], {"low": 10})

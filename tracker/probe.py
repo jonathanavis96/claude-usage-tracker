@@ -1039,7 +1039,8 @@ def main(argv: list[str] | None = None) -> int:
                   f"quantisation would exceed the published tolerance", file=sys.stderr)
             return 4
         expect_tokens = tokens_per_pct_for(words)
-        builder = lambda salt, i: probe_prompt(salt, i, words)
+        def builder(salt, i):
+            return probe_prompt(salt, i, words)
     home = Path.home()
     accounts = [tuple(x.split("=", 1)) for x in a.account] or [("jwork", home / ".claude-javiswork"), ("dave", home / ".claude-dave")]
     accounts = [(n, Path(p)) for n, p in accounts]
