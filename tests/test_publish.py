@@ -365,6 +365,17 @@ class GsPassiveTests(unittest.TestCase):
         self.assertIsNone(r["probed_at"])
         self.assertIsNone(r["probe_effort"])
 
+    def test_zero_probe_rows_and_no_split_anywhere_refuses_cleanly(self):
+        # Review finding: with no probe rows there is no row split to fall back to, and
+        # a passive.json with no "split" key leaves passive_split == {} --
+        # blended_price_per_token({}, price) is 0.0, which would ZeroDivisionError in the
+        # rates loop below. That must surface as a ValueError (which main() already
+        # catches), never the bare ZeroDivisionError.
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        passive_without_split = {k: v for k, v in PASSIVE.items() if k != "split"}
+        with self.assertRaises(ValueError):
+            build_public_json([], passive_without_split, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
+
     def test_no_readings_at_all_refuses(self):
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         with self.assertRaises(ValueError):

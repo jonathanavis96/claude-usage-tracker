@@ -203,6 +203,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     for r in probe_rows:
         d = datetime.fromisoformat(r["ts"]).date()
         by_day_models.setdefault(d, set()).add(r["model"])
+    passive_days = {ts.date() for ts, _, kind in combined if kind == "passive"}
 
     latest_row = max(probe_rows, key=lambda r: r["ts"]) if probe_rows else None
     latest_row_per_model: dict[str, dict] = {}
@@ -220,6 +221,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # gs-passive report (tracker/gs_passive.py) carries no class split of its own as of
     # 2026-09-16 -- only per-model token totals per stretch -- so it is not consulted here.
     passive_split = passive_split or (_row_split(latest_row) if latest_row is not None else {})
+    if not passive_split:
+        # Both sources are empty at once only with zero probe rows (no row split to fall
+        # back to) and a passive.json with no `split` -- e.g. gs-passive readings alone,
+        # before masterrig has ever published one. blended_price_per_token({}, ...) is
+        # 0.0, which would divide-by-zero below; raise here so main()'s existing
+        # publish-failed path (it already catches ValueError) applies instead.
+        raise ValueError("no class split to convert dollars to tokens")
 
     passive_history = passive.get("history", {})
     first_day = min((date.fromisoformat(ds) for ds in passive_history), default=first_probe_day)
@@ -256,6 +264,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 day_source = "held"
             elif model in by_day_models.get(d, set()):
                 day_source = "probe"
+            elif d in passive_days:
+                day_source = "passive"
             else:
                 day_source = "derived"
             hist.append({"date": d.isoformat(), "tokens_per_window": round(regime_value / (blended * weight)),
