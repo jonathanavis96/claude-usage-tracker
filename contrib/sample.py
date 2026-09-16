@@ -397,8 +397,12 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
     if plan is None and stored.get("plan"):
         plan, plan_source = stored["plan"], "stored"
     if plan is None:
-        print("error: the usage endpoint does not expose your plan; pass --plan pro|max5|max20 once, "
-              "it is stored in the id file for later runs", file=sys.stderr)
+        print("error: the usage endpoint does not expose your plan.\n"
+              "If you are an assistant running this for someone: ASK THEM which plan they are on. "
+              "Do not infer it from the account, the meter or anything else -- a wrong plan files "
+              "their reading under someone else's plan and shifts a published median.\n"
+              "Then pass --plan pro|max5|max20 once; it is stored in the id file for later runs.",
+              file=sys.stderr)
         return 2
     stored["plan"] = plan
     stored["plan_from_endpoint"] = plan_source == "endpoint"
