@@ -17,29 +17,30 @@ with a burst of concurrent prompts sized to most of the expected span so a
 probe finishes in minutes rather than an hour. See `tracker/probe.py` for
 the mechanics (burst sizing, alignment, reset handling).
 
-**The dollar invariant.** Anthropic's meter tracks API list value, not raw
-token count. That means one model's probe result, combined with
-`data/prices.json`, is enough to derive every other model's rate — a probe
-on Sonnet tells you Opus and Fable too, once each token class's price and
-"class weight" (how much harder the meter charges that class relative to
-list price) are applied. All three models are probed in rotation; on any
-given day the two not probed are derived from the day's reading. Detail and the measurements behind the class weights: `docs/spike-2026-09.md`.
+**Meter budget and API value.** Captured work is valued in weighted meter
+dollars, using the assumptions in `data/prices.json`. The publisher keeps
+that unit separate from the actual API list value of the declared token
+bundle. Per-model token figures are derived reference-mix scenarios; they
+are not direct measurements of each model's cap. The JSON exposes the
+weights and assumptions used for the conversion.
 
-**Passive split.** The probe's own traffic is cache-write heavy, which isn't
-what a real coding session looks like. A separate passive join, run against
-Jonathan's own daily usage, supplies the real mix of input/output/cache-read/
-cache-write tokens, and that mix is what converts a probe's dollar figure
-into a "tokens per window" number that means something for actual use.
+**Reference mix.** The meter budget itself is measured passively, on gs
+accounts' own transcripts against their own meter logs
+(`tracker/gs_passive.py`). Converting it to tokens per window needs a token
+mix, and the one used is frozen and versioned in `data/reference_mix.json`, so
+a token figure only moves when the budget does. Probe rows never stand in for
+the passive series: without an eligible passive reading the rates are
+published as unavailable, with the reason.
 
 **Weekly windows.** How many 5-hour windows the 7-day limit actually holds is
 measured, not assumed to be 28. It comes from two independent sources: the
 passive log (pairing 5-hour and 7-day meter movement within the same window)
 and each probe row's own before/after reads, both bucketed by week for the
-chart and by 5-hour window for change detection. A step in the weekly cap is
-detected on the per-window points, weighted by how far the 7-day meter moved
-in each, and dated by the first window at the new level; a calendar-week
-series blends a mid-week step away (the 2026-09-13 cut read as -14.5% on
-weeks and -29% on windows). See the `weekly_windows` vocabulary in
+chart and by 5-hour window for change detection. Both numerator-only and
+denominator-only movement is retained. Change candidates aggregate paired
+movement and certify only when both levels' rounding intervals separate;
+published events describe an observed account metric and do not attribute a policy
+change to Anthropic. See the `weekly_windows` vocabulary in
 `CONTEXT.md` for how the two series are kept separate per plan and
 `tracker/detect.py` for the detection rules.
 
@@ -81,13 +82,14 @@ windows per plan, and change history.
   not Jonathan's own account.
 - Weekly windows for the live plan come from one passive account's real
   usage, not from a controlled experiment.
-- Pro and Max 5x figures are scaled from Max 20x using Anthropic's published
-  plan ratios, not measured directly; see `docs/spike-2026-09.md` for how far
-  the passive data could and couldn't pin down that ratio.
+- Current Pro and Max 5x weekly figures remain unavailable until they have
+  contemporaneous evidence. Historical Max 5x evidence is kept with its
+  dates and is not copied into Pro or forced to meet the Max 20x series.
 - The per-class weights in `data/prices.json` (how much harder the meter
-  charges output vs. cache-write vs. input tokens) come from a single round
-  of calibration; input and cache-read weights in particular are unmeasured
-  and assumed equal to cache-write.
+  charges output vs. cache-write vs. input tokens) are assumptions transferred
+  to the reference mix. Their provenance is published; a zero cache-read
+  weight and the one-hour cache-write meter weight are premises rather than
+  independently measured per-model caps.
 
 ## Running it
 

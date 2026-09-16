@@ -91,6 +91,10 @@ seven-day reset identifiers as well as the displayed percentages. The old
 `gs-usage-ceiling.log` lacks reset identifiers and cannot establish that two
 increasing readings belong to the same window. Keep that log as historical
 evidence, but do not treat its stretches as certified limit measurements.
+Until `claude-usage-meter-jwork.log` has its first reading, `gs_accounts` reads
+jwork from the ceiling log (`legacy_meter_log`); those stretches are
+`reset_verified: false`, and the publisher labels a rate built on them
+`conditional` and fires no change event from them.
 
 | Account | Configuration | Meter log |
 |---|---|---|

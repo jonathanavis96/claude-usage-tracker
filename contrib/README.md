@@ -6,11 +6,10 @@ transcripts, prints exactly what it would send, and posts one sample to
 only when you say so. It spends none of your allowance: it sends no prompts to
 any model. Python 3, standard library only, one file, no install.
 
-The point: your tokens since the window started, over your meter percent right
-now, is tokens per 1% under your real mix of models. Enough people on each plan
-give the page a measured figure for Pro and Max 5x rather than an assumed one,
-and a second sample from you a week later gives the five-hour-windows-per-week
-ratio for your plan too.
+The point: two local-transcript samples in the same five-hour and seven-day
+reset windows can price their non-overlapping difference. This is conditional
+evidence only: it does not verify account attribution, complete capture,
+included subscription billing, or a plan-wide limit.
 
 ## What it sends
 
@@ -22,7 +21,7 @@ ratio for your plan too.
 | `ts` | your machine's clock, UTC |
 | `five_hour` | `utilization` percent and `resets_at`, from `https://api.anthropic.com/api/oauth/usage` with your existing Claude Code login (the same call Claude Code makes for its own `/usage`) |
 | `seven_day` | same |
-| `tokens_since_five_hour_reset` | per model and class (`input`, `output`, `cache_read`, `cache_write`), summed from the `usage` field of assistant turns in `~/.claude/projects/**/*.jsonl` since the current five-hour window started. Counts only. |
+| `tokens_since_five_hour_reset` | per model and class (`input`, `output`, `cache_read`, `cache_write`, optional `cache_write_1h` subset), summed from the `usage` field of assistant turns in `~/.claude/projects/**/*.jsonl` since the current five-hour window started. Unknown models are retained; positive unpriced work withholds money figures. |
 | `tokens_since_seven_day_reset` | same, since the current seven-day window started |
 | `client_version` | the script's version string |
 
@@ -93,12 +92,9 @@ Paste this into Claude Code:
 
 > Clone `https://github.com/jonathanavis96/claude-usage-tracker` into `~/claude-usage-tracker`, read `contrib/README.md`, then run `python3 ~/claude-usage-tracker/contrib/sample.py --print` and show me the JSON it prints with an explanation of each field. If it asks which plan I am on, ask me -- do not guess. Do not send anything and do not install anything until I type `approve`. When I do, install the hourly schedule from the README for my operating system and show me the line you added.
 
-Want it more or less often? Say so in the prompt ("every 30 minutes", "every
-12 hours") or change the schedule line afterwards; the table below has the
-values. Each sample is one small request to the usage endpoint and a read of
-your own transcripts, so any interval from 30 minutes up is fine. A daily
-sample still shows your meter over time; a shorter interval catches more of
-the detail within a day. The
+Choose 30 minutes, hourly, or every two hours. Slower schedules retain
+snapshots but cannot reliably make a same-five-hour paired estimate, so the
+contribution UI does not offer them. The
 one-off prompt above is the spec's wording verbatim; this continuous prompt is
 written to the spec's description of it (clone, read this README, print once,
 wait for `approve`, only then schedule).
@@ -110,9 +106,6 @@ wait for `approve`, only then schedule).
 | 30 minutes | `*/30 * * * *` | `1800` |
 | 1 hour (default) | `0 * * * *` | `3600` |
 | 2 hours | `0 */2 * * *` | `7200` |
-| 6 hours | `0 */6 * * *` | `21600` |
-| 12 hours | `0 */12 * * *` | `43200` |
-| 24 hours | `0 3 * * *` | `86400` |
 
 ### Linux (cron)
 
