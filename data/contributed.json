@@ -6,33 +6,33 @@
     "c": 0,
     "coarse": false,
     "t": "2026-09-09T13:16:16Z",
-    "usd_per_pct": 1.3233
+    "usd_per_pct": 0.8977
    },
    {
     "c": 1,
     "coarse": true,
     "t": "2026-09-16T00:11:31Z",
-    "usd_per_pct": 1.7491
+    "usd_per_pct": 1.2843
    }
   ],
   "samples": 2,
   "tokens_per_pct": {
    "claude-fable-5-1": {
     "contributors": 1,
-    "median": 2890480,
+    "median": 2948230,
     "samples": 1,
     "spread": null
    },
    "claude-sonnet-5": {
     "contributors": 1,
-    "median": 2344895,
+    "median": 1648933,
     "samples": 1,
     "spread": null
    }
   },
   "usd_per_pct": {
    "contributors": 1,
-   "median": 1.3233,
+   "median": 0.8977,
    "samples": 1,
    "spread": null
   },
@@ -78,5 +78,5 @@
    "with_complete_week": 0
   }
  },
- "updated_at": "2026-09-16T01:06:31+00:00"
+ "updated_at": "2026-09-16T02:17:13+00:00"
 }
