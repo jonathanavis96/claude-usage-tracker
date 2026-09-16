@@ -91,9 +91,11 @@ Paste this into Claude Code:
 > Clone `https://github.com/jonathanavis96/claude-usage-tracker` into `~/claude-usage-tracker`, read `contrib/README.md`, then run `python3 ~/claude-usage-tracker/contrib/sample.py --print` and show me the JSON it prints with an explanation of each field. Do not send anything and do not install anything until I type `approve`. When I do, install the hourly schedule from the README for my operating system and show me the line you added.
 
 Want it more or less often? Say so in the prompt ("every 30 minutes", "every
-6 hours") or change the schedule line afterwards; the table below has the
+12 hours") or change the schedule line afterwards; the table below has the
 values. Each sample is one small request to the usage endpoint and a read of
-your own transcripts, so any interval from 30 minutes up is fine. The
+your own transcripts, so any interval from 30 minutes up is fine. A daily
+sample still shows your meter over time; a shorter interval catches more of
+the detail within a day. The
 one-off prompt above is the spec's wording verbatim; this continuous prompt is
 written to the spec's description of it (clone, read this README, print once,
 wait for `approve`, only then schedule).
@@ -106,6 +108,8 @@ wait for `approve`, only then schedule).
 | 1 hour (default) | `0 * * * *` | `3600` |
 | 2 hours | `0 */2 * * *` | `7200` |
 | 6 hours | `0 */6 * * *` | `21600` |
+| 12 hours | `0 */12 * * *` | `43200` |
+| 24 hours | `0 3 * * *` | `86400` |
 
 ### Linux (cron)
 
