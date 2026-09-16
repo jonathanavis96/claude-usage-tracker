@@ -191,6 +191,51 @@ def transcript_paths(root: Path, since: datetime | None) -> list[Path]:
     return sorted(out)
 
 
+def _is_pooled_projects(cfg: Path, projects: Path) -> bool:
+    """True when `projects` is a symlink resolving outside `cfg`: several Claude
+    accounts sharing one physical projects directory (e.g. a work config dir
+    symlinked to the personal one), so a raw sum would include other accounts."""
+    if not projects.is_symlink():
+        return False
+    try:
+        resolved = projects.resolve()
+        cfg_resolved = cfg.resolve()
+    except OSError:
+        return False
+    try:
+        resolved.relative_to(cfg_resolved)
+        return False
+    except ValueError:
+        return True
+
+
+def own_session_filter(paths: list[Path], cfg: Path, *, force: bool = False, disable: bool = False) -> list[Path]:
+    """Drop transcripts that are not this login's own session when the projects
+    directory is pooled across accounts.
+
+    Claude Code writes a per-config-dir `<config dir>/session-env/<sessionId>/`
+    for each session it runs under that login; a transcript's own session id is
+    its filename stem. The filter applies when `projects` is a symlink resolving
+    outside `cfg` (pooled) or `force` is set (--own-sessions), and session-env
+    exists to tell sessions apart; `disable` (--all-sessions) always turns it
+    off. With no session-env directory the filter is a no-op even if pooled,
+    since there is nothing to filter by.
+    """
+    if disable:
+        return paths
+    projects = cfg / "projects"
+    if not (force or _is_pooled_projects(cfg, projects)):
+        return paths
+    session_env = cfg / "session-env"
+    if not session_env.is_dir():
+        return paths
+    own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
+    kept = [p for p in paths if p.stem in own_ids]
+    print(f"projects dir is shared with other accounts; kept {len(kept)} of {len(paths)} transcripts "
+          "that belong to this login (session-env)", file=sys.stderr)
+    return kept
+
+
 def window_start(resets_at: str | None, length: timedelta) -> datetime | None:
     if not resets_at:
         return None
@@ -306,6 +351,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--id-file", type=Path, default=ID_FILE, help=f"where the contributor id and plan live (default {ID_FILE})")
     ap.add_argument("--claude-dir", type=Path, default=None,
                     help="Claude Code config dir (default $CLAUDE_CONFIG_DIR or ~/.claude)")
+    ap.add_argument("--own-sessions", action="store_true",
+                    help="filter transcripts to this login's own sessions (session-env) even when "
+                         "projects isn't a shared symlink; on by default when it is")
+    ap.add_argument("--all-sessions", action="store_true",
+                    help="never filter by session-env, even when projects looks shared")
     return ap.parse_args(argv)
 
 
@@ -346,7 +396,9 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
 
     fh, sd = _bucket(usage, "five_hour"), _bucket(usage, "seven_day")
     since = window_start(sd["resets_at"], timedelta(days=7)) or window_start(fh["resets_at"], timedelta(hours=5))
-    turns = list(iter_turns(transcript_paths(cfg / "projects", since)))
+    paths = own_session_filter(transcript_paths(cfg / "projects", since), cfg,
+                               force=a.own_sessions, disable=a.all_sessions)
+    turns = list(iter_turns(paths))
     body = build_body(stored["contributor_id"], plan, plan_source, usage, turns, now)
 
     encoded = minify(body)
