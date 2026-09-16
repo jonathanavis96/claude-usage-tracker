@@ -144,16 +144,28 @@ def S7(mins, fh, sd, reset=None):
 class WindowPointTests(unittest.TestCase):
     def test_points_follow_the_weekly_pairing_rule_per_five_hour_window(self):
         samples = [S7(0, 10, 20), S7(5, 16, 21),   # d5 6, d7 1
-                   S7(10, 16, 22),                 # seven-day moved alone: not paired (weekly.py's d5 > 0)
+                   S7(10, 16, 22),                 # seven-day moved alone: kept (audit finding 3)
                    S7(15, 22, 23),                 # d5 6, d7 1
                    S7(20, 2, 23),                  # five-hour drop: a new window
                    S7(25, 8, 24),                  # d5 6, d7 1
                    S7(30, 14, 0),                  # seven-day drop: its weekly reset, not paired
-                   S7(35, 20, 1)]                  # d5 6, d7 1
+                   S7(35, 20, 1)]                  # d5 6, d7 1, in the new weekly window: its own point
         pts = window_points(samples)
         self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["windows"]) for p in pts],
-                         [(12.0, 2.0, 6.0), (12.0, 2.0, 6.0)])
-        self.assertEqual([p["window_ending"] for p in pts], [S7(15, 0, 0).ts.isoformat(), S7(35, 0, 0).ts.isoformat()])
+                         [(12.0, 3.0, 4.0), (6.0, 1.0, 6.0), (6.0, 1.0, 6.0)])
+        self.assertEqual([p["window_ending"] for p in pts],
+                         [S7(m, 0, 0).ts.isoformat() for m in (15, 25, 35)])
+        self.assertEqual({p["reset_verified"] for p in pts}, {False})
+
+    def test_a_gap_joins_its_window_as_a_second_piece_only_when_the_reset_is_recorded(self):
+        r5 = "2026-09-01T15:00:00+00:00"
+        with_reset = [Sample(T0 + timedelta(minutes=m), fh, sd, r5, "meter")
+                      for m, fh, sd in ((0, 0, 0), (5, 10, 2), (40, 10, 2), (45, 20, 4))]
+        pts = window_points(with_reset)
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["pieces"], p["reset_verified"]) for p in pts],
+                         [(20.0, 4.0, 2, True)])
+        no_reset = [Sample(s.ts, s.five_hour, s.seven_day, None, "gs-ceiling") for s in with_reset]
+        self.assertEqual([(p["five_hour_pct"], p["pieces"]) for p in window_points(no_reset)], [(10.0, 1), (10.0, 1)])
 
     def test_sums_match_tracker_weekly_on_the_same_readings(self):
         fh, sd = [0, 10, 20, 30, 40, 50, 60], [0, 1, 3, 4, 6, 7, 9]

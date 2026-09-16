@@ -15,6 +15,7 @@ from statistics import median
 from .samples import Sample
 from .usage_api import same_reset
 from .turns import Turn, normalize_model, normalized_raw_model
+from .weekly import _window_point
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
 DETAIL_CLASSES = ("cache_write_1h",)
@@ -192,16 +193,18 @@ class Stretch:
         usd = turn_meter_usd(turn, prices)
         if usd is None:
             self.unpriced_tokens += turn.total
-            by_class = self.unpriced.setdefault(normalized_raw_model(turn.model),
-                                                {c: 0 for c in CLASSES + DETAIL_CLASSES})
-            for c in CLASSES + DETAIL_CLASSES:
+            by_class = self.unpriced.setdefault(normalized_raw_model(turn.model), {c: 0 for c in CLASSES})
+            for c in CLASSES:
                 by_class[c] += getattr(turn, c)
+            if turn.cache_write_1h:
+                by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
             return
         self.usd += usd
-        by_class = self.tokens.setdefault(normalize_model(turn.model),
-                                          {c: 0 for c in CLASSES + DETAIL_CLASSES})
-        for c in CLASSES + DETAIL_CLASSES:
+        by_class = self.tokens.setdefault(normalize_model(turn.model), {c: 0 for c in CLASSES})
+        for c in CLASSES:
             by_class[c] += getattr(turn, c)
+        if turn.cache_write_1h:
+            by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
 
 
 def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stretch_pct: float = STRETCH_PCT,
@@ -242,32 +245,44 @@ def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stre
 def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> list[dict]:
     """Five-hour and seven-day movement per five-hour window, for weekly windows per account.
 
-    The pairing rule is tracker/weekly.py's: a pair counts when the five-hour
-    meter rose (d5 > 0) and the seven-day one did not fall (a fall is its
-    weekly reset); a five-hour reset starts a new window. The point shape is the
-    per-window `by_window` point tracker/weekly.py emits since issue #25, so the
-    same detector can read it. `window_ending` is the window's recorded reset
-    time when the log has one; gs's ceiling log records none, so there it is the
-    window's last paired reading.
+    The pairing rule is tracker/weekly.py's: consecutive readings inside one
+    window pair whenever neither meter fell (a seven-day fall is its weekly
+    reset), whichever of them moved -- a seven-day tick with the five-hour meter
+    still is denominator the ratio needs (audit 2026-09-16, finding 3). A
+    five-hour reset starts a new window; a gap longer than `max_gap` starts a
+    new piece, which joins the window it came from only when the log names that
+    window's reset (without one, a gap could hide a reset, so it starts a new
+    point). The point shape is tracker/weekly.py's `by_window` point.
+    `window_ending` is the window's recorded reset time when the log has one;
+    gs's ceiling log records none, so there it is the window's last paired
+    reading and `reset_verified` is false.
     """
     samples = sorted(samples, key=lambda s: s.ts)
     windows: list[dict] = []
-    cur: dict | None = None
+    chain: dict | None = None
     for a, b in zip(samples, samples[1:]):
         if _is_reset(a, b) or b.ts - a.ts >= FIVE_HOURS:
-            cur = None
+            chain = None
             continue
         if b.ts - a.ts > max_gap or a.seven_day is None or b.seven_day is None:
+            chain = None
             continue
         d5, d7 = b.five_hour - a.five_hour, b.seven_day - a.seven_day
-        if d5 >= 0 and d7 >= 0 and (d5 > 0 or d7 > 0):
-            if cur is None:
-                cur = {"resets_at": a.resets_at, "end": b.ts, "d5": 0.0, "d7": 0.0}
-                windows.append(cur)
-            cur["d5"] += d5
-            cur["d7"] += d7
-            cur["end"] = b.ts
-    return [{"window_ending": w["resets_at"] or w["end"].isoformat(),
-             "windows": round(w["d5"] / w["d7"], 2) if w["d7"] > 0 else None,
-             "five_hour_pct": round(w["d5"], 1), "seven_day_pct": round(w["d7"], 1),
-             "reset_verified": w["resets_at"] is not None} for w in windows]
+        if d5 < 0 or d7 < 0:
+            chain = None
+            continue
+        if chain is None:
+            last = windows[-1] if windows else None
+            if (last is not None and a.resets_at is not None and last["resets_at"] is not None
+                    and same_reset(last["resets_at"], a.resets_at)):
+                chain = last
+                chain["pieces"] += 1
+            else:
+                chain = {"resets_at": a.resets_at, "end": b.ts, "d5": 0.0, "d7": 0.0, "pieces": 1}
+                windows.append(chain)
+        chain["d5"] += d5
+        chain["d7"] += d7
+        chain["end"] = b.ts
+    return [_window_point(w["resets_at"] or w["end"].isoformat(), w["d5"], w["d7"], w["pieces"],
+                          reset_verified=w["resets_at"] is not None)
+            for w in windows if w["d5"] > 0 or w["d7"] > 0]
