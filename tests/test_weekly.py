@@ -42,13 +42,17 @@ class WeeklyWindowsTests(unittest.TestCase):
         ]
         now = datetime(2027, 1, 1, tzinfo=timezone.utc)
         result = weekly_windows(rows, now=now)
+        # One chain of readings: one piece, so 2 x sqrt(3.7 / 6) = 1.57 points conceded to
+        # each total (tracker/detect.py ratio_interval): 58.43/11.57 .. 61.57/8.43.
         self.assertEqual(result["history"], [
             {"week_ending": "2026-09-04", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0,
-             "partial": False},
+             "rounding_interval": [5.0498, 7.3042], "pieces": 1, "source": "paired_meter_deltas",
+             "reset_verified": True, "partial": False},
         ])
         self.assertEqual(result["current"], 6.0)
         self.assertEqual(result["by_window"], [
-            {"window_ending": "2026-09-06T16:59:59+00:00", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0},
+            {"window_ending": "2026-09-06T16:59:59+00:00", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0,
+             "rounding_interval": [5.0498, 7.3042], "pieces": 1, "reset_verified": True},
         ])
 
     def test_by_window_keeps_one_point_per_five_hour_window(self):
@@ -69,16 +73,58 @@ class WeeklyWindowsTests(unittest.TestCase):
         ]
         now = datetime(2027, 1, 1, tzinfo=timezone.utc)
         result = weekly_windows(rows, now=now)
-        self.assertEqual(result["history"], [
-            {"week_ending": "2026-09-18", "windows": 5.43, "five_hour_pct": 114.0, "seven_day_pct": 21.0,
-             "partial": False},
+        self.assertEqual([(h["week_ending"], h["windows"], h["five_hour_pct"], h["seven_day_pct"], h["pieces"],
+                           h["partial"]) for h in result["history"]],
+                         [("2026-09-18", 5.43, 114.0, 21.0, 4, False)])
+        self.assertEqual([(p["window_ending"], p["windows"], p["five_hour_pct"], p["seven_day_pct"], p["pieces"])
+                          for p in result["by_window"]], [
+            ("2026-09-14T16:30:00+00:00", 4.62, 37.0, 8.0, 1),
+            ("2026-09-14T21:30:00+00:00", 4.25, 17.0, 4.0, 1),
+            ("2026-09-15T02:30:00+00:00", None, 3.0, 0.0, 1),
+            ("2026-09-15T16:30:00+00:00", 6.33, 57.0, 9.0, 1),
         ])
-        self.assertEqual(result["by_window"], [
-            {"window_ending": "2026-09-14T16:30:00+00:00", "windows": 4.62, "five_hour_pct": 37.0, "seven_day_pct": 8.0},
-            {"window_ending": "2026-09-14T21:30:00+00:00", "windows": 4.25, "five_hour_pct": 17.0, "seven_day_pct": 4.0},
-            {"window_ending": "2026-09-15T02:30:00+00:00", "windows": None, "five_hour_pct": 3.0, "seven_day_pct": 0.0},
-            {"window_ending": "2026-09-15T16:30:00+00:00", "windows": 6.33, "five_hour_pct": 57.0, "seven_day_pct": 9.0},
-        ])
+        # The unmoved seven-day meter bounds nothing from above.
+        self.assertIsNone(result["by_window"][2]["rounding_interval"][1])
+
+    def test_audit_finding_3_denominator_only_movement_is_kept(self):
+        # (0,0), (30,4), (30,6), (60,10) inside one window of each: the endpoints
+        # measure 60/10 = 6. Keeping only pairs where the five-hour meter moved
+        # dropped the (0, +2) pair and published 60/8 = 7.5, 25% high.
+        def r(i, five, seven):
+            return {"ts": f"t{i}", "five_hour": five, "five_resets_at": "2026-09-06T16:59:59+00:00",
+                    "seven_day": seven, "seven_resets_at": "2026-09-04T03:59:59+00:00"}
+        rows = [r(0, 0.0, 0.0), r(1, 30.0, 4.0), r(2, 30.0, 6.0), r(3, 60.0, 10.0)]
+        result = weekly_windows(rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual((result["history"][0]["windows"], result["history"][0]["seven_day_pct"]), (6.0, 10.0))
+        self.assertEqual([(p["windows"], p["pieces"]) for p in result["by_window"]], [(6.0, 1)])
+
+    def test_a_pair_across_the_weekly_resets_jitter_is_still_one_window(self):
+        # The endpoint reports the same weekly reset as 03:59:59.9 on one read and
+        # 04:00:00.3 on the next. Comparing the hour prefix split them, and every
+        # pair across the jitter was dropped with both meters' movement in it.
+        rows = [
+            {"ts": "t0", "five_hour": 10.0, "five_resets_at": "2026-09-06T16:59:59+00:00",
+             "seven_day": 20.0, "seven_resets_at": "2026-09-04T03:59:59.913+00:00"},
+            {"ts": "t1", "five_hour": 40.0, "five_resets_at": "2026-09-06T16:59:59+00:00",
+             "seven_day": 25.0, "seven_resets_at": "2026-09-04T04:00:00.845+00:00"},
+            {"ts": "t2", "five_hour": 70.0, "five_resets_at": "2026-09-06T17:00:00+00:00",
+             "seven_day": 30.0, "seven_resets_at": "2026-09-04T03:59:59.463+00:00"},
+        ]
+        result = weekly_windows(rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual([(h["week_ending"], h["five_hour_pct"], h["seven_day_pct"]) for h in result["history"]],
+                         [("2026-09-04", 60.0, 10.0)])
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["pieces"]) for p in result["by_window"]],
+                         [(60.0, 10.0, 1)])
+
+    def test_a_gap_inside_one_window_is_two_pieces_of_one_point(self):
+        def r(ts, five, seven):
+            return {"ts": ts, "five_hour": five, "five_resets_at": "2026-09-06T16:59:59+00:00",
+                    "seven_day": seven, "seven_resets_at": "2026-09-04T03:59:59+00:00"}
+        rows = [r("a", 0.0, 0.0), r("b", 30.0, 5.0), None, r("c", 30.0, 5.0), r("d", 60.0, 10.0)]
+        result = weekly_windows(rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["pieces"]) for p in result["by_window"]],
+                         [(60.0, 10.0, 2)])
+        self.assertEqual(result["history"][0]["pieces"], 2)
 
     def test_by_window_is_not_thinned_by_the_weekly_floor(self):
         # Under the 50-point weekly floor the week is dropped, but its windows stay.
@@ -166,17 +212,21 @@ class WeeklyWindowsTests(unittest.TestCase):
         # Only complete weeks are asserted here: the in-progress week's total keeps
         # moving as more of the week's usage lands, so asserting it against a fixed
         # value makes this test flaky (it drifted from 5.6 to 5.7 within a day).
+        # Ranges re-read 2026-09-16 from the whole log after the audit's finding-3
+        # repair (both meters' movement kept, resets_at jitter no longer splitting
+        # pairs): max5 weeks 10.25-11.73, max20 weeks 6.36-7.24. The old ranges
+        # (9.5-11.1, 6.3-6.8) were read from pairing that dropped ~40% of movement.
         with open(LIVE_USAGE_LOG, encoding="utf-8") as f:
             rows = parse_rows(f)
         result = weekly_windows(rows)
         by_week = {h["week_ending"]: h["windows"] for h in result["history"]}
         for wk in ("2026-06-19", "2026-06-26", "2026-07-03", "2026-07-10", "2026-07-17",
                    "2026-07-24", "2026-07-31", "2026-08-07", "2026-08-14"):
-            self.assertGreaterEqual(by_week[wk], 9.5, wk)
-            self.assertLessEqual(by_week[wk], 11.1, wk)
+            self.assertGreaterEqual(by_week[wk], 10.2, wk)
+            self.assertLessEqual(by_week[wk], 11.8, wk)
         for wk in ("2026-08-21", "2026-08-28", "2026-09-04"):
             self.assertGreaterEqual(by_week[wk], 6.3, wk)
-            self.assertLessEqual(by_week[wk], 6.8, wk)
+            self.assertLessEqual(by_week[wk], 7.3, wk)
 
 
 def probe_row(ts, fhb, fha, sdb, sda, seven_resets=None):
@@ -204,7 +254,8 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
         self.assertEqual((result["current"], result["history"]), (None, []))
         # ...from the weekly rows only: the run is still one per-window point.
         self.assertEqual(result["by_window"], [
-            {"window_ending": "2026-09-01T00:00:00+00:00", "windows": 2.5, "five_hour_pct": 5.0, "seven_day_pct": 2.0},
+            {"window_ending": "2026-09-01T00:00:00+00:00", "windows": 2.5, "five_hour_pct": 5.0, "seven_day_pct": 2.0,
+             "rounding_interval": [0.9605, 15.3004], "pieces": 1, "reset_verified": False},
         ])
 
     def test_below_min_seven_day_pct_skipped(self):

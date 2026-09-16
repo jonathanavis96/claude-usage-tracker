@@ -35,103 +35,133 @@ The weekly-windows series (tracker/weekly.py) is a different animal from the
 probe's dollar readings and gets its own detector, detect_weighted_changes.
 Each point there is one five-hour window's paired meter movement: d5 (how far
 the five-hour meter moved) over d7 (how far the seven-day meter moved), and
-the ratio d5/d7 is how many five-hour windows the week's cap holds. Two
+the ratio d5/d7 is how many five-hour windows the week's cap holds. Three
 things follow that the sample detector above gets wrong on it:
 
 1. Resolution. Bucketing those pairs by calendar week (the shape the page
-   charts) blends a mid-week step into the week's average. Anthropic cut the
-   weekly cap on 2026-09-13; the calendar week ending 09-18 published 5.43,
-   a mix of ~6.1 pre-step days and 4.50 post-step days, which is -14.5%
-   against the previous weeks and so under threshold -- and even had it
-   crossed, the week-then-confirming-week rule could not have fired before
-   2026-10-02, nineteen days after the change (issue #25). So detection runs
-   on the per-window points, and a step is dated by the first window at the
-   new level.
+   charts) blends a mid-week step into the week's average (issue #25), so
+   detection runs on the per-window points and a step is dated by the first
+   window at the new level.
 
-2. Weight. A window is not a reading of equal standing: the seven-day meter
-   reports whole percent, so a window whose d7 is 3 carries a third of a
-   point of rounding on its denominator, and its ratio is +-33% noise. What
-   makes a step credible is accumulated seven-day movement, not a count of
-   readings. So instead of medians of readings, every comparison here is a
-   POOLED ratio (total d5 over total d7, tracker/detect.py:pooled_windows),
-   and the guards are stated in points of d7:
+2. Weight. A window is not a reading of equal standing: what makes a level
+   credible is accumulated seven-day movement, not a count of readings. Every
+   level here is POOLED (total d5 over total d7, `pooled_windows`), and both
+   sides of a split need MIN_POOL_POINTS windows and MIN_BASE_D7 / MIN_POOL_D7
+   points of d7.
+   No single window has to be heavy enough to "vote": the detector that
+   required one (a d7 >= 7 candidate) could miss a real cut indefinitely when
+   every post-cut window was light (audit 2026-09-16, finding 4: four windows
+   at 60/10 then twenty-one at 18/4 fired nothing).
 
-   - The base is the pooled ratio of the BASE_DAYS before the candidate,
-     within the current regime, and needs MIN_BASE_D7 points of d7 behind
-     it before anything can be judged against it.
-   - A point can only be a candidate ("vote") with d7 >= MIN_VOTE_D7, 7
-     points (why 7: below), and only if its ratio still lies beyond
-     threshold after conceding half a point of d7 rounding in its favour
-     (d5/(d7-0.5) for a drop, d5/(d7+0.5) for a rise). Half a point is the
-     typical error on the difference of two whole-percent reads; the
-     concession is not a second threshold, it is what stops a window that
-     reads 15% low from voting when its true value could as easily sit on
-     the base. It scales with the bucket: at the floor a point needs to read
-     about 21% low to vote, at d7=14 about 18%, at d7=20 about 17%.
-   - The candidate confirms once the points from it onward pool to at least
-     MIN_POOL_D7 of d7 across at least MIN_POOL_POINTS windows AND that pool,
-     with the same half-point concession, still lies beyond threshold from
-     the base in the candidate's direction. This is the weighted form of the
-     two-agreeing-readings rule: the five-hour and seven-day meters do not
-     always advance in step inside one window, so a single window, however
-     heavy, never confirms itself; but the newest point does take part, so a
-     step surfaces as soon as enough post-step movement has accumulated (two
-     windows / a day or two at Jonathan's usage), not after the next
-     calendar week closes.
-   - The event's percent is the pool's raw ratio against the base (the
-     concession is a gate, not the estimate), and the pool is always the
-     shortest one that confirms, so the event does not drift as later
-     windows arrive.
+3. Rounding and window scatter. Every window point is a difference of two
+   whole-percent readings of each meter. The meters are polled on a clock
+   (masterrig's log reads them every 30 minutes), not when a meter ticks, so
+   a reading's rounding error is uniform on (-0.5, 0.5) whatever the meter's
+   fractional part, and independent of the next reading's. A piece's error,
+   the difference of two such errors, is triangular on (-1, 1) with variance
+   1/6, and a total pooled from n disconnected pieces has variance n/6 on d5
+   and on d7 alike.
 
-Why the vote floor is 7 points of d7
-------------------------------------
+   Real windows scatter more than rounding alone: which work fills a window
+   moves its five-hour to seven-day ratio as well. That extra scatter is
+   measured, not assumed (WINDOW_DISPERSION, below), and a pool of n pieces
+   concedes
 
-Picked from the real log, not by feel. The detector first shipped with a
-floor of 3. Fed masterrig's whole usage log as it stood on 2026-09-15
-through the publish path (84 max20 windows, 2026-08-19 to 09-15), it
-reported four changes: +38% on 08-23, -23% on 08-28, +27% on 09-03 and the
-real -28% on 09-14. The first and third were voted by d7=6 windows (39/6,
-42/6) against bases pooled mostly from thin windows of 0 to 4 points each,
-and the second (a d7=8 window 12% under the plain fortnight) read as a
-candidate only against the base the false 08-23 regime left behind; the
-calendar weeks over the same span (6.58, 6.35, 6.02) have no step in them.
-Swept over the same log (tests/fixtures/):
+       e(n) = ROUNDING_Z * sqrt(WINDOW_DISPERSION * n / 6)
 
-    floor  max20, 08-19 to 09-15      max20 to 09-12   max5, 06-13 to 08-14
-    3-4    +38 -23 +27, -28 (09-14)   +38 -23 +27      -20 +21 -26 (July)
-    5-6    +38 -23 +27, -28 (09-14)   +38 -23 +27      none
-    7-8    -29 (09-14)                none             none
-    9      none                       none             none
+   points to each total, taken in opposite directions on d5 and d7: each
+   level's `rounding_interval` is (d5 - e)/(d7 + e) .. (d5 + e)/(d7 - e).
+   The published field keeps its name; the interval carries the measured
+   window scatter as well as the rounding.
 
-7 is the lowest floor at which neither flat stretch of the log reports
-anything (max5 is frozen and never detected on in production, which makes
-it a clean out-of-sample check), and it is where the seven-day meter's
-rounding alone stops being able to carry a flat window past threshold: a
-difference of two whole-percent reads can be off by up to a whole point,
-1/6 = 17% of a d7=6 window but 1/7 = 14% of a d7=7 one. The ceiling is the
-real cut: of its three post-cut windows only the first (09-14T16:30, 37/8)
-is heavy enough to vote at all, so a floor of 9 misses it. 8 also passes
-today but has no margin on that side.
+   Independence is the model's one assumption, and the one thing it cannot
+   exclude is a run of same-sign rounding errors long enough to fake a step.
+   Ten (11, 1) windows then two (47, 8) windows (finding 4) are all
+   compatible with a constant ratio of 6 if every d7 rounded the same way;
+   under independent rounding that is too improbable to concede, so the
+   interval alone would certify it. The floors are what bound it: each side
+   of a split needs MIN_BASE_D7 / MIN_POOL_D7 points of seven-day movement,
+   20, one to two days of real use, so a faked step needs its same-sign run
+   held across that many clock-polled readings on both sides. The finding-4
+   example (10 points before, 16 after) is refused by the floor; the same
+   example scaled to twenty (11, 1) and three (47, 8) windows clears it and
+   certifies -47%, which under independent rounding is what that evidence
+   says. The floors are equal because segmentation is symmetric: the level
+   on either side of a split is the same kind of pooled evidence.
 
-The cost is latency. Only 7 of those 84 max20 windows clear the floor,
-about one every four days, so a step waits for the first heavy window after
-it before it can vote; the 09-13 cut had one the next day. A thin window's
-movement is never wasted: it still pools into every base and confirmation.
+   WINDOW_DISPERSION is the variance ratio of window residuals over the
+   rounding model on a stretch with no change in it. For a flat run at pooled
+   level L, a window's residual d5 - L * d7 has rounding variance
+   pieces * (1 + L^2) / 6; the sum of squared residuals over those variances,
+   per degree of freedom, is the ratio. Measured on history/passive.json as
+   regenerated on masterrig on 2026-09-16, routed through the publish path's
+   plan split:
 
-Regimes replace the arm/re-arm rule: an event starts a new regime at its
-candidate, and every later base is pooled from that regime only, so the
-series does not re-fire while it sits on its new plateau and a second step
-is measured against the new level, not the old one.
+       stretch (window_ending, UTC)                       windows  d7    level  ratio
+       Max 20x 2026-08-28T01:50 .. 2026-09-13T21:30       63       228   6.21   3.70   <- used
+       Max 20x 2026-08-19T17:00 .. 2026-09-13T21:30       94       290   6.50   5.13   (with the 27 Aug spike)
+       Max 5x  2026-06-13T01:30 .. 2026-08-14T16:20       204      773   10.86  1.51
+       Max 20x 2026-09-14T11:30 .. 2026-09-16T17:30       9        31    4.68   0.27   (after the cut)
 
-Measured against the real 2026-09-13 cut, on the whole max20 series in the
-log: it fires "decreased 29%" dated 2026-09-14 as soon as the second
-post-cut window closes (09-14T21:30: pool 54/12 = 4.50 against a fortnight
-base of 711/112 = 6.35), and nothing else in the series fires (on the six
-windows quoted in issue #25, whose base is only the three pre-cut ones
-quoted there, it is -26%). The calendar-week detector could not have said
-anything before 2026-10-02.
+   The value used is the flat Max 20x run, the live plan's, excluding the
+   27 Aug spike: the windows ending 2026-08-27T15:10Z and 20:09Z read 95/11
+   and 87/9, a burst of heavy work at 8.6 and 9.7 against a level of 6.2.
+   Two windows of real workload variation are not rounding, and letting them
+   set the scatter for every pool widens every interval for their sake (at
+   5.1, replayed window by window, the 14 Sep cut certifies with the window
+   ending 2026-09-15T16:30Z, is lost again at 21:30Z and returns at
+   2026-09-16T02:30Z).
+
+A change is certified when a split of the series leaves both sides above
+their floors, the pooled levels differ by more than `threshold`, AND the two
+rounding intervals do not overlap. Among certified splits, the one that most
+reduces the absolute residual |d5 - level * d7| is taken (binary
+segmentation), and each side is then searched again, so one transition is
+one event, a second step is measured against the level before it, and a
+stray window cannot steal the onset of a persistent change (finding 5). The
+event carries the adjacent levels it separates (the same levels the chart
+draws), their intervals, the last window at the old level and the first at
+the new one as onset bounds, and the first window by which the post-change
+pool alone certified. Segmentation is retrospective: a later window can move
+or remove an event, which is why the events are published as observed
+account metric changes and never as a dated policy change.
+
+Why these constants
+-------------------
+
+Swept with ROUNDING_Z = 2 and both floors at 20 over the audit's
+counterexamples and over the committed history/passive.json (windows to
+2026-09-16T17:30Z); "daily" replays the Max 20x series as masterrig's
+03:15Z push would have delivered it (windows ending by 02:30Z):
+
+    dispersion  60/10 x4, 18/4 x21  (11,1) x10, (47,8) x2  x20, x3        max20 to 09-13     max5 flat   max20 all    daily 09-15 / 09-16
+    1           -25% (correct)      none (floor)           -47%           +33% 08-27, -32%   +18% 08-13  3 events     3 events / 3 events
+    3.7         -25% (correct)      none (floor)           -47%           none               none        -28% 09-14   -19% 08-28 / -29% 09-14
+    5.1         -25% (correct)      none (floor)           -47%           none               none        -28% 09-14   none / -29% 09-14
+
+With no dispersion (the bare triangular model) the 27 Aug spike and the fall
+back from it certify as changes, and so does a Max 5x step inside its flat
+run. At the measured 3.7 the Max 20x series certifies exactly one event, a
+decrease dated 2026-09-14, and nothing on the flat run before it. Max 5x
+keeps its decrease dated 2026-08-14 (-39%), which is the plan move itself:
+PLAN_CHANGE in tracker/publish.py is the account owner's approximate date
+and the step is published as not independently verified.
+
+Segmentation is retrospective, and a partial post-cut pool can be misread:
+the 2026-09-15 daily replay certifies -19% dated 2026-08-28 (7.58 over the
+windows to the 27 Aug spike against 6.10 after, a level the four post-cut
+windows it holds have pulled down just far enough), and the next day's replay
+replaces it with the real -29% dated 2026-09-14. bin/daily.sh
+therefore announces a change only once two consecutive publishes of new
+weekly evidence show it, dated within a day of each other, and never
+announces a date twice.
+
+The quoted six windows of issue #25 on their own (116/19 before, 81/18 after,
+three pieces each) certify nothing: neither side carries 20 points of d7.
 """
 from __future__ import annotations
+
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from statistics import median
@@ -140,12 +170,14 @@ MIN_HISTORY = 3
 LOOKBACK = 4
 
 # detect_weighted_changes: all in whole points of seven-day meter movement (d7).
-MIN_VOTE_D7 = 7.0        # a bucket under this is too noisy to be a candidate (why 7: module docstring)
-MIN_BASE_D7 = 10.0       # a base with less behind it cannot judge a candidate
-MIN_POOL_D7 = 10.0       # post-candidate movement needed to confirm a step
-MIN_POOL_POINTS = 2      # ...spread over at least this many windows
-BASE_DAYS = 14           # how far back the base pools, within the current regime
-ROUNDING_CONCESSION = 0.5  # points of d7 conceded to a bucket's ratio before it may vote
+MIN_BASE_D7 = 20.0       # the level before a split needs this much movement behind it
+MIN_POOL_D7 = 20.0       # ...and so does the level after it (the bound on same-sign rounding runs)
+MIN_POOL_POINTS = 2      # ...spread over at least this many windows on each side
+ROUNDING_Z = 2.0         # standard deviations of pooled error conceded
+# Variance of a window's error over the triangular rounding model's, measured on the
+# flat Max 20x run 2026-08-28T01:50Z..2026-09-13T21:30Z, excluding the 27 Aug spike
+# (derivation: module docstring, 3.).
+WINDOW_DISPERSION = 3.7
 
 
 @dataclass(frozen=True)
@@ -154,6 +186,13 @@ class ChangeEvent:
     direction: str
     percent: int
     model: str = "all"
+    onset_earliest: date | None = None
+    onset_latest: date | None = None
+    confirmed_at: date | None = None
+    evidence_points: int | None = None
+    denominator_pct: float | None = None
+    before_interval: tuple[float | None, float | None] | None = None
+    after_interval: tuple[float | None, float | None] | None = None
 
 
 def detect_changes(readings: list[tuple[datetime, float]], threshold: float = 0.15) -> list[ChangeEvent]:
@@ -191,100 +230,185 @@ def detect_smoothed_changes(readings: list[tuple[datetime, float]], threshold: f
 
     A passive day pools one account's real sessions and scatters 15-20% day to
     day, so two consecutive readings past a 15% line (detect_changes) fire on
-    noise. Here the newest `window` of readings is read as one figure, its
-    median, and compared with the median of the regime's readings older than
-    that window. Both sides need `min_points` readings. When the two medians
-    differ by more than `threshold` a change is dated at the first reading in
-    the window that sits on the new side of the halfway line, and a new regime
-    starts there. The date the event carries is where the new level began, not
-    where it was confirmed.
+    noise. Here the series is split where it best separates into two persistent
+    levels: every split with at least `min_points` readings on each side whose
+    medians differ by more than `threshold` is a candidate, the one that most
+    reduces the total absolute deviation from each side's median is taken, and
+    each side is searched again (binary segmentation). The event is dated at the
+    first reading of the new level.
+
+    Judging whole segments rather than a rolling window is what the 2026-09-16
+    audit (finding 5) asked for: a rolling week's median took the first reading
+    past a halfway line as the onset, so one stray low day before a real cut
+    stole its date, and the remainder of the same transition fired a second
+    event (100 x10, 80, 100 x2, 70 x12 read as -20% on day 10 and -22% on day
+    13 for one cut on day 13). `window` is kept in the signature for callers and
+    is unused. The readings carry no rounding bounds, so these events publish as
+    provisional (tracker/publish.py).
     """
     ordered = sorted(readings, key=lambda r: r[0])
+    found: list[tuple[int, int, int]] = []  # (lo, split, hi) of each split taken
+
+    def segment(lo: int, hi: int) -> None:
+        """Binary segmentation using persistent levels on both sides.
+
+        Looking at the entire candidate sides prevents one stray value in a
+        rolling window from stealing the onset and prevents the remainder of
+        one transition from firing a second event.
+        """
+        best: tuple[float, int] | None = None
+        whole_values = [v for _, v in ordered[lo:hi]]
+        whole_level = median(whole_values) if whole_values else 0
+        unsplit_loss = sum(abs(v - whole_level) for v in whole_values)
+        for split in range(lo + min_points, hi - min_points + 1):
+            left = [v for _, v in ordered[lo:split]]
+            right = [v for _, v in ordered[split:hi]]
+            before, after = median(left), median(right)
+            if not before:
+                continue
+            change = after / before - 1
+            if abs(change) <= threshold:
+                continue
+            # Prefer the split that most reduces robust within-segment error.
+            # This selects the one real boundary in a long new plateau instead
+            # of a later blended split plus a duplicate of the same transition.
+            split_loss = (sum(abs(v - before) for v in left)
+                          + sum(abs(v - after) for v in right))
+            score = unsplit_loss - split_loss
+            if best is None or score > best[0]:
+                best = (score, split)
+        if best is None:
+            return
+        split = best[1]
+        found.append((lo, split, hi))
+        segment(lo, split)
+        segment(split, hi)
+
+    segment(0, len(ordered))
+    starts = sorted({0, *(split for _, split, _ in found)})
     events: list[ChangeEvent] = []
-    regime_start = 0
-    i = 0
-    while i < len(ordered):
-        ts = ordered[i][0]
-        recent = [(t, v) for t, v in ordered[regime_start:i + 1] if t > ts - window]
-        base = [v for t, v in ordered[regime_start:i + 1] if t <= ts - window]
-        if len(recent) >= min_points and len(base) >= min_points:
-            base_level = median(base)
-            if base_level:
-                new_level = median(v for _, v in recent)
-                ratio = new_level / base_level - 1
-                if abs(ratio) > threshold:
-                    # The new regime starts at the first reading in the window that
-                    # sits on the new side of the halfway line, not at the window's
-                    # first reading: the window can still hold a few old-level days.
-                    halfway = (base_level + new_level) / 2
-                    onset = next(k for k in range(i + 1 - len(recent), i + 1)
-                                 if (ordered[k][1] > halfway) == (ratio > 0))
-                    events.append(ChangeEvent(ordered[onset][0].date(), "increased" if ratio > 0 else "decreased",
-                                              round(abs(ratio) * 100)))
-                    regime_start = onset
-        i += 1
-    return events
+    for lo, split, hi in found:
+        # Magnitude from the adjacent final segments, as detect_weighted_changes does:
+        # the side a split was chosen on can still hold a later step, and its median
+        # blends the two (100 x5, 50 x5, 25 x5 read -62% for the first step).
+        n = starts.index(split)
+        before = median(v for _, v in ordered[starts[n - 1]:split])
+        after = median(v for _, v in ordered[split:starts[n + 1] if n + 1 < len(starts) else len(ordered)])
+        if not before:
+            continue
+        ratio = after / before - 1
+        events.append(ChangeEvent(
+            ordered[split][0].date(), "increased" if ratio > 0 else "decreased",
+            round(abs(ratio) * 100), onset_earliest=ordered[split - 1][0].date(),
+            onset_latest=ordered[split][0].date(),
+            confirmed_at=ordered[min(hi - 1, split + min_points - 1)][0].date(),
+            evidence_points=hi - lo,
+        ))
+    return sorted(events, key=lambda e: e.date)
 
 
-def pooled_windows(points: list[tuple[datetime, float, float]]) -> float | None:
+def pooled_windows(points: list[tuple]) -> float | None:
     """Total five-hour movement over total seven-day movement, or None with no d7."""
     d5 = sum(p[1] for p in points)
     d7 = sum(p[2] for p in points)
     return d5 / d7 if d7 > 0 else None
 
 
-def _conceded_ratio(d5: float, d7: float, base: float) -> float:
-    """d5/d7 after conceding ROUNDING_CONCESSION points of d7 towards `base`.
+def _pieces(point: tuple) -> int:
+    """How many disconnected rounded differences a (ts, d5, d7[, pieces]) point sums."""
+    return int(point[3]) if len(point) > 3 and point[3] else 1
 
-    A ratio below base (a drop) is read as if d7 were half a point smaller, a
-    ratio above it as if d7 were half a point larger: the most charitable
-    reading the meter's whole-percent rounding allows.
+
+def rounding_error(pieces: int) -> float:
+    """Points of error conceded to a total pooled from `pieces` separate differences (module docstring, 3.)."""
+    return ROUNDING_Z * math.sqrt(WINDOW_DISPERSION * pieces / 6)
+
+
+def ratio_interval(d5: float, d7: float, pieces: int) -> tuple[float | None, float | None]:
+    """The lowest and highest d5/d7 the whole-percent readings allow (module docstring, 3.).
+
+    The upper end is None when the conceded error could take d7 to zero: the pool
+    cannot bound the ratio from above at all.
     """
-    if d5 / d7 < base:
-        return d5 / (d7 - ROUNDING_CONCESSION)
-    return d5 / (d7 + ROUNDING_CONCESSION)
+    e = rounding_error(pieces)
+    lo = max(0.0, d5 - e) / (d7 + e) if d7 + e > 0 else None
+    hi = (d5 + e) / (d7 - e) if d7 > e else None
+    return lo, hi
 
 
-def detect_weighted_changes(points: list[tuple[datetime, float, float]],
-                            threshold: float = 0.15) -> list[ChangeEvent]:
-    """Step changes in a (window_ending, d5, d7) series -- see the module docstring.
+def pooled_interval(points: list[tuple]) -> tuple[float | None, float | None]:
+    """ratio_interval over a pool of window points."""
+    if not points:
+        return None, None
+    return ratio_interval(sum(p[1] for p in points), sum(p[2] for p in points), sum(_pieces(p) for p in points))
 
-    Points with d7 <= 0 still pool into bases and confirmations (their d5 is
-    real movement); they just never vote. Events are dated by the candidate
-    window's ending time, in whatever zone the timestamps carry.
+
+def _certified_change(before: list[tuple], after: list[tuple], threshold: float) -> float | None:
+    """after's pooled level over before's, minus one, when it certifies a change; else None."""
+    if len(before) < MIN_POOL_POINTS or len(after) < MIN_POOL_POINTS:
+        return None
+    if sum(p[2] for p in before) < MIN_BASE_D7 or sum(p[2] for p in after) < MIN_POOL_D7:
+        return None
+    level_before, level_after = pooled_windows(before), pooled_windows(after)
+    # A zero level on either side is not a window budget: over at least MIN_POOL_D7
+    # points of seven-day movement the five-hour meter never moved, which is a
+    # capped or stale five-hour meter, not a plan with no windows. Without this a
+    # capped tail certified as "decreased 100%".
+    if not level_before or not level_after:
+        return None
+    change = level_after / level_before - 1
+    if abs(change) <= threshold:
+        return None
+    blo, bhi = pooled_interval(before)
+    alo, ahi = pooled_interval(after)
+    if change < 0:
+        separated = ahi is not None and blo is not None and ahi < blo
+    else:
+        separated = alo is not None and bhi is not None and alo > bhi
+    return change if separated else None
+
+
+def _residual(points: list[tuple]) -> float:
+    """Total |d5 - level * d7| around the pool's own level: what a split is chosen to reduce."""
+    level = pooled_windows(points)
+    if level is None:
+        return sum(p[1] for p in points)
+    return sum(abs(p[1] - level * p[2]) for p in points)
+
+
+def detect_weighted_changes(points: list[tuple], threshold: float = 0.15) -> list[ChangeEvent]:
+    """Certified step changes in a (window_ending, d5, d7[, pieces]) series -- see the module docstring.
+
+    Points where neither meter moved are dropped; a point with d7 == 0 still pools.
+    Events are dated by the first window at the new level, in whatever zone the
+    timestamps carry.
     """
     return _detect_weighted(points, threshold)[0]
 
 
-def current_regime_points(points: list[tuple[datetime, float, float]],
-                          threshold: float = 0.15) -> list[tuple[datetime, float, float]]:
+def current_regime_points(points: list[tuple], threshold: float = 0.15) -> list[tuple]:
     """The points of the current regime, oldest first: from the newest event's
-    candidate window on, or the whole series when nothing has fired. Compared by
-    full timestamp, so an earlier window on the event's own day (still at the old
+    first window on, or the whole series when nothing has been certified. Compared
+    by full timestamp, so an earlier window on the event's own day (still at the old
     level) stays out of the new regime."""
     _, ordered, starts = _detect_weighted(points, threshold)
     return ordered[starts[-1]:]
 
 
-def weighted_regimes(points: list[tuple[datetime, float, float]],
-                     threshold: float = 0.15) -> list[dict]:
+def weighted_regimes(points: list[tuple], threshold: float = 0.15) -> list[dict]:
     """Every regime the detector found, oldest first, each held flat at its pooled level.
 
     Windows per week is a plan constant: it moves when the limit moves and not
     otherwise, so the honest series is a step function, not one point per
-    calendar week. Each week's ratio is an estimate of the constant, and the
-    estimate carries several percent of assembly error -- whole-percent rounding
-    on a denominator that mostly moves by 1, an interval filter that keys on the
-    numerator (`d5 > 0` in weekly.weekly_windows drops a quiet interval's
-    seven-day movement along with it), and work spanning a reset or a sampling
-    gap dropped entirely. Charting the raw weekly ratios therefore draws movement
-    the limit never made.
+    calendar week, and each regime carries how far its own rounding lets the
+    level sit.
 
-    Each regime is {"start", "end", "windows", "seven_day_pct", "points"}:
-    `windows` is `pooled_windows` over the regime (total d5 over total d7, which
-    weights a busy window above a thin one, rather than a median of ratios),
-    `seven_day_pct` its pooled denominator so a consumer can see how much is
-    behind the level, and `points` its window count. `end` is the last window's
+    Each regime is {"start", "end", "windows", "seven_day_pct", "points", "pieces",
+    "rounding_interval", "quality"}: `windows` is `pooled_windows` over the regime,
+    `seven_day_pct` its pooled denominator, `points` its window count and `pieces`
+    the separate rounded differences behind it; `rounding_interval` is
+    `pooled_interval`, and `quality` is "bounded", or "insufficient_precision" when
+    the rounding could take the denominator to zero. `end` is the last window's
     timestamp; the newest regime's end is simply the newest window, not a claim
     that it has finished.
     """
@@ -296,58 +420,65 @@ def weighted_regimes(points: list[tuple[datetime, float, float]],
         level = pooled_windows(span)
         if not span or level is None:
             continue
+        lo, hi = pooled_interval(span)
         regimes.append({
             "start": span[0][0].isoformat(),
             "end": span[-1][0].isoformat(),
             "windows": round(level, 2),
             "seven_day_pct": round(sum(p[2] for p in span), 1),
             "points": len(span),
+            "pieces": sum(_pieces(p) for p in span),
+            "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
+            "quality": "bounded" if hi is not None else "insufficient_precision",
         })
     return regimes
 
 
-def _detect_weighted(points: list[tuple[datetime, float, float]],
-                     threshold: float) -> tuple[list[ChangeEvent], list[tuple[datetime, float, float]], list[int]]:
+def _detect_weighted(points: list[tuple], threshold: float) -> tuple[list[ChangeEvent], list[tuple], list[int]]:
     """(events, ordered points, regime start indices). `starts` always begins with 0 --
-    the series before any event is itself a regime -- and gains the candidate index each
-    time one fires, so starts[-1] is the current regime's start."""
-    ordered = sorted((p for p in points if p[1] > 0 and p[2] >= 0), key=lambda p: p[0])
-    events: list[ChangeEvent] = []
-    starts = [0]
-    i = 0
-    while i < len(ordered):
-        ts, d5, d7 = ordered[i]
-        base_from = ts - timedelta(days=BASE_DAYS)
-        base_pts = [p for p in ordered[starts[-1]:i] if p[0] >= base_from]
-        base = pooled_windows(base_pts)
-        if d7 < MIN_VOTE_D7 or base is None or sum(p[2] for p in base_pts) < MIN_BASE_D7:
-            i += 1
-            continue
-        ratio = d5 / d7 / base - 1
-        conceded = _conceded_ratio(d5, d7, base) / base - 1
-        if abs(conceded) <= threshold or (conceded > 0) != (ratio > 0):
-            i += 1
-            continue
-        # A candidate: pool forward until enough seven-day movement has accumulated.
-        pool_d5 = pool_d7 = 0.0
-        confirmed_at: int | None = None
-        for j in range(i, len(ordered)):
-            pool_d5 += ordered[j][1]
-            pool_d7 += ordered[j][2]
-            if pool_d7 >= MIN_POOL_D7 and j - i + 1 >= MIN_POOL_POINTS:
-                confirmed_at = j
-                break
-        if confirmed_at is None:
-            i += 1  # not enough movement after it yet: unconfirmed until more windows land
-            continue
-        pool_ratio = pool_d5 / pool_d7 / base - 1
-        pool_conceded = _conceded_ratio(pool_d5, pool_d7, base) / base - 1
-        if abs(pool_conceded) > threshold and (pool_conceded > 0) == (ratio > 0) and (pool_ratio > 0) == (ratio > 0):
-            events.append(ChangeEvent(ts.date(), "increased" if ratio > 0 else "decreased",
-                                      round(abs(pool_ratio) * 100)))
-            starts.append(i)
-        i += 1
-    return events, ordered, starts
+    the series before any event is itself a regime -- and gains each certified split,
+    so starts[-1] is the current regime's start."""
+    ordered = sorted((p for p in points if p[1] >= 0 and p[2] >= 0 and (p[1] > 0 or p[2] > 0)),
+                     key=lambda p: p[0])
+    found: list[tuple[int, int, int]] = []  # (lo, split, hi) of each certified split
+
+    def segment(lo: int, hi: int) -> None:
+        whole = _residual(ordered[lo:hi])
+        best: tuple[float, int] | None = None
+        for split in range(lo + MIN_POOL_POINTS, hi - MIN_POOL_POINTS + 1):
+            before, after = ordered[lo:split], ordered[split:hi]
+            if _certified_change(before, after, threshold) is None:
+                continue
+            gain = whole - _residual(before) - _residual(after)
+            if best is None or gain > best[0]:
+                best = (gain, split)
+        if best is None:
+            return
+        split = best[1]
+        found.append((lo, split, hi))
+        segment(lo, split)
+        segment(split, hi)
+
+    segment(0, len(ordered))
+    starts = sorted({0, *(split for _, split, _ in found)})
+    events = []
+    for lo, split, hi in found:
+        # Magnitude and intervals from the adjacent final regimes: the levels the chart draws.
+        n = starts.index(split)
+        before = ordered[starts[n - 1]:split]
+        after = ordered[split:starts[n + 1] if n + 1 < len(starts) else len(ordered)]
+        change = pooled_windows(after) / pooled_windows(before) - 1
+        # The first window by which the post-change pool alone certified against the old level.
+        confirmed = next(j for j in range(split + MIN_POOL_POINTS, hi + 1)
+                         if _certified_change(ordered[lo:split], ordered[split:j], threshold) is not None)
+        events.append(ChangeEvent(
+            ordered[split][0].date(), "increased" if change > 0 else "decreased", round(abs(change) * 100),
+            onset_earliest=ordered[split - 1][0].date(), onset_latest=ordered[split][0].date(),
+            confirmed_at=ordered[confirmed - 1][0].date(), evidence_points=len(before) + len(after),
+            denominator_pct=round(sum(p[2] for p in after), 1),
+            before_interval=pooled_interval(before), after_interval=pooled_interval(after),
+        ))
+    return sorted(events, key=lambda e: e.date), ordered, starts
 
 
 def latest_change(events: list[ChangeEvent]) -> ChangeEvent | None:

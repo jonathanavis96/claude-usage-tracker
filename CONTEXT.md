@@ -65,9 +65,9 @@ _Avoid_: prompt type, mode
 The tokens a probe spent for each 1% the meter advanced. The probe's raw result.
 _Avoid_: rate, cost per tick
 
-**Dollar invariant**:
-The rule that the meter tracks API list value, not token count, so one model's probe gives every other model's rate through the price table.
-_Avoid_: cost equivalence, price parity
+**Meter budget**:
+The class/model-weighted dollar unit used to compare captured work with meter movement. It is distinct from API list value. Converting it to another model is a reference-mix scenario using the price table and assumed weights, not a direct measurement of that model's cap.
+_Avoid_: API value, dollar invariant, price parity
 
 **Class weight**:
 How much harder the meter charges one token class (input, output, cache read, cache write) than its list price suggests, relative to cache write.
@@ -76,25 +76,25 @@ _Avoid_: multiplier, penalty
 **Meter weight**:
 How much harder the meter charges one model than another for the same list value. Currently 1.0 for every model.
 
-**Passive split**:
-The mix of token classes in Jonathan's own real sessions, used to convert dollars per window into tokens per window for the page.
-_Avoid_: real-world mix, session profile
+**Reference mix**:
+The frozen, versioned token-class mix (data/reference_mix.json) that converts a meter budget into tokens per window, and those tokens into API list value, for the page. It is a scenario, not a measurement of anyone's workload: it changes only with a new id, so figures stay comparable through time (audit 2026-09-16, finding 11). Replaces the passive split, which moved with every day's sessions.
+_Avoid_: real-world mix, session profile, passive split
 
 **Weekly windows**:
 How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). `weekly_windows` publishes both raw series (`passive`, `probe`) plus one `{current, history}` object per plan. Each raw series also carries the same pairs bucketed by five-hour window (`by_window`, one `Window point` per window); the weekly rows are what the page charts, the window points are what detection and the live plan's `current` run on.
 _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
 
 **Window point**:
-One five-hour window's paired meter movement: `five_hour_pct` (d5) over `seven_day_pct` (d7), keyed by the window's reset time (`window_ending`), with `windows` = d5/d7 or null when the seven-day meter did not move. Its weight is its d7: a point under 7 points of d7 is too noisy to vote on its own (rounding alone can move a d7=6 ratio by 17%, and on the real log a lower floor fired three false changes), but its movement still counts in every pooled figure.
+One five-hour window's paired meter movement: `five_hour_pct` (d5) over `seven_day_pct` (d7), keyed by the window's reset time (`window_ending`), with `windows` = d5/d7 or null when the seven-day meter did not move. Every same-window pair in which neither meter fell counts, whichever of them moved: a seven-day tick with the five-hour meter still is denominator the ratio needs (audit 2026-09-16, finding 3). `pieces` is how many separately read stretches of the window it pools (one unless a gap broke the readings), `rounding_interval` the ratio's range under whole-percent rounding, and `reset_verified` whether the log named the window's reset.
 _Avoid_: bucket, sample
 
 **Pooled**:
-Total d5 over total d7 across a set of window points, as opposed to a median of their individual ratios. Every base, confirmation and `current` on the weekly series is pooled, so a heavy window counts for more than a thin one.
+Total d5 over total d7 across a set of window points, as opposed to a median of their individual ratios. Every level, confirmation and `current` on the weekly series is pooled, so a heavy window counts for more than a thin one. A pool of n pieces concedes min(n, 2 sqrt n) points of rounding to each total for its interval (tracker/detect.py).
 _Avoid_: average, mean
 
-_Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped, and a passive window point counts as `max20` only when its window starts after `PLAN_CHANGE` day. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it); `max20` is the live plan -- probe weeks replace passive `max20` weeks in its chart rows from the first probe week on, and it is the only plan change detection runs on. `pro` has no measurement of its own, so it publishes `max5`'s figures again (same 5x-ratio era) with `"assumed": true`; `max20` and `max5` carry `"assumed": false`.
+_Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped, and a passive window point counts as `max20` only when its window starts after `PLAN_CHANGE` day. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it), published as `historical_only` with its regimes and the plan change as the account owner's unverified record; `max20` is the live plan and the only one change detection runs on. The probe runs publish as their own `probe` series and never replace passive `max20` weeks (finding 13). `pro` has no measurement of its own and publishes none: nothing is copied from `max5` (finding 6). Every plan carries `"assumed": false` and an `availability` reason. Weekly rows paired before the finding-3 repair (no `pieces`) are published as `legacy_uncertain` and nothing is computed from them.
 
-_Current_: `max20.current` is the pooled ratio of the current `Regime`'s window points over the trailing fortnight (anchored on the newest point), so it follows a detected step from the day it fires. It falls back to the median of the last two complete weekly rows only when no window points have arrived (a passive.json from before they existed) or the fortnight holds under 10 points of d7. `max5.current` is always that median.
+_Current_: `max20.current` is the pooled ratio of the current `Regime`'s repaired, reset-verified window points over the trailing fortnight (anchored on the newest point), so it follows a certified change from the publish that certifies it; with fewer than 10 points of d7 it is null. There is no fallback to a median of weekly rows. `max5.current` and `pro.current` are null without contemporaneous measurements; historical Max 5x evidence remains historical and is never copied into Pro. `current_estimate` carries the value's rounding interval, points, pieces, evidence dates, staleness (against the publish time) and quality.
 
 **Stretch**:
 One gs account's meter movement of at least 10%, pooled from consecutive same-window readings of that account's own meter log, with the meter dollars that account's own transcripts spent across it. The unit of passive measurement on gs (tracker/join.py `build_stretches`). Whole-percent rounding carries one point per separate window piece, so a 10% stretch reads to about ±10% and a busy day's pooled stretches to a few percent.
@@ -104,18 +104,17 @@ _Avoid_: interval (masterrig's 1% unit in the same module), span (a probe term)
 A stretch's meter dollars per 1% over its account's reference (the median of that account's recent accepted stretches): the share of the meter's movement that the account's transcripts on gs account for. 1.0 is complete capture.
 
 **Unaccounted traffic**:
-Meter movement a stretch's transcripts do not explain: the stretch reads more than 15% below its account's reference even allowing for rounding. It comes from using the account off gs or from broken transcript collection. Since 2026-09-16 it is recorded (`capture_status`) but published all the same (`CAPTURE_GATE` off in tracker/gs_passive.py): the 15% band withheld half of jwork's real stretches, and the half it withheld read low, so the published median was the median of the expensive half. The one exception is a **collection gap**, a stretch whose capture is under a tenth of the reference -- the meter moving with nothing on gs to explain it -- which is still left out. Its mirror, **surplus**, is transcripts the meter did not count, from a transcript directory another account also writes to.
+Meter movement a stretch's transcripts do not explain: the stretch reads more than 15% below its account's reference even allowing for rounding. It can come from off-machine use or broken transcript collection. Since 2026-09-16 it is recorded (`capture_status`) but published all the same (`CAPTURE_GATE` off in tracker/gs_passive.py): the 15% band withheld half of jwork's real stretches, and the half it withheld read low, so the published median was the median of the expensive half, and the audit of 2026-09-16 rules out a narrow band around the expected rate. Capture is therefore never verified, and every passive rate is published `conditional` with that reason. The one exception is a **collection gap**, a stretch whose capture is under a tenth of the reference -- the meter moving with nothing on gs to explain it -- which is still left out. Its mirror, **surplus**, is transcripts the meter did not count, from a transcript directory another account also writes to. A stretch with any unpriced-model work is never valued (finding 9).
 _Avoid_: missing tokens, leakage
 
 **Level shift**:
 A run of withheld stretches that agree with each other at a new level. It is what a genuine limit change looks like, and also what steady off-gs use looks like, so it stays withheld until the other gs account or a probe steps the same way; only then is it a change and the reference rebased (tracker/capture.py).
 
-**Session**:
-One transcript file's worth of turns (a subagent's own transcript counts as its own session). `session_tokens[model]` is the median cumulative tokens of a real session on that model over the last 30 days; the page's "about N sessions per window" unit.
-_Avoid_: task, conversation, run
+**Session scenario** (not published):
+Transcript token totals cannot be divided into the reference-mix window estimate. A sessions-per-window promise remains unavailable until session meter cost is measured under an explicit parent/subagent and effort policy.
 
 **Derived rate**:
-A model's published rate computed from another model's probe through the dollar invariant, rather than probed directly.
+A model's tokens per window converted from the measured meter budget on the reference mix with that model's price-table weights, rather than measured on that model (`source: derived_reference_mix`).
 
 **Passive calibration** (retired 2026-09-16):
 The ratio a gs-passive reading was to be divided by before joining the probe's dollar series. Measured at 1.80 on 2026-09-16 (Jono Work's accepted passive days against the probe), it still invented change events when applied, because the probe payload (98% cache_write by list value) and real sessions (59% cache_read, 24% cache_write, 17% output) are different quantities under any single scale. The passive series is published on its own now; probe rows never join it. `tracker.gs_passive --calibrate` stays for the record and is not used.
@@ -125,10 +124,10 @@ _Avoid_: normalization, scale factor
 `class_weight.output` in data/prices.json is measured from the passive stretches themselves: `tracker.gs_passive --fit-output-weight` solves meter movement = a x list dollars of (input + cache_write) + b x list dollars of output over the capture-accepted stretches, cache_read pinned at its measured 0.0, and reports b / a. On jwork's 60 accepted stretches 2026-09-05..15 it is 1.018, so the weight is 1.0 (was 1.8 from a single probe pair). The value is pasted into prices.json by hand so it stays fixed while real movement shows.
 
 **Instrument**:
-Which kind of reading measured the currently published figure: `probe` (a scheduled run) or `passive` (a gs account's own transcripts against its own meter, tracker/gs_passive.py). Probes are no longer scheduled as of 2026-09-16 (issue #39), and the two never share a series: with any priced passive reading the published dollar series is the passive one and probe rows only supply `probed_at`, the weekly windows and the class-split fallback; with none it is the probe's, as before. Step detection on the passive series is a rolling week's median against the regime before it (tracker/detect.py `detect_smoothed_changes`), because a passive day scatters 15-20% and the two-readings rule fires on that. History days before the first passive reading (2026-09-05) are `held`. Top-level `instrument` says which series is published; `rates[model].source` is `passive` on it, alongside `measured_at` (the newest reading's time) and the older `probed_at` (this model's own latest probe row).
+The compatible source behind a metric (`instrument`, `rates[model].evidence.source`). Measured passive readings require reset ids in the meter log and no unpriced work; capture completeness is diagnosed but not verified. Legacy reset-less passive evidence (jwork's ceiling log) remains a conditional reference with no change events. Missing passive evidence makes rates unavailable; probe payloads remain a separate series and never replace passive figures on an incompatible scale. History begins at the first compatible observation and is not backfilled.
 
 **Regime**:
-A stretch of history in which the measured limit is held flat, ended by a detected change. On the weekly series a regime starts at a `Weekly change`'s first window, and every later base is pooled from that regime only.
+A detector segment over compatible observations. A published regime carries the raw pooled level, its rounding interval, evidence count and provenance. It is an account-scoped estimate, not an Anthropic policy statement.
 _Avoid_: era, level, plateau
 
 ### Operation
@@ -154,11 +153,11 @@ A drifted row whose rerun agreed with the earlier median. It stays in history bu
 _Avoid_: bad row, glitch
 
 **Change**:
-Two agreeing readings that both differ from the earlier median: the limit moved. Published events and `last_change` carry a `scope`, `"window"` or `"weekly"`, naming which series the change was detected on.
+A step detected in one published series: an observed change in this account's metric, not a proven change to Anthropic's limits. Published events and `last_change` carry a `scope`, `"window"` or `"weekly"`, naming which series the change was detected on, plus `metric`, `onset`, `confirmation` and `attribution: observed_account_metric_change`. Window-scope events (the smoothed passive detector) are `provisional`, and bin/daily.sh announces neither provisional nor legacy-uncertain ones. It announces a change only once two consecutive publishes of new weekly evidence (a newer window in `weekly_windows.passive`) show it dated within a day of each other, and never announces a date within a day of one it has already announced (`.notified-change`, one date per line; the last observation is in `.weekly-change-seen`).
 _Avoid_: shift, event
 
-**Weekly change**:
-A step of more than 15% in weekly windows on the live plan's passive window points (`max20`), dated by the first window at the new level -- a day, not a week ending. A window point with at least 7 points of d7 whose ratio lies beyond threshold from the `Pooled` base (the regime's previous fortnight, at least 10 points of d7) even after conceding half a point of d7 rounding is a candidate; it fires once the points from it onward pool to at least 10 points of d7 over at least two windows and that pool still lies beyond threshold the same way. Never detected on the calendar-week rows: a mid-week step blends into the week's average (the 2026-09-13 cut published as a -14.5% week), and a week-then-confirming-week rule could not have surfaced it for nineteen days. `max5` is frozen and never runs detection, so the Max 5x -> Max 20x plan change itself is never reported as a weekly change. Published as an event with `"scope": "weekly"`. Mechanics and the rounding reasoning: tracker/detect.py.
+**Weekly ratio change**:
+An account-scoped change point in paired five-hour/seven-day movement. A split certifies only when both sides clear the d7 floors, their pooled levels differ by more than 15%, and their rounding intervals do not overlap. Detected on the window points, never on the calendar-week rows (a mid-week step blends into the week's average). Events publish onset bounds, confirmation evidence and the metric name; they do not claim that Anthropic changed a weekly cap or establish causation.
 _Avoid_: plan change (that is Jonathan's own subscription move, not a measured step)
 
 **Alert**:

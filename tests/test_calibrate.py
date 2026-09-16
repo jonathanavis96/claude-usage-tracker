@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from typing import ClassVar
 
 from tracker.calibrate import calibrate
 from tracker.cli_run import RunUsage
@@ -65,15 +66,17 @@ if __name__ == "__main__":
 
 class FailureTests(unittest.TestCase):
     def test_failing_cell_is_skipped_and_others_survive(self):
+        from datetime import datetime, timezone
+
         from tracker.calibrate import calibrate
         from tracker.cli_run import RunUsage
         from tracker.usage_api import Utilization
-        from datetime import datetime, timezone
         def run(prompt, model, effort):
             if effort == "high":
                 raise RuntimeError("boom")
             return RunUsage(model, 1, 2, 3, 4, 0.0, 1.0)
-        read = lambda: Utilization(datetime.now(timezone.utc), 0.0, 0.0, None)  # noqa: E731
+        def read():
+            return Utilization(datetime.now(timezone.utc), 0.0, 0.0, None)
         seen = []
         m = calibrate(["m"], ["low", "high"], 2, run, read, lambda s: None, checkpoint=lambda x: seen.append(len(x["_meta"]["runs"])))
         self.assertEqual(m["m"], {"low": 10})
@@ -88,12 +91,12 @@ class TwoTurnTests(unittest.TestCase):
     two turns = input 4, cache_read 39590, cache_write 877 (total 41881). Valued on the
     meter the two are close, so each cell publishes the median meter dollars over all runs.
     """
-    PRICES = {"claude-sonnet-5": {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5,
+    PRICES: ClassVar[dict] = {"claude-sonnet-5": {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5,
                                   "meter_weight": 1.0,
                                   "class_weight": {"input": 1.0, "output": 1.8, "cache_read": 1.0, "cache_write": 1.0}}}
 
     # (input, output, cache_read, cache_write): the seven live Sonnet low runs
-    SONNET_LOW = [
+    SONNET_LOW: ClassVar[list] = [
         (4, 1978, 39590, 1253),  # total 42825
         (2, 1713, 19795, 0),     # 21510
         (2, 1720, 19795, 0),     # 21517
@@ -164,6 +167,7 @@ class TwoTurnTests(unittest.TestCase):
         import json
         import tempfile
         from pathlib import Path
+
         from tracker.calibrate import main, recompute
 
         live = calibrate(["claude-sonnet-5"], ["low", "high"], 7,

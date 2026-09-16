@@ -2,7 +2,16 @@ import json
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from tracker.publish import build_public_json, usd_per_pct, blended_price_per_token
+from typing import ClassVar
+
+from tracker.publish import (
+    REFERENCE_MIX,
+    blended_api_price_per_token,
+    blended_price_per_token,
+    build_public_json,
+    usd_per_pct,
+)
+
 
 def probe(day, model, tpp, account="dave"):
     return {"ts": f"2026-09-{day:02d}T08:00:00+00:00", "model": model, "effort": "low", "tokens_per_pct": tpp,
@@ -15,7 +24,14 @@ PASSIVE = {"generated_at": "2026-09-05T20:00:00+00:00", "plan_ratio_5x_to_20x": 
 EFFORT = {"claude-sonnet-5": {"low": 900000, "high": 2520000}}
 
 
-def window(window_ending, d5, d7):
+def window(window_ending, d5, d7, pieces=1):
+    """A passive.json per-window point as tracker/weekly.py writes it since the audit's finding-3 repair."""
+    return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 else None,
+            "five_hour_pct": d5, "seven_day_pct": d7, "pieces": pieces, "reset_verified": True}
+
+
+def legacy_window(window_ending, d5, d7):
+    """The same point as a passive.json from before that repair wrote it: no pieces, no reset flag."""
     return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 else None,
             "five_hour_pct": d5, "seven_day_pct": d7}
 
@@ -30,31 +46,52 @@ ISSUE_25_WEEKS = [
 ]
 # The per-window points the issue quotes from masterrig's raw log for the same span.
 ISSUE_25_BY_WINDOW = [
-    window("2026-09-10T21:29:00+00:00", 72.0, 11.0),
-    window("2026-09-12T16:30:00+00:00", 17.0, 3.0),
-    window("2026-09-12T21:30:00+00:00", 27.0, 5.0),
-    window("2026-09-14T16:30:00+00:00", 37.0, 8.0),
-    window("2026-09-14T21:30:00+00:00", 17.0, 4.0),
-    window("2026-09-15T16:30:00+00:00", 27.0, 6.0),
+    legacy_window("2026-09-10T21:29:00+00:00", 72.0, 11.0),
+    legacy_window("2026-09-12T16:30:00+00:00", 17.0, 3.0),
+    legacy_window("2026-09-12T21:30:00+00:00", 27.0, 5.0),
+    legacy_window("2026-09-14T16:30:00+00:00", 37.0, 8.0),
+    legacy_window("2026-09-14T21:30:00+00:00", 17.0, 4.0),
+    legacy_window("2026-09-15T16:30:00+00:00", 27.0, 6.0),
 ]
 PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75},
           "claude-opus-5": {"input": 7.5, "output": 37.5, "cache_read": 0.75, "cache_write": 9.375}}
+# The same prices with data/prices.json's cache_read class weight of 0: where meter and API dollars part.
+CACHE_READ_FREE = {m: {**p, "class_weight": {"cache_read": 0.0}} for m, p in PRICES.items()}
 
 
 def gs_passive_report(*, account="dave", end, cache_write, delta_pct=10, model="claude-sonnet-5",
-                      meter_last=None):
+                      meter_last=None, reset_verified=True):
     """A minimal tracker.gs_passive.report() shape (issue #39): just enough for
     passive_dollar_readings to read one accepted stretch. `cache_write` tokens at
     PRICES' $3.75/Mtok give (cache_write * 3.75 / 1e6) meter dollars for the
     stretch; dividing by delta_pct and scaling to a full window is
-    passive_dollar_readings' own job, not this fixture's."""
-    acct = {"stretches": [
-        {"status": "accepted", "end": end, "delta_pct": delta_pct,
+    passive_dollar_readings' own job, not this fixture's. `reset_verified` is
+    what a report from a reset-bearing meter log carries; False is the archived
+    ceiling-log shape."""
+    acct = {"account": account, "stretches": [
+        {"status": "accepted", "end": end, "delta_pct": delta_pct, "windows": 1, "reset_verified": reset_verified,
          "tokens": {model: {"input": 0, "output": 0, "cache_read": 0, "cache_write": cache_write}}},
     ]}
     if meter_last is not None:
         acct["meter"] = {"last": meter_last}
     return {"accounts": {account: acct}}
+
+
+def daily_report(budgets, *, start_day=1, account="dave", reset_verified=True):
+    """One accepted stretch a day on 2026-09-(start_day + i), each worth budgets[i] meter dollars per window."""
+    stretches = []
+    for i, budget in enumerate(budgets):
+        # 10% of a window at $3.75/Mtok cache_write: budget/10 dollars is budget/10/3.75e-6 tokens.
+        stretches.append({"status": "accepted", "end": f"2026-09-{start_day + i:02d}T08:00:00+00:00",
+                          "delta_pct": 10, "windows": 1, "reset_verified": reset_verified,
+                          "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0,
+                                                         "cache_write": round(budget / 10 / 3.75e-6)}}})
+    return {"accounts": {account: {"account": account, "stretches": stretches}}}
+
+
+def tokens_for(budget, price):
+    """tokens_per_window for a meter budget on the frozen reference mix (audit finding 1's formula)."""
+    return round(budget / (blended_price_per_token(REFERENCE_MIX["split"], price) * price.get("meter_weight", 1.0)))
 
 
 # 352400 cache-write tokens at PRICES' cache_write price is $1.3215, and dividing
@@ -111,97 +148,129 @@ class UsdPerPctTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
+    """build_public_json on a passive series. Until 2026-09-16 these tests built the
+    series from probe rows; probe rows no longer form it at all (audit finding 13),
+    so each one now feeds the same intent through daily passive readings."""
+
     def test_shape(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        j = build_public_json(rows, PASSIVE, EFFORT, CACHE_READ_FREE, now, gs_passive=daily_report([15.0] * 5))
+        self.assertEqual(j["schema_version"], 2)
         self.assertEqual(j["generated_at"], "2026-09-05T20:15:00+00:00")
         self.assertEqual(j["last_sample_at"], "2026-09-05T08:00:00+00:00")
         self.assertEqual(j["plan_measured"], "max20")
+        # One window's published 1:5:20 scaling, labelled as such; nothing about windows per week.
         self.assertEqual(j["plan_ratios"], {"pro": 0.05, "max5": 0.25, "max20": 1.0})
-        # Windows a week holds, per plan. A different quantity from plan_ratios above (what one
-        # window is worth), and the page must never confuse the two: it scales its gap-filled
-        # weekly points by this one. Frozen, so a later limit change cannot leak into it.
-        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.78, "max5": 1.78, "max20": 1.0})
-        self.assertEqual(j["rate_basis"], "api_value")
+        self.assertEqual(j["plan_ratios_basis"]["kind"], "published_plan_scaling")
+        # The frozen cross-plan weekly ratio is gone: unmeasured is empty (audit finding 6).
+        self.assertEqual(j["weekly_window_ratios"], {})
+        self.assertEqual(j["rate_basis"], "meter_budget")
         r = j["rates"]["claude-sonnet-5"]
-        latest = probe(5, "claude-sonnet-5", 420000)
-        expected_tpw = usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100 / blended_price_per_token(PASSIVE["split"], PRICES["claude-sonnet-5"])
-        self.assertAlmostEqual(r["tokens_per_window"], round(expected_tpw), delta=1)
-        self.assertEqual(r["source"], "probe")
-        self.assertEqual(r["split"], PASSIVE["split"])
-        self.assertEqual(r["api_value_per_window"], round(usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100, 2))
+        self.assertEqual(r["meter_budget_per_window"], 15.0)
+        self.assertEqual(r["tokens_per_window"], tokens_for(15.0, CACHE_READ_FREE["claude-sonnet-5"]))
+        # API value is the list price of exactly those tokens, cache reads included (finding 1):
+        # with cache reads free to the meter it is several times the budget.
+        api = round(r["tokens_per_window"] * blended_api_price_per_token(REFERENCE_MIX["split"], CACHE_READ_FREE["claude-sonnet-5"]), 2)
+        self.assertEqual((r["api_value_per_window"], r["api_list_value_per_window"]), (api, api))
+        self.assertGreater(r["api_value_per_window"], r["meter_budget_per_window"])
+        self.assertEqual(r["source"], "derived_reference_mix")
+        self.assertEqual(r["split"], REFERENCE_MIX["split"])
+        self.assertFalse(r["assumptions"]["direct_model_cap_measurement"])
+        self.assertEqual((r["quality"]["status"], r["evidence"]["reset_verified"], r["freshness"]["stale"]),
+                         ("conditional", True, False))
         self.assertEqual(j["effort"], EFFORT)
-        self.assertEqual(j["api_price_per_mtok"], PRICES)
+        self.assertEqual(j["api_price_per_mtok"], CACHE_READ_FREE)
         self.assertIsNone(j["last_change"])
+        self.assertEqual(j["model_plan_limits"]["claude-sonnet-5"]["pro"]["included"], True)
         hist = j["history"]["claude-sonnet-5"]
-        # days before the first probe are held flat at the first (only) regime's value --
-        # no plan noise, no passive daily series, just the step function's opening level.
-        self.assertEqual(hist[0], {"date": "2026-08-01", "tokens_per_window": r["tokens_per_window"],
-                                   "api_value_per_window": r["api_value_per_window"], "source": "held", "interpolated": False})
-        self.assertEqual(hist[-1]["source"], "probe")
+        # History starts at the first reading: nothing held or backfilled before it (finding 12).
+        self.assertEqual(hist[0], {"date": "2026-09-01", "meter_budget_per_window": 15.0,
+                                   "tokens_per_window": r["tokens_per_window"],
+                                   "api_value_per_window": r["api_value_per_window"],
+                                   "api_list_value_per_window": r["api_value_per_window"],
+                                   "source": "passive", "quality": "measured", "readings": 1, "interpolated": False})
+        self.assertEqual(len(hist), 5)
 
-    def test_history_days_carry_the_held_regime_dollar_value_for_every_model(self):
-        # The page shows dollars per window beside tokens per window with the same
-        # step treatment, so every history day carries the regime's held dollar
-        # value: one figure per day, the same for every model, stepping only on a
-        # detected change and matching rates[model].api_value_per_window today.
-        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)]
-                + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)])
-        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+    def test_fable_is_not_included_on_pro_and_has_half_the_weekly_limit_on_max(self):
+        # Audit finding 2: the plan matrix offered Fable allowance Pro does not include, and
+        # a full weekly allowance on Max where Fable has half. Each cell names its source.
+        prices = {**PRICES, "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25, "cache_write": 12.5}}
+        j = build_public_json([], PASSIVE, EFFORT, prices, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 5))
+        limits = j["model_plan_limits"]
+        self.assertEqual({plan: (cell["included"], cell["weekly_fraction"]) for plan, cell in limits["claude-fable-5-1"].items()},
+                         {"pro": (False, 0.0), "max5": (True, 0.5), "max20": (True, 0.5)})
+        self.assertEqual({plan: (cell["included"], cell["weekly_fraction"]) for plan, cell in limits["claude-opus-5"].items()},
+                         {"pro": (True, 1.0), "max5": (True, 1.0), "max20": (True, 1.0)})
+        self.assertTrue(all(cell["source_url"].startswith("https://") and cell["as_of"]
+                            for model in limits.values() for cell in model.values()))
+
+    def test_no_session_count_is_published(self):
+        # Audit finding 11: sessions per window divided token totals from different mixes;
+        # nothing measures a session's meter cost, so no session figure is published.
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 5))
+        self.assertNotIn("session_tokens", j)
+        self.assertEqual(j["rates"]["claude-sonnet-5"]["reference_mix"]["kind"], "derived_scenario")
+
+    def test_history_days_carry_the_days_meter_budget_for_every_model(self):
+        # Every history day carries the meter budget, one figure per day and the same for
+        # every model; the API list value is a different unit, the list price of the tokens
+        # that budget converts to (finding 1), and with cache reads free to the meter it is
+        # the larger figure. Days are the day's readings, not a held regime level
+        # (finding 5): a step shows where it happened and nowhere else.
+        budgets = [15.0] * 10 + [10.5] * 5
+        now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, CACHE_READ_FREE, now, gs_passive=daily_report(budgets))
         event_date = j["last_change"]["date"]
         sonnet, opus = j["history"]["claude-sonnet-5"], j["history"]["claude-opus-5"]
-        self.assertEqual([h["api_value_per_window"] for h in sonnet], [h["api_value_per_window"] for h in opus])
-        before = {h["api_value_per_window"] for h in sonnet if h["date"] < event_date}
-        after = {h["api_value_per_window"] for h in sonnet if h["date"] >= event_date}
-        self.assertEqual(len(before), 1)
-        self.assertEqual(len(after), 1)
-        self.assertGreater(before.pop(), after.pop())
-        self.assertEqual(sonnet[-1]["api_value_per_window"], j["rates"]["claude-sonnet-5"]["api_value_per_window"])
-        self.assertEqual(sonnet[-1]["api_value_per_window"], j["rates"]["claude-opus-5"]["api_value_per_window"])
+        self.assertEqual([h["meter_budget_per_window"] for h in sonnet], [h["meter_budget_per_window"] for h in opus])
+        self.assertEqual({h["meter_budget_per_window"] for h in sonnet if h["date"] < event_date}, {15.0})
+        self.assertEqual({h["meter_budget_per_window"] for h in sonnet if h["date"] >= event_date}, {10.5})
+        self.assertTrue(all(h["api_value_per_window"] > h["meter_budget_per_window"] for h in sonnet + opus))
+        self.assertEqual(sonnet[-1]["meter_budget_per_window"], j["rates"]["claude-sonnet-5"]["meter_budget_per_window"])
+        self.assertEqual(j["rates"]["claude-opus-5"]["meter_budget_per_window"], 10.5)
 
-    def test_every_priced_model_gets_a_rate_derived_from_the_one_probed_model(self):
+    def test_every_priced_model_gets_a_rate_derived_from_the_one_measured_budget(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 5))
         self.assertEqual(set(j["rates"]), {"claude-sonnet-5", "claude-opus-5"})
         sonnet, opus = j["rates"]["claude-sonnet-5"], j["rates"]["claude-opus-5"]
-        # same dollar invariant, different price -> different tokens_per_window
-        self.assertEqual(sonnet["api_value_per_window"], opus["api_value_per_window"])
-        self.assertEqual(opus["source"], "derived")
-        self.assertEqual(sonnet["source"], "probe")
+        # the same meter budget, a different price -> different tokens_per_window
+        self.assertEqual(sonnet["meter_budget_per_window"], opus["meter_budget_per_window"])
+        self.assertEqual((sonnet["source"], opus["source"]), ("derived_reference_mix", "derived_reference_mix"))
+        # probed_at still names each model's own latest probe row, and nothing more.
         self.assertIsNone(opus["probed_at"])
         self.assertEqual(sonnet["probed_at"], "2026-09-05T08:00:00+00:00")
-        latest = probe(5, "claude-sonnet-5", 420000)
-        api_value = usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100
-        expected_opus_tpw = round(api_value / blended_price_per_token(PASSIVE["split"], PRICES["claude-opus-5"]))
-        self.assertEqual(opus["tokens_per_window"], expected_opus_tpw)
+        self.assertEqual(opus["tokens_per_window"], tokens_for(15.0, PRICES["claude-opus-5"]))
         # opus is priced ~2.5x sonnet across the board, so its derived rate is ~2.5x fewer tokens
         self.assertLess(opus["tokens_per_window"], sonnet["tokens_per_window"])
 
-    def test_history_marks_probe_days_by_which_model_was_actually_probed(self):
+    def test_history_has_no_probe_days_whichever_model_was_probed(self):
+        # There are no probe days any more: a probe row adds no history day and no day
+        # reads "probe" or "derived", whichever model was probed (finding 13).
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        sonnet_hist = [h for h in j["history"]["claude-sonnet-5"] if h["source"] == "probe" or h["date"] >= "2026-09-01"]
-        opus_hist = [h for h in j["history"]["claude-opus-5"] if h["date"] >= "2026-09-01"]
-        self.assertTrue(all(h["source"] == "probe" for h in sonnet_hist))
-        self.assertTrue(all(h["source"] == "derived" for h in opus_hist))
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 2, start_day=4))
+        for model in ("claude-sonnet-5", "claude-opus-5"):
+            self.assertEqual([(h["date"], h["source"]) for h in j["history"][model]],
+                             [("2026-09-04", "passive"), ("2026-09-05", "passive")])
 
-    def test_each_probed_model_publishes_its_own_probe_source(self):
-        # All three models are probed in rotation, one per 12 hours -- each has
-        # its own probe rows even on days it wasn't the one probed most recently.
+    def test_each_probed_model_publishes_its_own_probed_at(self):
+        # All three models were probed in rotation: each still publishes its own
+        # latest probe row as probed_at, and none of them is the rate's source.
         prices = {**PRICES, "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25,
                                                   "cache_write": 12.5, "meter_weight": 2.0}}
         rows = [probe(1, "claude-sonnet-5", 420000), probe(2, "claude-opus-5", 420000),
                 probe(3, "claude-fable-5-1", 420000), probe(4, "claude-sonnet-5", 420000)]
         now = datetime(2026, 9, 4, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, prices, now)
+        j = build_public_json(rows, PASSIVE, EFFORT, prices, now, gs_passive=daily_report([15.0] * 4))
         for model, expected_ts in [("claude-sonnet-5", "2026-09-04T08:00:00+00:00"),
                                     ("claude-opus-5", "2026-09-02T08:00:00+00:00"),
                                     ("claude-fable-5-1", "2026-09-03T08:00:00+00:00")]:
-            self.assertEqual(j["rates"][model]["source"], "probe", model)
+            self.assertEqual(j["rates"][model]["source"], "derived_reference_mix", model)
             self.assertEqual(j["rates"][model]["probed_at"], expected_ts, model)
 
     def test_probe_account_count_counts_distinct_accounts_without_naming_them(self):
@@ -209,87 +278,127 @@ class BuildTests(unittest.TestCase):
                 probe(2, "claude-sonnet-5", 420000, account="jwork"),
                 dict(probe(3, "claude-sonnet-5", 420000, account="dave"), outlier=True)]
         now = datetime(2026, 9, 2, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 2))
         self.assertEqual(j["probe_account_count"], 2)
+        self.assertEqual(j["passive_account_count"], 1)
         self.assertNotIn("dave", json.dumps(j))
         self.assertNotIn("jwork", json.dumps(j))
 
-    def test_model_with_only_an_outlier_row_publishes_derived_with_null_probed_at(self):
+    def test_model_with_only_an_outlier_row_publishes_derived_budget_with_null_probed_at(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         rows.append(dict(probe(5, "claude-opus-5", 420000), outlier=True))
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        self.assertEqual(j["rates"]["claude-opus-5"]["source"], "derived")
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 5))
+        self.assertEqual(j["rates"]["claude-opus-5"]["source"], "derived_reference_mix")
         self.assertIsNone(j["rates"]["claude-opus-5"]["probed_at"])
 
     def test_outlier_rows_are_skipped_everywhere(self):
-        # The rotation's drift check flags a lone outlier in place (tracker.rotate);
-        # it stays in history/probes.jsonl but the publisher must never see it: not
-        # in the regime median, not as a probe day, not as the latest sample.
+        # The rotation's drift check flags a lone outlier in place (tracker.rotate); it
+        # stays in history/probes.jsonl but the publisher never sees it: not as a probed_at,
+        # not as the probe effort, and it cannot touch the passive rates or history.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        rows.append(dict(probe(7, "claude-sonnet-5", 900000), outlier=True))
+        rows.append(dict(probe(7, "claude-sonnet-5", 900000), outlier=True, effort="high"))
         now = datetime(2026, 9, 7, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        clean = build_public_json(rows[:-1], PASSIVE, EFFORT, PRICES, now)
+        report = daily_report([15.0] * 7)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=report)
+        clean = build_public_json(rows[:-1], PASSIVE, EFFORT, PRICES, now, gs_passive=report)
         self.assertEqual(j["rates"], clean["rates"])
         self.assertEqual(j["history"], clean["history"])
-        self.assertEqual(j["last_sample_at"], "2026-09-05T08:00:00+00:00")
+        self.assertEqual(j["rates"]["claude-sonnet-5"]["probed_at"], "2026-09-05T08:00:00+00:00")
+        self.assertEqual(j["rates"]["claude-sonnet-5"]["probe_effort"], "low")
         self.assertIsNone(j["last_change"])
-        self.assertEqual(next(h for h in j["history"]["claude-sonnet-5"] if h["date"] == "2026-09-07")["source"], "derived")
 
-    def test_only_outlier_rows_refuses(self):
+    def test_only_outlier_rows_publishes_unavailable(self):
+        # Probe rows alone (outliers or not) are no measurement: the publish no longer
+        # refuses, it states that the rates are unavailable (finding 13).
         rows = [dict(probe(5, "claude-sonnet-5", 420000), outlier=True)]
-        with self.assertRaises(ValueError):
-            build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, tzinfo=timezone.utc))
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, tzinfo=timezone.utc))
+        self.assertEqual(j["instrument"], "unavailable")
+        self.assertEqual(j["availability"], {"rates": "unavailable", "evidence": "unavailable",
+                                             "reason": "no_eligible_passive_measurement"})
+        for r in j["rates"].values():
+            self.assertEqual((r["meter_budget_per_window"], r["tokens_per_window"], r["api_value_per_window"],
+                              r["source"]), (None, None, None, "unavailable"))
+        self.assertEqual(j["history"], {"claude-sonnet-5": [], "claude-opus-5": []})
 
-    def test_shape_empty_passive_split_falls_back_to_the_latest_row_split(self):
+    def test_shape_token_figures_stay_on_the_frozen_reference_mix(self):
+        # Token figures are always on the frozen reference mix (finding 11): neither an
+        # empty passive.json split nor a probe row's own class split changes them.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, {}, EFFORT, PRICES, now)
-        r = j["rates"]["claude-sonnet-5"]
-        # with no passive split, the row's own class fractions are used, which reduces to
-        # the raw tokens_per_pct * 100 for the model that was actually probed.
-        self.assertAlmostEqual(r["tokens_per_window"], 42_000_000, delta=1)
-        self.assertIn("api_value_per_window", r)
-        # the same fallback split is used to derive the unprobed model's rate too
-        opus = j["rates"]["claude-opus-5"]
-        latest = probe(5, "claude-sonnet-5", 420000)
-        api_value = usd_per_pct(latest, PRICES["claude-sonnet-5"]) * 100
-        row_split = {"input": 100 / 420000, "output": 400 / 420000, "cache_read": 419500 / 420000, "cache_write": 0.0}
-        expected_opus_tpw = round(api_value / blended_price_per_token(row_split, PRICES["claude-opus-5"]))
-        self.assertEqual(opus["tokens_per_window"], expected_opus_tpw)
+        report = daily_report([15.0] * 5)
+        j = build_public_json(rows, {}, EFFORT, PRICES, now, gs_passive=report)
+        with_split = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=report)
+        self.assertEqual(j["rates"], with_split["rates"])
+        self.assertEqual(j["rates"]["claude-opus-5"]["split"], REFERENCE_MIX["split"])
+        self.assertEqual(j["rates"]["claude-opus-5"]["tokens_per_window"], tokens_for(15.0, PRICES["claude-opus-5"]))
 
-    def test_fable_and_sonnet_probe_rows_at_same_meter_value_yield_same_api_value_per_window(self):
+    def test_fable_and_sonnet_days_at_same_meter_value_yield_same_meter_budget(self):
+        # Two passive days of the same meter dollars, one spent on Sonnet and one on Fable
+        # (whose meter_weight is 2): the meter budget is the same unit whichever model
+        # spent it, so both days publish the same budget.
         prices = {**PRICES, "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25,
                                                   "cache_write": 12.5, "meter_weight": 2.0}}
-        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        sonnet_rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        j_sonnet = build_public_json(sonnet_rows, PASSIVE, EFFORT, prices, now)
-        # tokens_per_pct chosen so tokens_usd(tokens, fable_price) * meter_weight(2.0)
-        # equals tokens_usd(sonnet 420000 tokens, sonnet_price) -- same meter dollars,
-        # different list dollars and a different model.
-        fable_rows = [probe(d, "claude-fable-5-1", 180800) for d in range(1, 6)]
-        j_fable = build_public_json(fable_rows, PASSIVE, EFFORT, prices, now)
-        self.assertAlmostEqual(j_sonnet["rates"]["claude-sonnet-5"]["api_value_per_window"],
-                                j_fable["rates"]["claude-fable-5-1"]["api_value_per_window"], delta=1e-6)
+        report = daily_report([15.0, 15.0])
+        fable_day = report["accounts"]["dave"]["stretches"][1]
+        # 15.0 per window is $1.30 of meter dollars over 10%: at $12.5/Mtok x 2 that is 52,000 tokens.
+        fable_day["tokens"] = {"claude-fable-5-1": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 60_000}}
+        now = datetime(2026, 9, 2, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, prices, now, gs_passive=report)
+        self.assertEqual([h["meter_budget_per_window"] for h in j["history"]["claude-sonnet-5"]], [15.0, 15.0])
 
     def test_fable_derived_tokens_are_half_what_they_would_be_at_weight_one(self):
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        report = daily_report([15.0] * 5)
         fable_price = {"input": 10, "output": 50, "cache_read": 0.25, "cache_write": 12.5}
         prices_weight_one = {**PRICES, "claude-fable-5-1": fable_price}
         prices_weight_two = {**PRICES, "claude-fable-5-1": {**fable_price, "meter_weight": 2.0}}
-        j1 = build_public_json(rows, PASSIVE, EFFORT, prices_weight_one, now)
-        j2 = build_public_json(rows, PASSIVE, EFFORT, prices_weight_two, now)
+        j1 = build_public_json([], PASSIVE, EFFORT, prices_weight_one, now, gs_passive=report)
+        j2 = build_public_json([], PASSIVE, EFFORT, prices_weight_two, now, gs_passive=report)
         self.assertAlmostEqual(j2["rates"]["claude-fable-5-1"]["tokens_per_window"],
                                 j1["rates"]["claude-fable-5-1"]["tokens_per_window"] / 2, delta=1)
 
     def test_change_event_surfaces(self):
-        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)] + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)]
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 15, tzinfo=timezone.utc))
-        self.assertEqual(j["last_change"]["direction"], "decreased")
-        self.assertEqual(j["last_change"]["model"], "all")
-        self.assertIn(j["last_change"]["percent"], range(20, 40))
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 15, 12, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 10 + [10.5] * 5))
+        c = j["last_change"]
+        self.assertEqual((c["direction"], c["model"], c["scope"], c["metric"]),
+                         ("decreased", "all", "window", "meter_budget_per_window"))
+        self.assertIn(c["percent"], range(20, 40))
+        # An observed change in this account's metric, provisional: the daily readings
+        # carry no uncertainty model (findings 4 and 5).
+        self.assertEqual((c["attribution"], c["observation_scope"], c["provisional"]),
+                         ("observed_account_metric_change", "account", True))
+        self.assertEqual(c["onset"], {"earliest": "2026-09-10", "latest": "2026-09-11"})
+
+    def test_a_reset_less_series_publishes_no_change_event(self):
+        # The same step from a log with no reset ids is a conditional reference only (finding 10).
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 15, 12, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 10 + [10.5] * 5, reset_verified=False))
+        self.assertIsNone(j["last_change"])
+        self.assertEqual(j["events"], [])
+        r = j["rates"]["claude-sonnet-5"]
+        self.assertEqual((r["quality"]["status"], r["evidence"]["reset_verified"]), ("conditional", False))
+        self.assertIn("legacy_reset_metadata_missing", r["quality"]["reasons"])
+        self.assertEqual({h["quality"] for h in j["history"]["claude-sonnet-5"]}, {"legacy_reset_unverified"})
+
+    def test_a_day_mixing_verified_and_reset_less_stretches_keeps_its_verified_reading(self):
+        # Review of PR 57: jwork's first day on its reset-bearing log also holds that
+        # morning's ceiling-log stretches. The legacy-inclusive readings pool both into
+        # one day value, so the history loop skipped it as "not verified" and never
+        # added the verified one: the day vanished. It must publish its verified
+        # reading alone, measured; a day with only reset-less stretches stays legacy.
+        report = daily_report([15.0] * 5, start_day=1)
+        legacy = daily_report([30.0, 12.0], start_day=5, reset_verified=False)["accounts"]["dave"]["stretches"]
+        legacy[0]["end"] = "2026-09-05T06:00:00+00:00"   # before the verified stretch that day
+        report["accounts"]["dave"]["stretches"] = sorted(report["accounts"]["dave"]["stretches"] + legacy,
+                                                         key=lambda st: st["end"])
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 6, 20, tzinfo=timezone.utc), gs_passive=report)
+        hist = {h["date"]: (h["meter_budget_per_window"], h["quality"], h["readings"]) for h in j["history"]["claude-sonnet-5"]}
+        self.assertEqual(hist["2026-09-05"], (15.0, "measured", 1))
+        self.assertEqual(hist["2026-09-06"], (12.0, "legacy_reset_unverified", 1))
+        self.assertEqual(len(hist), 6)
+        self.assertEqual(j["availability"]["evidence"], "measured")
 
     def test_events_excludes_the_plan_change(self):
         # Jonathan's ruling: the public chart is a step function of the measured limit
@@ -300,10 +409,11 @@ class BuildTests(unittest.TestCase):
         self.assertEqual([e for e in j["events"] if e["kind"] == "plan"], [])
 
     def test_change_produces_exactly_two_flat_levels_stepping_on_the_event_date(self):
-        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)]
-                + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)])
-        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        # With readings that are themselves flat either side of the step, the daily history
+        # is two flat levels meeting on the event date. (History is the readings, not held
+        # regime levels, since finding 5; flat inputs are what make it flat here.)
+        now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 10 + [10.5] * 5))
         hist = j["history"]["claude-sonnet-5"]
         event_date = j["last_change"]["date"]
         before = [h["tokens_per_window"] for h in hist if h["date"] < event_date]
@@ -315,22 +425,21 @@ class BuildTests(unittest.TestCase):
         self.assertEqual({h["tokens_per_window"] for h in hist}, {before[0], on_and_after[0]})
 
     def test_events_includes_every_detected_change(self):
-        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 11)]
-                + [probe(d, "claude-sonnet-5", 300000) for d in range(11, 16)])
-        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 10 + [10.5] * 5))
         change_events = [e for e in j["events"] if e["kind"] == "change"]
         self.assertTrue(change_events)
         self.assertEqual(change_events[-1]["date"], j["last_change"]["date"])
         self.assertEqual(change_events[-1]["label"],
-                          f"Window changed -{j['last_change']['percent']}%")
+                          f"Observed window budget changed -{j['last_change']['percent']}%")
 
 
 class GsPassiveTests(unittest.TestCase):
     """Passive readings from tracker.gs_passive (issue #39) are the published series
-    on their own since 2026-09-16; probe rows never join them (the scales differ)."""
+    on their own since 2026-09-16; probe rows never join them (the scales differ), and
+    since the 2026-09-16 audit (finding 13) never stand in for them either."""
 
-    def test_passive_readings_are_the_series_and_probe_rows_only_fill_in(self):
+    def test_passive_readings_are_the_series_and_probe_rows_only_date_their_own_runs(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
@@ -339,20 +448,19 @@ class GsPassiveTests(unittest.TestCase):
         self.assertEqual(j["last_sample_at"], "2026-09-06T08:00:00+00:00")
         self.assertEqual(j["passive_account_count"], 1)
         r = j["rates"]["claude-sonnet-5"]
-        self.assertEqual(r["source"], "passive")
+        self.assertEqual(r["source"], "derived_reference_mix")
         self.assertEqual(r["measured_at"], "2026-09-06T08:00:00+00:00")
         # probed_at is unchanged by a passive reading: still this model's own latest probe row.
         self.assertEqual(r["probed_at"], "2026-09-05T08:00:00+00:00")
-        self.assertEqual(j["rates"]["claude-opus-5"]["source"], "passive")
-        # The value is the passive stretch's own: $1.3215 over 10%, x100 = 13.215 per window.
-        self.assertAlmostEqual(r["api_value_per_window"], 13.22, delta=0.01)
-        # The class split is the gs accounts' own mix, not masterrig's passive.json.
-        self.assertEqual(r["split"], {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 1.0})
-        # Probe days are not part of the series, so history before the first passive
-        # day is held, and no day reads "probe".
-        hist = j["history"]["claude-sonnet-5"]
-        self.assertEqual({h["source"] for h in hist if h["date"] < "2026-09-06"}, {"held"})
-        self.assertEqual([h["source"] for h in hist if h["date"] == "2026-09-06"], ["passive"])
+        self.assertEqual(j["rates"]["claude-opus-5"]["source"], "derived_reference_mix")
+        # The budget is the passive stretch's own: $1.3215 over 10%, x100 = 13.215 per window.
+        self.assertAlmostEqual(r["meter_budget_per_window"], 13.22, delta=0.01)
+        # The class split is the frozen reference mix (finding 11), not any account's live one.
+        self.assertEqual(r["split"], REFERENCE_MIX["split"])
+        # Probe days are not part of the series and nothing is held before the first
+        # passive day (finding 12): the history is that one day.
+        self.assertEqual([(h["date"], h["source"]) for h in j["history"]["claude-sonnet-5"]],
+                         [("2026-09-06", "passive")])
 
     def test_a_passive_series_far_from_the_probe_level_fires_no_change_event(self):
         # The whole point of not joining: a probe steady at 97 next to passive days
@@ -370,44 +478,56 @@ class GsPassiveTests(unittest.TestCase):
         j = build_public_json(rows, {"split": {"cache_write": 1.0}}, EFFORT, prices, now, gs_passive=raw_passive)
         self.assertIsNone(j["last_change"])
         self.assertEqual(j["instrument"], "passive")
+        self.assertAlmostEqual(j["rates"]["claude-sonnet-5"]["meter_budget_per_window"], 150.0, delta=1e-6)
         self.assertAlmostEqual(j["rates"]["claude-sonnet-5"]["api_value_per_window"], 150.0, delta=1e-6)
 
-    def test_no_gs_passive_keeps_source_probe_as_before(self):
+    def test_no_gs_passive_publishes_unavailable_rates_not_the_probe_series(self):
+        # Audit finding 13: without the passive report the probe series used to be
+        # published in its place, on another scale (-22% on the 2026-09-16 data with no
+        # limit change). Now the rates say they are unavailable, and why.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        self.assertEqual(j["instrument"], "probe")
-        self.assertEqual(j["rates"]["claude-sonnet-5"]["source"], "probe")
+        self.assertEqual(j["instrument"], "unavailable")
+        r = j["rates"]["claude-sonnet-5"]
+        self.assertEqual((r["source"], r["meter_budget_per_window"], r["tokens_per_window"]), ("unavailable", None, None))
+        self.assertEqual(r["quality"]["reasons"], ["no_eligible_passive_measurement"])
+        self.assertEqual(r["probed_at"], "2026-09-05T08:00:00+00:00")
         self.assertEqual(j["passive_account_count"], 0)
 
-    def test_a_gs_passive_report_with_no_priced_reading_falls_back_to_the_probe_series(self):
+    def test_a_gs_passive_report_with_no_priced_reading_is_the_same_as_no_report(self):
+        # ...and a report whose only stretch is unpriced is the same as no report at all.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         empty = {"accounts": {"jwork": {"stretches": [{"status": "unpriced", "end": "2026-09-06T08:00:00+00:00",
                                                         "delta_pct": 10, "tokens": {}}]}}}
-        probe_only = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        without = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=empty)
-        self.assertEqual(j["instrument"], "probe")
+        self.assertEqual(j["instrument"], "unavailable")
         self.assertEqual(j["passive_account_count"], 0)
-        self.assertEqual({k: v for k, v in j.items() if k != "passive_account_count"},
-                         {k: v for k, v in probe_only.items() if k != "passive_account_count"})
+        self.assertEqual(j, without)
 
-    def test_freshness_guard_is_satisfied_by_a_fresh_passive_reading_when_probes_are_stale(self):
+    def test_freshness_follows_a_fresh_passive_reading_when_probes_are_stale(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]  # 2026-09-01..05
         now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)  # 21 days past the last probe
         fresh_passive = gs_passive_report(end="2026-09-25T08:00:00+00:00", cache_write=352400)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=fresh_passive)
         self.assertEqual(j["instrument"], "passive")
         self.assertEqual(j["last_sample_at"], "2026-09-25T08:00:00+00:00")
+        self.assertFalse(j["rates"]["claude-sonnet-5"]["freshness"]["stale"])
 
-    def test_a_stale_passive_series_refuses_even_with_a_fresh_probe_row(self):
-        # The guard reads the series that is published. A probe row run by hand
-        # yesterday does not freshen a passive series that stopped three weeks ago.
+    def test_a_stale_passive_series_publishes_as_stale_even_with_a_fresh_probe_row(self):
+        # Freshness reads the series that is published. A probe row run by hand yesterday
+        # does not freshen a passive series that stopped three weeks ago. The publish no
+        # longer refuses: the rate carries its own staleness, apart from generated_at,
+        # which only says the build ran (audit finding 16).
         rows = [probe(25, "claude-sonnet-5", 420000)]
         now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
         stale_passive = gs_passive_report(end="2026-09-05T08:00:00+00:00", cache_write=352400)
-        with self.assertRaises(ValueError):
-            build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=stale_passive)
+        r = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=stale_passive)["rates"]["claude-sonnet-5"]
+        self.assertEqual(r["freshness"], {"as_of": "2026-09-05T08:00:00+00:00",
+                                          "stale_after": "2026-09-15T08:00:00+00:00", "stale": True})
+        self.assertIn("evidence_stale", r["quality"]["reasons"])
 
     def test_publishing_works_with_zero_probe_rows(self):
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
@@ -416,26 +536,33 @@ class GsPassiveTests(unittest.TestCase):
         self.assertEqual(j["probe_account_count"], 0)
         self.assertEqual(j["passive_account_count"], 1)
         r = j["rates"]["claude-sonnet-5"]
-        self.assertEqual(r["source"], "passive")
+        self.assertEqual(r["source"], "derived_reference_mix")
         self.assertIsNone(r["probed_at"])
         self.assertIsNone(r["probe_effort"])
 
-    def test_zero_probe_rows_and_no_split_anywhere_refuses_cleanly(self):
-        # With no probe rows there is no row split to fall back to, a passive.json with
-        # no "split" gives nothing, and a gs report whose stretches carry no tokens gives
-        # nothing either: blended_price_per_token({}, price) is 0.0, which would
-        # ZeroDivisionError in the rates loop. That must surface as a ValueError.
+    def test_zero_probe_rows_and_no_split_anywhere_is_cleanly_unavailable(self):
+        # No probe rows, a passive.json with no "split", and a report whose one stretch
+        # carries no tokens: nothing to divide by zero any more (the mix is frozen), and a
+        # stretch with no captured work is a collection gap, not a free window, so there is
+        # no reading and the rates are cleanly unavailable rather than $0.
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         passive_without_split = {k: v for k, v in PASSIVE.items() if k != "split"}
         tokenless = {"accounts": {"dave": {"stretches": [
-            {"status": "accepted", "end": "2026-09-06T08:00:00+00:00", "delta_pct": 10, "tokens": {}}]}}}
-        with self.assertRaises(ValueError):
-            build_public_json([], passive_without_split, EFFORT, PRICES, now, gs_passive=tokenless)
+            {"status": "accepted", "end": "2026-09-06T08:00:00+00:00", "delta_pct": 10, "tokens": {},
+             "reset_verified": True}]}}}
+        j = build_public_json([], passive_without_split, EFFORT, PRICES, now, gs_passive=tokenless)
+        self.assertEqual(j["instrument"], "unavailable")
+        self.assertIsNone(j["rates"]["claude-sonnet-5"]["meter_budget_per_window"])
 
-    def test_no_readings_at_all_refuses(self):
+    def test_no_readings_at_all_publishes_unavailable_and_no_prices_refuses(self):
+        # No readings is a published "unavailable", not a refusal (finding 13); an empty
+        # price table is still refused, since there is nothing to publish at all.
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual((j["instrument"], j["last_sample_at"], j["history"]["claude-sonnet-5"]),
+                         ("unavailable", None, []))
         with self.assertRaises(ValueError):
-            build_public_json([], PASSIVE, EFFORT, PRICES, now)
+            build_public_json([], PASSIVE, EFFORT, {}, now)
 
     def test_a_passive_series_uses_the_smoothed_detector(self):
         # Nine passive days scattering +-20% around one level fire nothing (detect_changes
@@ -443,6 +570,7 @@ class GsPassiveTests(unittest.TestCase):
         def rpt(values, start_day=1):
             return {"accounts": {"dave": {"stretches": [
                 {"status": "accepted", "end": f"2026-09-{start_day + i:02d}T08:00:00+00:00", "delta_pct": 10,
+                 "reset_verified": True,
                  "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": int(v)}}}
                 for i, v in enumerate(values)]}}}
         noisy = [400_000, 380_000, 320_000, 470_000, 480_000, 420_000, 400_000, 360_000, 300_000]
@@ -471,6 +599,7 @@ class FailurePathTests(unittest.TestCase):
     def test_corrupt_input_exits_nonzero_and_keeps_previous_output(self):
         import tempfile
         from pathlib import Path
+
         from tracker.publish import main
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -520,7 +649,7 @@ class GuardTests(unittest.TestCase):
             # everything else must be identical whether or not --gs-passive was given.
             del without["generated_at"], with_missing["generated_at"]
             self.assertEqual(without, with_missing)
-            self.assertEqual(with_missing["instrument"], "probe")
+            self.assertEqual(with_missing["instrument"], "unavailable")
 
     def test_placeholder_effort_matrix_refuses_and_does_not_write(self):
         import tempfile
@@ -558,7 +687,7 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(j["effort_usd"], {"claude-sonnet-5": {"low": 0.0355, "high": 0.12}})
 
     # Two of the seven live Sonnet low runs (gs, 2026-09-09): one turn and two turns.
-    RUNS = {"claude-sonnet-5/low": [
+    RUNS: ClassVar[dict] = {"claude-sonnet-5/low": [
         {"input": 2, "output": 1610, "cache_read": 19795, "cache_write": 0, "total": 21407},
         {"input": 4, "output": 1410, "cache_read": 39590, "cache_write": 877, "total": 41881},
         {"input": 2, "output": 1713, "cache_read": 19795, "cache_write": 0, "total": 21510},
@@ -567,6 +696,7 @@ class GuardTests(unittest.TestCase):
     def test_effort_usd_is_derived_from_stored_runs_when_the_file_has_no_usd(self):
         import json
         import tempfile
+
         from tracker.calibrate import recompute
         now = datetime.now(timezone.utc)
         row = probe(5, "claude-sonnet-5", 420000)
@@ -604,8 +734,9 @@ class GuardTests(unittest.TestCase):
             self.assertEqual((d / "effort.json").read_bytes(), before)
 
     def test_no_rates_refuses(self):
+        # An empty price table has no rates to publish at all: refused.
         with self.assertRaises(ValueError):
-            build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, tzinfo=timezone.utc))
+            build_public_json([], PASSIVE, EFFORT, {}, datetime(2026, 9, 5, tzinfo=timezone.utc))
 
     def test_meter_read_at_is_the_newest_meter_sample_not_the_newest_measurement(self):
         # The meter is read every few minutes; a stretch closes at an idle bound or a
@@ -625,10 +756,13 @@ class GuardTests(unittest.TestCase):
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc))
         self.assertIsNone(j["meter_read_at"])
 
-    def test_stale_last_sample_refuses(self):
-        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        with self.assertRaises(ValueError):
-            build_public_json(rows, PASSIVE, EFFORT, PRICES, datetime(2026, 9, 20, tzinfo=timezone.utc))
+    def test_stale_last_sample_publishes_as_stale(self):
+        # A newest reading older than MAX_SAMPLE_AGE_DAYS publishes as stale rather than
+        # refusing (finding 16): the reader sees the figure's own date and status.
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 20, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 5))
+        self.assertTrue(j["rates"]["claude-sonnet-5"]["freshness"]["stale"])
+        self.assertEqual(j["last_sample_at"], "2026-09-05T08:00:00+00:00")
 
     def test_passive_generated_at_is_null_when_missing(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
@@ -640,22 +774,25 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
     # 2026-08-14 is the last full Max 5x week (ends before PLAN_CHANGE 2026-08-18);
     # 2026-08-21's (2026-08-14, 2026-08-21] span straddles PLAN_CHANGE and belongs
     # to neither plan; 2026-08-28 and 2026-09-04 are full Max 20x weeks.
-    PASSIVE_WEEKLY = {"current": 6.46, "history": [
+    PASSIVE_WEEKLY: ClassVar[dict] = {"current": 6.46, "history": [
         {"week_ending": "2026-08-14", "windows": 10.91, "five_hour_pct": 400.0, "seven_day_pct": 36.7},
         {"week_ending": "2026-08-21", "windows": 6.8, "five_hour_pct": 300.0, "seven_day_pct": 44.1},
         {"week_ending": "2026-08-28", "windows": 6.58, "five_hour_pct": 250.0, "seven_day_pct": 38.0},
         {"week_ending": "2026-09-04", "windows": 6.35, "five_hour_pct": 324.0, "seven_day_pct": 51.0},
     ]}
 
-    def test_absent_from_passive_omits_top_level_key(self):
+    def test_absent_from_passive_publishes_every_plan_unavailable(self):
+        # The contract publishes weekly_windows always, each plan saying why it has no
+        # figure, so a consumer never infers "unmeasured" from a missing key.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        self.assertNotIn("weekly_windows", j)
+        ww = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)["weekly_windows"]
+        self.assertEqual({p: (ww[p]["current"], ww[p]["availability"]) for p in ("max20", "max5", "pro")}, {
+            "max20": (None, {"status": "unavailable", "reason": "no_paired_meter_data"}),
+            "max5": (None, {"status": "historical_only", "reason": "no_current_max5_measurement"}),
+            "pro": (None, {"status": "unavailable", "reason": "no_pro_measurement"})})
 
     def test_passive_weeks_are_split_by_plan_and_the_straddling_week_is_dropped(self):
-        # None of the existing rows carry five_hour_before/after, so the probe
-        # series is empty and max20 is passive-only.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
@@ -663,23 +800,31 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         ww = j["weekly_windows"]
         self.assertEqual([h["week_ending"] for h in ww["max5"]["history"]], ["2026-08-14"])
         self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]], ["2026-08-28", "2026-09-04"])
-        self.assertEqual(ww["passive"], self.PASSIVE_WEEKLY)
+        self.assertEqual(ww["passive"]["history"], [dict(h, partial=False) for h in self.PASSIVE_WEEKLY["history"]])
         self.assertEqual(ww["probe"], {"current": None, "history": [], "by_window": []})
-        self.assertEqual(ww["max20"]["current"], self.PASSIVE_WEEKLY["current"])
+        # passive.json's own two-weeks median is not a current value (audit finding 6), and
+        # weeks paired before the finding-3 repair are published as legacy evidence.
+        self.assertIsNone(ww["max20"]["current"])
+        self.assertEqual({(h["quality"], tuple(h["reasons"])) for h in ww["max20"]["history"]},
+                         {("legacy_uncertain", ("paired_before_denominator_repair",))})
         self.assertFalse(ww["max20"]["assumed"])
         self.assertFalse(ww["max5"]["assumed"])
 
-    def test_pro_publishes_as_an_assumed_copy_of_max5(self):
+    def test_pro_publishes_nothing_borrowed_from_max5(self):
+        # Not any more (finding 6): Pro has no measurement of its own, so it publishes
+        # nothing borrowed from Max 5x, and Max 5x has no current figure either.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, passive, EFFORT, PRICES, now)
-        ww = j["weekly_windows"]
-        self.assertEqual(ww["pro"]["current"], ww["max5"]["current"])
-        self.assertEqual(ww["pro"]["history"], ww["max5"]["history"])
-        self.assertTrue(ww["pro"]["assumed"])
+        ww = build_public_json(rows, passive, EFFORT, PRICES, now)["weekly_windows"]
+        self.assertEqual((ww["pro"]["current"], ww["pro"]["history"], ww["pro"]["regimes"], ww["pro"]["assumed"]),
+                         (None, [], [], False))
+        self.assertIsNone(ww["max5"]["current"])
+        self.assertTrue(ww["max5"]["history"])
 
-    def test_probe_weeks_replace_passive_max20_weeks_from_the_first_probe_week_on(self):
+    def test_probe_weeks_publish_beside_passive_max20_weeks_not_in_place_of_them(self):
+        # Not any more (finding 13): the probe runs are another instrument, published as
+        # their own weekly series, and the passive max20 weeks stay what they are.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         for r, (fhb, fha, sdb, sda, wk) in zip(rows, [
             (10.0, 40.0, 10.0, 15.0, "2026-08-28T03:59:59+00:00"),
@@ -696,15 +841,16 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         ww = j["weekly_windows"]
         self.assertEqual(len(ww["probe"]["history"]), 3)
-        # 08-28 and 09-04 are covered by the probe now, so passive's max20 weeks
-        # are entirely superseded.
-        self.assertEqual(ww["max20"]["history"], ww["probe"]["history"])
-        self.assertEqual(ww["max20"]["current"], ww["probe"]["current"])
-        self.assertNotEqual(ww["max20"]["current"], self.PASSIVE_WEEKLY["current"])
+        self.assertEqual({h["source"] for h in ww["probe"]["history"]}, {"probe_paired_deltas"})
+        self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]], ["2026-08-28", "2026-09-04"])
+        self.assertEqual({h["source"] for h in ww["max20"]["history"]}, {"passive_paired_deltas"})
+        self.assertIsNone(ww["max20"]["current"])
         # max5 is untouched by any of this -- it is frozen passive-era history.
         self.assertEqual([h["week_ending"] for h in ww["max5"]["history"]], ["2026-08-14"])
 
-    def test_max20_history_carries_the_partial_flag_from_probe_weekly_windows(self):
+    def test_probe_history_carries_the_partial_flag_from_probe_weekly_windows(self):
+        # The probe series carries probe_weekly_windows' own partial flags, now under
+        # weekly_windows.probe rather than spliced into max20.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         for r, (fhb, fha, sdb, sda, wk) in zip(rows, [
             (10.0, 40.0, 10.0, 15.0, "2026-08-28T03:59:59+00:00"),
@@ -719,8 +865,10 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
-        by_week = {h["week_ending"]: h["partial"] for h in j["weekly_windows"]["max20"]["history"]}
+        by_week = {h["week_ending"]: h["partial"] for h in j["weekly_windows"]["probe"]["history"]}
         self.assertEqual(by_week, {"2026-08-28": False, "2026-09-04": False, "2026-09-11": True})
+        self.assertEqual({h["week_ending"]: h["partial"] for h in j["weekly_windows"]["max20"]["history"]},
+                         {"2026-08-28": False, "2026-09-04": False})
 
     def test_passive_partial_flags_are_recomputed_from_the_publish_time(self):
         # A lagging passive.json from before the flag existed: the open week is
@@ -748,10 +896,10 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertIsNone(j["last_change"])
 
     def test_calendar_week_rows_alone_never_produce_a_weekly_event(self):
-        # A passive.json from before the per-window series existed: the weekly
-        # rows still publish, but detection only runs on `by_window` -- the
-        # calendar-week series blends a mid-week step away (issue #25), so it is
-        # not detected on at all rather than detected on badly.
+        # A passive.json with weekly rows but no per-window series: the rows still
+        # publish, but detection only runs on window points -- the calendar-week series
+        # blends a mid-week step away (issue #25) -- and a median of two calendar weeks
+        # is no longer published as current either (finding 6).
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         weekly = {"current": 6.46, "history": [
             {"week_ending": "2026-08-28", "windows": 6.58, "five_hour_pct": 250.0, "seven_day_pct": 38.0},
@@ -765,72 +913,95 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
         self.assertIsNone(j["last_change"])
-        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.46)  # median of the last two complete weeks
+        self.assertIsNone(j["weekly_windows"]["max20"]["current"])
+        self.assertEqual(len(j["weekly_windows"]["max20"]["history"]), 5)
 
-    def test_issue_25_weekly_cut_is_published_from_the_data_as_it_stood_on_2026_09_15(self):
-        # The real series: calendar weeks as published (the open 09-18 week
-        # blending to 5.43) and the per-window points quoted in issue #25.
+    def test_issue_25_windows_as_they_stood_on_2026_09_15_publish_no_uncertified_cut(self):
+        # The six per-window points quoted in issue #25, in two shapes. As the archived
+        # passive.json carries them (paired before the finding-3 repair) nothing is
+        # computed from them: max20 has no current and the reason says why. As repaired
+        # points they are too few to certify the cut (finding 4; the whole real series
+        # does, RealLogTests), and current pools all six, since no change split them.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
-        passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": ISSUE_25_BY_WINDOW})
-        now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
-        j = build_public_json(rows, passive, EFFORT, PRICES, now)
-        weekly_change_events = [e for e in j["events"] if e.get("scope") == "weekly"]
-        self.assertEqual(weekly_change_events, [
-            {"date": "2026-09-14", "kind": "change", "scope": "weekly", "label": "Weekly limit changed -26%"}])
-        self.assertEqual(j["last_change"], {"date": "2026-09-14", "direction": "decreased", "percent": 26,
-                                            "model": "all", "scope": "weekly"})
-        # `current` follows the post-cut level (81/18), not the two pre-cut weeks.
-        self.assertEqual(j["weekly_windows"]["max20"]["current"], 4.5)
+        now = datetime(2026, 9, 15, 17, 30, tzinfo=timezone.utc)
+        legacy = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": ISSUE_25_BY_WINDOW})
+        j = build_public_json(rows, legacy, EFFORT, PRICES, now)
+        self.assertEqual(j["events"], [])
+        self.assertIsNone(j["weekly_windows"]["max20"]["current"])
+        self.assertEqual(j["weekly_windows"]["max20"]["availability"],
+                         {"status": "unavailable", "reason": "passive_weekly_windows_predate_paired_delta_repair"})
         # The calendar-week rows are untouched: the chart still gets them.
         self.assertEqual([h["windows"] for h in j["weekly_windows"]["max20"]["history"]], [6.58, 6.35, 6.02, 5.43])
         self.assertEqual(j["weekly_windows"]["passive"]["by_window"], ISSUE_25_BY_WINDOW)
+        repaired = [dict(w, pieces=1, reset_verified=True) for w in ISSUE_25_BY_WINDOW]
+        j = build_public_json(rows, dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS,
+                                                                  "by_window": repaired}), EFFORT, PRICES, now)
+        self.assertIsNone(j["last_change"])
+        estimate = j["weekly_windows"]["max20"]["current_estimate"]
+        self.assertEqual((estimate["value"], estimate["five_hour_pct"], estimate["seven_day_pct"], estimate["pieces"]),
+                         (5.32, 197.0, 37.0, 6))
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 5.32)
 
     def test_max20_current_is_the_pooled_trailing_fortnight_of_the_regime(self):
         # No change detected: current pools the last 14 days of per-window
         # points (anchored on the newest point), not the median of two weeks.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
-        by_window = ([window("2026-08-2%dT10:00:00+00:00" % d, 65.0, 10.0) for d in range(0, 6)]   # 6.5, >14 days old
-                     + [window("2026-09-%02dT10:00:00+00:00" % d, 60.0, 10.0) for d in range(4, 15)])  # 6.0
+        by_window = ([window(f"2026-08-2{d}T10:00:00+00:00", 65.0, 10.0) for d in range(6)]   # 6.5, >14 days old
+                     + [window(f"2026-09-{d:02d}T10:00:00+00:00", 60.0, 10.0) for d in range(4, 15)])  # 6.0
         passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": by_window})
         now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
         self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.0)
+        estimate = j["weekly_windows"]["max20"]["current_estimate"]
+        self.assertEqual((estimate["points"], estimate["seven_day_pct"], estimate["stale"]), (11, 110.0, False))
+        lo, hi = estimate["rounding_interval"]
+        self.assertLess(lo, 6.0)
+        self.assertGreater(hi, 6.0)
+        # A weekly log that stops arriving is stale against the publish time, not its own newest point.
+        later = build_public_json(rows, passive, EFFORT, PRICES, datetime(2026, 10, 15, tzinfo=timezone.utc))
+        self.assertTrue(later["weekly_windows"]["max20"]["current_estimate"]["stale"])
+        self.assertEqual(later["weekly_windows"]["max20"]["availability"], {"status": "measured", "reason": "evidence_stale"})
 
     def test_per_window_points_from_before_the_plan_change_stay_out_of_max20(self):
         # Max 5x windows (about 11) right up to PLAN_CHANGE, then Max 20x at 6.5:
         # the plan change is Jonathan's, not Anthropic's, and must not fire.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        by_window = ([window("2026-08-%02dT10:00:00+00:00" % d, 110.0, 10.0) for d in range(10, 19)]
-                     + [window("2026-08-%02dT10:00:00+00:00" % d, 65.0, 10.0) for d in range(19, 31)])
+        by_window = ([window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(10, 19)]
+                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 65.0, 10.0) for d in range(19, 31)])
         passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.PASSIVE_WEEKLY["history"],
                                                 "by_window": by_window})
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
         self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.5)
-        self.assertEqual(j["weekly_windows"]["max5"]["current"], 10.91)
+        # Max 5x keeps its measured level as history (a regime), never as current (finding 6).
+        self.assertIsNone(j["weekly_windows"]["max5"]["current"])
+        self.assertEqual([r["windows"] for r in j["weekly_windows"]["max5"]["regimes"]], [11.0])
+        self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
     def test_probe_runs_per_window_points_are_published_but_stay_out_of_the_max20_series(self):
         # The real 2026-09-14/15 probe rows: each run moves the seven-day meter
         # by a point or none, so pooling them in only adds rounding (see
         # _max20_window_points). They publish under probe.by_window and change
-        # neither the event nor current.
+        # nothing in max20.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
+        repaired = [dict(w, pieces=1, reset_verified=True) for w in ISSUE_25_BY_WINDOW]
+        passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": repaired})
+        now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
+        without = build_public_json(rows, passive, EFFORT, PRICES, now)
         for r, (fhb, fha, sdb, sda) in zip(rows[-3:], [(0.0, 5.0, 94.0, 95.0), (5.0, 9.0, 95.0, 95.0), (0.0, 5.0, 0.0, 1.0)]):
             r["five_hour_before"], r["five_hour_after"] = fhb, fha
             r["seven_day_before"], r["seven_day_after"] = sdb, sda
-        passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": ISSUE_25_BY_WINDOW})
-        now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertEqual([p["windows"] for p in j["weekly_windows"]["probe"]["by_window"]], [5.0, None, 5.0])
-        self.assertEqual(j["last_change"]["percent"], 26)
-        self.assertEqual(j["weekly_windows"]["max20"]["current"], 4.5)
+        self.assertEqual(j["weekly_windows"]["max20"], without["weekly_windows"]["max20"])
+        self.assertEqual(j["events"], without["events"])
 
     def test_probe_runs_alone_cannot_set_current(self):
         # A passive.json without by_window plus the probe runs above: six points
-        # of seven-day movement is rounding, not a level. current stays the
-        # weekly rows' median rather than the runs' pooled 46/6.
+        # of seven-day movement is rounding, not a level. There is no max20 current
+        # at all -- the weekly rows' median is not one either (finding 6).
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
         for r, (fhb, fha, sdb, sda) in zip(rows[-3:], [(0.0, 5.0, 94.0, 95.0), (5.0, 9.0, 95.0, 95.0), (0.0, 5.0, 0.0, 1.0)]):
             r["five_hour_before"], r["five_hour_after"] = fhb, fha
@@ -838,64 +1009,88 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS})
         now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
-        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.18)  # median of 6.35 and 6.02
+        self.assertIsNone(j["weekly_windows"]["max20"]["current"])
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
 
 
-# weekly_windows() over the real ~/.moonlighter/usage_log.jsonl on masterrig as it
-# stood on 2026-09-15: the weekly_windows block passive.json carries once masterrig
-# runs the per-window code, every five-hour window from 2026-06-13.
-REAL_WEEKLY = json.loads((Path(__file__).parent / "fixtures" / "passive_weekly_windows_2026-09-15.json")
-                         .read_text(encoding="utf-8"))
+# The weekly_windows block of the committed history/passive.json: masterrig's whole
+# ~/.moonlighter/usage_log.jsonl (every five-hour window from 2026-06-13), paired as
+# tracker/weekly.py pairs since the audit's finding-3 repair and regenerated on
+# masterrig on 2026-09-16. Only the windows ending by that regeneration are read, so
+# the pins below do not move as the file grows (tests/test_detect.py, HISTORY_CUTOFF).
+HISTORY_CUTOFF = "2026-09-16T17:31"
+REAL_WEEKLY = json.loads((Path(__file__).resolve().parents[1] / "history" / "passive.json")
+                         .read_text(encoding="utf-8"))["weekly_windows"]
 
 
 class RealLogTests(unittest.TestCase):
-    def _publish(self, until: str) -> dict:
-        """The public JSON from the real log's windows ending before `until` (an ISO prefix)."""
-        weekly = dict(REAL_WEEKLY, by_window=[w for w in REAL_WEEKLY["by_window"] if w["window_ending"] < until])
+    def _publish(self, until: str, now: datetime) -> dict:
+        """The public JSON from the committed history's windows ending before `until` (an ISO prefix)."""
+        weekly = dict(REAL_WEEKLY, by_window=[w for w in REAL_WEEKLY["by_window"]
+                                              if w["window_ending"] < min(until, HISTORY_CUTOFF)])
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
-        return build_public_json(rows, dict(PASSIVE, weekly_windows=weekly), EFFORT, PRICES,
-                                 datetime(2026, 9, 15, 21, 0, tzinfo=timezone.utc))
+        return build_public_json(rows, dict(PASSIVE, weekly_windows=weekly), EFFORT, PRICES, now)
 
-    def test_the_real_log_publishes_one_weekly_change_the_14_sep_cut(self):
-        # The acceptance test for the vote floor: through the real publish path,
-        # the 84 max20 windows from 2026-08-19 to 09-15 give exactly one event.
-        # At a floor of 3 they gave four: +38% 08-23 and +27% 09-03, each voted
-        # by a d7=6 window, -23% 08-28, which only read as a candidate against
-        # the base the false 08-23 regime left behind, and then this one.
-        j = self._publish("2026-09-16")
-        self.assertEqual([e for e in j["events"] if e["scope"] == "weekly"], [
-            {"date": "2026-09-14", "kind": "change", "scope": "weekly", "label": "Weekly limit changed -29%"}])
-        self.assertEqual(j["last_change"], {"date": "2026-09-14", "direction": "decreased", "percent": 29,
-                                            "model": "all", "scope": "weekly"})
+    def test_the_committed_history_publishes_one_weekly_change_the_14_sep_cut(self):
+        # Through the real publish path, the committed Max 20x series gives exactly one
+        # event: the cut, -28%, dated by its first window, certified against both
+        # levels' intervals, and published as an observed change in this account's
+        # weekly/window ratio. Max 20x current is the new regime's own level, 145/31.
+        j = self._publish(HISTORY_CUTOFF, datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc))
+        self.assertEqual([(e["date"], e["percent"], e["label"]) for e in j["events"]],
+                         [("2026-09-14", 28, "Observed weekly/window ratio changed -28%")])
+        c = j["last_change"]
+        self.assertEqual((c["scope"], c["direction"], c["metric"], c["attribution"], c["provisional"]),
+                         ("weekly", "decreased", "weekly_to_five_hour_ratio", "observed_account_metric_change", False))
+        self.assertEqual((c["onset"], c["confirmation"]),
+                         ({"earliest": "2026-09-13", "latest": "2026-09-14"},
+                          {"at": "2026-09-15", "evidence_points": 103, "seven_day_pct": 31.0}))
+        self.assertEqual((c["rounding_interval_before"], c["rounding_interval_after"]),
+                         ([6.1258, 6.9156], [3.9284, 5.695]))
+        max20 = j["weekly_windows"]["max20"]
+        self.assertEqual((max20["current"], max20["availability"]), (4.68, {"status": "measured", "reason": None}))
+        est = max20["current_estimate"]
+        self.assertEqual((est["five_hour_pct"], est["seven_day_pct"], est["points"], est["from"][:16], est["stale"]),
+                         (145.0, 31.0, 9, "2026-09-14T11:30", False))
+        # The Max 5x step on 2026-08-14 is the plan move, left published as it is.
+        self.assertEqual([(r["start"][:10], r["windows"]) for r in j["weekly_windows"]["max5"]["regimes"]],
+                         [("2026-06-13", 10.86), ("2026-08-14", 6.61)])
+        self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
-    def test_max20_current_follows_the_cut_from_the_publish_that_detects_it(self):
-        # Before the second post-cut window lands nothing has fired, and current
-        # is the trailing fortnight (6.23, mostly pre-cut). From the publish that
-        # detects the cut it is the new regime's own level: 54/12 = 4.5 on 09-14,
-        # 82/18 = 4.56 on 09-15, where the two-complete-weeks median (6.18) would
-        # overstate the week's capacity by 36%.
-        self.assertEqual(REAL_WEEKLY["current"], 6.18)
-        for until, fired, current in [("2026-09-14T17", False, 6.23), ("2026-09-14T22", True, 4.5),
-                                      ("2026-09-16", True, 4.56)]:
-            with self.subTest(until=until):
-                j = self._publish(until)
-                self.assertEqual(j["last_change"] is not None, fired)
-                self.assertEqual(j["weekly_windows"]["max20"]["current"], current)
+    def test_nothing_publishes_before_the_cut_and_the_daily_replays_settle_on_it(self):
+        # As masterrig's daily push would have delivered the history (windows ending by
+        # 02:30Z): nothing through 2026-09-14; on 2026-09-15 a partial post-cut pool
+        # misdates the cut to 2026-08-28 (tests/test_detect.py); from 2026-09-16 it is
+        # the cut, with current following it.
+        for day in ("2026-08-25", "2026-09-01", "2026-09-08", "2026-09-14"):
+            with self.subTest(day=day):
+                j = self._publish(day + "T02:31", datetime.fromisoformat(day + "T03:30:00+00:00"))
+                self.assertEqual((j["events"], j["last_change"]), ([], None))
+        j = self._publish("2026-09-14T02:31", datetime(2026, 9, 14, 3, 30, tzinfo=timezone.utc))
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.3)
+        j = self._publish("2026-09-15T02:31", datetime(2026, 9, 15, 3, 30, tzinfo=timezone.utc))
+        self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [("2026-08-28", 19)])
+        j = self._publish("2026-09-16T02:31", datetime(2026, 9, 16, 3, 30, tzinfo=timezone.utc))
+        self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [("2026-09-14", 29)])
+        current = j["weekly_windows"]["max20"]["current"]
+        lo, hi = j["weekly_windows"]["max20"]["current_estimate"]["rounding_interval"]
+        self.assertEqual(current, 4.61)
+        self.assertTrue(lo <= current <= hi)
 
 
 class LastChangeScopeTests(unittest.TestCase):
-    # The real 2026-09-13 cut (issue #25), which detects as a weekly event dated 2026-09-14.
-    WEEKLY_MAX20 = {"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": ISSUE_25_BY_WINDOW}
+    # A certifiable weekly step dated 2026-09-14: eight windows at 6.0, then four at 4.5.
+    WEEKLY_MAX20: ClassVar[dict] = {"current": None, "history": [], "by_window": (
+        [window(f"2026-09-{d:02d}T10:00:00+00:00", 60.0, 10.0) for d in range(6, 14)]
+        + [window(f"2026-09-14T{h:02d}:00:00+00:00", 45.0, 10.0) for h in (10, 15, 20)]
+        + [window("2026-09-15T10:00:00+00:00", 45.0, 10.0)])}
 
     def test_newer_weekly_event_beats_an_older_window_event(self):
-        # Window event fires around 2026-09-05 (early Sept rows); the weekly
-        # event is dated 2026-09-14, later, so it must win last_change.
-        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-                + [probe(d, "claude-sonnet-5", 300000) for d in range(6, 10)])
+        # The window event is dated 2026-09-06 (passive readings step down there); the
+        # weekly event is dated 2026-09-14, later, so it must win last_change.
         passive = dict(PASSIVE, weekly_windows=self.WEEKLY_MAX20)
-        now = datetime(2026, 9, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
+        j = build_public_json([], passive, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 5 + [10.5] * 5))
         window_events = [e for e in j["events"] if e.get("scope") == "window"]
         self.assertTrue(window_events)
         self.assertLess(window_events[-1]["date"], "2026-09-14")
@@ -905,11 +1100,9 @@ class LastChangeScopeTests(unittest.TestCase):
     def test_older_weekly_event_loses_to_a_newer_window_event(self):
         # Same weekly step (dated 2026-09-14), but now the window event is
         # pushed later than it, past 2026-09-14, so the window event must win.
-        rows = ([probe(d, "claude-sonnet-5", 420000) for d in range(1, 21)]
-                + [probe(d, "claude-sonnet-5", 300000) for d in range(21, 26)])
         passive = dict(PASSIVE, weekly_windows=self.WEEKLY_MAX20)
-        now = datetime(2026, 9, 25, tzinfo=timezone.utc)
-        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        now = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+        j = build_public_json([], passive, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 20 + [10.5] * 5))
         window_events = [e for e in j["events"] if e.get("scope") == "window"]
         weekly_events = [e for e in j["events"] if e.get("scope") == "weekly"]
         self.assertTrue(window_events)

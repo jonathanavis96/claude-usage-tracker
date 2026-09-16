@@ -1,8 +1,9 @@
 import json
-import unittest
 import tempfile
+import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+
 from tracker.usage_api import parse_usage, read_usage
 
 BODY = {"five_hour": {"utilization": 24.0, "resets_at": "2026-09-06T02:00:00.3Z"},
@@ -33,9 +34,8 @@ class ParseTests(unittest.TestCase):
             self.assertEqual(u.five_hour, 24.0)
 
     def test_missing_token_raises(self):
-        with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(FileNotFoundError):
-                read_usage(Path(d), fetch=lambda u, h: BODY)
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(FileNotFoundError):
+            read_usage(Path(d), fetch=lambda u, h: BODY)
 
 
 class Retry429Tests(unittest.TestCase):
@@ -43,6 +43,7 @@ class Retry429Tests(unittest.TestCase):
         import io
         import urllib.error
         from unittest import mock
+
         from tracker.usage_api import _default_fetch
         calls = []
         err = urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "7"}, io.BytesIO(b""))
@@ -59,6 +60,7 @@ class Retry429Tests(unittest.TestCase):
         import io
         import urllib.error
         from unittest import mock
+
         from tracker.usage_api import RETRY_429_MAX_S, _default_fetch
         err = urllib.error.HTTPError("u", 429, "Too Many Requests", {}, io.BytesIO(b""))
         ok = mock.MagicMock()
@@ -74,6 +76,7 @@ class Retry429Tests(unittest.TestCase):
         import io
         import urllib.error
         from unittest import mock
+
         from tracker.usage_api import _default_fetch
         err = urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "9999"}, io.BytesIO(b""))
         ok = mock.MagicMock()
@@ -89,6 +92,7 @@ class Retry429Tests(unittest.TestCase):
         import io
         import urllib.error
         from unittest import mock
+
         from tracker.usage_api import _default_fetch
 
         class Abort(Exception):
@@ -98,9 +102,8 @@ class Retry429Tests(unittest.TestCase):
             raise Abort("deadline")
 
         err = urllib.error.HTTPError("u", 429, "Too Many Requests", {}, io.BytesIO(b""))
-        with mock.patch("urllib.request.urlopen", side_effect=[err, err]):
-            with self.assertRaises(Abort):
-                _default_fetch("https://x.test/u", {}, sleep=sleep)
+        with mock.patch("urllib.request.urlopen", side_effect=[err, err]), self.assertRaises(Abort):
+            _default_fetch("https://x.test/u", {}, sleep=sleep)
 
     def test_bounded_path_raises_after_max_retries(self):
         # read_usage's default fetch (no caller-supplied deadline) must not spin
@@ -108,12 +111,12 @@ class Retry429Tests(unittest.TestCase):
         import io
         import urllib.error
         from unittest import mock
+
         from tracker.usage_api import _default_fetch
         err = urllib.error.HTTPError("u", 429, "Too Many Requests", {}, io.BytesIO(b""))
         calls = []
-        with mock.patch("urllib.request.urlopen", side_effect=[err] * 3):
-            with self.assertRaises(urllib.error.HTTPError):
-                _default_fetch("https://x.test/u", {}, sleep=calls.append, max_retries=2)
+        with mock.patch("urllib.request.urlopen", side_effect=[err] * 3), self.assertRaises(urllib.error.HTTPError):
+            _default_fetch("https://x.test/u", {}, sleep=calls.append, max_retries=2)
         self.assertEqual(calls, [30, 60])
 
     def test_read_usage_with_no_fetch_bounds_retries(self):
@@ -122,6 +125,7 @@ class Retry429Tests(unittest.TestCase):
         # length of RETRY_429_S. _default_fetch's own indefinite-retry behaviour is
         # covered above; this only checks read_usage wires the bound through.
         from unittest import mock
+
         from tracker.usage_api import RETRY_429_S
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok123"}}))
@@ -133,8 +137,8 @@ class Retry429Tests(unittest.TestCase):
         import io
         import urllib.error
         from unittest import mock
+
         from tracker.usage_api import _default_fetch
         err = urllib.error.HTTPError("u", 500, "Server Error", {}, io.BytesIO(b""))
-        with mock.patch("urllib.request.urlopen", side_effect=[err]):
-            with self.assertRaises(urllib.error.HTTPError):
-                _default_fetch("https://x.test/u", {}, sleep=lambda s: None)
+        with mock.patch("urllib.request.urlopen", side_effect=[err]), self.assertRaises(urllib.error.HTTPError):
+            _default_fetch("https://x.test/u", {}, sleep=lambda s: None)

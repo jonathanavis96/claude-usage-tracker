@@ -1,8 +1,15 @@
 import json
 import unittest
 from datetime import datetime, timedelta, timezone
-from tracker.samples import (MixedAccountLog, merge_samples, parse_ceiling_log, parse_gs_ceiling_log,
-                             parse_meter_log, parse_moonlighter)
+
+from tracker.samples import (
+    MixedAccountLog,
+    merge_samples,
+    parse_ceiling_log,
+    parse_gs_ceiling_log,
+    parse_meter_log,
+    parse_moonlighter,
+)
 
 ML = ['{"ts": "2026-06-13T00:51:22.743614+02:00", "seven_day": {"utilization": 23.0, "resets_at": "2026-06-19T04:00:00Z"}, "seven_day_sonnet": {"utilization": 5.0, "resets_at": null}, "five_hour": {"utilization": 40.0, "resets_at": "2026-06-13T01:30:00Z"}}',
       '{"ts": "2026-06-13T01:30:02+02:00", "seven_day": {"utilization": 25.0, "resets_at": null}, "seven_day_sonnet": {"utilization": null, "resets_at": null}, "five_hour": {"utilization": null, "resets_at": null}}',

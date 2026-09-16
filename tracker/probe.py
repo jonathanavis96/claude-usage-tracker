@@ -50,6 +50,7 @@ no alignment span (`reset_start` on the row): 0 is the first tick.
 (default 60). The row records it as `"settle_s"`.
 """
 from __future__ import annotations
+
 import ctypes
 import json
 import os
@@ -58,14 +59,15 @@ import re
 import struct
 import subprocess
 import sys
+from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Collection
-from .usage_api import Utilization, same_reset
+
 from .cli_run import RunUsage
 from .publish import class_weight, meter_usd, tokens_usd
+from .usage_api import Utilization, same_reset
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
 
@@ -974,8 +976,9 @@ def main(argv: list[str] | None = None) -> int:
     import sys
     import time
     from datetime import timedelta, timezone
-    from .usage_api import _default_fetch, read_usage
+
     from .cli_run import run_prompt
+    from .usage_api import _default_fetch, read_usage
     ap = argparse.ArgumentParser(description="Run one tick probe and append to probes.jsonl")
     ap.add_argument("--model", required=True)
     ap.add_argument("--effort", default="low")
@@ -1036,7 +1039,8 @@ def main(argv: list[str] | None = None) -> int:
                   f"quantisation would exceed the published tolerance", file=sys.stderr)
             return 4
         expect_tokens = tokens_per_pct_for(words)
-        builder = lambda salt, i: probe_prompt(salt, i, words)  # noqa: E731
+        def builder(salt, i):
+            return probe_prompt(salt, i, words)
     home = Path.home()
     accounts = [tuple(x.split("=", 1)) for x in a.account] or [("jwork", home / ".claude-javiswork"), ("dave", home / ".claude-dave")]
     accounts = [(n, Path(p)) for n, p in accounts]

@@ -54,15 +54,17 @@ rotation; they are the weekly weight run (bin/output-probe.sh). An outlier row d
 enter a median but does count as its model's turn.
 """
 from __future__ import annotations
+
 import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import median
+
 from .probe import payload_words_for, tokens_per_pct_for
 from .publish import load_probes, usd_per_pct
-from .rows import is_output, is_outlier
+from .rows import is_outlier, is_output
 
 ROTATION = ("claude-sonnet-5", "claude-opus-5", "claude-fable-5-1")
 DRIFT_THRESHOLD = 0.15

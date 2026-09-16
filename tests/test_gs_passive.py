@@ -2,9 +2,20 @@ import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from itertools import pairwise
 from pathlib import Path
-from tracker.gs_passive import (Account, JWORK_CEILING_SINCE, gs_accounts, main, passive_dollar_readings,
-                                probe_readings, report, transcript_files)
+
+from tracker.gs_passive import (
+    JWORK_CEILING_SINCE,
+    Account,
+    gs_accounts,
+    load_samples,
+    main,
+    passive_dollar_readings,
+    probe_readings,
+    report,
+    transcript_files,
+)
 from tracker.publish import usd_per_pct
 
 T0 = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
@@ -68,7 +79,11 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(a["dave"].config_dir, Path("/h/.claude-dave"))
         self.assertEqual(a["dave"].meter_log, Path("/h/.paperclip/ops/claude-usage-meter-dave.log"))
         self.assertEqual(a["jwork"].config_dir, Path("/h/.claude-javiswork"))
-        self.assertEqual(a["jwork"].meter_log, Path("/h/.paperclip/ops/gs-usage-ceiling.log"))
+        # jwork moves to a reset-bearing log of its own (audit finding 10); the ceiling
+        # log it was read from stays its legacy source until that log has readings.
+        self.assertEqual(a["jwork"].meter_log, Path("/h/.paperclip/ops/claude-usage-meter-jwork.log"))
+        self.assertEqual((a["jwork"].meter_format, a["jwork"].legacy_meter_log),
+                         ("meter", Path("/h/.paperclip/ops/gs-usage-ceiling.log")))
         self.assertEqual(a["jwork"].meter_since, JWORK_CEILING_SINCE)
         self.assertNotEqual(a["dave"].meter_log, a["jwork"].meter_log)
 
@@ -151,7 +166,8 @@ class ReportTests(unittest.TestCase):
         self.assertEqual([s["status"] for s in r["stretches"]], ["accepted"] * 8)
         self.assertAlmostEqual(r["stretches"][0]["usd_per_pct"], 0.5)
         self.assertEqual(r["daily"], [{"date": "2026-09-14", "usd_per_pct": 0.5, "delta_pct": 80.0, "stretches": 8,
-                                       "rounding": 0.0125}])
+                                       "rounding": 0.0125, "bounds": [0.4938, 0.5063], "pieces": 1,
+                                       "reset_verified": True, "capture_diagnosed": 0}])
         self.assertEqual(r["state"], {"state": "ok"})
         self.assertEqual(r["last_usable_at"], (T0 + timedelta(minutes=200)).isoformat())
         self.assertEqual(r["spread"]["stretch"]["n"], 8)
@@ -199,6 +215,7 @@ class ReportTests(unittest.TestCase):
 
     def test_with_the_gate_on_a_withheld_stretch_never_reaches_the_publisher(self):
         from unittest import mock
+
         import tracker.gs_passive as gp
         with tempfile.TemporaryDirectory() as d, mock.patch.object(gp, "CAPTURE_GATE", True):
             home = dave_home(Path(d), withheld_stretch=6)
@@ -264,6 +281,26 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(r["meter"]["samples"], 41)
         self.assertGreaterEqual(datetime.fromisoformat(r["meter"]["first"]), JWORK_CEILING_SINCE)
         self.assertEqual(len(r["stretches"]), 8)
+        # Read from the ceiling log alone: no reset ids, so nothing is certified.
+        self.assertEqual(r["meter"]["reset_verified_samples"], 0)
+        self.assertEqual({s["reset_verified"] for s in r["stretches"]}, {False})
+        self.assertEqual(passive_dollar_readings({"accounts": {"jwork": r}}, PRICES), [])
+        self.assertTrue(passive_dollar_readings({"accounts": {"jwork": r}}, PRICES, allow_legacy_unverified=True))
+
+    def test_jworks_reset_bearing_log_takes_over_from_its_first_reading(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = jwork_home(Path(d))
+            first = JWORK_CEILING_SINCE + timedelta(minutes=101)
+            resets = (first + timedelta(hours=4)).isoformat()
+            lines = [json.dumps({"ts": (first + timedelta(minutes=5 * i)).isoformat(), "account": "jwork",
+                                 "five_hour": {"utilization": 40 + 2 * i, "resets_at": resets},
+                                 "seven_day": {"utilization": 20 + i // 3, "resets_at": "2026-09-11T04:00:00+00:00"}})
+                     for i in range(20)]
+            (home / ".paperclip" / "ops" / "claude-usage-meter-jwork.log").write_text("\n".join(lines) + "\n")
+            samples = load_samples(gs_accounts(home)["jwork"])
+        self.assertEqual(sum(1 for s in samples if s.resets_at is None), 20)   # ceiling readings before `first`
+        self.assertEqual(sum(1 for s in samples if s.resets_at is not None), 20)
+        self.assertTrue(all(a.ts < b.ts for a, b in pairwise(samples)))
 
     def test_a_transcript_directory_shared_with_other_config_dirs_is_named(self):
         with tempfile.TemporaryDirectory() as d:

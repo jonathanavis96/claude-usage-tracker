@@ -9,17 +9,36 @@ tokens/1% ratio (467,778.6 vs 579,818.7, +24%): both are pure cache-write-heavy 
 their class splits differ enough that the two measures disagree slightly.
 """
 from __future__ import annotations
+
 import io
 import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from tracker.probe import (FIXED_PROMPT_SPLIT, MAX_PAYLOAD_WORDS, MIN_PAYLOAD_WORDS, PROMPTS_PER_TICK,
-                           TOKENS_PER_WORD, payload_words_for, tokens_per_pct_for)
+
+from tracker.probe import (
+    FIXED_PROMPT_SPLIT,
+    MAX_PAYLOAD_WORDS,
+    MIN_PAYLOAD_WORDS,
+    PROMPTS_PER_TICK,
+    TOKENS_PER_WORD,
+    payload_words_for,
+    tokens_per_pct_for,
+)
 from tracker.publish import meter_usd, usd_per_pct
-from tracker.rotate import (DRIFT_THRESHOLD, ROTATION, check_drift, decide, expectation,
-                            main, mark_outlier, next_model, prose_rows, usable_rows)
+from tracker.rotate import (
+    DRIFT_THRESHOLD,
+    ROTATION,
+    check_drift,
+    decide,
+    expectation,
+    main,
+    mark_outlier,
+    next_model,
+    prose_rows,
+    usable_rows,
+)
 
 PRICES = {"claude-sonnet-5": {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5,
                               "meter_weight": 1.0, "class_weight": {"output": 1.8}},

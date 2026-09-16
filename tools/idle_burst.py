@@ -90,6 +90,7 @@ import json
 import statistics
 import sys
 from datetime import date, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -123,7 +124,7 @@ def meter_segments(samples):
     """Runs of consecutive samples with no reset, no decrease and no long gap."""
     segments = []
     run = [samples[0]]
-    for a, b in zip(samples, samples[1:]):
+    for a, b in pairwise(samples):
         broken = (not same_reset(a.resets_at, b.resets_at)
                   or b.five_hour < a.five_hour
                   or b.ts - a.ts > MAXGAP)
@@ -140,7 +141,7 @@ def idle_bursts(turns):
     """Stretches of turns separated by at least IDLE of silence."""
     bursts = []
     run = [turns[0]]
-    for a, b in zip(turns, turns[1:]):
+    for a, b in pairwise(turns):
         if b.ts - a.ts >= IDLE:
             bursts.append(run)
             run = []

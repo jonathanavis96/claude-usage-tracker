@@ -7,6 +7,7 @@ tracker.alert but hands tracker.rotate to the real interpreter, against a scratc
 git clone with a bare origin.
 """
 from __future__ import annotations
+
 import json
 import os
 import re
@@ -15,6 +16,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
+
 from tracker.publish import usd_per_pct
 from tracker.rotate import _usd, expectation
 
@@ -32,7 +35,7 @@ class TestDeployScriptsSyntax(unittest.TestCase):
     def _check(self, name: str) -> None:
         script = BIN / name
         self.assertTrue(script.exists(), f"{script} missing")
-        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_probe_sh_syntax(self) -> None:
@@ -111,24 +114,26 @@ class TestDeployScriptsSyntax(unittest.TestCase):
 
 
 class TestDailyNotifyChange(unittest.TestCase):
-    """Run bin/daily.sh's notify_change function in isolation."""
+    """Run bin/daily.sh's notify_change function in isolation, over a run of publishes."""
 
     @classmethod
     def setUpClass(cls) -> None:
         text = (BIN / "daily.sh").read_text(encoding="utf-8")
-        match = re.search(r"^notify_change\(\) \{.*?^\}$", text, re.S | re.M)
+        match = re.search(r"^notify_change\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
         assert match, "notify_change not found in bin/daily.sh"
         cls.func = match.group(0)
 
-    def _run(self, *, last_change, notified=None, env_file=True, curl_status="200"):
-        """Return (returncode, stdout, stderr, state-file contents or None)."""
+    def _publishes(self, *publishes, notified=None, env_file=True):
+        """Run notify_change once per publish, in order, in one repo checkout.
+
+        Each publish is (last_change, newest weekly window[, curl status]): the public
+        JSON that publish wrote. Returns (procs, requests, alerts), one entry per
+        publish, and sets self.state to the announced dates recorded, or None.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = root / "site" / "website" / "public" / "data"
             data.mkdir(parents=True)
-            (data / "claude-usage.json").write_text(
-                json.dumps({"last_change": last_change}), encoding="utf-8"
-            )
             home = root / "home"
             home.mkdir()
             if env_file:
@@ -136,100 +141,171 @@ class TestDailyNotifyChange(unittest.TestCase):
                     "# names NOTIFY_SEND_SECRET in a comment first\nNOTIFY_SEND_SECRET=s3cr3t\n",
                     encoding="utf-8",
                 )
-            # A stub curl that never touches the network. It records the request
-            # so the payload can be asserted, and prints the status curl -w would.
             stub = root / "bin"
             stub.mkdir()
-            curl = stub / "curl"
-            curl.write_text(
-                "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$REQUEST_LOG\"\n"
-                f"printf '{curl_status}'\n",
-                encoding="utf-8",
-            )
-            curl.chmod(0o755)
-
             cwd = root / "repo"
             cwd.mkdir()
             if notified is not None:
                 (cwd / ".notified-change").write_text(notified + "\n", encoding="utf-8")
-
-            env = dict(os.environ)
-            env.update(
-                HOME=str(home),
-                SITE=str(root / "site"),
-                PATH=f"{stub}{os.pathsep}{env['PATH']}",
-                REQUEST_LOG=str(root / "request.log"),
-                ALERT_LOG=str(root / "alert.log"),
-            )
-            # The real alert_jonathan is defined by daily.sh outside notify_change and
-            # runs tracker.alert; here it is a stub that records its subject and text.
-            stub_alert = 'alert_jonathan() { printf \'%s\\n\' "$1" "$2" >> "$ALERT_LOG"; }'
-            proc = subprocess.run(
-                ["bash", "-c", f"set -uo pipefail\n{stub_alert}\n{self.func}\nnotify_change"],
-                cwd=cwd,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
+            procs, requests, alerts = [], [], []
+            for publish in publishes:
+                last_change, newest_window, curl_status = (*publish, "200")[:3]
+                windows = [{"window_ending": newest_window}] if newest_window else []
+                (data / "claude-usage.json").write_text(
+                    json.dumps({"last_change": last_change, "weekly_windows": {"passive": {"by_window": windows}}}),
+                    encoding="utf-8",
+                )
+                # A stub curl that never touches the network. It records the request
+                # so the payload can be asserted, and prints the status curl -w would.
+                curl = stub / "curl"
+                curl.write_text(
+                    "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$REQUEST_LOG\"\n"
+                    f"printf '{curl_status}'\n",
+                    encoding="utf-8",
+                )
+                curl.chmod(0o755)
+                request_log, alert_log = root / "request.log", root / "alert.log"
+                request_log.unlink(missing_ok=True)
+                alert_log.unlink(missing_ok=True)
+                env = dict(os.environ)
+                env.update(
+                    HOME=str(home),
+                    SITE=str(root / "site"),
+                    PATH=f"{stub}{os.pathsep}{env['PATH']}",
+                    REQUEST_LOG=str(request_log),
+                    ALERT_LOG=str(alert_log),
+                )
+                # The real alert_jonathan is defined by daily.sh outside notify_change and
+                # runs tracker.alert; here it is a stub that records its subject and text.
+                stub_alert = 'alert_jonathan() { printf \'%s\\n\' "$1" "$2" >> "$ALERT_LOG"; }'
+                procs.append(subprocess.run(
+                    ["bash", "-c", f"set -uo pipefail\n{stub_alert}\n{self.func}\nnotify_change"],
+                    check=False,
+                    cwd=cwd,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                ))
+                self.assertEqual(procs[-1].returncode, 0, procs[-1].stderr)
+                requests.append(request_log.read_text(encoding="utf-8") if request_log.exists() else "")
+                alerts.append(alert_log.read_text(encoding="utf-8") if alert_log.exists() else "")
             state_path = cwd / ".notified-change"
-            state = state_path.read_text(encoding="utf-8").strip() if state_path.exists() else None
-            log_path = root / "request.log"
-            request = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-            alert_path = root / "alert.log"
-            self.alerts = alert_path.read_text(encoding="utf-8") if alert_path.exists() else ""
-            return proc, state, request
+            self.state = state_path.read_text(encoding="utf-8").split() if state_path.exists() else None
+            return procs, requests, alerts
 
-    CHANGE = {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"}
+    @staticmethod
+    def _payload(request: str) -> dict:
+        return json.loads(next(ln for ln in request.splitlines() if ln.startswith("{")))
 
-    def test_posts_a_new_change_and_records_it(self) -> None:
-        proc, state, request = self._run(last_change=self.CHANGE)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(state, "2026-09-11")
-        self.assertIn("https://alldonesites.com/api/notify/send", request)
+    CHANGE: ClassVar[dict] = {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"}
+    # masterrig's daily history pushes: the newest window each one carries.
+    W1, W2, W3, W4 = ("2026-09-15T02:30:00+00:00", "2026-09-16T02:30:00+00:00",
+                      "2026-09-17T02:30:00+00:00", "2026-09-18T02:30:00+00:00")
+
+    def test_posts_a_change_once_two_publishes_of_new_evidence_show_it(self) -> None:
+        _procs, requests, alerts = self._publishes((self.CHANGE, self.W1), (self.CHANGE, self.W2))
+        self.assertEqual((requests[0], alerts[0]), ("", ""), "one publish is not enough to announce")
+        self.assertEqual(self.state, ["2026-09-11"])
+        self.assertIn("https://alldonesites.com/api/notify/send", requests[1])
         # The secret must come from the assignment line, not the comment above it.
-        self.assertIn("authorization: Bearer s3cr3t", request)
-        payload = json.loads(next(ln for ln in request.splitlines() if ln.startswith("{")))
+        self.assertIn("authorization: Bearer s3cr3t", requests[1])
         self.assertEqual(
-            payload,
+            self._payload(requests[1]),
             {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"},
         )
         # Jonathan gets his own alert for the confirmed change, quoting the outcome.
-        self.assertIn("Change confirmed: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
-        self.assertIn("HTTP 200", self.alerts)
+        self.assertIn("Observed change: increased 7% on 2026-09-11 (claude-opus-5)", alerts[1])
+        self.assertIn("HTTP 200", alerts[1])
+
+    def test_hourly_republishes_of_the_same_windows_are_one_look(self) -> None:
+        # The publisher runs hourly on a history that arrives daily: three publishes of
+        # the same windows are one observation, and the next day's windows confirm it.
+        _procs, requests, _alerts = self._publishes(
+            (self.CHANGE, self.W1), (self.CHANGE, self.W1), (self.CHANGE, self.W1), (self.CHANGE, self.W2))
+        self.assertEqual(requests[:3], ["", "", ""])
+        self.assertEqual(self._payload(requests[3])["date"], "2026-09-11")
+
+    def test_the_real_misdated_cut_is_never_announced_and_the_cut_is(self) -> None:
+        # The committed history replayed as masterrig pushed it (tests/test_detect.py):
+        # 2026-09-15's windows certify -19% dated 2026-08-28 all day, 2026-09-16's move
+        # it to the real cut, and the next push that still shows the cut announces it.
+        misdated = {"date": "2026-08-28", "direction": "decreased", "percent": 19, "scope": "weekly"}
+        cut = {"date": "2026-09-14", "direction": "decreased", "percent": 29, "scope": "weekly"}
+        _procs, requests, alerts = self._publishes(
+            (misdated, self.W1), (misdated, self.W1), (cut, self.W2), (cut, self.W2),
+            ({**cut, "percent": 28}, "2026-09-16T17:30:00.354502+00:00"))
+        self.assertEqual(requests[:4], ["", "", "", ""])
+        self.assertEqual(alerts[:4], ["", "", "", ""])
+        self.assertEqual(self._payload(requests[4]),
+                         {"date": "2026-09-14", "direction": "decreased", "percent": 28, "scope": "weekly"})
+        self.assertEqual(self.state, ["2026-09-14"])
+
+    def test_a_change_whose_date_moves_by_a_day_is_one_event_and_is_announced_once(self) -> None:
+        # Window by window the real cut first dated itself 2026-09-13, then 2026-09-14.
+        cut13 = {"date": "2026-09-13", "direction": "decreased", "percent": 29, "scope": "weekly"}
+        cut14 = {"date": "2026-09-14", "direction": "decreased", "percent": 30, "scope": "weekly"}
+        _procs, requests, _alerts = self._publishes(
+            (cut13, "2026-09-15T16:30:00+00:00"), (cut14, "2026-09-15T21:30:00+00:00"),
+            (cut13, self.W2), (cut13, self.W3), (cut14, self.W4))
+        self.assertEqual(requests[0], "")
+        self.assertEqual(self._payload(requests[1])["date"], "2026-09-14")
+        self.assertEqual(requests[2:], ["", "", ""], "the same event must not be announced again")
+        self.assertEqual(self.state, ["2026-09-14"])
+
+    def test_a_publish_without_the_change_breaks_the_run(self) -> None:
+        _procs, requests, _alerts = self._publishes(
+            (self.CHANGE, self.W1), (None, self.W2), (self.CHANGE, self.W3), (self.CHANGE, self.W4))
+        self.assertEqual(requests[:3], ["", "", ""])
+        self.assertEqual(self._payload(requests[3])["date"], "2026-09-11")
 
     def test_skips_a_change_already_announced(self) -> None:
-        proc, _state, request = self._run(last_change=self.CHANGE, notified="2026-09-11")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(request, "", "no request should be made for an announced change")
-        self.assertEqual(self.alerts, "", "an announced change must not alert again")
+        # A one-line state file from before the run rule still counts, and so does a
+        # date within a day of the announced one.
+        for notified in ("2026-09-11", "2026-09-10"):
+            with self.subTest(notified=notified):
+                _procs, requests, alerts = self._publishes(
+                    (self.CHANGE, self.W1), (self.CHANGE, self.W2), notified=notified)
+                self.assertEqual(requests, ["", ""], "no request should be made for an announced change")
+                self.assertEqual(alerts, ["", ""], "an announced change must not alert again")
+
+    def test_a_new_announcement_is_added_to_the_dates_already_announced(self) -> None:
+        self._publishes((self.CHANGE, self.W1), (self.CHANGE, self.W2), notified="2026-08-14")
+        self.assertEqual(self.state, ["2026-08-14", "2026-09-11"])
+
+    def test_skips_provisional_or_legacy_uncertain_evidence(self) -> None:
+        for flag in ("provisional", "legacy_uncertain"):
+            with self.subTest(flag=flag):
+                flagged = {**self.CHANGE, flag: True}
+                _procs, requests, alerts = self._publishes((flagged, self.W1), (flagged, self.W2))
+                self.assertEqual(requests, ["", ""])
+                self.assertEqual(alerts, ["", ""])
+                self.assertIsNone(self.state)
 
     def test_skips_when_there_is_no_change(self) -> None:
-        proc, state, request = self._run(last_change=None)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIsNone(state)
-        self.assertEqual(request, "")
+        _procs, requests, _alerts = self._publishes((None, self.W1), (None, self.W2))
+        self.assertIsNone(self.state)
+        self.assertEqual(requests, ["", ""])
 
     def test_skips_when_the_env_file_is_missing(self) -> None:
-        proc, state, request = self._run(last_change=self.CHANGE, env_file=False)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIsNone(state)
-        self.assertEqual(request, "")
+        _procs, requests, _alerts = self._publishes((self.CHANGE, self.W1), (self.CHANGE, self.W2), env_file=False)
+        self.assertIsNone(self.state)
+        self.assertEqual(requests, ["", ""])
 
-    def test_a_non_2xx_answer_is_a_warning_and_retries_tomorrow(self) -> None:
-        proc, state, _request = self._run(last_change=self.CHANGE, curl_status="500")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIsNone(state, "a failed POST must not be recorded as announced")
-        self.assertIn("will retry tomorrow", proc.stderr)
+    def test_a_non_2xx_answer_is_a_warning_and_retries_on_the_next_publish(self) -> None:
+        procs, requests, alerts = self._publishes(
+            (self.CHANGE, self.W1), (self.CHANGE, self.W2, "500"), (self.CHANGE, self.W2))
+        self.assertIn("will retry tomorrow", procs[1].stderr)
         # The alert still goes out, and says the list send failed.
-        self.assertIn("Change confirmed: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
-        self.assertIn("HTTP 500", self.alerts)
+        self.assertIn("Observed change: increased 7% on 2026-09-11 (claude-opus-5)", alerts[1])
+        self.assertIn("HTTP 500", alerts[1])
+        # Not recorded as announced, so the next publish sends it again and records it.
+        self.assertEqual(self._payload(requests[2])["date"], "2026-09-11")
+        self.assertEqual(self.state, ["2026-09-11"])
 
     def test_incomplete_change_is_skipped(self) -> None:
-        proc, state, request = self._run(last_change={"date": "2026-09-11"})
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIsNone(state)
-        self.assertEqual(request, "")
-
+        _procs, requests, _alerts = self._publishes(({"date": "2026-09-11"}, self.W1), ({"date": "2026-09-11"}, self.W2))
+        self.assertIsNone(self.state)
+        self.assertEqual(requests, ["", ""])
 
 
 SONNET_0939 = {"ts": "2026-09-06T09:39:26.287942+00:00", "model": "claude-sonnet-5", "effort": "low",
@@ -323,7 +399,7 @@ class TestProbeShFlow(unittest.TestCase):
             for i, rc in enumerate(fake_rcs, start=1):
                 env[f"FAKE_RC_{i}"] = str(rc)
             proc = subprocess.run(["bash", str(repo / "bin" / "probe.sh")], cwd=repo, env=env,
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, check=False)
             args = (root / "probe-args.log").read_text(encoding="utf-8").splitlines() \
                 if (root / "probe-args.log").exists() else []
             alerts = (root / "alerts.log").read_text(encoding="utf-8") if (root / "alerts.log").exists() else ""
@@ -416,7 +492,7 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(log, ["seed"])
 
     def test_first_run_failure_body_leads_with_a_plain_language_summary(self):
-        proc, args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[4])
+        proc, _args, alerts, _rows, log = self._run([SONNET_0939], [None], fake_rcs=[4])
         self.assertEqual(proc.returncode, 4, proc.stderr + proc.stdout)
         self.assertIn("Probe aborted on claude-opus-5", alerts)
         # tracker.report ran for real (the stub only fakes probe and alert): summary first,
@@ -427,7 +503,7 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(log, ["seed"])
 
     def test_an_unknown_exit_code_is_reported_as_a_crash_not_swallowed(self):
-        proc, args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[1])
+        proc, _args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[1])
         self.assertEqual(proc.returncode, 1, proc.stderr + proc.stdout)
         self.assertIn("Probe crashed on claude-opus-5 (exit 1)", alerts)
         self.assertIn("Outcome: CRASHED.", alerts)

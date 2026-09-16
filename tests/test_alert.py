@@ -5,6 +5,7 @@ local http.server on 127.0.0.1 for the one test that exercises the real
 urllib path.
 """
 from __future__ import annotations
+
 import io
 import json
 import tempfile
@@ -14,8 +15,17 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from tracker.alert import (AlertConfig, SEND_URL, _default_post, alert_body, alert_config,
-                           main, read_env_file, send_alert)
+
+from tracker.alert import (
+    SEND_URL,
+    AlertConfig,
+    _default_post,
+    alert_body,
+    alert_config,
+    main,
+    read_env_file,
+    send_alert,
+)
 
 NOW = datetime(2026, 9, 6, 14, 30, tzinfo=timezone.utc)
 
@@ -142,7 +152,7 @@ class MainTests(unittest.TestCase):
 
     def test_unconfigured_is_a_skip_with_exit_0(self):
         post = FakePost()
-        rc, out, err = self._main(["--subject", "x", "--text", "y"], post, env_text="# nothing here\n")
+        rc, _out, err = self._main(["--subject", "x", "--text", "y"], post, env_text="# nothing here\n")
         self.assertEqual(rc, 0)
         self.assertIn("alert: skipped", err)
         self.assertEqual(post.calls, [])

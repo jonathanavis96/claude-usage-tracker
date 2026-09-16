@@ -1,12 +1,13 @@
 """Stream Claude Code transcripts into deduplicated per-turn token usage."""
 from __future__ import annotations
+
 import json
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
-from typing import Iterable, Iterator
 
 CANONICAL_MODELS = {"claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"}
 #: Older ids priced as a current model. Fable 5 lists at Fable 5.1's prices for
@@ -27,6 +28,10 @@ class Turn:
     output: int
     cache_read: int
     cache_write: int
+    # Subset of cache_write created with the one-hour TTL.  It is kept
+    # separately because it has a different API price, but is deliberately not
+    # added by total: cache_write already contains it.
+    cache_write_1h: int = 0
 
     @property
     def total(self) -> int:
@@ -55,9 +60,17 @@ def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
                 if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
                     continue
                 seen.add(mid)
+                cache_detail = u.get("cache_creation") or {}
+                cache_write_1h = int(cache_detail.get("ephemeral_1h_input_tokens") or 0)
+                cache_write = int(u.get("cache_creation_input_tokens") or 0)
+                # Some producers expose only the duration breakdown.  Preserve
+                # the compatible aggregate rather than dropping those writes.
+                if not cache_write and isinstance(cache_detail, dict):
+                    cache_write = (int(cache_detail.get("ephemeral_5m_input_tokens") or 0)
+                                   + cache_write_1h)
                 yield Turn(_parse_ts(d["timestamp"]), m.get("model") or "unknown",
                            int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
-                           int(u.get("cache_read_input_tokens") or 0), int(u.get("cache_creation_input_tokens") or 0))
+                           int(u.get("cache_read_input_tokens") or 0), cache_write, cache_write_1h)
 
 
 def normalize_model(model_id: str) -> str | None:
@@ -70,6 +83,18 @@ def normalize_model(model_id: str) -> str | None:
     m = _DATE_SUFFIX.sub("", m)
     m = MODEL_ALIASES.get(m, m)
     return m if m in CANONICAL_MODELS else None
+
+
+def normalized_raw_model(model_id: str) -> str:
+    """Normalize presentation suffixes while retaining an unpriced raw id.
+
+    Monetary code still calls :func:`normalize_model` to decide whether a
+    price exists.  Collection code uses this function so unknown work remains
+    visible and can make the monetary estimate unavailable.
+    """
+    m = _1M_MARKER.sub("", model_id or "unknown")
+    m = _DATE_SUFFIX.sub("", m)
+    return MODEL_ALIASES.get(m, m)
 
 
 def session_tokens_by_model(paths: Iterable[Path], now: datetime | None = None,

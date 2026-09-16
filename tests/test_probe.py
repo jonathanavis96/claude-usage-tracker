@@ -3,9 +3,17 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from tracker.usage_api import Utilization
+from typing import ClassVar
+
 from tracker.cli_run import RunUsage
-from tracker.probe import run_tick_probe, is_idle, choose_account, append_result, ProbeAbort
+from tracker.probe import (
+    ProbeAbort,
+    append_result,
+    choose_account,
+    is_idle,
+    run_tick_probe,
+)
+from tracker.usage_api import Utilization
 
 T0 = datetime(2026, 9, 6, 8, 0, tzinfo=timezone.utc)
 
@@ -34,7 +42,7 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(len(a.split()), len(c.split()))
 
     def test_probe_prompt_is_prose(self):
-        from tracker.probe import probe_prompt, PROBE_PROMPT
+        from tracker.probe import PROBE_PROMPT, probe_prompt
         prompt = probe_prompt("s", 0, 100)
         body = prompt[len(PROBE_PROMPT):]
         lines = body.splitlines()
@@ -63,11 +71,13 @@ class OutputPromptTests(unittest.TestCase):
 
 class JitterTests(unittest.TestCase):
     def test_is_idle_ignores_sub_minute_resets_at_jitter(self):
+        from datetime import datetime, timezone
+
         from tracker.probe import is_idle
         from tracker.usage_api import Utilization
-        from datetime import datetime, timezone
         rs = iter(["2026-09-06T02:29:59.965637+00:00", "2026-09-06T02:30:00.148993+00:00"])
-        read = lambda: Utilization(datetime.now(timezone.utc), 0.0, 0.0, next(rs))  # noqa: E731
+        def read():
+            return Utilization(datetime.now(timezone.utc), 0.0, 0.0, next(rs))
         self.assertTrue(is_idle(read, lambda s: None))
 
 
@@ -132,12 +142,14 @@ class IdleTests(unittest.TestCase):
     def test_busy_process_rejects_an_account_whose_meter_is_flat(self):
         # The meter check alone passes ([7, 7]); the live claude process on this
         # account's config dir is what makes it busy.
-        procs = lambda: [(491402, Path("/h/.claude-dave"))]  # noqa: E731
+        def procs():
+            return [(491402, Path("/h/.claude-dave"))]
         self.assertFalse(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
 
     def test_process_free_account_with_flat_meter_passes(self):
         # A claude process on some other account does not count against this one.
-        procs = lambda: [(491402, Path("/h/.claude-other"))]  # noqa: E731
+        def procs():
+            return [(491402, Path("/h/.claude-other"))]
         self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=Path("/h/.claude-dave"), processes=procs))
 
     def test_busy_process_short_circuits_the_meter_window(self):
@@ -146,7 +158,8 @@ class IdleTests(unittest.TestCase):
         def read():
             reads.append(1)
             return Utilization(T0, 7.0, 30.0, "r1")
-        procs = lambda: [(1, Path("/h/.claude-dave"))]  # noqa: E731
+        def procs():
+            return [(1, Path("/h/.claude-dave"))]
         self.assertFalse(is_idle(read, slept.append, cfg=Path("/h/.claude-dave"), processes=procs))
         self.assertEqual((slept, reads), ([], []))
 
@@ -183,14 +196,14 @@ class IdleTests(unittest.TestCase):
         reads = {"dave": util_seq([7, 8, 8, 8]), "jono": util_seq([3, 4, 4, 4])}
         slept = []
         acc = choose_account([("dave", Path("/d")), ("jono", Path("/j"))], lambda name: reads[name], slept.append,
-                             max_wait_s=3600, retry_s=900, processes=lambda: [])
+                             max_wait_s=3600, retry_s=900, processes=list)
         self.assertEqual(acc, ("dave", Path("/d")))
         self.assertIn(900, slept)
 
     def test_choose_account_gives_up(self):
         reads = {"dave": util_seq([1, 2] * 50)}
         acc = choose_account([("dave", Path("/d"))], lambda n: reads[n], lambda s: None, max_wait_s=1800, retry_s=900,
-                             processes=lambda: [])
+                             processes=list)
         self.assertIsNone(acc)
 
     def test_choose_account_rejects_the_account_with_a_live_process_and_logs_its_pid(self):
@@ -198,7 +211,8 @@ class IdleTests(unittest.TestCase):
         # rejects it and jwork (also flat, no process) is chosen instead.
         reads = {"jwork": util_seq([3, 3]), "dave": util_seq([7, 7])}
         logged = []
-        procs = lambda: [(491402, Path("/h/.claude-dave")), (1, Path("/h/.claude"))]  # noqa: E731
+        def procs():
+            return [(491402, Path("/h/.claude-dave")), (1, Path("/h/.claude"))]
         acc = choose_account([("dave", Path("/h/.claude-dave")), ("jwork", Path("/h/.claude-javiswork"))],
                              lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
                              processes=procs, log=logged.append)
@@ -210,7 +224,7 @@ class IdleTests(unittest.TestCase):
         logged = []
         acc = choose_account([("dave", Path("/h/.claude-dave")), ("jwork", Path("/h/.claude-javiswork"))],
                              lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
-                             processes=lambda: [], log=logged.append)
+                             processes=list, log=logged.append)
         self.assertEqual(acc[0], "jwork")
         self.assertEqual(logged, ["dave weekly meter 30%", "dave busy: meter moved 7% -> 8%",
                                   "jwork weekly meter 30%"])
@@ -218,7 +232,7 @@ class IdleTests(unittest.TestCase):
     def test_choose_account_prefers_jwork_when_both_are_idle(self):
         reads = {"jwork": util_seq([3, 3]), "dave": util_seq([7, 7])}
         acc = choose_account([("jwork", Path("/h/.claude-javiswork")), ("dave", Path("/h/.claude-dave"))],
-                             lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900, processes=lambda: [])
+                             lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900, processes=list)
         self.assertEqual(acc, ("jwork", Path("/h/.claude-javiswork")))
 
 
@@ -243,7 +257,7 @@ class WeeklyMeterTests(unittest.TestCase):
         reads = {"dave": weekly(99.0), "jwork": weekly(42.0)}
         logged = []
         acc = choose_account([("dave", self.DAVE), ("jwork", self.JWORK)], lambda n: reads[n],
-                             lambda s: None, max_wait_s=0, retry_s=900, processes=lambda: [],
+                             lambda s: None, max_wait_s=0, retry_s=900, processes=list,
                              log=logged.append)
         self.assertEqual(acc, ("jwork", self.JWORK))
         self.assertEqual(logged, ["dave weekly meter 99%",
@@ -252,22 +266,22 @@ class WeeklyMeterTests(unittest.TestCase):
 
     def test_90_itself_is_not_above_the_limit(self):
         acc = choose_account([("dave", self.DAVE)], lambda n: weekly(90.0), lambda s: None,
-                             max_wait_s=0, retry_s=900, processes=lambda: [], log=lambda line: None)
+                             max_wait_s=0, retry_s=900, processes=list, log=lambda line: None)
         self.assertEqual(acc, ("dave", self.DAVE))
 
     def test_a_weekly_skip_spends_no_meter_window(self):
-        from tracker.probe import skip_reason, Skip
+        from tracker.probe import Skip, skip_reason
         slept, reads = [], []
 
         def read():
             reads.append(1)
             return Utilization(T0, 7.0, 99.0, "r1")
-        self.assertEqual(skip_reason(read, slept.append, cfg=self.DAVE, processes=lambda: []),
+        self.assertEqual(skip_reason(read, slept.append, cfg=self.DAVE, processes=list),
                          Skip("weekly", "99% of the seven-day limit used, above 90%"))
         self.assertEqual((slept, len(reads)), ([], 1))
 
     def test_an_unreported_weekly_meter_fails_closed(self):
-        from tracker.probe import skip_reason, Skip
+        from tracker.probe import Skip, skip_reason
         notes = []
         self.assertEqual(skip_reason(weekly(None), lambda s: None, note=notes.append),
                          Skip("weekly", "the usage endpoint reported no seven-day figure"))
@@ -302,7 +316,7 @@ class SessionStatusTests(unittest.TestCase):
     DAVE = Path("/h/.claude-dave")
 
     def _procs(self, *pids):
-        return lambda: [(pid, self.DAVE) for pid in pids]  # noqa: E731
+        return lambda: [(pid, self.DAVE) for pid in pids]
 
     def test_idle_session_does_not_block_an_account_with_a_flat_meter(self):
         self.assertTrue(is_idle(util_seq([7, 7]), lambda s: None, cfg=self.DAVE,
@@ -536,9 +550,8 @@ class SessionDirEventsTests(unittest.TestCase):
 
     def test_a_missing_sessions_dir_cannot_be_watched(self):
         from tracker.probe import SessionDirEvents
-        with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(OSError):
-                SessionDirEvents(Path(d))
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(OSError):
+            SessionDirEvents(Path(d))
 
 
 class ChildTrackerTests(unittest.TestCase):
@@ -546,6 +559,7 @@ class ChildTrackerTests(unittest.TestCase):
 
     def test_records_the_pid_and_returns_stdout(self):
         import sys
+
         from tracker.probe import ChildTracker
         children = ChildTracker()
         out = children([sys.executable, "-c", "import os, sys; print(os.getpid(), sys.stdin.read())"],
@@ -556,6 +570,7 @@ class ChildTrackerTests(unittest.TestCase):
 
     def test_a_failed_run_raises_with_the_stderr_tail(self):
         import sys
+
         from tracker.probe import ChildTracker
         children = ChildTracker()
         with self.assertRaises(RuntimeError) as e:
@@ -573,7 +588,7 @@ class SessionStateReaderTests(unittest.TestCase):
         (cfg / "sessions" / f"{pid}.json").write_text(body, encoding="utf-8")
 
     def test_reads_the_stamp_and_returns_none_when_it_is_missing_or_not_a_number(self):
-        from tracker.probe import read_session_status, SessionState
+        from tracker.probe import SessionState, read_session_status
         with tempfile.TemporaryDirectory() as d:
             cfg = Path(d)
             # Shaped like a real file, fields and all (gs, 2026-09-12).
@@ -663,7 +678,6 @@ class InProbeBusyGuardTests(unittest.TestCase):
         calls = []
         def busy():
             calls.append(1)
-            return None
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, runner(), sleep=lambda s: None,
                            now=lambda: T0, ticks=1, skip=0, busy=busy)
         self.assertEqual(r.prompts, 7)
@@ -746,7 +760,7 @@ class DeadlineTests(unittest.TestCase):
 
 
 class EarlyTickTests(unittest.TestCase):
-    PRICE = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
+    PRICE: ClassVar[dict] = {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}
 
     def test_tick_our_prompts_cannot_pay_for_aborts(self):
         read = util_seq([10, 10, 10, 11, 11, 11, 11, 12])
@@ -775,8 +789,9 @@ class PayloadCliTests(unittest.TestCase):
         """
         import json
         import tempfile
-        import tracker.probe as probe_mod
+
         import tracker.cli_run as cli_run_mod
+        import tracker.probe as probe_mod
         import tracker.usage_api as usage_api_mod
         from tracker.usage_api import Utilization
 
@@ -951,7 +966,7 @@ class PromptSizeTests(unittest.TestCase):
         # Issue #24's worked example: at $0.95 per 1% Opus gets about 3,380 words and
         # Fable about 1,754 (3,375 and 1,748 here: the five output tokens of the overhead
         # carry their 1.8 class weight). Twelve such prompts pay for the tick exactly.
-        from tracker.probe import payload_words_for, PROMPTS_PER_TICK
+        from tracker.probe import PROMPTS_PER_TICK, payload_words_for
         for model, want in (("claude-opus-5", 3375), ("claude-fable-5-1", 1748), ("claude-sonnet-5", 8850)):
             words = payload_words_for(0.95, PRICES[model])
             self.assertEqual(words, want, model)
@@ -973,14 +988,19 @@ class PromptSizeTests(unittest.TestCase):
     def test_token_expectation_follows_the_payload(self):
         # the token expectation is what the sized prompt spends, PROMPTS_PER_TICK times
         # over, so the burst it sizes is 80% of a twelve-prompt span whatever the model
-        from tracker.probe import (FIXED_PROMPT_TOKENS, PROMPTS_PER_TICK, TOKENS_PER_WORD, _burst_size,
-                                   tokens_per_pct_for)
+        from tracker.probe import (
+            FIXED_PROMPT_TOKENS,
+            PROMPTS_PER_TICK,
+            TOKENS_PER_WORD,
+            _burst_size,
+            tokens_per_pct_for,
+        )
         self.assertEqual(tokens_per_pct_for(3375), PROMPTS_PER_TICK * (3375 * TOKENS_PER_WORD + FIXED_PROMPT_TOKENS))
         self.assertEqual(_burst_size(tokens_per_pct_for(3375), 0.8, [], 3375, room=100), 9)
         self.assertEqual(_burst_size(tokens_per_pct_for(12_000), 0.8, [], 12_000, room=100), 9)
 
     def test_output_prompt_takes_a_reply_size(self):
-        from tracker.probe import output_prompt, OUTPUT_REPLY_WORDS
+        from tracker.probe import OUTPUT_REPLY_WORDS, output_prompt
         self.assertEqual(OUTPUT_REPLY_WORDS, 4_000)
         self.assertIn("2,500 words", output_prompt("s", 0, 2_500))
 
@@ -1180,12 +1200,12 @@ class RowShapeTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
-    PRICES = {"claude-sonnet-5": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1},
+    PRICES: ClassVar[dict] = {"claude-sonnet-5": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1},
               "claude-fable-5-1": {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}}
 
     def _capture(self, argv, sessions=True):
-        import tracker.probe as probe_mod
         import tracker.cli_run as cli_run_mod
+        import tracker.probe as probe_mod
         import tracker.usage_api as usage_api_mod
         captured = {}
 
@@ -1232,8 +1252,8 @@ class CliTests(unittest.TestCase):
         self.assertLess(len(c["prompt_text"].split()), 500 + 40)
 
     def test_flags_reach_run_tick_probe(self):
-        rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0",
-                               "--ticks", "2", "--skip", "0", "--settle", "30"])
+        _rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0",
+                                "--ticks", "2", "--skip", "0", "--settle", "30"])
         self.assertEqual((c["ticks"], c["skip"], c["settle_s"], c["payload_words"]), (2, 0, 30.0, 12_000))
 
     def test_prose_takes_dollars_and_output_takes_tokens(self):
@@ -1260,7 +1280,6 @@ class CliTests(unittest.TestCase):
         orig = probe_mod.choose_account
         def fake_choose(accounts, *a, **k):
             seen["accounts"] = accounts
-            return None
         probe_mod.choose_account = fake_choose
         try:
             with tempfile.TemporaryDirectory() as d:
@@ -1275,8 +1294,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(seen["accounts"], [("jwork", home / ".claude-javiswork"), ("dave", home / ".claude-dave")])
 
     def test_help_names_the_default_order(self):
-        import io
         import contextlib
+        import io
+
         import tracker.probe as probe_mod
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
@@ -1291,7 +1311,7 @@ class CliTests(unittest.TestCase):
             self._capture(["--model", "claude-sonnet-5"])
 
     def test_the_guard_watches_session_files_and_knows_the_probes_own_prompts(self):
-        from tracker.probe import SessionDirEvents, SessionWatch, ChildTracker
+        from tracker.probe import ChildTracker, SessionDirEvents, SessionWatch
         rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0"])
         self.assertEqual(rc, 4)
         watch = c["busy"].__self__
@@ -1303,8 +1323,8 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(watch.lifecycle())  # closed once the run is over
 
     def test_an_account_whose_sessions_dir_cannot_be_watched_is_not_probed(self):
-        import io
         import contextlib
+        import io
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             rc, c = self._capture(["--model", "claude-sonnet-5", "--expect-usd-per-pct", "1.0"], sessions=False)
@@ -1315,14 +1335,14 @@ class CliTests(unittest.TestCase):
     def _skipped(self, skips):
         """main's exit and last line when choose_account passes over every account with
         these reasons (name -> Skip)."""
-        import io
         import contextlib
+        import io
+
         import tracker.probe as probe_mod
         orig = probe_mod.choose_account
 
         def fake_choose(accounts, *a, skipped=None, **k):
             skipped.update(skips)
-            return None
         probe_mod.choose_account = fake_choose
         err = io.StringIO()
         try:
@@ -1350,8 +1370,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(last, "probe skipped: no idle account within max wait")
 
     def test_output_payload_keeps_its_fixed_reply_size(self):
-        rc, c = self._capture(["--model", "claude-fable-5-1", "--payload", "output",
-                               "--expect-tokens-per-pct", "31724"])
+        _rc, c = self._capture(["--model", "claude-fable-5-1", "--payload", "output",
+                                "--expect-tokens-per-pct", "31724"])
         self.assertEqual(c["payload"], "output")
         self.assertEqual(c["payload_words"], 4_000)
         self.assertIn("4,000 words", c["prompt_text"])
@@ -1362,7 +1382,13 @@ class InitialBurstTests(unittest.TestCase):
         # Before any prompt has run, a prompt is estimated as payload plus the fixed
         # overhead; the Fable payload for $0.95 per 1% is about 1,750 words, so the
         # payload-only estimate would fire a burst of 27 where the span is 12 prompts.
-        from tracker.probe import _burst_size, payload_words_for, tokens_per_pct_for, TOKENS_PER_WORD, FIXED_PROMPT_TOKENS
+        from tracker.probe import (
+            FIXED_PROMPT_TOKENS,
+            TOKENS_PER_WORD,
+            _burst_size,
+            payload_words_for,
+            tokens_per_pct_for,
+        )
         words = payload_words_for(0.95, PRICES["claude-fable-5-1"])
         expect = tokens_per_pct_for(words)
         k = _burst_size(expect, 0.8, [], words, room=100)
@@ -1375,7 +1401,11 @@ class LowExpectationRefusalTests(unittest.TestCase):
     def test_expectation_too_low_for_eight_prompts_is_refused(self):
         # The fixed overhead puts a floor under a prompt's cost; dollars per 1% that buy
         # fewer than MIN_PROMPTS_PER_SPAN floor prompts cannot be sized into a usable span.
-        from tracker.probe import MIN_PAYLOAD_WORDS, MIN_PROMPTS_PER_SPAN, payload_words_for
+        from tracker.probe import (
+            MIN_PAYLOAD_WORDS,
+            MIN_PROMPTS_PER_SPAN,
+            payload_words_for,
+        )
         price = PRICES["claude-opus-5"]
         floor_prompt = prompt_meter_usd(MIN_PAYLOAD_WORDS, price)
         too_low = floor_prompt * (MIN_PROMPTS_PER_SPAN - 1)

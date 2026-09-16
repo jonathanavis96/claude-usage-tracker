@@ -30,11 +30,12 @@ expose the real call count.
 sending anything, pricing them from `--prices` (default data/prices.json).
 """
 from __future__ import annotations
+
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
-from typing import Callable
 
 from .publish import meter_usd
 
@@ -147,11 +148,11 @@ def calibrate(models: list[str], efforts: list[str], repeats: int, run: Callable
             for _ in range(repeats):
                 try:
                     u = run(CALIBRATION_PROMPT, model, effort)
-                except Exception:  # one retry, then give up on this run
+                except Exception:  # noqa: BLE001 -- any failure of a run: one retry, then give up on this run
                     sleep(10)
                     try:
                         u = run(CALIBRATION_PROMPT, model, effort)
-                    except Exception as e2:
+                    except Exception as e2:  # noqa: BLE001 -- recorded as a failed cell, never raised
                         matrix["_meta"]["failed"].append({"cell": f"{model}/{effort}", "error": str(e2)[:200]})
                         continue
                 runs.append({"input": u.input, "output": u.output,
@@ -197,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         m["_meta"]["recomputed"] = datetime.now(timezone.utc).isoformat()
     else:
         import time
+
         from .cli_run import run_prompt
         from .usage_api import read_usage
         cfg = a.config_dir or Path.home() / ".claude"

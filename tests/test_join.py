@@ -1,10 +1,20 @@
+import json
 import unittest
-from datetime import datetime, timezone, timedelta, date
-from tracker.samples import Sample
-from tracker.turns import Turn
-from tracker.join import (Interval, Stretch, build_intervals, build_stretches, bundle_meter_usd, daily_rates,
-                          turn_meter_usd, window_points)
+from datetime import date, datetime, timedelta, timezone
+
+from tracker.join import (
+    Interval,
+    Stretch,
+    build_intervals,
+    build_stretches,
+    bundle_meter_usd,
+    daily_rates,
+    turn_meter_usd,
+    window_points,
+)
 from tracker.publish import usd_per_pct
+from tracker.samples import Sample, parse_moonlighter
+from tracker.turns import Turn
 from tracker.weekly import weekly_windows
 
 T0 = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
@@ -144,16 +154,56 @@ def S7(mins, fh, sd, reset=None):
 class WindowPointTests(unittest.TestCase):
     def test_points_follow_the_weekly_pairing_rule_per_five_hour_window(self):
         samples = [S7(0, 10, 20), S7(5, 16, 21),   # d5 6, d7 1
-                   S7(10, 16, 22),                 # seven-day moved alone: not paired (weekly.py's d5 > 0)
+                   S7(10, 16, 22),                 # seven-day moved alone: kept (audit finding 3)
                    S7(15, 22, 23),                 # d5 6, d7 1
                    S7(20, 2, 23),                  # five-hour drop: a new window
                    S7(25, 8, 24),                  # d5 6, d7 1
                    S7(30, 14, 0),                  # seven-day drop: its weekly reset, not paired
-                   S7(35, 20, 1)]                  # d5 6, d7 1
+                   S7(35, 20, 1)]                  # d5 6, d7 1, in the new weekly window: its own point
         pts = window_points(samples)
         self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["windows"]) for p in pts],
-                         [(12.0, 2.0, 6.0), (12.0, 2.0, 6.0)])
-        self.assertEqual([p["window_ending"] for p in pts], [S7(15, 0, 0).ts.isoformat(), S7(35, 0, 0).ts.isoformat()])
+                         [(12.0, 3.0, 4.0), (6.0, 1.0, 6.0), (6.0, 1.0, 6.0)])
+        self.assertEqual([p["window_ending"] for p in pts],
+                         [S7(m, 0, 0).ts.isoformat() for m in (15, 25, 35)])
+        self.assertEqual({p["reset_verified"] for p in pts}, {False})
+
+    def test_a_gap_joins_its_window_as_a_second_piece_only_when_the_reset_is_recorded(self):
+        r5 = "2026-09-01T15:00:00+00:00"
+        with_reset = [Sample(T0 + timedelta(minutes=m), fh, sd, r5, "meter")
+                      for m, fh, sd in ((0, 0, 0), (5, 10, 2), (40, 10, 2), (45, 20, 4))]
+        pts = window_points(with_reset)
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["pieces"], p["reset_verified"]) for p in pts],
+                         [(20.0, 4.0, 2, True)])
+        no_reset = [Sample(s.ts, s.five_hour, s.seven_day, None, "gs-ceiling") for s in with_reset]
+        self.assertEqual([(p["five_hour_pct"], p["pieces"]) for p in window_points(no_reset)], [(10.0, 1), (10.0, 1)])
+
+    def test_a_recorded_weekly_reset_splits_a_window_even_when_the_meter_climbed_back(self):
+        # Review of PR 57, round 2, finding 2: the seven-day meter's fall was the only
+        # weekly-reset check here. Across the reset between minutes 5 and 10 it reads
+        # 1 then 1 again (the new week has already used a point), so d7 = 0 while the
+        # true movement is at least the old week's last point: pooled, the window read
+        # 18/2 = 9. Pairs and rejoins now also compare the recorded seven-day reset,
+        # as tracker/weekly.py does, and both give two points of 6/1.
+        r5 = (T0 + timedelta(hours=4)).isoformat()
+        r7a = (T0 + timedelta(minutes=7, seconds=30)).isoformat()                 # the weekly reset, between readings
+        r7b = (T0 + timedelta(days=7, minutes=7, seconds=30)).isoformat()
+        readings = [(0, 0, 0, r7a), (5, 6, 1, r7a), (10, 12, 1, r7b), (15, 18, 2, r7b)]
+        lines = [json.dumps({"ts": (T0 + timedelta(minutes=m)).isoformat(),
+                             "five_hour": {"utilization": fh, "resets_at": r5},
+                             "seven_day": {"utilization": sd, "resets_at": r7}}) for m, fh, sd, r7 in readings]
+        samples = parse_moonlighter(lines, source="meter")
+        self.assertEqual([s.seven_resets_at for s in samples], [r7a, r7a, r7b, r7b])
+        pts = window_points(samples)
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["pieces"]) for p in pts], [(6.0, 1.0, 1), (6.0, 1.0, 1)])
+        rows = [{"ts": (T0 + timedelta(minutes=m)).isoformat(), "five_hour": float(fh), "five_resets_at": r5,
+                 "seven_day": float(sd), "seven_resets_at": r7} for m, fh, sd, r7 in readings]
+        by_window = weekly_windows(rows, now=T0)["by_window"]
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"]) for p in by_window],
+                         [(p["five_hour_pct"], p["seven_day_pct"]) for p in pts])
+        # A gap across the reset rejoins nothing either: the piece after it is its own point.
+        gapped = [samples[0], samples[1]] + [Sample(s.ts + timedelta(minutes=30), s.five_hour, s.seven_day, s.resets_at,
+                                                    s.source, s.seven_resets_at) for s in samples[2:]]
+        self.assertEqual([(p["five_hour_pct"], p["pieces"]) for p in window_points(gapped)], [(6.0, 1), (6.0, 1)])
 
     def test_sums_match_tracker_weekly_on_the_same_readings(self):
         fh, sd = [0, 10, 20, 30, 40, 50, 60], [0, 1, 3, 4, 6, 7, 9]

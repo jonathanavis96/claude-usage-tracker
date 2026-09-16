@@ -37,12 +37,14 @@ Everything here is advisory to the publish: a failed alert is a warning, and
 tracker.publish carries on with whatever weight prices.json holds.
 """
 from __future__ import annotations
+
 import json
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping
+
 from .alert import ENV_FILE, Poster, _default_post, alert_config, send_alert
 from .rows import is_output
 

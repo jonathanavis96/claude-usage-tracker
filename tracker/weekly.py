@@ -7,10 +7,13 @@ single five-hour window and a single weekly window, gives the ratio directly
 -- no need to assume the published site multiplies by a fixed 28.
 """
 from __future__ import annotations
+
 import json
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
-from typing import Iterable
+
+from .detect import ratio_interval
 
 _FIVE_HOUR_TOLERANCE = timedelta(seconds=120)
 _MIN_FIVE_HOUR_PCT = 50.0
@@ -69,18 +72,37 @@ def _same_five_hour_window(prev: dict, cur: dict) -> bool:
 
 
 def _same_weekly_window(prev: dict, cur: dict) -> bool:
-    return prev["seven_resets_at"][:13] == cur["seven_resets_at"][:13]
+    # The endpoint jitters resets_at by a second or so between reads, across the hour:
+    # 03:59:59.9 and 04:00:00.3 are one weekly window. Comparing the hour prefix split
+    # them and silently dropped every pair across the jitter, movement on both meters.
+    p = datetime.fromisoformat(prev["seven_resets_at"])
+    c = datetime.fromisoformat(cur["seven_resets_at"])
+    return abs((c - p).total_seconds()) < _FIVE_HOUR_TOLERANCE.total_seconds()
 
 
-def _window_point(window_ending: str, d5: float, d7: float) -> dict:
+def _week_key(resets_at: str) -> str:
+    """The week a seven-day reset closes, as YYYY-MM-DD, stable across resets_at jitter."""
+    return (datetime.fromisoformat(resets_at) + timedelta(seconds=30)).date().isoformat()
+
+
+def _ratio_interval(d5: float, d7: float, pieces: int = 1) -> list[float | None]:
+    """The rounding interval of a pooled ratio (tracker/detect.py `ratio_interval`), rounded for JSON."""
+    return [round(x, 4) if x is not None else None for x in ratio_interval(d5, d7, pieces)]
+
+
+def _window_point(window_ending: str, d5: float, d7: float, pieces: int = 1, reset_verified: bool = True) -> dict:
     """One per-window point of the `by_window` series (weekly_windows, probe_weekly_windows).
 
     `windows` is null when the seven-day meter did not move: the point is real
     five-hour movement that the pooled figures still count, but has no ratio of
-    its own.
+    its own. `pieces` is how many separate chains of readings the point sums (a
+    gap in the log inside one window makes two), and `rounding_interval` is how
+    far whole-percent rounding lets the ratio sit (tracker/detect.py).
     """
     return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 > 0 else None,
-            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1)}
+            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1),
+            "rounding_interval": _ratio_interval(d5, d7, pieces), "pieces": pieces,
+            "reset_verified": reset_verified}
 
 
 def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict:
@@ -116,26 +138,48 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
     buckets: dict[str, dict] = {}
     windows: list[dict] = []
     prev: dict | None = None
+    chain: dict | None = None
     for cur in rows:
         if cur is None:
-            prev = None
+            prev = chain = None
             continue
         if prev is not None and _same_five_hour_window(prev, cur) and _same_weekly_window(prev, cur):
             d5 = cur["five_hour"] - prev["five_hour"]
             d7 = cur["seven_day"] - prev["seven_day"]
-            if d5 > 0 and d7 >= 0:
-                week_key = cur["seven_resets_at"][:10]
-                b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0, "resets_at": cur["seven_resets_at"]})
+            if d5 >= 0 and d7 >= 0:
+                # Both meters' movement is kept, whichever of them moved (audit finding 3):
+                # a seven-day tick that lands while the five-hour display holds still is
+                # denominator the ratio needs, and dropping it biased the ratio upward.
+                # A pair where neither moved still counts, as continuity: the chain of
+                # readings it sits in telescopes to one rounding error per meter.
+                week_key = _week_key(cur["seven_resets_at"])
+                b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0, "resets_at": cur["seven_resets_at"],
+                                                 "pieces": 0})
                 b["d5"] += d5
                 b["d7"] += d7
                 b["resets_at"] = cur["seven_resets_at"]
-                if windows and _same_five_hour_window(windows[-1], cur):
-                    windows[-1]["d5"] += d5
-                    windows[-1]["d7"] += d7
-                else:
-                    windows.append({"five_resets_at": prev["five_resets_at"], "d5": d5, "d7": d7})
+                if chain is None:
+                    # A new piece: a separate difference of two rounded readings per meter.
+                    # Pieces of the same five-hour window (split by a gap in the log) stay
+                    # one window point with a wider rounding interval.
+                    b["pieces"] += 1
+                    if (windows and _same_five_hour_window(windows[-1], cur)
+                            and _same_weekly_window(windows[-1], cur)):
+                        chain = windows[-1]
+                        chain["pieces"] += 1
+                    else:
+                        chain = {"five_resets_at": prev["five_resets_at"], "seven_resets_at": cur["seven_resets_at"],
+                                 "d5": 0.0, "d7": 0.0, "pieces": 1}
+                        windows.append(chain)
+                chain["d5"] += d5
+                chain["d7"] += d7
+            else:
+                chain = None  # a meter fell inside one window: a glitch, not movement
+        else:
+            chain = None
         prev = cur
-    by_window = [_window_point(w["five_resets_at"], w["d5"], w["d7"]) for w in windows]
+    by_window = [_window_point(w["five_resets_at"], w["d5"], w["d7"], w["pieces"])
+                 for w in windows if w["d5"] > 0 or w["d7"] > 0]
 
     history = []
     for week_key in sorted(buckets):
@@ -146,6 +190,9 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
                 "windows": round(b["d5"] / b["d7"], 2),
                 "five_hour_pct": round(b["d5"], 1),
                 "seven_day_pct": round(b["d7"], 1),
+                "rounding_interval": _ratio_interval(b["d5"], b["d7"], b["pieces"]),
+                "pieces": b["pieces"],
+                "source": "paired_meter_deltas", "reset_verified": True,
                 "_resets_at": b["resets_at"],
             })
 
@@ -167,7 +214,7 @@ def _iso_week_ending(ts: str) -> str:
     boundary.
     """
     d = datetime.fromisoformat(ts).date()
-    iso_year, iso_week, iso_weekday = d.isocalendar()
+    _iso_year, _iso_week, iso_weekday = d.isocalendar()
     sunday = d + timedelta(days=7 - iso_weekday)
     return sunday.isoformat()
 
@@ -216,12 +263,13 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
         if fhb is None or fha is None or sdb is None or sda is None:
             continue
         d5 = fha - fhb
-        if d5 <= 0:
+        if d5 < 0:
             continue
         d7 = sda - sdb
-        if d7 < 0:
+        if d7 < 0 or (d5 == 0 and d7 == 0):
             continue
-        by_window.append(_window_point(r["ts"], d5, d7))
+        # A probe row records no five-hour reset id: it sits in one window by construction only.
+        by_window.append(_window_point(r["ts"], d5, d7, reset_verified=False))
         resets_at = r.get("seven_day_resets_at")
         week_key = resets_at[:10] if resets_at else _iso_week_ending(r["ts"])
         b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0})

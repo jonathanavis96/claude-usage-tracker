@@ -72,7 +72,7 @@ class Fixture:
             rec("m2", in_five, model="claude-sonnet-5", inp=1, out=2, cr=3, cw=4),  # sonnet, both windows
             rec("m3", in_seven_only, inp=100, out=200, cr=0, cw=0),          # opus, seven-day only
             rec("m4", before_both, inp=1000, out=1000, cr=1000, cw=1000),   # outside both
-            rec("m5", in_five, model="claude-haiku-4-5-20251001", inp=7),   # not a canonical model: dropped
+            rec("m5", in_five, model="claude-haiku-4-5-20251001", inp=7),   # not a priced model: kept by its id
             "not json at all",
             json.dumps({"type": "assistant", "timestamp": _iso(in_five), "message": {"id": "m6"}}),  # no usage
         ]) + "\n")
@@ -109,10 +109,15 @@ def cut1_line(text):
 
 
 EXPECT_FIVE = {
+    # Unknown models are retained (after only date/[1m] normalization) so
+    # downstream pricing can withhold a monetary estimate instead of losing
+    # meter-moving work.
+    "claude-haiku-4-5": {"input": 7, "output": 20, "cache_read": 300, "cache_write": 400},
     "claude-opus-5": {"input": 15, "output": 25, "cache_read": 305, "cache_write": 405},   # m1 + m7
     "claude-sonnet-5": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4},        # m2
 }
 EXPECT_SEVEN = {
+    "claude-haiku-4-5": {"input": 7, "output": 20, "cache_read": 300, "cache_write": 400},
     "claude-opus-5": {"input": 115, "output": 225, "cache_read": 305, "cache_write": 405},  # + m3
     "claude-sonnet-5": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4},
 }
@@ -146,7 +151,15 @@ class BodyTests(unittest.TestCase):
             _, out, _ = f.run("--plan", "pro", "--dry-run")
             self.assertEqual(set(body_from_print(out)), {
                 "contributor_id", "plan", "plan_source", "ts", "five_hour", "seven_day",
-                "tokens_since_five_hour_reset", "tokens_since_seven_day_reset", "client_version"})
+                "tokens_since_five_hour_reset", "tokens_since_seven_day_reset", "capture", "client_version"})
+            # The sub-agent's test named an ownership value the sampler never produces. This
+            # fixture's projects/ is not pooled with another profile and no filter was asked
+            # for, so ownership is the unverified default, and capture carries no path.
+            capture = body_from_print(out)["capture"]
+            self.assertEqual(set(capture), {"collected_at", "five_hour_started_at", "seven_day_started_at", "ownership"})
+            self.assertEqual(capture["ownership"], "local_transcripts_unverified")
+            self.assertEqual(capture["collected_at"], NOW.strftime("%Y-%m-%dT%H:%M:%SZ"))
+            self.assertNotIn(str(f.claude_dir), json.dumps(capture))
 
     def test_body_under_2kb(self):
         with Fixture() as f:
@@ -214,7 +227,7 @@ class PrivacyTests(unittest.TestCase):
 class PlanTests(unittest.TestCase):
     def test_first_run_without_plan_fails_and_writes_no_id_file(self):
         with Fixture() as f:
-            rc, out, err = f.run("--dry-run")
+            rc, _out, err = f.run("--dry-run")
             self.assertEqual(rc, 2)
             self.assertIn("--plan", err)
             self.assertFalse(f.id_file.exists())
@@ -229,15 +242,91 @@ class PlanTests(unittest.TestCase):
             self.assertEqual((body["plan"], body["plan_source"]), ("max5", "stored"))
             self.assertEqual(body["contributor_id"], first_id)
 
+    def test_ids_are_local_profile_and_plan_scoped(self):
+        with Fixture() as f:
+            _, first, _ = f.run("--plan", "pro", "--dry-run")
+            pro_id = body_from_print(first)["contributor_id"]
+            _, second, _ = f.run("--plan", "max20", "--dry-run", "--print")
+            max_id = body_from_print(second)["contributor_id"]
+            self.assertNotEqual(pro_id, max_id)
+            stored = json.loads(f.id_file.read_text())
+            # Keyed locally by a hash of the config dir and its account (never sent), so
+            # one machine's second Claude profile does not share an id (audit finding 14).
+            profiles = {k.rsplit(":", 1)[0] for k in stored["identities"]}
+            self.assertEqual({k.rsplit(":", 1)[1] for k in stored["identities"]}, {"pro", "max20"})
+            self.assertEqual(len(profiles), 1)
+            self.assertRegex(profiles.pop(), r"^[0-9a-f]{64}$")
+            self.assertNotIn(str(f.claude_dir), f.id_file.read_text())
+            other = Path(f.tmp.name) / "claude-other"
+            (other / "projects").mkdir(parents=True)
+            out = io.StringIO()
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                sample.main(["--id-file", str(f.id_file), "--claude-dir", str(other), "--plan", "pro", "--dry-run", "--print"],
+                            usage_fetch=lambda: USAGE, now=NOW, out=out)
+            self.assertNotIn(body_from_print(out.getvalue())["contributor_id"], (pro_id, max_id))
+
+    @staticmethod
+    def _run_profile(f, cfg, *argv):
+        out = io.StringIO()
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            rc = sample.main(["--id-file", str(f.id_file), "--claude-dir", str(cfg), *argv],
+                             usage_fetch=lambda: USAGE, now=NOW, out=out)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_a_0_1_0_id_file_keeps_its_contributor_id_and_plan(self):
+        # Review of PR 57, round 2, finding 5: 0.1.0 wrote no profile_scope, so the
+        # migration guard never matched a real old file. The upgraded sampler minted a
+        # new id (breaking pairing across the upgrade) and refused the stored plan.
+        legacy_id = "3f0c6a5e-1d2b-4c7a-9e8f-0a1b2c3d4e5f"
+        legacy = {"contributor_id": legacy_id, "created": "2026-09-01T00:00:00Z", "plan": "max20", "plan_from_endpoint": False}
+        with Fixture() as f:
+            # Given the same plan again, the old sampler still minted a new id.
+            f.id_file.write_text(json.dumps(legacy))
+            rc, out, err = f.run("--plan", "max20", "--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(body_from_print(out)["contributor_id"], legacy_id)
+        with Fixture() as f:
+            f.id_file.write_text(json.dumps(legacy))
+            rc, out, err = f.run("--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            body = body_from_print(out)
+            self.assertEqual((body["contributor_id"], body["plan"], body["plan_source"]), (legacy_id, "max20", "stored"))
+            # The file now names its profile, so a second profile does not inherit the id.
+            other = Path(f.tmp.name) / "claude-other"
+            (other / "projects").mkdir(parents=True)
+            rc, out, err = self._run_profile(f, other, "--plan", "max20", "--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            self.assertNotEqual(body_from_print(out)["contributor_id"], legacy_id)
+            rc, out, _ = f.run("--dry-run", "--print")
+            self.assertEqual(body_from_print(out)["contributor_id"], legacy_id)
+
+    def test_each_profile_keeps_its_own_stored_plan(self):
+        # Review of PR 57, round 2, finding 6: only the last run's profile kept its
+        # stored plan, so alternating two profiles asked for --plan on every run.
+        with Fixture() as f:
+            other = Path(f.tmp.name) / "claude-other"
+            (other / "projects").mkdir(parents=True)
+            _, first, _ = f.run("--plan", "max20", "--dry-run", "--print")
+            _, second, _ = self._run_profile(f, other, "--plan", "pro", "--dry-run", "--print")
+            rc, out, err = f.run("--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            body = body_from_print(out)
+            self.assertEqual((body["plan"], body["plan_source"], body["contributor_id"]),
+                             ("max20", "stored", body_from_print(first)["contributor_id"]))
+            rc, out, err = self._run_profile(f, other, "--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            body = body_from_print(out)
+            self.assertEqual((body["plan"], body["contributor_id"]), ("pro", body_from_print(second)["contributor_id"]))
+
     def test_endpoint_plan_wins_and_is_recorded(self):
         usage = dict(USAGE, subscription_type="Claude Max 20x")
         with Fixture() as f:
-            rc, out, _ = f.run("--plan", "pro", "--dry-run", usage=usage)
+            _rc, out, _ = f.run("--plan", "pro", "--dry-run", usage=usage)
             body = body_from_print(out)
             self.assertEqual((body["plan"], body["plan_source"]), ("max20", "endpoint"))
             self.assertTrue(json.loads(f.id_file.read_text())["plan_from_endpoint"])
             # and a later run needs no --plan even if the endpoint stops exposing it
-            rc, out, _ = f.run("--dry-run", "--print")
+            _rc, out, _ = f.run("--dry-run", "--print")
             self.assertEqual(body_from_print(out)["plan"], "max20")
 
     def test_normalize_plan(self):
@@ -363,7 +452,7 @@ class PooledProjectsTests(unittest.TestCase):
 
     def test_filters_to_own_sessions_when_symlink_is_pooled(self):
         with tempfile.TemporaryDirectory() as t:
-            cfg, own_session, other_session = self._fake_configs(Path(t))
+            cfg, own_session, _other_session = self._fake_configs(Path(t))
             paths = sample.transcript_paths(cfg / "projects", None)
             self.assertEqual(len(paths), 2)
             err = io.StringIO()
@@ -406,6 +495,33 @@ class PooledProjectsTests(unittest.TestCase):
             paths = sample.transcript_paths(cfg / "projects", None)
             self.assertEqual(sample.own_session_filter(paths, cfg), paths)
 
+    def test_ownership_says_filtered_only_when_the_filter_ran(self):
+        # Review of PR 57: the body claimed "filtered_local_transcripts" whenever projects
+        # was pooled or --own-sessions was given, even with no session-env to filter by,
+        # when every transcript, other logins' included, was kept.
+        def ownership(cfg, *flags):
+            out = io.StringIO()
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                rc = sample.main(["--id-file", str(cfg.parent / "id.json"), "--claude-dir", str(cfg), "--plan", "max20",
+                                  "--dry-run", "--print", *flags], usage_fetch=lambda: USAGE, now=NOW, out=out)
+            self.assertEqual(rc, 0)
+            return body_from_print(out.getvalue())["capture"]["ownership"]
+
+        with tempfile.TemporaryDirectory() as t:
+            cfg, _, _ = self._fake_configs(Path(t))
+            self.assertEqual(ownership(cfg), "filtered_local_transcripts")
+            self.assertEqual(ownership(cfg, "--all-sessions"), "local_transcripts_unverified")
+            (cfg / "session-env" / SESSION_A).rmdir()
+            (cfg / "session-env").rmdir()
+            self.assertEqual(ownership(cfg), "local_transcripts_unverified")
+            self.assertEqual(ownership(cfg, "--own-sessions"), "local_transcripts_unverified")
+        with tempfile.TemporaryDirectory() as t:
+            cfg = Path(t) / "cfg"
+            (cfg / "projects").mkdir(parents=True)
+            self.assertEqual(ownership(cfg, "--own-sessions"), "local_transcripts_unverified")
+            (cfg / "session-env" / SESSION_A).mkdir(parents=True)
+            self.assertEqual(ownership(cfg, "--own-sessions"), "filtered_local_transcripts")
+
     def test_token_lookup_follows_claude_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "t"}}))
@@ -414,9 +530,8 @@ class PooledProjectsTests(unittest.TestCase):
                 self.assertEqual(sample.read_token(sample.config_dir()), "t")
             with mock.patch.dict("os.environ", {}, clear=True), mock.patch.object(Path, "home", return_value=Path(d)):
                 self.assertEqual(sample.config_dir(), Path(d) / ".claude")
-            with mock.patch.object(sample.platform, "system", return_value="Linux"):
-                with self.assertRaises(FileNotFoundError):
-                    sample.read_token(Path(d) / "missing")
+            with mock.patch.object(sample.platform, "system", return_value="Linux"), self.assertRaises(FileNotFoundError):
+                sample.read_token(Path(d) / "missing")
 
 
 if __name__ == "__main__":

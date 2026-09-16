@@ -1,11 +1,12 @@
 """Run one `claude -p` prompt and return its token usage."""
 from __future__ import annotations
+
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ def parse_result(stdout: str, model_hint: str) -> RunUsage:
 
 
 def _default_runner(argv: list[str], prompt: str, env: dict) -> str:
-    p = subprocess.run(argv, input=prompt, capture_output=True, text=True, env=env, timeout=900)
+    p = subprocess.run(argv, input=prompt, capture_output=True, text=True, env=env, timeout=900, check=False)
     if p.returncode != 0:
         raise RuntimeError(f"claude exited {p.returncode}: {p.stderr[-500:]}")
     return p.stdout

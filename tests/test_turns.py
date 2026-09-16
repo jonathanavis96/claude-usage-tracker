@@ -4,7 +4,14 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tracker.turns import iter_turns, normalize_model, session_tokens_by_model, transcript_paths
+
+from tracker.turns import (
+    iter_turns,
+    normalize_model,
+    session_tokens_by_model,
+    transcript_paths,
+)
+
 
 def rec(mid, ts="2026-09-05T20:20:48.817Z", model="claude-fable-5-1", **usage):
     u = {"input_tokens": 2, "cache_creation_input_tokens": 41398, "cache_read_input_tokens": 24483, "output_tokens": 96}

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import platform
@@ -35,11 +36,11 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
 
-CLIENT_VERSION = "contrib-sample/0.1.0"
+CLIENT_VERSION = "contrib-sample/0.2.0"
 DEFAULT_ENDPOINT = "https://alldonesites.com/api/contribute"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 ID_FILE = Path.home() / ".claude-usage-contrib.json"
@@ -48,8 +49,8 @@ MAX_BODY_BYTES = 2048
 POST_TIMEOUT_S = 10
 USAGE_TIMEOUT_S = 30
 
-# Copied from tracker/turns.py so this file has no imports from the tracker.
-CANONICAL_MODELS = {"claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"}
+# Do not allow-list transcript model identifiers. A new or old model can still
+# move a meter; the collector must see it and withhold money when it is unpriced.
 _DATE_SUFFIX = re.compile(r"-\d{8}$")
 _1M_MARKER = re.compile(r"\s*\[1m\]$")
 CLASSES = ("input", "output", "cache_read", "cache_write")
@@ -60,8 +61,8 @@ CLASSES = ("input", "output", "cache_read", "cache_write")
 PLAN_KEYS = ("plan", "plan_type", "tier", "subscription", "subscription_type", "rate_limit_tier")
 
 FIELD_HELP = {
-    "contributor_id": "A random UUID made on this machine on the first run and kept in the id file "
-                      "so later samples from you can be paired. It is not linked to your account.",
+    "contributor_id": "A random UUID for this configured Claude profile and plan, stored only locally "
+                      "so later samples can be paired. It is not linked to your account.",
     "plan": "Your subscription plan (pro, max5, max20). Read from the usage endpoint if it exposes "
             "one, otherwise the value you gave with --plan, stored in the id file.",
     "plan_source": "Where `plan` came from: endpoint, stored (id file) or flag (--plan on this run).",
@@ -73,6 +74,8 @@ FIELD_HELP = {
                                     "cache_write) summed from your transcripts' usage fields for turns "
                                     "since the current five-hour window started. Counts only.",
     "tokens_since_seven_day_reset": "Same sums for turns since the current seven-day window started.",
+    "capture": "Collection time, window starts, and an ownership-filter status; no paths, account names, "
+               "session IDs, prompts, or credentials. Local transcripts are not proof of complete account capture.",
     "client_version": "The version string of this script, so the server can tell samples apart.",
 }
 
@@ -96,7 +99,7 @@ def read_token(cfg: Path) -> str:
     if platform.system() == "Darwin":
         try:
             out = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                                 capture_output=True, text=True, timeout=10)
+                                 capture_output=True, text=True, timeout=10, check=False)
         except (OSError, subprocess.SubprocessError):
             out = None
         if out is not None and out.returncode == 0 and out.stdout.strip():
@@ -149,10 +152,10 @@ def _parse_ts(s: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def normalize_model(model_id: str) -> str | None:
+def normalize_model(model_id: str) -> str:
     m = _1M_MARKER.sub("", model_id)
     m = _DATE_SUFFIX.sub("", m)
-    return m if m in CANONICAL_MODELS else None
+    return m if re.fullmatch(r"claude-[a-z0-9-]+", m) else "claude-unknown"
 
 
 def iter_turns(paths: Iterable[Path]) -> Iterator[tuple[datetime, str, dict[str, int]]]:
@@ -178,6 +181,7 @@ def iter_turns(paths: Iterable[Path]) -> Iterator[tuple[datetime, str, dict[str,
                     "output": int(u.get("output_tokens") or 0),
                     "cache_read": int(u.get("cache_read_input_tokens") or 0),
                     "cache_write": int(u.get("cache_creation_input_tokens") or 0),
+                    "cache_write_1h": int((u.get("cache_creation") or {}).get("ephemeral_1h_input_tokens") or 0),
                 })
 
 
@@ -219,6 +223,14 @@ def transcript_session_id(path: Path) -> str:
     return path.stem
 
 
+def own_session_filter_applies(cfg: Path, *, force: bool = False, disable: bool = False) -> bool:
+    """Whether own_session_filter actually filters: its one statement of the conditions,
+    so the body's `capture.ownership` can never claim a filter that did not run."""
+    if disable or not (force or _is_pooled_projects(cfg, cfg / "projects")):
+        return False
+    return (cfg / "session-env").is_dir()
+
+
 def own_session_filter(paths: list[Path], cfg: Path, *, force: bool = False, disable: bool = False) -> list[Path]:
     """Drop transcripts that are not this login's own session when the projects
     directory is pooled across accounts.
@@ -231,14 +243,9 @@ def own_session_filter(paths: list[Path], cfg: Path, *, force: bool = False, dis
     off. With no session-env directory the filter is a no-op even if pooled,
     since there is nothing to filter by.
     """
-    if disable:
-        return paths
-    projects = cfg / "projects"
-    if not (force or _is_pooled_projects(cfg, projects)):
+    if not own_session_filter_applies(cfg, force=force, disable=disable):
         return paths
     session_env = cfg / "session-env"
-    if not session_env.is_dir():
-        return paths
     own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
     kept = [p for p in paths if transcript_session_id(p) in own_ids]
     print(f"projects dir is shared with other accounts; kept {len(kept)} of {len(paths)} transcripts "
@@ -265,11 +272,11 @@ def tokens_since(turns: list[tuple[datetime, str, dict[str, int]]], start: datet
         if not (start <= ts <= now):
             continue
         model = normalize_model(raw_model)
-        if model is None:
-            continue
         acc = out.setdefault(model, {c: 0 for c in CLASSES})
         for c in CLASSES:
-            acc[c] += counts[c]
+            acc[c] += counts.get(c, 0)
+        if counts.get("cache_write_1h"):
+            acc["cache_write_1h"] = acc.get("cache_write_1h", 0) + counts["cache_write_1h"]
     return {m: out[m] for m in sorted(out)}
 
 
@@ -282,7 +289,7 @@ def load_id_file(path: Path) -> dict | None:
         d = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         return None
-    return d if isinstance(d, dict) and d.get("contributor_id") else None
+    return d if isinstance(d, dict) else None
 
 
 def save_id_file(path: Path, data: dict) -> None:
@@ -295,7 +302,8 @@ def save_id_file(path: Path, data: dict) -> None:
 
 # ---------------------------------------------------------------- body
 
-def build_body(contributor_id: str, plan: str, plan_source: str, usage: dict, turns: list, now: datetime) -> dict:
+def build_body(contributor_id: str, plan: str, plan_source: str, usage: dict, turns: list, now: datetime,
+               *, ownership: str = "local_transcripts_unverified") -> dict:
     fh, sd = _bucket(usage, "five_hour"), _bucket(usage, "seven_day")
     return {
         "contributor_id": contributor_id,
@@ -306,6 +314,12 @@ def build_body(contributor_id: str, plan: str, plan_source: str, usage: dict, tu
         "seven_day": sd,
         "tokens_since_five_hour_reset": tokens_since(turns, window_start(fh["resets_at"], timedelta(hours=5)), now),
         "tokens_since_seven_day_reset": tokens_since(turns, window_start(sd["resets_at"], timedelta(days=7)), now),
+        "capture": {
+            "collected_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "five_hour_started_at": (window_start(fh["resets_at"], timedelta(hours=5)) or now).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "seven_day_started_at": (window_start(sd["resets_at"], timedelta(days=7)) or now).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ownership": ownership,
+        },
         "client_version": CLIENT_VERSION,
     }
 
@@ -369,17 +383,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
+def identity_scope(cfg: Path) -> str:
+    """Local-only profile/account discriminator. Never put it in a payload."""
+    try:
+        account = json.loads((cfg / ".claude.json").read_text()).get("oauthAccount", {}).get("accountUuid")
+    except (OSError, ValueError, AttributeError):
+        account = None
+    material = str(cfg.resolve()) + ":" + (account if isinstance(account, str) else "unverified-account")
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
 def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None = None,
          ask=None, out=None) -> int:
     a = parse_args(sys.argv[1:] if argv is None else argv)
     out = out or sys.stdout
+    explicit_now = now
     now = now or datetime.now(timezone.utc)
     cfg = a.claude_dir or config_dir()
+    profile = identity_scope(cfg)
 
-    stored = load_id_file(a.id_file)
-    first_run = stored is None
-    if first_run:
-        stored = {"contributor_id": str(uuid.uuid4()), "created": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    stored = load_id_file(a.id_file) or {}
+    first_run = not bool(stored)
 
     try:
         usage = (usage_fetch or (lambda: fetch_usage(read_token(cfg))))()
@@ -390,12 +414,20 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
         print(f"error: could not read the usage endpoint: {e}", file=sys.stderr)
         return 2
 
+    now = explicit_now or datetime.now(timezone.utc)
     plan = endpoint_plan(usage)
     plan_source = "endpoint"
     if plan is None and a.plan:
         plan, plan_source = a.plan, "flag"
-    if plan is None and stored.get("plan"):
-        plan, plan_source = stored["plan"], "stored"
+    # A stored plan and id belong to one local profile. `plans` holds each profile's
+    # own plan, so alternating profiles never loses one. A file from before it holds
+    # a single plan and id, for `profile_scope`; a 0.1.0 file recorded no profile at
+    # all, so its plan and id go to the first profile that runs after the upgrade.
+    plans = stored.get("plans") if isinstance(stored.get("plans"), dict) else {}
+    legacy_owner = stored.get("profile_scope", profile)
+    stored_plan = plans.get(profile) or (stored.get("plan") if legacy_owner == profile else None)
+    if plan is None and stored_plan:
+        plan, plan_source = stored_plan, "stored"
     if plan is None:
         print("error: the usage endpoint does not expose your plan.\n"
               "If you are an assistant running this for someone: ASK THEM which plan they are on. "
@@ -404,7 +436,17 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
               "Then pass --plan pro|max5|max20 once; it is stored in the id file for later runs.",
               file=sys.stderr)
         return 2
+    identities = stored.setdefault("identities", {})
+    scope = f"{profile}:{plan}"
+    if scope not in identities:
+        # Migrate an old one-ID file for the same plan, preserving pairing.
+        legacy = stored.get("contributor_id") if legacy_owner == profile and stored.get("plan") == plan else None
+        identities[scope] = legacy if isinstance(legacy, str) else str(uuid.uuid4())
+    contributor_id = identities[scope]
+    stored["contributor_id"] = contributor_id  # compatibility with old local tooling
+    stored["profile_scope"] = profile
     stored["plan"] = plan
+    stored["plans"] = {**plans, profile: plan}
     stored["plan_from_endpoint"] = plan_source == "endpoint"
     save_id_file(a.id_file, stored)
 
@@ -413,7 +455,9 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
     paths = own_session_filter(transcript_paths(cfg / "projects", since), cfg,
                                force=a.own_sessions, disable=a.all_sessions)
     turns = list(iter_turns(paths))
-    body = build_body(stored["contributor_id"], plan, plan_source, usage, turns, now)
+    filtered = own_session_filter_applies(cfg, force=a.own_sessions, disable=a.all_sessions)
+    ownership = "filtered_local_transcripts" if filtered else "local_transcripts_unverified"
+    body = build_body(contributor_id, plan, plan_source, usage, turns, now, ownership=ownership)
 
     encoded = minify(body)
     if len(encoded.encode()) > MAX_BODY_BYTES:
@@ -433,7 +477,7 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
         print(f"\nContributor id and plan are stored in {a.id_file} (nothing else is written).", file=out)
         print("\nSame body as one line, for pasting into the page instead of sending from here:\n", file=out)
         print(compact_line(body), file=out)
-        print("", file=out)
+        print(file=out)
 
     if a.dry_run:
         print("dry run: not sending.", file=out)
@@ -444,7 +488,8 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
             if not sys.stdin.isatty():
                 print("not sending: no terminal to ask on (use --yes to send, --dry-run to only look).", file=out)
                 return 0
-            ask = lambda prompt: input(prompt)  # noqa: E731
+            def ask(prompt):
+                return input(prompt)
         if ask("Send? [y/N] ").strip().lower() not in ("y", "yes"):
             print("not sent.", file=out)
             return 0

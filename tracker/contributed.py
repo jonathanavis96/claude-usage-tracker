@@ -13,90 +13,80 @@ before tracker.publish:
   aggregate  the per-plan `contributed` block, written to data/contributed.json
              and carried into the public JSON by tracker.publish --contributed
 
-Aggregation rules, per plan (pro, max5, max20):
+Aggregation rules, per plan (pro, max5, max20). Only samples from the last
+EVIDENCE_DAYS count (`evidence` says how many were set aside and why), and a
+contributor is an unverified source id, not a proven account
+(`identity_basis`). Nothing here feeds the tracker's own rates or weekly
+figures; the block sits beside them (audit 2026-09-16, finding 14).
 
-  contributors, samples   distinct contributor ids and rows on that plan.
-  usd_per_pct             one combined figure per sample (not per model): every
-                          priced model present is valued in meter dollars exactly
-                          as tracker/publish.py values a probe row (list price
-                          x class_weight per class, x the model's meter_weight),
-                          summed, and divided by the sample's whole-meter
-                          utilization. A sample with any unpriced model present
-                          is skipped entirely (for this figure and for
-                          tokens_per_pct below, since the token attribution
-                          needs every model's price). Median across contributors
-                          (each contributor first reduced to the median of their
-                          own samples), null with no priced sample clearing the
-                          utilization floor.
-  tokens_per_pct[model]   the model's tokens since the five-hour reset, divided
-                          by its own share of the utilization rather than the
-                          whole meter: a model's dollar share of the sample's
-                          combined value gives its share u_m of the sample's
-                          utilization u (u_m = u x value_m / total), so
-                          tokens_per_pct_m = tokens_m / u_m. This is what fixes
-                          the old bug of dividing every model's tokens by the
-                          whole-meter percent, which understated every figure
-                          in a mixed-model sample. Uses the same utilization
-                          floor and priced-sample requirement as usd_per_pct.
-  spread                  on both: interquartile range across contributors over
-                          the median, null with fewer than two contributors.
-  weekly_windows          each contributor's consecutive samples inside one
-                          five-hour and one seven-day window (tracker/weekly.py's
-                          own pairing) give five-hour movement over seven-day
-                          movement per week; a contributor's figure is the median
-                          of their complete weeks, weighted by how many they have;
-                          the plan figure is the weighted median after dropping
-                          contributors more than MAX_DEVIATION (30%) from it;
-                          `measured` only once two contributors each have one
-                          complete week, else null with a `reason`.
-  points                  one entry per (thinned) sample from the last
-                          POINTS_DAYS days, for the page's per-contributor
-                          scatter/line chart: {"t", "usd_per_pct",
-                          "tokens_per_pct", "tokens_per_pct_week", "windows",
-                          "c", "coarse"}. `tokens_per_pct` is the sample's tokens
-                          since the five-hour reset over its five-hour percent and
-                          `tokens_per_pct_week` the same for the seven-day window;
-                          `windows` is their quotient, how many five-hour windows
-                          that reading says a week holds. Each is null when its own
-                          meter is under MIN_UTILIZATION or its token count is zero.
-                          Each window also carries a `..._by_model` map splitting the
-                          utilization by each model's dollar share (the attribution
-                          `tokens_per_pct` above uses), so one model's figure can be
-                          compared against the page's own per-model rate. It is omitted
-                          whole when any model present has no price, and a model whose
-                          slice of the meter is under MIN_UTILIZATION is left out of it:
-                          a model used almost entirely for cache_read has almost no
-                          priced value, and dividing its tokens by that slice runs away.
-                          `c` is a per-plan ordinal (0, 1, 2 ...) assigned in
-                          order of each contributor's first sample time in the
-                          window -- never the contributor id itself. `coarse`
-                          marks a sample under MIN_UTILIZATION (still included,
-                          unlike the medians above, so the chart can grey it
-                          out); `usd_per_pct` is null when utilization is <= 0
-                          or the sample is unpriced. Thinned to at most one
-                          point per contributor per UTC clock hour (the latest
-                          sample in that hour), then to the newest MAX_POINTS
-                          if still over, sorted by `t` ascending.
-
-A sample's five-hour percent covers every model used in that window; dollar-
-share attribution (above) is what recovers each model's own figure from that
-shared percent. The median across many contributors is what the page shows,
-and the probe stays the controlled reference (nothing here replaces a probe
-or passive figure).
+  contributors, samples   distinct source ids and current rows on that plan.
+  spans                   each source's readings paired into non-overlapping
+                          spans (`_paired_rows`): two readings of the same
+                          five-hour and seven-day windows, both carrying
+                          `capture` metadata, at least MIN_UTILIZATION of
+                          five-hour movement apart. A span's movement and
+                          tokens are the differences of its two readings, so
+                          cumulative snapshots never overlap. A last span that
+                          never reached the floor is kept as `coarse`.
+  usd_per_pct             one combined meter-dollar figure per span: every
+                          model present valued as tracker/publish.py values
+                          meter work (list price x class_weight per class, x
+                          the model's meter_weight), summed, over the span's
+                          five-hour movement. A span with any unpriced model is
+                          left out whole (finding 9). Each source contributes
+                          its newest non-coarse span; the figure is the median
+                          across sources, null with none.
+  tokens_per_pct[model]   the model's span tokens over its own slice of the
+                          movement, the slice being its dollar share of the
+                          span's value (u_m = u x value_m / total). Same span
+                          rules as usd_per_pct. A model with no figure is
+                          absent, never given the combined total (finding 8).
+  spread                  on both: interquartile range across sources over the
+                          median, null with fewer than two sources.
+  weekly_windows          each source's own newest paired week (tracker/weekly.py
+                          pairing: both meters' movement over the same readings)
+                          with its rounding interval, as `estimates`. `measured`
+                          stays null: sources are neither pooled, weighted nor
+                          dropped as outliers (findings 7 and 14).
+  points                  one entry per (thinned) span, for the page's
+                          per-contributor chart: {"t", "usd_per_pct",
+                          "tokens_per_pct", "tokens_per_pct_week", "c",
+                          "coarse"}, plus `tokens_per_pct_by_model` and
+                          `tokens_per_pct_week_by_model` when every model
+                          present is priced. `tokens_per_pct` is the span's
+                          tokens over its five-hour movement and
+                          `tokens_per_pct_week` its seven-day-map tokens over its
+                          seven-day movement; each is null when its own meter
+                          moved less than MIN_UTILIZATION or no token was
+                          counted. No windows-per-week quotient of the two is
+                          published: it divides two token estimators, not paired
+                          meter movement (finding 7). A model whose slice of the
+                          meter is under MIN_UTILIZATION is left out of the
+                          by-model maps: a model used almost entirely for
+                          cache_read has almost no priced value, and dividing its
+                          tokens by that slice runs away. `c` is a stable opaque
+                          per-plan pseudonym (a hash), never the source id.
+                          `coarse` marks a span under MIN_UTILIZATION.
+                          Thinned to at most one point per source per UTC clock
+                          hour (the latest span ending in that hour), then to the
+                          newest MAX_POINTS, sorted by `t` ascending.
 """
 from __future__ import annotations
+
+import hashlib
 import json
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median, quantiles
-from typing import Callable
 
 from .alert import ENV_FILE, USER_AGENT, read_env_file
 from .publish import meter_usd, write_json
+from .usage_api import same_reset
 from .weekly import parse_row, weekly_windows
 
 EXPORT_URL = "https://alldonesites.com/api/contribute/export"
@@ -104,9 +94,8 @@ SECRET_KEY = "NOTIFY_SEND_SECRET"
 PLANS = ("pro", "max5", "max20")
 CLASSES = ("input", "output", "cache_read", "cache_write")
 MIN_UTILIZATION = 5.0
-MAX_DEVIATION = 0.30
-MIN_CONTRIBUTORS = 2
 POINTS_DAYS = 30
+EVIDENCE_DAYS = 30
 MAX_POINTS = 2000
 FETCH_TIMEOUT_S = 20
 CURSOR_LINE_KEY = "next_cursor"
@@ -248,6 +237,8 @@ def _model_tokens(row: dict, field: str = "tokens_since_five_hour_reset") -> dic
             continue
         try:
             out[model] = {c: int(counts.get(c) or 0) for c in CLASSES}
+            if counts.get("cache_write_1h") is not None:
+                out[model]["cache_write_1h"] = int(counts["cache_write_1h"])
         except (TypeError, ValueError):
             continue
     return out
@@ -278,6 +269,14 @@ def _weighted_median(pairs: list[tuple[float, float]]) -> float:
     return pairs[-1][0]
 
 
+def _price(model: str, prices: dict) -> dict | None:
+    """The price row a model id is valued at. The old Fable id is priced as Fable 5.1
+    (an alias for pricing only: the row keeps the id it was observed under)."""
+    if model in prices:
+        return prices[model]
+    return prices.get("claude-fable-5-1") if model == "claude-fable-5" else None
+
+
 def _sample_values(r: dict, prices: dict) -> tuple[dict[str, dict], dict[str, float]] | None:
     """This sample's per-model token counts and meter-dollar values, or None to skip it.
 
@@ -289,11 +288,12 @@ def _sample_values(r: dict, prices: dict) -> tuple[dict[str, dict], dict[str, fl
     present = {m: c for m, c in _model_tokens(r).items() if sum(c.values()) > 0}
     if not present:
         return None
-    if any(m not in prices for m in present):
+    resolved = {m: _price(m, prices) for m in present}
+    if any(p is None for p in resolved.values()):
         return None
     values = {}
     for model, counts in present.items():
-        price = prices[model]
+        price = resolved[model]
         values[model] = meter_usd(counts, price) * price.get("meter_weight", 1.0)
     return present, values
 
@@ -319,9 +319,11 @@ def _per_pct(rows_by_contributor: dict[str, list[dict]], prices: dict) -> tuple[
                 continue
             usd.setdefault(cid, []).append(total / u)
             for model, value in values.items():
-                if value <= 0:
+                # The chart's own floor on a model's slice of the meter (_per_pct_both_windows):
+                # one precision rule for points and summaries (audit finding 8).
+                if value <= 0 or u * value / total < MIN_UTILIZATION:
                     continue
-                model_total = sum(present[model].values())
+                model_total = sum(present[model].get(c, 0) for c in CLASSES)
                 # u_m = u * value_m / total; tokens_per_pct_m = model_total / u_m.
                 tokens.setdefault(model, {}).setdefault(cid, []).append(model_total * total / (value * u))
 
@@ -376,12 +378,13 @@ def _per_pct_both_windows(row: dict, prices: dict) -> tuple[dict | None, dict | 
         if u is None or u < MIN_UTILIZATION:
             return None
         present = {m: c for m, c in _model_tokens(row, field).items() if sum(c.values()) > 0}
-        total_tokens = sum(sum(c.values()) for c in present.values())
+        total_tokens = sum(sum(c.get(k, 0) for k in CLASSES) for c in present.values())
         if total_tokens <= 0:
             return None
         out: dict = {"all": total_tokens / u}
-        if present and all(m in prices for m in present):
-            values = {m: meter_usd(c, prices[m]) * prices[m].get("meter_weight", 1.0)
+        resolved = {m: _price(m, prices) for m in present}
+        if present and all(p is not None for p in resolved.values()):
+            values = {m: meter_usd(c, resolved[m]) * resolved[m].get("meter_weight", 1.0)
                       for m, c in present.items()}
             total_value = sum(values.values())
             if total_value > 0:
@@ -399,7 +402,7 @@ def _per_pct_both_windows(row: dict, prices: dict) -> tuple[dict | None, dict | 
                     # collapses and the quotient runs away.
                     if u_m < MIN_UTILIZATION:
                         continue
-                    by_model[model] = sum(present[model].values()) / u_m
+                    by_model[model] = sum(present[model].get(c, 0) for c in CLASSES) / u_m
                 if by_model:
                     out["by_model"] = by_model
         return out
@@ -426,8 +429,11 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
             entries.sort(key=lambda e: e[0])
             per_contributor[cid] = entries
 
-    ordinals = {cid: i for i, cid in enumerate(
-        sorted(per_contributor, key=lambda cid: per_contributor[cid][0][0]))}
+    # Stable opaque per-plan pseudonym: identifiers cannot shift just because a
+    # source enters/leaves the rolling period, and the submitted UUID is not
+    # exposed.  The caller invokes this separately for each plan.
+    ordinals = {cid: int.from_bytes(hashlib.sha256(("contrib:" + cid).encode()).digest()[:4], "big")
+                for cid in per_contributor}
 
     points: list[tuple[datetime, dict]] = []
     for cid, entries in per_contributor.items():
@@ -446,17 +452,13 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
                 if priced is not None:
                     _, values = priced
                     usd_per_pct = round(sum(values.values()) / u, 4)
-            # Both windows, each normalised by its own tokens. Their quotient is how many
-            # five-hour windows a week holds: the week's capacity over the window's, with
-            # the traffic cancelling on both sides. (A bare five-hour percent over a
-            # seven-day percent is not that -- the seven-day meter also carries a week of
-            # other work, so it understates the count badly.)
+            # Never derive windows/week from two cumulative raw-token maps.
+            # Their model and cache mixes differ, so the work does not cancel.
             five, seven = _per_pct_both_windows(r, prices)
-            windows = round(seven["all"] / five["all"], 3) if five and seven else None
             point = {"t": ts_norm, "usd_per_pct": usd_per_pct,
                      "tokens_per_pct": round(five["all"]) if five else None,
                      "tokens_per_pct_week": round(seven["all"]) if seven else None,
-                     "windows": windows, "c": c, "coarse": coarse}
+                     "c": c, "coarse": coarse}
             for key, side in (("tokens_per_pct_by_model", five), ("tokens_per_pct_week_by_model", seven)):
                 if side and "by_model" in side:
                     point[key] = {m: round(v) for m, v in sorted(side["by_model"].items())}
@@ -477,33 +479,133 @@ def _contributor_weeks(rows: list[dict], now: datetime) -> list[float]:
 
 
 def _weekly(rows_by_contributor: dict[str, list[dict]], now: datetime) -> dict:
-    per_contributor: list[tuple[float, float]] = []  # (median windows, weeks)
+    """Each source's own paired weekly estimate; never pooled, weighted or outlier-rejected.
+
+    Every source's rows are paired as tracker/weekly.py pairs the tracker's own log
+    (both meters' movement over the same readings, finding 3), and the source's
+    newest week is its estimate, with that week's rounding interval. Nothing
+    becomes a plan figure (`measured` stays null): the sources are unverified
+    identities with unverified capture, and a source far from the others is kept
+    and shown, not dropped (audit 2026-09-16, finding 14).
+    """
+    estimates = []
+    complete = weeks = 0
     for rows in rows_by_contributor.values():
-        weeks = _contributor_weeks(rows, now)
-        if weeks:
-            per_contributor.append((median(weeks), float(len(weeks))))
-    total_contributors = len(rows_by_contributor)
-    out = {"measured": None, "reason": None, "contributors": total_contributors,
-           "with_complete_week": len(per_contributor),
-           "dropped": 0, "weeks": int(sum(w for _, w in per_contributor))}
-    if not rows_by_contributor:
-        out["reason"] = "no samples"
-        return out
-    if len(per_contributor) < MIN_CONTRIBUTORS:
-        who = "none" if not per_contributor else str(len(per_contributor))
-        suffix = " yet" if not per_contributor else ""
-        out["reason"] = (f"{total_contributors} contributor{'s' if total_contributors != 1 else ''}, "
-                         f"{who} with a complete week{suffix}; {MIN_CONTRIBUTORS} needed")
-        return out
-    centre = _weighted_median(per_contributor)
-    kept = [(v, w) for v, w in per_contributor if abs(v - centre) <= MAX_DEVIATION * centre]
-    out["dropped"] = len(per_contributor) - len(kept)
-    out["weeks"] = int(sum(w for _, w in kept))
-    if len(kept) < MIN_CONTRIBUTORS:
-        out["reason"] = f"contributors more than {int(MAX_DEVIATION * 100)}% apart; {MIN_CONTRIBUTORS} agreeing needed"
-        return out
-    out["measured"] = round(_weighted_median(kept), 2)
-    return out
+        ordered = sorted(rows, key=lambda r: r.get("ts") or "")
+        history = weekly_windows([parse_row(r) for r in ordered], now=now).get("history", [])
+        closed = [h for h in history if not h.get("partial")]
+        weeks += len(closed)
+        complete += bool(closed)
+        if history:
+            h = history[-1]
+            estimates.append({"value": h["windows"], "interval": h.get("rounding_interval"),
+                              "five_hour_pct": h["five_hour_pct"], "seven_day_pct": h["seven_day_pct"],
+                              "pieces": h.get("pieces"), "through": h["week_ending"], "partial": h.get("partial", True)})
+    n = len(rows_by_contributor)
+    if not n:
+        reason = "no samples"
+    else:
+        have = f"{complete} with a complete week" if complete else "none with a complete week yet"
+        reason = f"{n} contributor{'s' if n != 1 else ''}, {have}; per-source estimates only, never pooled into a plan figure"
+    return {"measured": None, "reason": reason, "contributors": n, "with_complete_week": complete,
+            "dropped": 0, "weeks": weeks, "estimates": sorted(estimates, key=lambda e: (e["through"], e["value"])),
+            "quality": "conditional_paired_meter_deltas"}
+
+
+def _paired_rows(rows: list[dict]) -> list[dict]:
+    """One source's non-overlapping spans between two readings of the same windows.
+
+    A span runs from an anchor reading to the first later reading of the same
+    five-hour and seven-day windows (resets compared with the endpoint's jitter
+    tolerance) that has moved the five-hour meter by MIN_UTILIZATION; the span's
+    meter movement and token counts are the differences of the two readings, so no
+    span shares traffic with another (audit 2026-09-16, finding 14). A reading
+    without `capture` metadata (contrib/sample.py before 0.2.0) cannot anchor or
+    end a span. A span whose token maps are inconsistent (a count falls, or the
+    one-hour cache writes exceed all cache writes) is not published. When the
+    windows end before the meter has moved far enough, that last short span is
+    kept as a coarse one: the chart shows it, the summaries do not use it.
+    """
+    result = []
+    anchor = pending = None
+
+    def span(a: dict, row: dict) -> dict | None:
+        maps = []
+        for field in ("tokens_since_five_hour_reset", "tokens_since_seven_day_reset"):
+            before, after = _model_tokens(a, field), _model_tokens(row, field)
+            delta = {}
+            for model in sorted(set(before) | set(after)):
+                counts = {c: after.get(model, {}).get(c, 0) - before.get(model, {}).get(c, 0)
+                          for c in (*CLASSES, "cache_write_1h")}
+                if any(n < 0 for n in counts.values()) or counts["cache_write_1h"] > counts["cache_write"]:
+                    return None
+                delta[model] = counts
+            maps.append(delta)
+        return dict(row, five_hour=dict(row["five_hour"], utilization=_utilization(row) - _utilization(a)),
+                    seven_day=dict(row["seven_day"], utilization=row["seven_day"]["utilization"] - a["seven_day"]["utilization"]),
+                    tokens_since_five_hour_reset=maps[0], tokens_since_seven_day_reset=maps[1],
+                    evidence_start=a["ts"], quality="conditional_paired_local_transcripts")
+
+    def close() -> None:
+        if anchor is not None and pending is not None:
+            short = span(anchor, pending)
+            if short is not None and short["five_hour"]["utilization"] > 0:
+                result.append(short)
+
+    for row in sorted(rows, key=lambda r: r.get("ts", "")):
+        if not row.get("capture"):
+            close()
+            anchor = pending = None
+            continue
+        if anchor is None:
+            anchor = row
+            continue
+        same = all((row.get(m) or {}).get("resets_at") and (anchor.get(m) or {}).get("resets_at")
+                   and same_reset(row[m]["resets_at"], anchor[m]["resets_at"]) for m in ("five_hour", "seven_day"))
+        d5 = _utilization(row) - _utilization(anchor) if same else -1
+        d7 = row["seven_day"]["utilization"] - anchor["seven_day"]["utilization"] if same else -1
+        if not same or d5 < 0 or d7 < 0:
+            close()
+            anchor, pending = row, None
+            continue
+        if d5 < MIN_UTILIZATION:
+            pending = row
+            continue
+        paired = span(anchor, row)
+        if paired is not None:
+            result.append(paired)
+        anchor, pending = row, None
+    close()
+    return result
+
+
+def _current_rows(rows: list[dict], now: datetime) -> tuple[dict[str, list[dict]], dict]:
+    """Return the current evidence cohort and enough freshness detail to audit it."""
+    cutoff = now - timedelta(days=EVIDENCE_DAYS)
+    current: dict[str, list[dict]] = {}
+    old = bad_time = 0
+    newest: datetime | None = None
+    for r in rows:
+        ts = _iso_z(r.get("ts"))
+        if ts is None:
+            bad_time += 1
+            continue
+        dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        if dt < cutoff or dt > now:
+            old += 1
+            continue
+        current.setdefault(str(r.get("contributor_id")), []).append(r)
+        if newest is None or dt > newest:
+            newest = dt
+    return current, {
+        "as_of": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        "current_since": cutoff.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        "freshest_sample_at": newest.isoformat(timespec="seconds") if newest else None,
+        "stale": newest is None or newest < now - timedelta(days=7),
+        "reason": "no current samples" if newest is None else None,
+        "ignored_old_samples": old,
+        "ignored_invalid_time_samples": bad_time,
+    }
 
 
 def aggregate(rows: list[dict], now: datetime, prices: dict | None = None) -> dict:
@@ -527,18 +629,29 @@ def aggregate(rows: list[dict], now: datetime, prices: dict | None = None) -> di
         by_plan[plan].setdefault(k[0], []).append(r)
 
     out: dict = {"updated_at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
-                 "min_utilization": MIN_UTILIZATION, "max_deviation": MAX_DEVIATION,
-                 "min_contributors": MIN_CONTRIBUTORS}
+                 "min_utilization": MIN_UTILIZATION, "evidence_window_days": EVIDENCE_DAYS}
     for plan in PLANS:
-        contributors = by_plan[plan]
-        tokens_per_pct, usd_per_pct = _per_pct(contributors, prices)
+        all_rows = [r for source_rows in by_plan[plan].values() for r in source_rows]
+        contributors, evidence = _current_rows(all_rows, now)
+        # Cumulative readings overlap.  Each current source contributes its
+        # newest reading to a current cross-source statistic, avoiding a
+        # historical/oversampled median.
+        paired = {cid: _paired_rows(source_rows) for cid, source_rows in contributors.items()}
+        latest = {cid: [r for r in spans if _utilization(r) >= MIN_UTILIZATION][-1:] for cid, spans in paired.items()}
+        latest = {cid: spans for cid, spans in latest.items() if spans}
+        tokens_per_pct, usd_per_pct = _per_pct(latest, prices)
         out[plan] = {
             "contributors": len(contributors),
             "samples": sum(len(v) for v in contributors.values()),
             "tokens_per_pct": tokens_per_pct,
             "usd_per_pct": usd_per_pct,
             "weekly_windows": _weekly(contributors, now),
-            "points": _points(contributors, prices, now),
+            "points": _points(paired, prices, now),
+            "quality": "conditional_paired_local_transcripts",
+            "identity_basis": "unverified_source_ids",
+            "missing_reasons": ["two same-reset samples with >=5 points of movement and priced tokens required",
+                                "local transcript capture and subscription billing are not independently verified"],
+            "evidence": dict(evidence, samples_without_capture=sum(1 for rs in contributors.values() for r in rs if not r.get("capture"))),
         }
     return out
 

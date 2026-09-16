@@ -5,6 +5,7 @@ import unittest
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
+
 from tracker.meter_log import NO_RETRY_FETCH, account_identity, main, sample
 from tracker.samples import parse_meter_log, parse_moonlighter
 from tracker.weekly import parse_row
