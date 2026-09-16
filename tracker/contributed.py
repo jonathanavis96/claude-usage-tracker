@@ -49,6 +49,19 @@ Aggregation rules, per plan (pro, max5, max20):
                           contributors more than MAX_DEVIATION (30%) from it;
                           `measured` only once two contributors each have one
                           complete week, else null with a `reason`.
+  points                  one entry per (thinned) sample from the last
+                          POINTS_DAYS days, for the page's per-contributor
+                          scatter/line chart: {"t", "usd_per_pct", "c", "coarse"}.
+                          `c` is a per-plan ordinal (0, 1, 2 ...) assigned in
+                          order of each contributor's first sample time in the
+                          window -- never the contributor id itself. `coarse`
+                          marks a sample under MIN_UTILIZATION (still included,
+                          unlike the medians above, so the chart can grey it
+                          out); `usd_per_pct` is null when utilization is <= 0
+                          or the sample is unpriced. Thinned to at most one
+                          point per contributor per UTC clock hour (the latest
+                          sample in that hour), then to the newest MAX_POINTS
+                          if still over, sorted by `t` ascending.
 
 A sample's five-hour percent covers every model used in that window; dollar-
 share attribution (above) is what recovers each model's own figure from that
@@ -62,7 +75,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median, quantiles
 from typing import Callable
@@ -78,6 +91,8 @@ CLASSES = ("input", "output", "cache_read", "cache_write")
 MIN_UTILIZATION = 5.0
 MAX_DEVIATION = 0.30
 MIN_CONTRIBUTORS = 2
+POINTS_DAYS = 30
+MAX_POINTS = 2000
 FETCH_TIMEOUT_S = 20
 CURSOR_LINE_KEY = "next_cursor"
 
@@ -315,6 +330,63 @@ def _per_pct(rows_by_contributor: dict[str, list[dict]], prices: dict) -> tuple[
     return tokens_out, block(usd, lambda x: round(x, 4))
 
 
+def _iso_z(ts) -> str | None:
+    """`ts` normalised to "YYYY-MM-DDTHH:MM:SSZ" (UTC, seconds), or None if unparseable."""
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datetime) -> list[dict]:
+    """Anonymised per-sample points for the page's contributor chart, see the
+    module docstring's `points` entry for the shape and thinning rules."""
+    cutoff = now - timedelta(days=POINTS_DAYS)
+    per_contributor: dict[str, list[tuple[datetime, str, dict]]] = {}
+    for cid, rows in rows_by_contributor.items():
+        entries = []
+        for r in rows:
+            ts_norm = _iso_z(r.get("ts"))
+            if ts_norm is None:
+                continue
+            dt = datetime.strptime(ts_norm, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            if dt < cutoff or dt > now:
+                continue
+            entries.append((dt, ts_norm, r))
+        if entries:
+            entries.sort(key=lambda e: e[0])
+            per_contributor[cid] = entries
+
+    ordinals = {cid: i for i, cid in enumerate(
+        sorted(per_contributor, key=lambda cid: per_contributor[cid][0][0]))}
+
+    points: list[tuple[datetime, dict]] = []
+    for cid, entries in per_contributor.items():
+        c = ordinals[cid]
+        by_hour: dict[tuple, tuple] = {}
+        for dt, ts_norm, r in entries:
+            bucket = (dt.year, dt.month, dt.day, dt.hour)
+            if bucket not in by_hour or dt > by_hour[bucket][0]:
+                by_hour[bucket] = (dt, ts_norm, r)
+        for dt, ts_norm, r in by_hour.values():
+            u = _utilization(r)
+            coarse = u is None or u < MIN_UTILIZATION
+            usd_per_pct = None
+            if u is not None and u > 0:
+                priced = _sample_values(r, prices)
+                if priced is not None:
+                    _, values = priced
+                    total = sum(values.values())
+                    usd_per_pct = round(total / u, 4)
+            points.append((dt, {"t": ts_norm, "usd_per_pct": usd_per_pct, "c": c, "coarse": coarse}))
+
+    points.sort(key=lambda p: p[0])
+    if len(points) > MAX_POINTS:
+        points = points[-MAX_POINTS:]
+    return [p for _, p in points]
+
+
 def _contributor_weeks(rows: list[dict], now: datetime) -> list[float]:
     """The `windows` figure of each complete week one contributor's samples pair into."""
     ordered = sorted(rows, key=lambda r: r.get("ts") or "")
@@ -385,6 +457,7 @@ def aggregate(rows: list[dict], now: datetime, prices: dict | None = None) -> di
             "tokens_per_pct": tokens_per_pct,
             "usd_per_pct": usd_per_pct,
             "weekly_windows": _weekly(contributors, now),
+            "points": _points(contributors, prices, now),
         }
     return out
 
