@@ -2,7 +2,8 @@ import json
 import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from tracker.detect import current_regime_points, detect_changes, detect_weighted_changes, latest_change, pooled_windows
+from tracker.detect import (current_regime_points, detect_changes, detect_smoothed_changes, detect_weighted_changes,
+                            latest_change, pooled_windows)
 
 
 def readings(values, start=datetime(2026, 8, 20), step_days=7):
@@ -264,3 +265,35 @@ class WeightedDetectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SmoothedDetectTests(unittest.TestCase):
+    """detect_smoothed_changes: a rolling week's median against the regime before it."""
+
+    def daily(self, values, start=datetime(2026, 9, 5)):
+        return readings(values, start=start, step_days=1)
+
+    def test_a_noisy_flat_passive_series_fires_nothing(self):
+        # jwork's real per-day figures 2026-09-05..15 with sub-agents counted, scaled: cv 0.15.
+        r = self.daily([1.91, 1.81, 1.52, 2.21, 2.20, 1.97, 1.88, 1.73, 1.39, 1.80, 2.05, 1.70])
+        self.assertEqual(detect_changes(r)[:1] and True, True)  # the old rule fires on this series
+        self.assertEqual(detect_smoothed_changes(r), [])
+
+    def test_a_sustained_step_fires_and_is_dated_where_the_new_level_began(self):
+        r = self.daily([100] * 8 + [140] * 8)
+        ev = detect_smoothed_changes(r)
+        self.assertEqual(len(ev), 1)
+        self.assertEqual((ev[0].direction, ev[0].percent), ("increased", 40))
+        self.assertEqual(ev[0].date, r[8][0].date())
+
+    def test_a_two_day_spike_does_not_fire(self):
+        r = self.daily([100] * 8 + [160, 160] + [100] * 6)
+        self.assertEqual(detect_smoothed_changes(r), [])
+
+    def test_needs_min_points_on_both_sides(self):
+        self.assertEqual(detect_smoothed_changes(self.daily([100, 100, 100, 150, 150, 150, 150])), [])
+
+    def test_does_not_refire_within_the_new_regime(self):
+        r = self.daily([100] * 8 + [70] * 20)
+        ev = detect_smoothed_changes(r)
+        self.assertEqual([(e.direction, e.percent) for e in ev], [("decreased", 30)])

@@ -9,6 +9,12 @@ from statistics import median
 from typing import Iterable, Iterator
 
 CANONICAL_MODELS = {"claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"}
+#: Older ids priced as a current model. Fable 5 lists at Fable 5.1's prices for
+#: input, output and cache_write (its cache_read is $1 against $0.25, a class the
+#: meter weights at 0.0), so its meter value is Fable 5.1's. Sub-agents on gs
+#: still run it (799 turns in 2026-09-10..16), and unpriced it dropped whole
+#: stretches from the passive join.
+MODEL_ALIASES = {"claude-fable-5": "claude-fable-5-1"}
 _DATE_SUFFIX = re.compile(r"-\d{8}$")
 _1M_MARKER = re.compile(r"\s*\[1m\]$")
 
@@ -56,12 +62,13 @@ def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
 
 def normalize_model(model_id: str) -> str | None:
     """Strip a date suffix (-YYYYMMDD) or a [1m] marker and map to one of the
-    three current model ids. Anything that still doesn't match one of those
-    three after stripping (an older version, a haiku variant, `<synthetic>`)
-    is dropped -- returns None.
+    three current model ids, via MODEL_ALIASES for an older id priced the same.
+    Anything that still doesn't match one of those three (a haiku variant,
+    `<synthetic>`) is dropped -- returns None.
     """
     m = _1M_MARKER.sub("", model_id)
     m = _DATE_SUFFIX.sub("", m)
+    m = MODEL_ALIASES.get(m, m)
     return m if m in CANONICAL_MODELS else None
 
 
@@ -97,6 +104,20 @@ def session_tokens_by_model(paths: Iterable[Path], now: datetime | None = None,
             continue
         totals.setdefault(model, []).append(sum(t.total for t in turns))
     return {model: round(median(values)) for model, values in totals.items()}
+
+
+def transcript_session_id(path: Path) -> str:
+    """The session a transcript belongs to: its stem, or for a sub-agent file
+    (`<session>/subagents/agent-<id>.jsonl`) the parent session's id.
+
+    Sub-agents run under the parent's login and spend on its meter, but
+    session-env has no entry of their own, so matching the stem alone dropped
+    every one of them from jwork's join (191 of 1152 files, 45% of the turns,
+    2026-09-10..16). contrib/sample.py restates this rule; it does not import tracker/.
+    """
+    if path.parent.name == "subagents":
+        return path.parent.parent.name
+    return path.stem
 
 
 def transcript_paths(root: Path, since: datetime | None) -> list[Path]:

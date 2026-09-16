@@ -59,10 +59,6 @@ def gs_passive_report(*, account="dave", end, cache_write, delta_pct=10, model="
 # event firing on the value alone.
 GS_PASSIVE_MATCHING_PROBE = gs_passive_report(end="2026-09-06T08:00:00+00:00", cache_write=352400)
 
-# A calibration that leaves passive readings exactly as measured, for tests
-# whose point is the join itself, not the scaling `--calibrate` computes.
-CALIBRATION_1X = {"ratio": 1.0, "window": ["2026-09-01", "2026-09-15"]}
-
 
 class UsdPerPctTests(unittest.TestCase):
     def test_usd_per_pct_brief_example(self):
@@ -321,15 +317,15 @@ class BuildTests(unittest.TestCase):
 
 
 class GsPassiveTests(unittest.TestCase):
-    """Passive readings from tracker.gs_passive (issue #39) extending the probe series."""
+    """Passive readings from tracker.gs_passive (issue #39) are the published series
+    on their own since 2026-09-16; probe rows never join them (the scales differ)."""
 
-    def test_passive_reading_extends_the_series_and_becomes_the_newest(self):
+    def test_passive_readings_are_the_series_and_probe_rows_only_fill_in(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE,
-                              passive_calibration=CALIBRATION_1X)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
         self.assertEqual(j["instrument"], "passive")
-        self.assertEqual(j["passive_calibration"], CALIBRATION_1X)
+        self.assertNotIn("passive_calibration", j)
         self.assertEqual(j["last_sample_at"], "2026-09-06T08:00:00+00:00")
         self.assertEqual(j["passive_accounts"], ["dave"])
         r = j["rates"]["claude-sonnet-5"]
@@ -337,9 +333,34 @@ class GsPassiveTests(unittest.TestCase):
         self.assertEqual(r["measured_at"], "2026-09-06T08:00:00+00:00")
         # probed_at is unchanged by a passive reading: still this model's own latest probe row.
         self.assertEqual(r["probed_at"], "2026-09-05T08:00:00+00:00")
-        # An unprobed model reads "passive" too -- a passive reading is model-agnostic,
-        # so it can't tell the page this is specifically an opus day either.
         self.assertEqual(j["rates"]["claude-opus-5"]["source"], "passive")
+        # The value is the passive stretch's own: $1.3215 over 10%, x100 = 13.215 per window.
+        self.assertAlmostEqual(r["api_value_per_window"], 13.22, delta=0.01)
+        # The class split is the gs accounts' own mix, not masterrig's passive.json.
+        self.assertEqual(r["split"], {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 1.0})
+        # Probe days are not part of the series, so history before the first passive
+        # day is held, and no day reads "probe".
+        hist = j["history"]["claude-sonnet-5"]
+        self.assertEqual({h["source"] for h in hist if h["date"] < "2026-09-06"}, {"held"})
+        self.assertEqual([h["source"] for h in hist if h["date"] == "2026-09-06"], ["passive"])
+
+    def test_a_passive_series_far_from_the_probe_level_fires_no_change_event(self):
+        # The whole point of not joining: a probe steady at 97 next to passive days
+        # at 150 used to read as a +55% step. Now the probe rows are not in the series.
+        prices = {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1.0}}
+
+        def steady_probe(day):
+            return {"ts": f"2026-09-{day:02d}T08:00:00+00:00", "model": "claude-sonnet-5", "effort": "low",
+                    "tokens_per_pct": 970_000, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 970_000},
+                    "prompts": 8, "tick_from": 10, "tick_to": 11, "elapsed_s": 60, "account": "dave"}
+
+        rows = [steady_probe(d) for d in range(1, 6)]
+        raw_passive = gs_passive_report(end="2026-09-06T08:00:00+00:00", cache_write=150_000_000, delta_pct=100)
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, {"split": {"cache_write": 1.0}}, EFFORT, prices, now, gs_passive=raw_passive)
+        self.assertIsNone(j["last_change"])
+        self.assertEqual(j["instrument"], "passive")
+        self.assertAlmostEqual(j["rates"]["claude-sonnet-5"]["api_value_per_window"], 150.0, delta=1e-6)
 
     def test_no_gs_passive_keeps_source_probe_as_before(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
@@ -349,22 +370,38 @@ class GsPassiveTests(unittest.TestCase):
         self.assertEqual(j["rates"]["claude-sonnet-5"]["source"], "probe")
         self.assertEqual(j["passive_accounts"], [])
 
+    def test_a_gs_passive_report_with_no_priced_reading_falls_back_to_the_probe_series(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        empty = {"accounts": {"jwork": {"stretches": [{"status": "unpriced", "end": "2026-09-06T08:00:00+00:00",
+                                                        "delta_pct": 10, "tokens": {}}]}}}
+        probe_only = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=empty)
+        self.assertEqual(j["instrument"], "probe")
+        self.assertEqual(j["passive_accounts"], [])
+        self.assertEqual({k: v for k, v in j.items() if k != "passive_accounts"},
+                         {k: v for k, v in probe_only.items() if k != "passive_accounts"})
+
     def test_freshness_guard_is_satisfied_by_a_fresh_passive_reading_when_probes_are_stale(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]  # 2026-09-01..05
         now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)  # 21 days past the last probe
-        # Without a passive reading this exact series is already covered by
-        # FailurePathTests.test_stale_last_sample_refuses; here a passive reading
-        # 1 day old keeps the newest-reading-of-either-kind guard satisfied.
         fresh_passive = gs_passive_report(end="2026-09-25T08:00:00+00:00", cache_write=352400)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=fresh_passive,
-                              passive_calibration=CALIBRATION_1X)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=fresh_passive)
         self.assertEqual(j["instrument"], "passive")
         self.assertEqual(j["last_sample_at"], "2026-09-25T08:00:00+00:00")
 
+    def test_a_stale_passive_series_refuses_even_with_a_fresh_probe_row(self):
+        # The guard reads the series that is published. A probe row run by hand
+        # yesterday does not freshen a passive series that stopped three weeks ago.
+        rows = [probe(25, "claude-sonnet-5", 420000)]
+        now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+        stale_passive = gs_passive_report(end="2026-09-05T08:00:00+00:00", cache_write=352400)
+        with self.assertRaises(ValueError):
+            build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=stale_passive)
+
     def test_publishing_works_with_zero_probe_rows(self):
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE,
-                              passive_calibration=CALIBRATION_1X)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
         self.assertEqual(j["instrument"], "passive")
         self.assertEqual(j["probe_accounts"], [])
         self.assertEqual(j["passive_accounts"], ["dave"])
@@ -374,68 +411,44 @@ class GsPassiveTests(unittest.TestCase):
         self.assertIsNone(r["probe_effort"])
 
     def test_zero_probe_rows_and_no_split_anywhere_refuses_cleanly(self):
-        # Review finding: with no probe rows there is no row split to fall back to, and
-        # a passive.json with no "split" key leaves passive_split == {} --
-        # blended_price_per_token({}, price) is 0.0, which would ZeroDivisionError in the
-        # rates loop below. That must surface as a ValueError (which main() already
-        # catches), never the bare ZeroDivisionError.
+        # With no probe rows there is no row split to fall back to, a passive.json with
+        # no "split" gives nothing, and a gs report whose stretches carry no tokens gives
+        # nothing either: blended_price_per_token({}, price) is 0.0, which would
+        # ZeroDivisionError in the rates loop. That must surface as a ValueError.
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         passive_without_split = {k: v for k, v in PASSIVE.items() if k != "split"}
+        tokenless = {"accounts": {"dave": {"stretches": [
+            {"status": "accepted", "end": "2026-09-06T08:00:00+00:00", "delta_pct": 10, "tokens": {}}]}}}
         with self.assertRaises(ValueError):
-            build_public_json([], passive_without_split, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE,
-                              passive_calibration=CALIBRATION_1X)
+            build_public_json([], passive_without_split, EFFORT, PRICES, now, gs_passive=tokenless)
 
     def test_no_readings_at_all_refuses(self):
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
         with self.assertRaises(ValueError):
             build_public_json([], PASSIVE, EFFORT, PRICES, now)
 
-    def test_missing_calibration_ignores_passive_readings_and_matches_probe_only_output(self):
-        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
-        probe_only = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
-        with_uncalibrated_passive = build_public_json(rows, PASSIVE, EFFORT, PRICES, now,
-                                                       gs_passive=GS_PASSIVE_MATCHING_PROBE)
-        # passive_accounts is informational (which gs accounts measured anything), and is
-        # the one field that legitimately differs -- it doesn't depend on the join at all.
-        self.assertEqual(with_uncalibrated_passive["passive_accounts"], ["dave"])
-        without_passive_accounts = {k: v for k, v in with_uncalibrated_passive.items() if k != "passive_accounts"}
-        self.assertEqual(without_passive_accounts, {k: v for k, v in probe_only.items() if k != "passive_accounts"})
-        self.assertIsNone(with_uncalibrated_passive["passive_calibration"])
-        self.assertEqual(with_uncalibrated_passive["instrument"], "probe")
-
-    def test_a_passive_reading_is_divided_by_the_calibration_ratio_before_joining(self):
-        # A raw passive reading of 150 next to a probe steady at 97 would read as a
-        # real step (roughly +55%); divided by a 1.5 ratio it joins at 100, close
-        # enough to 97 that no change event fires.
-        prices = {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1.0}}
-
-        def steady_probe(day):
-            return {"ts": f"2026-09-{day:02d}T08:00:00+00:00", "model": "claude-sonnet-5", "effort": "low",
-                    "tokens_per_pct": 970_000, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 970_000},
-                    "prompts": 8, "tick_from": 10, "tick_to": 11, "elapsed_s": 60, "account": "dave"}
-
-        rows = [steady_probe(d) for d in range(1, 6)]  # 97 dollars per window, every day
-        # A whole-window (delta_pct=100) stretch, so its own dollars-per-window IS its
-        # meter dollars: 150,000,000 cache-write tokens at $1/Mtok is $150.
-        raw_passive = gs_passive_report(end="2026-09-06T08:00:00+00:00", cache_write=150_000_000, delta_pct=100)
-        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, {"split": {"cache_write": 1.0}}, EFFORT, prices, now, gs_passive=raw_passive,
-                              passive_calibration={"ratio": 1.5, "window": ["2026-09-01", "2026-09-15"]})
-        # No change event: the calibrated passive reading (100) sits in the same
-        # regime as the steady probe (97), close enough that nothing fires -- the
-        # raw reading (150) would not have.
+    def test_a_passive_series_uses_the_smoothed_detector(self):
+        # Nine passive days scattering +-20% around one level fire nothing (detect_changes
+        # would have fired on the 4th and 5th); a sustained week 40% higher does.
+        def rpt(values, start_day=1):
+            return {"accounts": {"dave": {"stretches": [
+                {"status": "accepted", "end": f"2026-09-{start_day + i:02d}T08:00:00+00:00", "delta_pct": 10,
+                 "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": int(v)}}}
+                for i, v in enumerate(values)]}}}
+        noisy = [400_000, 380_000, 320_000, 470_000, 480_000, 420_000, 400_000, 360_000, 300_000]
+        now = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
+        j = build_public_json([], {"split": {"cache_write": 1.0}}, EFFORT, PRICES, now, gs_passive=rpt(noisy))
         self.assertIsNone(j["last_change"])
-        self.assertEqual(j["passive_calibration"], {"ratio": 1.5, "window": ["2026-09-01", "2026-09-15"]})
-        self.assertEqual(j["instrument"], "passive")
-        # the single regime's median of five 97s and one calibrated 100 is 97 --
-        # the point is that it's ONE regime (no split), not this exact figure.
-        self.assertAlmostEqual(j["rates"]["claude-sonnet-5"]["api_value_per_window"], 97.0, delta=1e-6)
+        stepped = [400_000] * 8 + [560_000] * 8
+        now = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+        j = build_public_json([], {"split": {"cache_write": 1.0}}, EFFORT, PRICES, now, gs_passive=rpt(stepped))
+        self.assertIsNotNone(j["last_change"])
+        self.assertEqual(j["last_change"]["date"], "2026-09-09")
 
     def test_passive_accounts_only_lists_accounts_with_an_accepted_stretch(self):
         report = {"accounts": {
             "dave": GS_PASSIVE_MATCHING_PROBE["accounts"]["dave"],
-            "jwork": {"stretches": [{"status": "unaccounted", "end": "2026-09-06T08:00:00+00:00",
+            "jwork": {"stretches": [{"status": "unpriced", "end": "2026-09-06T08:00:00+00:00",
                                      "delta_pct": 5, "tokens": {}}]},
         }}
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
