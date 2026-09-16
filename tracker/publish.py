@@ -5,7 +5,9 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
+from .capture import ACCEPTED
 from .detect import MIN_POOL_D7, current_regime_points, detect_changes, detect_weighted_changes, pooled_windows
+from .gs_passive import passive_dollar_readings
 from .passive import PLAN_CHANGE
 from .rows import usable_rows
 from .weekly import probe_weekly_windows
@@ -75,7 +77,7 @@ def _row_split(row: dict) -> dict:
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
-                      effort_usd: dict | None = None) -> dict:
+                      effort_usd: dict | None = None, gs_passive: dict | None = None) -> dict:
     """Derive every model's rate from one probed model's dollar value.
 
     `effort` is the calibration matrix's median tokens per task (model -> effort) and
@@ -119,6 +121,23 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     "derived". `rates[model]["probed_at"]` is that model's own latest usable
     prose row's timestamp, or null when it has never been probed.
 
+    `gs_passive` (tracker/gs_passive.py's `report()`, issue #39) supplies passive
+    per-account readings that extend the probe's dollar series rather than
+    replace it: `passive_dollar_readings(gs_passive, prices, by="day")` returns
+    the same (time, meter-dollars-per-window) shape as a probe reading, so the
+    two are concatenated and sorted before anything downstream (detect_changes,
+    regime medians, tokens_per_window, api_value_per_window) runs. Probes are no
+    longer scheduled (Jonathan, 2026-09-16); this is what keeps the series
+    moving without them. `instrument` (top level) is "passive" or "probe"
+    according to the newest reading of either kind; `rates[model]["source"]` is
+    "passive" when the *current regime's* newest reading is passive (a passive
+    reading is model-agnostic, so every model reads "passive" together),
+    "probe"/"derived" otherwise as before, and `rates[model]["measured_at"]" is
+    that current-regime newest reading's own timestamp (kept alongside the
+    older `probed_at`, which still means only this model's own latest probe
+    row's own timestamp). With no probe rows at all, publishing still works as
+    long as some reading -- probe or passive -- exists.
+
     Top-level `probe_accounts` is the sorted list of distinct `account` tags
     (tracker/probe.py's --account names, e.g. "dave", "jwork") carried on
     usable prose rows -- which accounts actually did the probing, not which
@@ -142,12 +161,22 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # drift check was contradicted by its rerun: neither enters the dollar series,
     # the regime medians, change detection or the freshness check (tracker/rows.py).
     probe_rows = usable_rows(probe_rows)
-    if not probe_rows:
-        raise ValueError("no probe rates to publish")
 
-    # One model-agnostic dollar series: what a full window (100%) of usage
-    # would have cost at API list prices, regardless of which model probed it.
-    dollar_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100) for r in probe_rows]
+    # One model-agnostic dollar series: what a full window (100%) of usage would
+    # have cost at API list prices, regardless of which model probed it, or
+    # whether it was probed at all. `passive_dollar_readings` returns the same
+    # (time, dollars-per-window) shape as a probe reading (see gs_passive.py),
+    # so the two concatenate directly; only the *kind* of each reading is
+    # tracked separately, for `instrument` and `rates[model]["source"]" below.
+    probe_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100, "probe")
+                      for r in probe_rows]
+    passive_readings = [(ts, v, "passive") for ts, v in passive_dollar_readings(gs_passive, prices, by="day")] \
+        if gs_passive else []
+    combined = sorted(probe_readings + passive_readings, key=lambda t: t[0])
+    if not combined:
+        raise ValueError("no readings to publish")
+
+    dollar_readings = [(ts, v) for ts, v, _ in combined]
     events = detect_changes(dollar_readings)
     regime_starts = sorted({e.date for e in events})
 
@@ -160,27 +189,37 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 break
         return idx
 
-    by_day_value: dict[date, list[float]] = {}
     by_day_models: dict[date, set[str]] = {}
     regime_values: dict[int, list[float]] = {}
+    # The newest reading in each regime, kind and all: what rates[model]["source"]
+    # and ["measured_at"] key off, so a passive-only day in the current regime
+    # reads "passive" for every model instead of silently keeping a stale "probe".
+    regime_newest: dict[int, tuple[datetime, str]] = {}
+    for ts, v, kind in combined:
+        idx = regime_index(ts.date())
+        regime_values.setdefault(idx, []).append(v)
+        if idx not in regime_newest or ts > regime_newest[idx][0]:
+            regime_newest[idx] = (ts, kind)
     for r in probe_rows:
         d = datetime.fromisoformat(r["ts"]).date()
-        v = usd_per_pct(r, prices[r["model"]]) * 100
-        by_day_value.setdefault(d, []).append(v)
         by_day_models.setdefault(d, set()).add(r["model"])
-        regime_values.setdefault(regime_index(d), []).append(v)
 
-    latest_row = max(probe_rows, key=lambda r: r["ts"])
+    latest_row = max(probe_rows, key=lambda r: r["ts"]) if probe_rows else None
     latest_row_per_model: dict[str, dict] = {}
     for r in probe_rows:
         m = r["model"]
         if m not in latest_row_per_model or r["ts"] > latest_row_per_model[m]["ts"]:
             latest_row_per_model[m] = r
     probe_accounts = sorted({r["account"] for r in probe_rows if r.get("account")})
-    first_probe_day = min(by_day_value)
+    passive_accounts = sorted(name for name, acct in (gs_passive or {}).get("accounts", {}).items()
+                              if any(s["status"] == ACCEPTED for s in acct.get("stretches", [])))
+    earliest_reading_day = combined[0][0].date()
+    first_probe_day = min(by_day_models, default=earliest_reading_day)
     # A missing/lagging passive.json is allowed (it arrives from masterrig), so fall back to
-    # the latest probe row's own class split rather than blowing up on an empty split.
-    passive_split = passive_split or _row_split(latest_row)
+    # the latest probe row's own class split rather than blowing up on an empty split. The
+    # gs-passive report (tracker/gs_passive.py) carries no class split of its own as of
+    # 2026-09-16 -- only per-model token totals per stretch -- so it is not consulted here.
+    passive_split = passive_split or (_row_split(latest_row) if latest_row is not None else {})
 
     passive_history = passive.get("history", {})
     first_day = min((date.fromisoformat(ds) for ds in passive_history), default=first_probe_day)
@@ -189,6 +228,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     current_regime = regime_index(last_day)
     current_regime_value = median(regime_values[current_regime])
     api_value_per_window = current_regime_value
+    measured_at, current_kind = regime_newest[current_regime]
+    instrument = combined[-1][2]  # the newest reading overall, of either kind
 
     # Published ratios only: the passive-observed 5x-to-20x ratio is too noisy to publish
     # (see docs/spike-2026-09.md); the page cites it in caveats instead.
@@ -198,10 +239,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         blended = blended_price_per_token(passive_split, price)
         weight = price.get("meter_weight", 1.0)
         model_probe = latest_row_per_model.get(model)
+        source = "passive" if current_kind == "passive" else ("probe" if model_probe is not None else "derived")
         rates[model] = {"tokens_per_window": round(current_regime_value / (blended * weight)),
-                        "source": "probe" if model_probe is not None else "derived",
+                        "source": source,
                         "probed_at": model_probe["ts"] if model_probe is not None else None,
-                        "probe_effort": latest_row["effort"],
+                        "measured_at": measured_at.isoformat(),
+                        "probe_effort": latest_row["effort"] if latest_row is not None else None,
                         "split": passive_split,
                         "api_value_per_window": round(api_value_per_window, 2)}
         hist = []
@@ -210,23 +253,25 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
             idx = regime_index(d)
             regime_value = median(regime_values[idx])
             if d < first_probe_day:
-                source = "held"
+                day_source = "held"
             elif model in by_day_models.get(d, set()):
-                source = "probe"
+                day_source = "probe"
             else:
-                source = "derived"
+                day_source = "derived"
             hist.append({"date": d.isoformat(), "tokens_per_window": round(regime_value / (blended * weight)),
                         "api_value_per_window": round(regime_value, 2),
-                        "source": source, "interpolated": False})
+                        "source": day_source, "interpolated": False})
             d += timedelta(days=1)
         history[model] = hist
-    last_sample = max((r["ts"] for r in probe_rows), default=None)
+    last_sample = combined[-1][0].isoformat()
     # The page freezes generated_at, so a stale publish would silently present old
-    # numbers as current instead of letting the page's own stale warning fire.
+    # numbers as current instead of letting the page's own stale warning fire. The
+    # guard is on the newest reading of EITHER kind: passive keeps the figure
+    # fresh on its own now that probes are not scheduled (issue #39).
     if not rates:
-        raise ValueError("no probe rates to publish")
-    if last_sample is None or datetime.fromisoformat(last_sample) < now - timedelta(days=MAX_SAMPLE_AGE_DAYS):
-        raise ValueError(f"newest probe sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
+        raise ValueError("no rates to publish")
+    if datetime.fromisoformat(last_sample) < now - timedelta(days=MAX_SAMPLE_AGE_DAYS):
+        raise ValueError(f"newest sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
     passive_weekly = passive.get("weekly_windows")
     weekly_windows = None
     weekly_events: list = []
@@ -289,7 +334,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "last_sample_at": last_sample,
         "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
+        "instrument": instrument,
         "probe_accounts": probe_accounts,
+        "passive_accounts": passive_accounts,
         "plan_ratios": ratios,
         "rate_basis": "api_value",
         "rates": rates,
@@ -421,6 +468,24 @@ def load_contributed(path: Path | None) -> dict | None:
     return block
 
 
+def load_gs_passive(path: Path | None) -> dict | None:
+    """tracker.gs_passive's report() JSON (bin/daily.sh's history/gs-passive.json), or None
+    when no path is given or the file is absent. An unreadable file is a warning and None,
+    like --contributed: a bad or missing gs-passive run must never fail the publish, since
+    the probe series (or a previous gs-passive.json) can still carry the day."""
+    if path is None or not Path(path).exists():
+        return None
+    try:
+        block = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"warning: gs-passive block not published, {path} unreadable: {e}", file=sys.stderr)
+        return None
+    if not isinstance(block, dict):
+        print(f"warning: gs-passive block not published, {path} is not a JSON object", file=sys.stderr)
+        return None
+    return block
+
+
 def write_json(path: Path, obj: dict) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(path).with_suffix(".tmp")
@@ -442,6 +507,9 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
     ap.add_argument("--alert-env-file", type=Path, default=ENV_FILE, help="where the refused-weight alert finds its address")
     ap.add_argument("--contributed", type=Path, default=None,
                     help="data/contributed.json from tracker.contributed; carried through as the `contributed` block when present")
+    ap.add_argument("--gs-passive", type=Path, default=None, dest="gs_passive",
+                    help="history/gs-passive.json from tracker.gs_passive (issue #39); its accepted readings "
+                         "extend the probe's dollar series. Missing or unreadable is a warning, not a failure")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     now = now or datetime.now(timezone.utc)
@@ -472,7 +540,8 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
             effort_raw = recompute(effort_raw, prices)
         effort = {k: v for k, v in effort_raw.items() if not k.startswith("_") and k != "usd"}
         effort_usd = {k: v for k, v in effort_raw.get("usd", {}).items() if not k.startswith("_")}
-        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd)
+        gs_passive = load_gs_passive(a.gs_passive)
+        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd, gs_passive=gs_passive)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1

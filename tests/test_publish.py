@@ -41,6 +41,25 @@ PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cach
           "claude-opus-5": {"input": 7.5, "output": 37.5, "cache_read": 0.75, "cache_write": 9.375}}
 
 
+def gs_passive_report(*, account="dave", end, cache_write, delta_pct=10, model="claude-sonnet-5"):
+    """A minimal tracker.gs_passive.report() shape (issue #39): just enough for
+    passive_dollar_readings to read one accepted stretch. `cache_write` tokens at
+    PRICES' $3.75/Mtok give (cache_write * 3.75 / 1e6) meter dollars for the
+    stretch; dividing by delta_pct and scaling to a full window is
+    passive_dollar_readings' own job, not this fixture's."""
+    return {"accounts": {account: {"stretches": [
+        {"status": "accepted", "end": end, "delta_pct": delta_pct,
+         "tokens": {model: {"input": 0, "output": 0, "cache_read": 0, "cache_write": cache_write}}},
+    ]}}}
+
+
+# 352400 cache-write tokens at PRICES' cache_write price is $1.3215, and dividing
+# by this stretch's own 10% and scaling to 100% reproduces probe(5, ...)'s own
+# 13.215 dollars-per-window exactly, so a test can mix the two without a change
+# event firing on the value alone.
+GS_PASSIVE_MATCHING_PROBE = gs_passive_report(end="2026-09-06T08:00:00+00:00", cache_write=352400)
+
+
 class UsdPerPctTests(unittest.TestCase):
     def test_usd_per_pct_brief_example(self):
         row = {"tokens": {"input": 0, "output": 0, "cache_read": 100_000, "cache_write": 400_000},
@@ -297,6 +316,72 @@ class BuildTests(unittest.TestCase):
                           f"Window changed -{j['last_change']['percent']}%")
 
 
+class GsPassiveTests(unittest.TestCase):
+    """Passive readings from tracker.gs_passive (issue #39) extending the probe series."""
+
+    def test_passive_reading_extends_the_series_and_becomes_the_newest(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
+        self.assertEqual(j["instrument"], "passive")
+        self.assertEqual(j["last_sample_at"], "2026-09-06T08:00:00+00:00")
+        self.assertEqual(j["passive_accounts"], ["dave"])
+        r = j["rates"]["claude-sonnet-5"]
+        self.assertEqual(r["source"], "passive")
+        self.assertEqual(r["measured_at"], "2026-09-06T08:00:00+00:00")
+        # probed_at is unchanged by a passive reading: still this model's own latest probe row.
+        self.assertEqual(r["probed_at"], "2026-09-05T08:00:00+00:00")
+        # An unprobed model reads "passive" too -- a passive reading is model-agnostic,
+        # so it can't tell the page this is specifically an opus day either.
+        self.assertEqual(j["rates"]["claude-opus-5"]["source"], "passive")
+
+    def test_no_gs_passive_keeps_source_probe_as_before(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual(j["instrument"], "probe")
+        self.assertEqual(j["rates"]["claude-sonnet-5"]["source"], "probe")
+        self.assertEqual(j["passive_accounts"], [])
+
+    def test_freshness_guard_is_satisfied_by_a_fresh_passive_reading_when_probes_are_stale(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]  # 2026-09-01..05
+        now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)  # 21 days past the last probe
+        # Without a passive reading this exact series is already covered by
+        # FailurePathTests.test_stale_last_sample_refuses; here a passive reading
+        # 1 day old keeps the newest-reading-of-either-kind guard satisfied.
+        fresh_passive = gs_passive_report(end="2026-09-25T08:00:00+00:00", cache_write=352400)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=fresh_passive)
+        self.assertEqual(j["instrument"], "passive")
+        self.assertEqual(j["last_sample_at"], "2026-09-25T08:00:00+00:00")
+
+    def test_publishing_works_with_zero_probe_rows(self):
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
+        self.assertEqual(j["instrument"], "passive")
+        self.assertEqual(j["probe_accounts"], [])
+        self.assertEqual(j["passive_accounts"], ["dave"])
+        r = j["rates"]["claude-sonnet-5"]
+        self.assertEqual(r["source"], "passive")
+        self.assertIsNone(r["probed_at"])
+        self.assertIsNone(r["probe_effort"])
+
+    def test_no_readings_at_all_refuses(self):
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            build_public_json([], PASSIVE, EFFORT, PRICES, now)
+
+    def test_passive_accounts_only_lists_accounts_with_an_accepted_stretch(self):
+        report = {"accounts": {
+            "dave": GS_PASSIVE_MATCHING_PROBE["accounts"]["dave"],
+            "jwork": {"stretches": [{"status": "unaccounted", "end": "2026-09-06T08:00:00+00:00",
+                                     "delta_pct": 5, "tokens": {}}]},
+        }}
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=report)
+        self.assertEqual(j["passive_accounts"], ["dave"])
+
+
 class FailurePathTests(unittest.TestCase):
     def test_corrupt_input_exits_nonzero_and_keeps_previous_output(self):
         import tempfile
@@ -325,11 +410,32 @@ class GuardTests(unittest.TestCase):
         (d / "prices.json").write_text(json.dumps(PRICES if prices is None else prices))
         return d
 
-    def _run(self, d):
+    def _run(self, d, *, gs_passive=None):
         from tracker.publish import main
-        return main(["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"),
-                     "--effort", str(d / "effort.json"), "--prices", str(d / "prices.json"),
-                     "--out", str(d / "out.json")])
+        argv = ["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"),
+                "--effort", str(d / "effort.json"), "--prices", str(d / "prices.json"),
+                "--out", str(d / "out.json")]
+        if gs_passive is not None:
+            argv += ["--gs-passive", str(gs_passive)]
+        return main(argv)
+
+    def test_missing_gs_passive_file_is_a_warning_and_output_is_unchanged(self):
+        import json
+        import tempfile
+        now = datetime.now(timezone.utc)
+        row = probe(5, "claude-sonnet-5", 420000)
+        row["ts"] = now.isoformat()
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t, rows=[row])
+            self.assertEqual(self._run(d), 0)
+            without = json.loads((d / "out.json").read_text())
+            self.assertEqual(self._run(d, gs_passive=d / "does-not-exist.json"), 0)
+            with_missing = json.loads((d / "out.json").read_text())
+            # generated_at is `datetime.now()` at call time (this test doesn't pin `now`);
+            # everything else must be identical whether or not --gs-passive was given.
+            del without["generated_at"], with_missing["generated_at"]
+            self.assertEqual(without, with_missing)
+            self.assertEqual(with_missing["instrument"], "probe")
 
     def test_placeholder_effort_matrix_refuses_and_does_not_write(self):
         import tempfile
