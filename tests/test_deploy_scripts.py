@@ -69,6 +69,23 @@ class TestDeployScriptsSyntax(unittest.TestCase):
         self.assertIn("git add data/prices.json", text)
         self.assertIn('git push -q origin "$BRANCH"', text)
 
+    def test_daily_runs_gs_passive_before_publish_and_never_lets_it_stop_the_publish(self) -> None:
+        # Passive is the instrument now (issue #39): a failed gs_passive run must
+        # still let the publish carry on with whatever gs-passive.json is already
+        # committed, exactly like the contributed step above.
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        gs_passive = text.index("python3 -m tracker.gs_passive")
+        publish = text.index("python3 -m tracker.publish")
+        self.assertLess(gs_passive, publish)
+        step = text[gs_passive:publish]
+        self.assertIn("--prices data/prices.json", step)
+        self.assertIn("--probes history/probes.jsonl", step)
+        self.assertIn("--out history/gs-passive.json", step)
+        self.assertIn("|| echo \"warning: tracker.gs_passive failed", step)
+        self.assertIn("--gs-passive history/gs-passive.json", text[publish:])
+        commit = text.index('git -c user.name=publisher')
+        self.assertIn("history/gs-passive.json", text[publish:commit])
+
     def test_daily_runs_contributed_before_publish_and_never_lets_it_stop_the_publish(self) -> None:
         text = (BIN / "daily.sh").read_text(encoding="utf-8")
         contributed = text.index("python3 -m tracker.contributed")

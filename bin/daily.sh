@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# Daily on gs: merge probe rows and passive history into the public JSON, and
-# push it into the alldonesites site repo.
+# Daily on gs: merge probe rows, masterrig's passive history and this host's own
+# per-account passive readings into the public JSON, and push it into the
+# alldonesites site repo.
+#
+# Passive is the instrument now (issue #39, 2026-09-16): the probe crontab lines
+# are commented out, and tracker.gs_passive's per-account join (dave, jwork --
+# both used almost only through this host) is what keeps the published figure
+# moving. The probe code and history/probes.jsonl stay in the repo -- publish
+# still reads them, and the rotation script still runs by hand if anyone
+# wants a check reading -- nothing here schedules it.
 #
 # history/passive.json arrives in THIS repo via masterrig's own cron pushing
 # it here, so pull this repo first. The site checkout is created on first run
@@ -46,10 +54,22 @@ python3 -m tracker.contributed \
   --out data/contributed.json \
   || echo "warning: tracker.contributed failed with exit $?, publishing with the previous contributed block" >&2
 
+# This host's own per-account passive join (issue #39): dave's and jwork's own
+# transcripts against their own meters, judged by the capture-completeness
+# check. Advisory, like tracker.contributed above -- a failed run publishes
+# with whatever history/gs-passive.json this repo already has (or none), and
+# the probe series (if a probe is ever run by hand) still carries the day.
+python3 -m tracker.gs_passive \
+  --prices data/prices.json \
+  --probes history/probes.jsonl \
+  --out history/gs-passive.json \
+  || echo "warning: tracker.gs_passive failed with exit $?, publishing with the previous gs-passive.json" >&2
+
 python3 -m tracker.publish \
   --probes history/probes.jsonl \
   --passive history/passive.json \
   --contributed data/contributed.json \
+  --gs-passive history/gs-passive.json \
   --out "$SITE/website/public/data/claude-usage.json"
 rc=$?
 
@@ -66,8 +86,9 @@ fi
 # failed push is a warning, the files are still committed locally and the next
 # pull --rebase --autostash carries them.
 git add data/prices.json
-# Neither contributed file exists until the first successful tracker.contributed run.
-for f in history/contributed.jsonl data/contributed.json; do
+# None of these exist until their first successful run (contributed) or first
+# tick of usable transcript+meter data (gs-passive).
+for f in history/contributed.jsonl data/contributed.json history/gs-passive.json; do
   [ -f "$f" ] && git add "$f"
 done
 if ! git diff --cached --quiet; then

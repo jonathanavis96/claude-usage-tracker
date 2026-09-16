@@ -41,6 +41,29 @@ PRICES = {"claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cach
           "claude-opus-5": {"input": 7.5, "output": 37.5, "cache_read": 0.75, "cache_write": 9.375}}
 
 
+def gs_passive_report(*, account="dave", end, cache_write, delta_pct=10, model="claude-sonnet-5"):
+    """A minimal tracker.gs_passive.report() shape (issue #39): just enough for
+    passive_dollar_readings to read one accepted stretch. `cache_write` tokens at
+    PRICES' $3.75/Mtok give (cache_write * 3.75 / 1e6) meter dollars for the
+    stretch; dividing by delta_pct and scaling to a full window is
+    passive_dollar_readings' own job, not this fixture's."""
+    return {"accounts": {account: {"stretches": [
+        {"status": "accepted", "end": end, "delta_pct": delta_pct,
+         "tokens": {model: {"input": 0, "output": 0, "cache_read": 0, "cache_write": cache_write}}},
+    ]}}}
+
+
+# 352400 cache-write tokens at PRICES' cache_write price is $1.3215, and dividing
+# by this stretch's own 10% and scaling to 100% reproduces probe(5, ...)'s own
+# 13.215 dollars-per-window exactly, so a test can mix the two without a change
+# event firing on the value alone.
+GS_PASSIVE_MATCHING_PROBE = gs_passive_report(end="2026-09-06T08:00:00+00:00", cache_write=352400)
+
+# A calibration that leaves passive readings exactly as measured, for tests
+# whose point is the join itself, not the scaling `--calibrate` computes.
+CALIBRATION_1X = {"ratio": 1.0, "window": ["2026-09-01", "2026-09-15"]}
+
+
 class UsdPerPctTests(unittest.TestCase):
     def test_usd_per_pct_brief_example(self):
         row = {"tokens": {"input": 0, "output": 0, "cache_read": 100_000, "cache_write": 400_000},
@@ -297,6 +320,130 @@ class BuildTests(unittest.TestCase):
                           f"Window changed -{j['last_change']['percent']}%")
 
 
+class GsPassiveTests(unittest.TestCase):
+    """Passive readings from tracker.gs_passive (issue #39) extending the probe series."""
+
+    def test_passive_reading_extends_the_series_and_becomes_the_newest(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE,
+                              passive_calibration=CALIBRATION_1X)
+        self.assertEqual(j["instrument"], "passive")
+        self.assertEqual(j["passive_calibration"], CALIBRATION_1X)
+        self.assertEqual(j["last_sample_at"], "2026-09-06T08:00:00+00:00")
+        self.assertEqual(j["passive_accounts"], ["dave"])
+        r = j["rates"]["claude-sonnet-5"]
+        self.assertEqual(r["source"], "passive")
+        self.assertEqual(r["measured_at"], "2026-09-06T08:00:00+00:00")
+        # probed_at is unchanged by a passive reading: still this model's own latest probe row.
+        self.assertEqual(r["probed_at"], "2026-09-05T08:00:00+00:00")
+        # An unprobed model reads "passive" too -- a passive reading is model-agnostic,
+        # so it can't tell the page this is specifically an opus day either.
+        self.assertEqual(j["rates"]["claude-opus-5"]["source"], "passive")
+
+    def test_no_gs_passive_keeps_source_probe_as_before(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual(j["instrument"], "probe")
+        self.assertEqual(j["rates"]["claude-sonnet-5"]["source"], "probe")
+        self.assertEqual(j["passive_accounts"], [])
+
+    def test_freshness_guard_is_satisfied_by_a_fresh_passive_reading_when_probes_are_stale(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]  # 2026-09-01..05
+        now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)  # 21 days past the last probe
+        # Without a passive reading this exact series is already covered by
+        # FailurePathTests.test_stale_last_sample_refuses; here a passive reading
+        # 1 day old keeps the newest-reading-of-either-kind guard satisfied.
+        fresh_passive = gs_passive_report(end="2026-09-25T08:00:00+00:00", cache_write=352400)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=fresh_passive,
+                              passive_calibration=CALIBRATION_1X)
+        self.assertEqual(j["instrument"], "passive")
+        self.assertEqual(j["last_sample_at"], "2026-09-25T08:00:00+00:00")
+
+    def test_publishing_works_with_zero_probe_rows(self):
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE,
+                              passive_calibration=CALIBRATION_1X)
+        self.assertEqual(j["instrument"], "passive")
+        self.assertEqual(j["probe_accounts"], [])
+        self.assertEqual(j["passive_accounts"], ["dave"])
+        r = j["rates"]["claude-sonnet-5"]
+        self.assertEqual(r["source"], "passive")
+        self.assertIsNone(r["probed_at"])
+        self.assertIsNone(r["probe_effort"])
+
+    def test_zero_probe_rows_and_no_split_anywhere_refuses_cleanly(self):
+        # Review finding: with no probe rows there is no row split to fall back to, and
+        # a passive.json with no "split" key leaves passive_split == {} --
+        # blended_price_per_token({}, price) is 0.0, which would ZeroDivisionError in the
+        # rates loop below. That must surface as a ValueError (which main() already
+        # catches), never the bare ZeroDivisionError.
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        passive_without_split = {k: v for k, v in PASSIVE.items() if k != "split"}
+        with self.assertRaises(ValueError):
+            build_public_json([], passive_without_split, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE,
+                              passive_calibration=CALIBRATION_1X)
+
+    def test_no_readings_at_all_refuses(self):
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            build_public_json([], PASSIVE, EFFORT, PRICES, now)
+
+    def test_missing_calibration_ignores_passive_readings_and_matches_probe_only_output(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        probe_only = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        with_uncalibrated_passive = build_public_json(rows, PASSIVE, EFFORT, PRICES, now,
+                                                       gs_passive=GS_PASSIVE_MATCHING_PROBE)
+        # passive_accounts is informational (which gs accounts measured anything), and is
+        # the one field that legitimately differs -- it doesn't depend on the join at all.
+        self.assertEqual(with_uncalibrated_passive["passive_accounts"], ["dave"])
+        without_passive_accounts = {k: v for k, v in with_uncalibrated_passive.items() if k != "passive_accounts"}
+        self.assertEqual(without_passive_accounts, {k: v for k, v in probe_only.items() if k != "passive_accounts"})
+        self.assertIsNone(with_uncalibrated_passive["passive_calibration"])
+        self.assertEqual(with_uncalibrated_passive["instrument"], "probe")
+
+    def test_a_passive_reading_is_divided_by_the_calibration_ratio_before_joining(self):
+        # A raw passive reading of 150 next to a probe steady at 97 would read as a
+        # real step (roughly +55%); divided by a 1.5 ratio it joins at 100, close
+        # enough to 97 that no change event fires.
+        prices = {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1.0}}
+
+        def steady_probe(day):
+            return {"ts": f"2026-09-{day:02d}T08:00:00+00:00", "model": "claude-sonnet-5", "effort": "low",
+                    "tokens_per_pct": 970_000, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 970_000},
+                    "prompts": 8, "tick_from": 10, "tick_to": 11, "elapsed_s": 60, "account": "dave"}
+
+        rows = [steady_probe(d) for d in range(1, 6)]  # 97 dollars per window, every day
+        # A whole-window (delta_pct=100) stretch, so its own dollars-per-window IS its
+        # meter dollars: 150,000,000 cache-write tokens at $1/Mtok is $150.
+        raw_passive = gs_passive_report(end="2026-09-06T08:00:00+00:00", cache_write=150_000_000, delta_pct=100)
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, {"split": {"cache_write": 1.0}}, EFFORT, prices, now, gs_passive=raw_passive,
+                              passive_calibration={"ratio": 1.5, "window": ["2026-09-01", "2026-09-15"]})
+        # No change event: the calibrated passive reading (100) sits in the same
+        # regime as the steady probe (97), close enough that nothing fires -- the
+        # raw reading (150) would not have.
+        self.assertIsNone(j["last_change"])
+        self.assertEqual(j["passive_calibration"], {"ratio": 1.5, "window": ["2026-09-01", "2026-09-15"]})
+        self.assertEqual(j["instrument"], "passive")
+        # the single regime's median of five 97s and one calibrated 100 is 97 --
+        # the point is that it's ONE regime (no split), not this exact figure.
+        self.assertAlmostEqual(j["rates"]["claude-sonnet-5"]["api_value_per_window"], 97.0, delta=1e-6)
+
+    def test_passive_accounts_only_lists_accounts_with_an_accepted_stretch(self):
+        report = {"accounts": {
+            "dave": GS_PASSIVE_MATCHING_PROBE["accounts"]["dave"],
+            "jwork": {"stretches": [{"status": "unaccounted", "end": "2026-09-06T08:00:00+00:00",
+                                     "delta_pct": 5, "tokens": {}}]},
+        }}
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=report)
+        self.assertEqual(j["passive_accounts"], ["dave"])
+
+
 class FailurePathTests(unittest.TestCase):
     def test_corrupt_input_exits_nonzero_and_keeps_previous_output(self):
         import tempfile
@@ -325,11 +472,32 @@ class GuardTests(unittest.TestCase):
         (d / "prices.json").write_text(json.dumps(PRICES if prices is None else prices))
         return d
 
-    def _run(self, d):
+    def _run(self, d, *, gs_passive=None):
         from tracker.publish import main
-        return main(["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"),
-                     "--effort", str(d / "effort.json"), "--prices", str(d / "prices.json"),
-                     "--out", str(d / "out.json")])
+        argv = ["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"),
+                "--effort", str(d / "effort.json"), "--prices", str(d / "prices.json"),
+                "--out", str(d / "out.json")]
+        if gs_passive is not None:
+            argv += ["--gs-passive", str(gs_passive)]
+        return main(argv)
+
+    def test_missing_gs_passive_file_is_a_warning_and_output_is_unchanged(self):
+        import json
+        import tempfile
+        now = datetime.now(timezone.utc)
+        row = probe(5, "claude-sonnet-5", 420000)
+        row["ts"] = now.isoformat()
+        with tempfile.TemporaryDirectory() as t:
+            d = self._files(t, rows=[row])
+            self.assertEqual(self._run(d), 0)
+            without = json.loads((d / "out.json").read_text())
+            self.assertEqual(self._run(d, gs_passive=d / "does-not-exist.json"), 0)
+            with_missing = json.loads((d / "out.json").read_text())
+            # generated_at is `datetime.now()` at call time (this test doesn't pin `now`);
+            # everything else must be identical whether or not --gs-passive was given.
+            del without["generated_at"], with_missing["generated_at"]
+            self.assertEqual(without, with_missing)
+            self.assertEqual(with_missing["instrument"], "probe")
 
     def test_placeholder_effort_matrix_refuses_and_does_not_write(self):
         import tempfile

@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tracker.gs_passive import (JWORK_CEILING_SINCE, gs_accounts, main, passive_dollar_readings, probe_readings,
-                                report)
+from tracker.gs_passive import (Account, JWORK_CEILING_SINCE, gs_accounts, main, passive_dollar_readings,
+                                probe_readings, report, transcript_files)
 from tracker.publish import usd_per_pct
 
 T0 = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
@@ -71,6 +71,56 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(a["jwork"].meter_log, Path("/h/.paperclip/ops/gs-usage-ceiling.log"))
         self.assertEqual(a["jwork"].meter_since, JWORK_CEILING_SINCE)
         self.assertNotEqual(a["dave"].meter_log, a["jwork"].meter_log)
+
+
+class TranscriptFilesTests(unittest.TestCase):
+    """The pooled-projects filter (review finding, real jwork data): projects/ symlinked
+    to ~/.claude keeps the bare and jono-jono accounts' transcripts alongside jwork's own
+    unless session-env tells them apart -- contrib/sample.py's own_session_filter rule,
+    restated here since tracker/ does not import contrib/."""
+
+    def _account(self, config_dir: Path) -> Account:
+        return Account("x", config_dir, config_dir / "meter.log", "meter")
+
+    def test_symlinked_root_with_session_env_keeps_only_this_logins_sessions(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            shared = d / "shared-projects" / "-proj"
+            shared.mkdir(parents=True)
+            (shared / "own-session.jsonl").write_text(turn_line(T0, "m1") + "\n")
+            (shared / "other-account-session.jsonl").write_text(turn_line(T0, "m2") + "\n")
+            cfg = d / ".claude-javiswork"
+            (cfg / "session-env" / "own-session").mkdir(parents=True)
+            (cfg / "projects").symlink_to(d / "shared-projects")
+            files, own_sessions = transcript_files(self._account(cfg), None)
+            self.assertEqual([p.stem for p in files], ["own-session"])
+            self.assertEqual(own_sessions, {"kept": 1, "dropped": 1})
+
+    def test_non_symlink_root_is_untouched_even_with_a_session_env_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            cfg = d / ".claude-dave"
+            proj = cfg / "projects" / "-proj"
+            proj.mkdir(parents=True)
+            (proj / "a.jsonl").write_text(turn_line(T0, "m1") + "\n")
+            (proj / "b.jsonl").write_text(turn_line(T0, "m2") + "\n")
+            (cfg / "session-env" / "a").mkdir(parents=True)
+            files, own_sessions = transcript_files(self._account(cfg), None)
+            self.assertEqual({p.stem for p in files}, {"a", "b"})
+            self.assertIsNone(own_sessions)
+
+    def test_symlinked_root_with_no_session_env_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            shared = d / "shared-projects" / "-proj"
+            shared.mkdir(parents=True)
+            (shared / "a.jsonl").write_text(turn_line(T0, "m1") + "\n")
+            cfg = d / ".claude-javiswork"
+            cfg.mkdir()
+            (cfg / "projects").symlink_to(d / "shared-projects")
+            files, own_sessions = transcript_files(self._account(cfg), None)
+            self.assertEqual([p.stem for p in files], ["a"])
+            self.assertIsNone(own_sessions)
 
 
 class ReportTests(unittest.TestCase):
@@ -153,6 +203,37 @@ class ProbeReadingTests(unittest.TestCase):
                          [(datetime.fromisoformat(row["ts"]), usd_per_pct(row, PRICES["claude-opus-5"]))])
 
 
+class CalibrateTests(unittest.TestCase):
+    def test_calibrate_prints_the_ratio_of_medians_as_json(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))  # 8 accepted dave stretches -> one $50/window day at PRICES
+            prices = Path(d) / "prices.json"
+            prices.write_text(json.dumps(PRICES))
+            probe_row = {"ts": "2026-09-14T09:00:00+00:00", "model": "claude-sonnet-5", "tick_from": 0, "tick_to": 1,
+                        "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 100_000}}  # $25/window
+            probes = Path(d) / "probes.jsonl"
+            probes.write_text(json.dumps(probe_row) + "\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main(["--home", str(home), "--account", "dave", "--prices", str(prices),
+                           "--probes", str(probes), "--calibrate",
+                           "--since", "2026-09-14T00:00:00+00:00", "--until", "2026-09-15T00:00:00+00:00"])
+            self.assertEqual(rc, 0)
+            result = json.loads(buf.getvalue())
+        self.assertEqual(result, {"ratio": 2.0, "window": ["2026-09-14", "2026-09-15"], "passive_n": 1, "probe_n": 1})
+
+    def test_calibrate_without_since_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            prices = Path(d) / "prices.json"
+            prices.write_text(json.dumps(PRICES))
+            with self.assertRaises(SystemExit):
+                main(["--home", str(home), "--prices", str(prices), "--probes", str(Path(d) / "none.jsonl"),
+                     "--calibrate", "--until", "2026-09-15T00:00:00+00:00"])
+
+
 class CliTests(unittest.TestCase):
     def test_writes_the_report(self):
         with tempfile.TemporaryDirectory() as d:
@@ -163,3 +244,19 @@ class CliTests(unittest.TestCase):
                        "--probes", str(Path(d) / "none.jsonl"), "--out", str(out)])
             self.assertEqual(rc, 0)
             self.assertEqual(list(json.loads(out.read_text())["accounts"]), ["dave"])
+
+
+class UtcArgTests(unittest.TestCase):
+    def test_a_bare_date_is_aware_utc_and_until_covers_the_whole_day(self):
+        from tracker.gs_passive import _utc_arg, _utc_until
+        since = _utc_arg("2026-09-05")
+        until = _utc_until("2026-09-15")
+        self.assertEqual(since.tzinfo, timezone.utc)
+        self.assertEqual((since.hour, since.minute, since.second), (0, 0, 0))
+        self.assertEqual((until.hour, until.minute, until.second), (23, 59, 59))
+        # An aware sample on the 15th afternoon falls inside the window.
+        self.assertTrue(since <= datetime(2026, 9, 15, 18, 0, tzinfo=timezone.utc) <= until)
+
+    def test_an_explicit_datetime_is_kept_as_given(self):
+        from tracker.gs_passive import _utc_until
+        self.assertEqual(_utc_until("2026-09-15T12:00:00+00:00"), datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc))

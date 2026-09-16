@@ -97,13 +97,37 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     return [s for s in samples if until is None or s.ts <= until]
 
 
-def transcript_files(account: Account, since: datetime | None, withhold: Iterable[str] = ()) -> list[Path]:
+def transcript_files(account: Account, since: datetime | None,
+                     withhold: Iterable[str] = ()) -> tuple[list[Path], dict | None]:
+    """This account's transcripts, and (kept, dropped) if the pooled-projects filter applied.
+
+    jwork's `projects/` is a symlink shared with the bare `~/.claude` and
+    `~/.claude-jono` config dirs (see the module docstring): a raw glob over it
+    would count those other logins' tokens as jwork's own. Claude Code writes a
+    per-config-dir `<config dir>/session-env/<sessionId>/` for every session it
+    runs under that login, and a transcript's own session id is its filename
+    stem -- the same rule contrib/sample.py's `own_session_filter` applies for
+    the contributed export. Here it fires whenever `projects/` is itself a
+    symlink and the account has a `session-env` directory to filter by; with
+    no `session-env` the filter is a no-op even for a symlinked root, since
+    there is nothing to tell sessions apart with. The second return value is
+    `None` when the filter did not apply, or `{"kept": n, "dropped": m}` when
+    it did, for the account's `transcripts` meta.
+    """
     root = account.config_dir / "projects"
     if not root.exists():
-        return []
+        return [], None
     patterns = list(withhold)
-    return [p for p in transcript_paths(root, since)
+    paths = [p for p in transcript_paths(root, since)
             if not any(fnmatch(str(p.relative_to(root)), pat) for pat in patterns)]
+    if not root.is_symlink():
+        return paths, None
+    session_env = account.config_dir / "session-env"
+    if not session_env.is_dir():
+        return paths, None
+    own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
+    kept = [p for p in paths if p.stem in own_ids]
+    return kept, {"kept": len(kept), "dropped": len(paths) - len(kept)}
 
 
 def shared_with(account: Account, home: Path) -> list[str]:
@@ -208,7 +232,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
     for name, account in accounts.items():
         samples = load_samples(account, until)
         since = samples[0].ts if samples else None
-        files = transcript_files(account, since, withhold.get(name, ())) if samples else []
+        files, own_sessions = transcript_files(account, since, withhold.get(name, ())) if samples else ([], None)
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
         stretches[name] = build_stretches(samples, turns, prices)
         weekly[name] = window_points(samples)
@@ -220,7 +244,8 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                       "last": samples[-1].ts.isoformat() if samples else None},
             "transcripts": {"root": str(root), "resolves_to": str(root.resolve()),
                             "shared_with": shared_with(account, home or account.config_dir.parent),
-                            "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ()))},
+                            "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
+                            "own_sessions": own_sessions},
         }
     checked = check(stretches, probe_readings(list(probe_rows), prices))
     out_accounts = {}
@@ -272,6 +297,59 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day") -> list
     return sorted(out)
 
 
+def calibrate(rpt: dict, probe_rows: list[dict], prices: dict, since: datetime, until: datetime) -> dict:
+    """The passive/probe dollar-per-window ratio over [since, until] (issue #39 follow-up).
+
+    Jono Work's accepted passive days and the probe read the same meter on
+    different scales -- $1.26-$1.81 per window passive against $0.97 probed,
+    on the real 2026-09-05..15 gs data -- so joining them raw invents change
+    events the live page does not have. `ratio` = median(accepted passive
+    daily readings in the window) / median(usable probe rows' dollars per
+    window in the same window); tracker/publish.py divides a passive reading
+    by this ratio before joining it to the probe series. `None` when either
+    side has no readings in the window, so the caller can refuse to publish
+    a ratio computed from nothing.
+
+    Probe dollars-per-window is restated via `bundle_meter_usd` rather than
+    importing tracker/publish.py's `usd_per_pct` (same formula: meter dollars
+    per tick times 100, see bundle_meter_usd's own docstring) -- publish.py
+    imports this module for `passive_dollar_readings`, so importing back
+    would be circular.
+    """
+    passive_vals = [v for t, v in passive_dollar_readings(rpt, prices, by="day") if since <= t <= until]
+    probe_vals = []
+    for r in usable_rows(probe_rows):
+        ts = datetime.fromisoformat(r["ts"])
+        if not (since <= ts <= until):
+            continue
+        ticks = r.get("tick_to", 0) - r.get("tick_from", 0)
+        usd = bundle_meter_usd(r["model"], r["tokens"], prices) if ticks > 0 else None
+        if usd is not None:
+            probe_vals.append(usd / ticks * 100)
+    ratio = median(passive_vals) / median(probe_vals) if passive_vals and probe_vals else None
+    return {"ratio": _r(ratio, 6), "window": [since.date().isoformat(), until.date().isoformat()],
+            "passive_n": len(passive_vals), "probe_n": len(probe_vals)}
+
+
+def _utc_arg(value: str, *, end_of_day: bool = False) -> datetime:
+    """An ISO date or date-time from the command line as an aware UTC datetime.
+
+    Meter samples and transcript turns are aware, so a naive argument would raise
+    on comparison. A bare date means the whole day: its start for --since, its
+    last second for --until, so `--since 2026-09-05 --until 2026-09-15` spans
+    both days inclusive."""
+    t = datetime.fromisoformat(value)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    if end_of_day and len(value) == 10:
+        t = t.replace(hour=23, minute=59, second=59)
+    return t
+
+
+def _utc_until(value: str) -> datetime:
+    return _utc_arg(value, end_of_day=True)
+
+
 def _summary(name: str, a: dict) -> str:
     statuses: dict[str, int] = {}
     for s in a["stretches"]:
@@ -289,11 +367,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--account", action="append", help="limit to these accounts (default: every gs account)")
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
     ap.add_argument("--probes", type=Path, default=Path("history/probes.jsonl"))
-    ap.add_argument("--until", type=datetime.fromisoformat, help="replay as of this time")
+    ap.add_argument("--until", type=_utc_until, help="replay as of this time (a bare date means its last second)")
     ap.add_argument("--withhold", action="append", default=[], metavar="ACCOUNT:GLOB",
                     help="leave out that account's transcripts matching GLOB under projects/")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="print the passive/probe dollar-per-window ratio for --since..--until as JSON "
+                         "and exit; never writes --out or prices.json (Jonathan pastes the ratio in by hand)")
+    ap.add_argument("--since", type=_utc_arg, help="calibration window start (with --calibrate); a bare date means its first second")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args(argv)
+    if a.calibrate and (a.since is None or a.until is None):
+        ap.error("--calibrate requires --since and --until")
     accounts = gs_accounts(a.home)
     if a.account:
         unknown = set(a.account) - set(accounts)
@@ -308,6 +392,9 @@ def main(argv: list[str] | None = None) -> int:
     rows = ([json.loads(line) for line in a.probes.read_text(encoding="utf-8").splitlines() if line.strip()]
             if a.probes.exists() else [])
     r = report(accounts, prices, rows, withhold=withhold, until=a.until, home=a.home)
+    if a.calibrate:
+        print(json.dumps(calibrate(r, rows, prices, a.since, a.until)))
+        return 0
     for name, acct in r["accounts"].items():
         print(_summary(name, acct))
     for c in r["changes"]:
