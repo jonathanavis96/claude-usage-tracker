@@ -32,6 +32,19 @@ else). The body is under 2 KB. `tests/test_contrib_sample.py` asserts, against
 a fake transcript full of paths, session ids, a prompt and an email address,
 that none of it reaches the serialised body.
 
+### Shared projects directories (multiple accounts, one machine)
+
+On some setups `<config dir>/projects` is a symlink several Claude Code
+config dirs point at (for example a work config dir symlinked to a personal
+one), so a plain sum over it would include another account's sessions. When
+that symlink resolves outside the config dir *and* `<config dir>/session-env/`
+exists (Claude Code writes one directory per session id it runs there), the
+script keeps only transcripts whose filename (the session id) has a
+matching `session-env` entry, and prints one line to stderr saying how many
+of how many it kept. `--own-sessions` forces that filter even when
+`projects` isn't a symlink; `--all-sessions` always disables it and sums
+every transcript found.
+
 ## Path 1: one-off, from your own Claude Code
 
 Paste this into Claude Code on your machine:

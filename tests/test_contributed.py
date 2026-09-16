@@ -95,16 +95,27 @@ class TokensPerPctTests(unittest.TestCase):
                 sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000, output=100_000))]
         j = aggregate(rows, NOW, PRICES)
         # 400k cache_write at $2.5/M = $1.00, 100k output at $10/M x class_weight 1.8 = $1.80: $2.80 over 50%.
-        self.assertAlmostEqual(j["max20"]["usd_per_pct"]["claude-sonnet-5"]["median"], 2.80 / 50, places=4)
+        self.assertAlmostEqual(j["max20"]["usd_per_pct"]["median"], 2.80 / 50, places=4)
         self.assertEqual(j["max20"]["tokens_per_pct"]["claude-sonnet-5"]["median"], 500_000 / 50)
 
-    def test_usd_per_pct_applies_meter_weight_and_skips_unpriced_models(self):
+    def test_usd_per_pct_applies_meter_weight_and_a_sample_with_an_unpriced_model_is_dropped(self):
         prices = {"claude-sonnet-5": {**PRICES["claude-sonnet-5"], "meter_weight": 2.0}}
         tokens = {**sonnet(400_000), "claude-mystery-9": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1000}}
         j = aggregate([sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, tokens)], NOW, prices)
-        self.assertAlmostEqual(j["max20"]["usd_per_pct"]["claude-sonnet-5"]["median"], 2.0 / 50, places=4)
-        self.assertIn("claude-mystery-9", j["max20"]["tokens_per_pct"])
-        self.assertNotIn("claude-mystery-9", j["max20"]["usd_per_pct"])
+        # claude-mystery-9 has no price, so the whole sample drops for both figures.
+        self.assertIsNone(j["max20"]["usd_per_pct"])
+        self.assertEqual(j["max20"]["tokens_per_pct"], {})
+
+    def test_two_model_sample_gives_one_combined_dollar_figure_and_share_attributed_tokens(self):
+        # Sonnet: 400k cache_write @ $2.5/M = $1.00. Opus: 200k output @ $25/M x class_weight 1.8 = $9.00.
+        # Combined value $10.00 over utilization 40 -> usd_per_pct 0.25.
+        # Sonnet's share of the meter: 40 x 1.00/10.00 = 4 -> tokens_per_pct 400_000/4 = 100_000.
+        # Opus's share: 40 x 9.00/10.00 = 36 -> tokens_per_pct 200_000/36.
+        tokens = {**sonnet(400_000), "claude-opus-5": {"input": 0, "output": 200_000, "cache_read": 0, "cache_write": 0}}
+        j = aggregate([sample(A, "max20", "2026-09-02T10:00:00Z", 40.0, 10.0, tokens)], NOW, PRICES)
+        self.assertAlmostEqual(j["max20"]["usd_per_pct"]["median"], 10.0 / 40, places=4)
+        self.assertEqual(j["max20"]["tokens_per_pct"]["claude-sonnet-5"]["median"], round(100_000))
+        self.assertEqual(j["max20"]["tokens_per_pct"]["claude-opus-5"]["median"], round(200_000 / 36))
 
     def test_spread_is_iqr_over_median_and_null_for_one_contributor(self):
         rows = [sample(cid, "max20", "2026-09-02T10:00:00Z", 10.0, 10.0, sonnet(t))
@@ -147,7 +158,17 @@ class WeeklyWindowsTests(unittest.TestCase):
         w = aggregate(fixture_rows(), NOW, PRICES)["pro"]["weekly_windows"]
         self.assertIsNone(w["measured"])
         self.assertEqual(w["contributors"], 1)
+        self.assertEqual(w["with_complete_week"], 1)
         self.assertIn("2 needed", w["reason"])
+
+    def test_one_contributor_none_complete_gives_the_singular_reason(self):
+        rows = [sample(A, "pro", "2026-09-02T10:00:00Z", 20.0, 10.0),
+                sample(A, "pro", "2026-09-02T16:00:00Z", 80.0, 12.0, five_reset="2026-09-02T19:00:00+00:00")]
+        w = aggregate(rows, NOW, PRICES)["pro"]["weekly_windows"]
+        self.assertIsNone(w["measured"])
+        self.assertEqual(w["contributors"], 1)
+        self.assertEqual(w["with_complete_week"], 0)
+        self.assertEqual(w["reason"], "1 contributor, none with a complete week yet; 2 needed")
 
     def test_an_open_week_does_not_count_towards_the_gate(self):
         still_open = (NOW + timedelta(days=2)).isoformat()
@@ -157,7 +178,9 @@ class WeeklyWindowsTests(unittest.TestCase):
                 sample(B, "max20", "2026-09-02T12:00:00Z", 80.0, 12.0)]
         w = aggregate(rows, NOW, PRICES)["max20"]["weekly_windows"]
         self.assertIsNone(w["measured"])
-        self.assertEqual(w["contributors"], 1)
+        # A and B are both contributors on the plan; only B has a closed week.
+        self.assertEqual(w["contributors"], 2)
+        self.assertEqual(w["with_complete_week"], 1)
 
     def test_samples_in_different_windows_do_not_pair(self):
         other_reset = "2026-09-02T19:00:00+00:00"
@@ -166,7 +189,8 @@ class WeeklyWindowsTests(unittest.TestCase):
                 sample(B, "max20", "2026-09-02T10:00:00Z", 20.0, 10.0),
                 sample(B, "max20", "2026-09-02T12:00:00Z", 80.0, 12.0)]
         w = aggregate(rows, NOW, PRICES)["max20"]["weekly_windows"]
-        self.assertEqual(w["contributors"], 1)
+        self.assertEqual(w["contributors"], 2)
+        self.assertEqual(w["with_complete_week"], 1)
         self.assertIsNone(w["measured"])
 
     def test_a_contributor_more_than_30_percent_from_the_median_is_dropped(self):

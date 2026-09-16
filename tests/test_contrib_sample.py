@@ -320,6 +320,78 @@ class TranscriptTests(unittest.TestCase):
             self.assertEqual(sample.transcript_paths(Path(d) / "nope", None), [])
             self.assertEqual(sample.tokens_since([], NOW - timedelta(hours=1), NOW), {})
 
+
+class PooledProjectsTests(unittest.TestCase):
+    """<config dir>/projects can be a symlink several accounts share; own_session_filter
+    keeps only transcripts with a matching <config dir>/session-env/<sessionId>/ dir."""
+
+    def _fake_configs(self, tmp: Path):
+        shared = tmp / "shared-projects"
+        shared.mkdir()
+        own_session = SESSION_A
+        other_session = SESSION_B
+        (shared / f"{own_session}.jsonl").write_text("{}")
+        (shared / f"{other_session}.jsonl").write_text("{}")
+        cfg = tmp / "cfg"
+        cfg.mkdir()
+        (cfg / "projects").symlink_to(shared)
+        (cfg / "session-env" / own_session).mkdir(parents=True)
+        return cfg, own_session, other_session
+
+    def test_pooled_symlink_is_detected(self):
+        with tempfile.TemporaryDirectory() as t:
+            cfg, _, _ = self._fake_configs(Path(t))
+            self.assertTrue(sample._is_pooled_projects(cfg, cfg / "projects"))
+            # An ordinary, non-symlinked projects dir is not pooled.
+            plain = Path(t) / "plain"
+            (plain / "projects").mkdir(parents=True)
+            self.assertFalse(sample._is_pooled_projects(plain, plain / "projects"))
+
+    def test_filters_to_own_sessions_when_symlink_is_pooled(self):
+        with tempfile.TemporaryDirectory() as t:
+            cfg, own_session, other_session = self._fake_configs(Path(t))
+            paths = sample.transcript_paths(cfg / "projects", None)
+            self.assertEqual(len(paths), 2)
+            err = io.StringIO()
+            with mock.patch("sys.stderr", err):
+                kept = sample.own_session_filter(paths, cfg)
+            self.assertEqual([p.stem for p in kept], [own_session])
+            self.assertIn("kept 1 of 2", err.getvalue())
+            self.assertIn("session-env", err.getvalue())
+
+    def test_all_sessions_disables_the_filter(self):
+        with tempfile.TemporaryDirectory() as t:
+            cfg, _, _ = self._fake_configs(Path(t))
+            paths = sample.transcript_paths(cfg / "projects", None)
+            kept = sample.own_session_filter(paths, cfg, disable=True)
+            self.assertEqual(len(kept), 2)
+
+    def test_own_sessions_forces_the_filter_without_a_symlink(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            cfg = tmp / "cfg"
+            proj = cfg / "projects"
+            proj.mkdir(parents=True)
+            (proj / f"{SESSION_A}.jsonl").write_text("{}")
+            (proj / f"{SESSION_B}.jsonl").write_text("{}")
+            (cfg / "session-env" / SESSION_A).mkdir(parents=True)
+            paths = sample.transcript_paths(proj, None)
+            self.assertEqual(sample.own_session_filter(paths, cfg), paths)  # not pooled: no-op
+            kept = sample.own_session_filter(paths, cfg, force=True)
+            self.assertEqual([p.stem for p in kept], [SESSION_A])
+
+    def test_no_session_env_is_a_no_op_even_when_pooled(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            shared = tmp / "shared"
+            shared.mkdir()
+            (shared / f"{SESSION_A}.jsonl").write_text("{}")
+            cfg = tmp / "cfg"
+            cfg.mkdir()
+            (cfg / "projects").symlink_to(shared)
+            paths = sample.transcript_paths(cfg / "projects", None)
+            self.assertEqual(sample.own_session_filter(paths, cfg), paths)
+
     def test_token_lookup_follows_claude_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "t"}}))

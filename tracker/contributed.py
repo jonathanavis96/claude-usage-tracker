@@ -16,16 +16,28 @@ before tracker.publish:
 Aggregation rules, per plan (pro, max5, max20):
 
   contributors, samples   distinct contributor ids and rows on that plan.
-  tokens_per_pct[model]   median across contributors (each contributor first
-                          reduced to the median of their own samples) of that
-                          model's tokens since the five-hour reset over the
-                          five-hour utilization, using only samples whose
-                          utilization is at least MIN_UTILIZATION (5). Raw
-                          counts, the same rule the personal page draws.
-  usd_per_pct[model]      same, but the tokens valued in meter dollars exactly
+  usd_per_pct             one combined figure per sample (not per model): every
+                          priced model present is valued in meter dollars exactly
                           as tracker/publish.py values a probe row (list price
-                          x class_weight per class, x the model's meter_weight):
-                          the cross-check on the probe's dollar invariant.
+                          x class_weight per class, x the model's meter_weight),
+                          summed, and divided by the sample's whole-meter
+                          utilization. A sample with any unpriced model present
+                          is skipped entirely (for this figure and for
+                          tokens_per_pct below, since the token attribution
+                          needs every model's price). Median across contributors
+                          (each contributor first reduced to the median of their
+                          own samples), null with no priced sample clearing the
+                          utilization floor.
+  tokens_per_pct[model]   the model's tokens since the five-hour reset, divided
+                          by its own share of the utilization rather than the
+                          whole meter: a model's dollar share of the sample's
+                          combined value gives its share u_m of the sample's
+                          utilization u (u_m = u x value_m / total), so
+                          tokens_per_pct_m = tokens_m / u_m. This is what fixes
+                          the old bug of dividing every model's tokens by the
+                          whole-meter percent, which understated every figure
+                          in a mixed-model sample. Uses the same utilization
+                          floor and priced-sample requirement as usd_per_pct.
   spread                  on both: interquartile range across contributors over
                           the median, null with fewer than two contributors.
   weekly_windows          each contributor's consecutive samples inside one
@@ -38,10 +50,11 @@ Aggregation rules, per plan (pro, max5, max20):
                           `measured` only once two contributors each have one
                           complete week, else null with a `reason`.
 
-A sample's five-hour percent covers every model used in that window, so a
-mixed-model sample under-reads each model's own figure; the median across
-many contributors is what the page shows, and the probe stays the controlled
-reference (nothing here replaces a probe or passive figure).
+A sample's five-hour percent covers every model used in that window; dollar-
+share attribution (above) is what recovers each model's own figure from that
+shared percent. The median across many contributors is what the page shows,
+and the probe stays the controlled reference (nothing here replaces a probe
+or passive figure).
 """
 from __future__ import annotations
 import json
@@ -235,39 +248,71 @@ def _weighted_median(pairs: list[tuple[float, float]]) -> float:
     return pairs[-1][0]
 
 
-def _per_pct(rows_by_contributor: dict[str, list[dict]], prices: dict) -> tuple[dict, dict]:
-    """(tokens_per_pct, usd_per_pct) per model: medians across contributors with the utilization floor."""
+def _sample_values(r: dict, prices: dict) -> tuple[dict[str, dict], dict[str, float]] | None:
+    """This sample's per-model token counts and meter-dollar values, or None to skip it.
+
+    A sample is skipped whenever any model it used has total tokens > 0 but no
+    price: the dollar-share attribution below needs every present model's
+    price to split the sample's utilization between them. Models with zero
+    tokens are dropped first since they carry no attribution weight.
+    """
+    present = {m: c for m, c in _model_tokens(r).items() if sum(c.values()) > 0}
+    if not present:
+        return None
+    if any(m not in prices for m in present):
+        return None
+    values = {}
+    for model, counts in present.items():
+        price = prices[model]
+        values[model] = meter_usd(counts, price) * price.get("meter_weight", 1.0)
+    return present, values
+
+
+def _per_pct(rows_by_contributor: dict[str, list[dict]], prices: dict) -> tuple[dict, dict | None]:
+    """(tokens_per_pct, usd_per_pct): usd_per_pct is one combined figure per sample
+    (every priced model's value summed, over the whole-meter utilization);
+    tokens_per_pct[model] recovers each model's own figure by giving it the
+    slice of the utilization matching its dollar share of that sample."""
     tokens: dict[str, dict[str, list[float]]] = {}
-    usd: dict[str, dict[str, list[float]]] = {}
+    usd: dict[str, list[float]] = {}
     for cid, rows in rows_by_contributor.items():
         for r in rows:
             u = _utilization(r)
             if u is None or u < MIN_UTILIZATION:
                 continue
-            for model, counts in _model_tokens(r).items():
-                total = sum(counts.values())
-                if total <= 0:
+            priced = _sample_values(r, prices)
+            if priced is None:
+                continue
+            present, values = priced
+            total = sum(values.values())
+            if total <= 0:
+                continue
+            usd.setdefault(cid, []).append(total / u)
+            for model, value in values.items():
+                if value <= 0:
                     continue
-                tokens.setdefault(model, {}).setdefault(cid, []).append(total / u)
-                price = prices.get(model)
-                if price is None:
-                    continue
-                value = meter_usd(counts, price) * price.get("meter_weight", 1.0)
-                usd.setdefault(model, {}).setdefault(cid, []).append(value / u)
+                model_total = sum(present[model].values())
+                # u_m = u * value_m / total; tokens_per_pct_m = model_total / u_m.
+                tokens.setdefault(model, {}).setdefault(cid, []).append(model_total * total / (value * u))
 
-    def block(per_model: dict, rounder) -> dict:
-        out = {}
-        for model in sorted(per_model):
-            per_contributor = [median(v) for v in per_model[model].values()]
-            out[model] = {
-                "median": rounder(median(per_contributor)),
-                "spread": _spread(per_contributor),
-                "contributors": len(per_contributor),
-                "samples": sum(len(v) for v in per_model[model].values()),
-            }
-        return out
+    def block(per_cid: dict, rounder):
+        if not per_cid:
+            return None
+        per_contributor = [median(v) for v in per_cid.values()]
+        return {
+            "median": rounder(median(per_contributor)),
+            "spread": _spread(per_contributor),
+            "contributors": len(per_contributor),
+            "samples": sum(len(v) for v in per_cid.values()),
+        }
 
-    return block(tokens, lambda x: round(x)), block(usd, lambda x: round(x, 4))
+    tokens_out = {}
+    for model in sorted(tokens):
+        b = block(tokens[model], lambda x: round(x))
+        if b is not None:
+            tokens_out[model] = b
+
+    return tokens_out, block(usd, lambda x: round(x, 4))
 
 
 def _contributor_weeks(rows: list[dict], now: datetime) -> list[float]:
@@ -284,14 +329,18 @@ def _weekly(rows_by_contributor: dict[str, list[dict]], now: datetime) -> dict:
         weeks = _contributor_weeks(rows, now)
         if weeks:
             per_contributor.append((median(weeks), float(len(weeks))))
-    out = {"measured": None, "reason": None, "contributors": len(per_contributor),
+    total_contributors = len(rows_by_contributor)
+    out = {"measured": None, "reason": None, "contributors": total_contributors,
+           "with_complete_week": len(per_contributor),
            "dropped": 0, "weeks": int(sum(w for _, w in per_contributor))}
     if not rows_by_contributor:
         out["reason"] = "no samples"
         return out
     if len(per_contributor) < MIN_CONTRIBUTORS:
-        out["reason"] = (f"{len(per_contributor)} contributor{'s' if len(per_contributor) != 1 else ''} with a "
-                         f"complete week; {MIN_CONTRIBUTORS} needed")
+        who = "none" if not per_contributor else str(len(per_contributor))
+        suffix = " yet" if not per_contributor else ""
+        out["reason"] = (f"{total_contributors} contributor{'s' if total_contributors != 1 else ''}, "
+                         f"{who} with a complete week{suffix}; {MIN_CONTRIBUTORS} needed")
         return out
     centre = _weighted_median(per_contributor)
     kept = [(v, w) for v, w in per_contributor if abs(v - centre) <= MAX_DEVIATION * centre]
@@ -308,7 +357,8 @@ def aggregate(rows: list[dict], now: datetime, prices: dict | None = None) -> di
     """The `contributed` block: one entry per plan plus `updated_at`.
 
     `prices` is data/prices.json's model table (underscore keys already
-    dropped); without it `usd_per_pct` is empty. Duplicate (contributor_id, ts)
+    dropped); without it `usd_per_pct` is null and `tokens_per_pct` is empty,
+    since both need every present model priced. Duplicate (contributor_id, ts)
     rows count once; rows on an unknown plan or without a usable meter are
     ignored.
     """
