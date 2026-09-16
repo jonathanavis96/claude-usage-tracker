@@ -117,6 +117,10 @@ _Avoid_: task, conversation, run
 **Derived rate**:
 A model's published rate computed from another model's probe through the dollar invariant, rather than probed directly.
 
+**Passive calibration**:
+The frozen ratio (`data/prices.json._passive_calibration.ratio`) a gs-passive reading is divided by before it can join the probe's dollar series: the two instruments read the same meter on different scales (measured on gs, Jono Work's accepted passive days ran $1.26-$1.81 per window against the probe's $0.97), and concatenating them raw invented change events the live page never had. `tracker.gs_passive --calibrate` computes it (median of accepted passive daily readings over median of usable probe readings, in a stated window) but never writes it -- Jonathan pastes the value in by hand, so it stays fixed while real movement in either series still shows. Missing entirely, passive readings are left out of the join altogether rather than joined unscaled.
+_Avoid_: normalization, scale factor
+
 **Instrument**:
 Which kind of reading measured the currently published figure: `probe` (a scheduled run) or `passive` (a gs account's own transcripts against its own meter, tracker/gs_passive.py). Probes are no longer scheduled as of 2026-09-16 (issue #39); passive is the everyday instrument now, and a probe run by hand still enters the same dollar series and can still be the newest reading. Top-level `instrument` is the newest reading of either kind; a model's own `rates[model].source` is `passive` when the newest reading in its current `Regime` is passive, `probe`/`derived` otherwise, alongside `measured_at` (that reading's own time) and the older `probed_at` (this model's own latest probe row, unaffected by a passive reading).
 _Avoid_: source (already means something narrower, per-model), method

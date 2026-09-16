@@ -203,6 +203,37 @@ class ProbeReadingTests(unittest.TestCase):
                          [(datetime.fromisoformat(row["ts"]), usd_per_pct(row, PRICES["claude-opus-5"]))])
 
 
+class CalibrateTests(unittest.TestCase):
+    def test_calibrate_prints_the_ratio_of_medians_as_json(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))  # 8 accepted dave stretches -> one $50/window day at PRICES
+            prices = Path(d) / "prices.json"
+            prices.write_text(json.dumps(PRICES))
+            probe_row = {"ts": "2026-09-14T09:00:00+00:00", "model": "claude-sonnet-5", "tick_from": 0, "tick_to": 1,
+                        "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 100_000}}  # $25/window
+            probes = Path(d) / "probes.jsonl"
+            probes.write_text(json.dumps(probe_row) + "\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main(["--home", str(home), "--account", "dave", "--prices", str(prices),
+                           "--probes", str(probes), "--calibrate",
+                           "--since", "2026-09-14T00:00:00+00:00", "--until", "2026-09-15T00:00:00+00:00"])
+            self.assertEqual(rc, 0)
+            result = json.loads(buf.getvalue())
+        self.assertEqual(result, {"ratio": 2.0, "window": ["2026-09-14", "2026-09-15"], "passive_n": 1, "probe_n": 1})
+
+    def test_calibrate_without_since_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            prices = Path(d) / "prices.json"
+            prices.write_text(json.dumps(PRICES))
+            with self.assertRaises(SystemExit):
+                main(["--home", str(home), "--prices", str(prices), "--probes", str(Path(d) / "none.jsonl"),
+                     "--calibrate", "--until", "2026-09-15T00:00:00+00:00"])
+
+
 class CliTests(unittest.TestCase):
     def test_writes_the_report(self):
         with tempfile.TemporaryDirectory() as d:

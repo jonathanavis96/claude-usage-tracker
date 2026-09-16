@@ -77,7 +77,8 @@ def _row_split(row: dict) -> dict:
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
-                      effort_usd: dict | None = None, gs_passive: dict | None = None) -> dict:
+                      effort_usd: dict | None = None, gs_passive: dict | None = None,
+                      passive_calibration: dict | None = None) -> dict:
     """Derive every model's rate from one probed model's dollar value.
 
     `effort` is the calibration matrix's median tokens per task (model -> effort) and
@@ -138,6 +139,19 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     row's own timestamp). With no probe rows at all, publishing still works as
     long as some reading -- probe or passive -- exists.
 
+    A passive reading is never joined to the probe series raw: the two
+    instruments read the same meter on different scales (measured on gs,
+    Jono Work's accepted passive days ran $1.26-$1.81 per window against the
+    probe's $0.97 -- see `tracker.gs_passive --calibrate`), and joining them
+    unscaled invented change events the live page never had. `passive_calibration`
+    (this repo's `data/prices.json._passive_calibration`, frozen -- this
+    function only ever reads it) supplies `ratio`, which every passive reading
+    is divided by before joining; with no calibration on file, passive readings
+    are left out entirely (a warning to stderr, never a failure) and the
+    publish is exactly the probe-only publish of today. The top-level
+    `passive_calibration` field in the output is `{ratio, window}` when applied,
+    `null` otherwise.
+
     Top-level `probe_accounts` is the sorted list of distinct `account` tags
     (tracker/probe.py's --account names, e.g. "dave", "jwork") carried on
     usable prose rows -- which accounts actually did the probing, not which
@@ -170,8 +184,24 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # tracked separately, for `instrument` and `rates[model]["source"]" below.
     probe_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100, "probe")
                       for r in probe_rows]
-    passive_readings = [(ts, v, "passive") for ts, v in passive_dollar_readings(gs_passive, prices, by="day")] \
-        if gs_passive else []
+    # The two instruments read the same meter on different scales (measured on gs,
+    # issue #39 follow-up: Jono Work's accepted passive days ran $1.26-$1.81 per
+    # window against the probe's $0.97), so a passive reading is divided by the
+    # frozen `_passive_calibration` ratio (tracker.gs_passive --calibrate) before
+    # it can join the probe series -- joining the two raw invented change events
+    # the live page never had. With no calibration on file, passive readings are
+    # left out entirely rather than joined unscaled, so a missing ratio can never
+    # fabricate a change: the publish is exactly the probe-only publish of today.
+    passive_readings: list[tuple[datetime, float, str]] = []
+    passive_calibration_applied = None
+    if gs_passive:
+        ratio = (passive_calibration or {}).get("ratio")
+        if ratio:
+            passive_readings = [(ts, v / ratio, "passive")
+                                for ts, v in passive_dollar_readings(gs_passive, prices, by="day")]
+            passive_calibration_applied = {"ratio": ratio, "window": passive_calibration.get("window")}
+        else:
+            print("gs-passive readings ignored: no _passive_calibration in prices", file=sys.stderr)
     combined = sorted(probe_readings + passive_readings, key=lambda t: t[0])
     if not combined:
         raise ValueError("no readings to publish")
@@ -345,6 +375,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
         "instrument": instrument,
+        "passive_calibration": passive_calibration_applied,
         "probe_accounts": probe_accounts,
         "passive_accounts": passive_accounts,
         "plan_ratios": ratios,
@@ -538,7 +569,9 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         effort_raw = json.loads(a.effort.read_text())
         if effort_raw.get("_status") == "placeholder":
             raise ValueError(f"{a.effort} is still a placeholder; calibrate it before publishing")
-        prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
+        prices_raw = json.loads(a.prices.read_text())
+        passive_calibration = prices_raw.get("_passive_calibration")
+        prices = {k: v for k, v in prices_raw.items() if not k.startswith("_")}
         # The matrix's cells and usd are derived from its stored runs at the prices
         # in force right now, after update_output_weight above may have changed
         # class_weight.output: a committed usd block would be stale the moment the
@@ -551,7 +584,8 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         effort = {k: v for k, v in effort_raw.items() if not k.startswith("_") and k != "usd"}
         effort_usd = {k: v for k, v in effort_raw.get("usd", {}).items() if not k.startswith("_")}
         gs_passive = load_gs_passive(a.gs_passive)
-        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd, gs_passive=gs_passive)
+        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd, gs_passive=gs_passive,
+                              passive_calibration=passive_calibration)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1

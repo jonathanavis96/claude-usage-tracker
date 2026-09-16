@@ -297,6 +297,40 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day") -> list
     return sorted(out)
 
 
+def calibrate(rpt: dict, probe_rows: list[dict], prices: dict, since: datetime, until: datetime) -> dict:
+    """The passive/probe dollar-per-window ratio over [since, until] (issue #39 follow-up).
+
+    Jono Work's accepted passive days and the probe read the same meter on
+    different scales -- $1.26-$1.81 per window passive against $0.97 probed,
+    on the real 2026-09-05..15 gs data -- so joining them raw invents change
+    events the live page does not have. `ratio` = median(accepted passive
+    daily readings in the window) / median(usable probe rows' dollars per
+    window in the same window); tracker/publish.py divides a passive reading
+    by this ratio before joining it to the probe series. `None` when either
+    side has no readings in the window, so the caller can refuse to publish
+    a ratio computed from nothing.
+
+    Probe dollars-per-window is restated via `bundle_meter_usd` rather than
+    importing tracker/publish.py's `usd_per_pct` (same formula: meter dollars
+    per tick times 100, see bundle_meter_usd's own docstring) -- publish.py
+    imports this module for `passive_dollar_readings`, so importing back
+    would be circular.
+    """
+    passive_vals = [v for t, v in passive_dollar_readings(rpt, prices, by="day") if since <= t <= until]
+    probe_vals = []
+    for r in usable_rows(probe_rows):
+        ts = datetime.fromisoformat(r["ts"])
+        if not (since <= ts <= until):
+            continue
+        ticks = r.get("tick_to", 0) - r.get("tick_from", 0)
+        usd = bundle_meter_usd(r["model"], r["tokens"], prices) if ticks > 0 else None
+        if usd is not None:
+            probe_vals.append(usd / ticks * 100)
+    ratio = median(passive_vals) / median(probe_vals) if passive_vals and probe_vals else None
+    return {"ratio": _r(ratio, 6), "window": [since.date().isoformat(), until.date().isoformat()],
+            "passive_n": len(passive_vals), "probe_n": len(probe_vals)}
+
+
 def _summary(name: str, a: dict) -> str:
     statuses: dict[str, int] = {}
     for s in a["stretches"]:
@@ -317,8 +351,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--until", type=datetime.fromisoformat, help="replay as of this time")
     ap.add_argument("--withhold", action="append", default=[], metavar="ACCOUNT:GLOB",
                     help="leave out that account's transcripts matching GLOB under projects/")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="print the passive/probe dollar-per-window ratio for --since..--until as JSON "
+                         "and exit; never writes --out or prices.json (Jonathan pastes the ratio in by hand)")
+    ap.add_argument("--since", type=datetime.fromisoformat, help="calibration window start (with --calibrate)")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args(argv)
+    if a.calibrate and (a.since is None or a.until is None):
+        ap.error("--calibrate requires --since and --until")
     accounts = gs_accounts(a.home)
     if a.account:
         unknown = set(a.account) - set(accounts)
@@ -333,6 +373,9 @@ def main(argv: list[str] | None = None) -> int:
     rows = ([json.loads(line) for line in a.probes.read_text(encoding="utf-8").splitlines() if line.strip()]
             if a.probes.exists() else [])
     r = report(accounts, prices, rows, withhold=withhold, until=a.until, home=a.home)
+    if a.calibrate:
+        print(json.dumps(calibrate(r, rows, prices, a.since, a.until)))
+        return 0
     for name, acct in r["accounts"].items():
         print(_summary(name, acct))
     for c in r["changes"]:
