@@ -1,10 +1,19 @@
 import unittest
-from datetime import datetime, timezone, timedelta, date
+from datetime import date, datetime, timedelta, timezone
+
+from tracker.join import (
+    Interval,
+    Stretch,
+    build_intervals,
+    build_stretches,
+    bundle_meter_usd,
+    daily_rates,
+    turn_meter_usd,
+    window_points,
+)
+from tracker.publish import usd_per_pct
 from tracker.samples import Sample
 from tracker.turns import Turn
-from tracker.join import (Interval, Stretch, build_intervals, build_stretches, bundle_meter_usd, daily_rates,
-                          turn_meter_usd, window_points)
-from tracker.publish import usd_per_pct
 from tracker.weekly import weekly_windows
 
 T0 = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)

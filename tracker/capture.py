@@ -67,10 +67,12 @@ there, and the change is reported. Nothing uncorroborated is ever published,
 and no run of withheld stretches can quietly read as a change.
 """
 from __future__ import annotations
+
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from statistics import median
-from typing import Iterable
+
 from .join import Stretch
 
 TOLERANCE = 0.15

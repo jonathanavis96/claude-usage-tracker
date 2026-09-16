@@ -2,8 +2,16 @@ import json
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from tracker.publish import (REFERENCE_MIX, blended_api_price_per_token, blended_price_per_token, build_public_json,
-                             usd_per_pct)
+from typing import ClassVar
+
+from tracker.publish import (
+    REFERENCE_MIX,
+    blended_api_price_per_token,
+    blended_price_per_token,
+    build_public_json,
+    usd_per_pct,
+)
+
 
 def probe(day, model, tpp, account="dave"):
     return {"ts": f"2026-09-{day:02d}T08:00:00+00:00", "model": model, "effort": "low", "tokens_per_pct": tpp,
@@ -573,6 +581,7 @@ class FailurePathTests(unittest.TestCase):
     def test_corrupt_input_exits_nonzero_and_keeps_previous_output(self):
         import tempfile
         from pathlib import Path
+
         from tracker.publish import main
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -660,7 +669,7 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(j["effort_usd"], {"claude-sonnet-5": {"low": 0.0355, "high": 0.12}})
 
     # Two of the seven live Sonnet low runs (gs, 2026-09-09): one turn and two turns.
-    RUNS = {"claude-sonnet-5/low": [
+    RUNS: ClassVar[dict] = {"claude-sonnet-5/low": [
         {"input": 2, "output": 1610, "cache_read": 19795, "cache_write": 0, "total": 21407},
         {"input": 4, "output": 1410, "cache_read": 39590, "cache_write": 877, "total": 41881},
         {"input": 2, "output": 1713, "cache_read": 19795, "cache_write": 0, "total": 21510},
@@ -669,6 +678,7 @@ class GuardTests(unittest.TestCase):
     def test_effort_usd_is_derived_from_stored_runs_when_the_file_has_no_usd(self):
         import json
         import tempfile
+
         from tracker.calibrate import recompute
         now = datetime.now(timezone.utc)
         row = probe(5, "claude-sonnet-5", 420000)
@@ -746,7 +756,7 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
     # 2026-08-14 is the last full Max 5x week (ends before PLAN_CHANGE 2026-08-18);
     # 2026-08-21's (2026-08-14, 2026-08-21] span straddles PLAN_CHANGE and belongs
     # to neither plan; 2026-08-28 and 2026-09-04 are full Max 20x weeks.
-    PASSIVE_WEEKLY = {"current": 6.46, "history": [
+    PASSIVE_WEEKLY: ClassVar[dict] = {"current": 6.46, "history": [
         {"week_ending": "2026-08-14", "windows": 10.91, "five_hour_pct": 400.0, "seven_day_pct": 36.7},
         {"week_ending": "2026-08-21", "windows": 6.8, "five_hour_pct": 300.0, "seven_day_pct": 44.1},
         {"week_ending": "2026-08-28", "windows": 6.58, "five_hour_pct": 250.0, "seven_day_pct": 38.0},
@@ -918,8 +928,8 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         # No change detected: current pools the last 14 days of per-window
         # points (anchored on the newest point), not the median of two weeks.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
-        by_window = ([window("2026-08-2%dT10:00:00+00:00" % d, 65.0, 10.0) for d in range(0, 6)]   # 6.5, >14 days old
-                     + [window("2026-09-%02dT10:00:00+00:00" % d, 60.0, 10.0) for d in range(4, 15)])  # 6.0
+        by_window = ([window(f"2026-08-2{d}T10:00:00+00:00", 65.0, 10.0) for d in range(6)]   # 6.5, >14 days old
+                     + [window(f"2026-09-{d:02d}T10:00:00+00:00", 60.0, 10.0) for d in range(4, 15)])  # 6.0
         passive = dict(PASSIVE, weekly_windows={"current": 6.18, "history": ISSUE_25_WEEKS, "by_window": by_window})
         now = datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
@@ -939,8 +949,8 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         # Max 5x windows (about 11) right up to PLAN_CHANGE, then Max 20x at 6.5:
         # the plan change is Jonathan's, not Anthropic's, and must not fire.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        by_window = ([window("2026-08-%02dT10:00:00+00:00" % d, 110.0, 10.0) for d in range(10, 19)]
-                     + [window("2026-08-%02dT10:00:00+00:00" % d, 65.0, 10.0) for d in range(19, 31)])
+        by_window = ([window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(10, 19)]
+                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 65.0, 10.0) for d in range(19, 31)])
         passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.PASSIVE_WEEKLY["history"],
                                                 "by_window": by_window})
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
@@ -1038,9 +1048,9 @@ class RealLogTests(unittest.TestCase):
 
 class LastChangeScopeTests(unittest.TestCase):
     # A certifiable weekly step dated 2026-09-14: eight windows at 6.0, then four at 4.5.
-    WEEKLY_MAX20 = {"current": None, "history": [], "by_window": (
-        [window("2026-09-%02dT10:00:00+00:00" % d, 60.0, 10.0) for d in range(6, 14)]
-        + [window("2026-09-14T%02d:00:00+00:00" % h, 45.0, 10.0) for h in (10, 15, 20)]
+    WEEKLY_MAX20: ClassVar[dict] = {"current": None, "history": [], "by_window": (
+        [window(f"2026-09-{d:02d}T10:00:00+00:00", 60.0, 10.0) for d in range(6, 14)]
+        + [window(f"2026-09-14T{h:02d}:00:00+00:00", 45.0, 10.0) for h in (10, 15, 20)]
         + [window("2026-09-15T10:00:00+00:00", 45.0, 10.0)])}
 
     def test_newer_weekly_event_beats_an_older_window_event(self):

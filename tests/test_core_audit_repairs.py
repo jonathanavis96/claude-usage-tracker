@@ -12,7 +12,6 @@ from tracker.publish import build_public_json, meter_usd, tokens_usd
 from tracker.turns import Turn, iter_turns
 from tracker.weekly import weekly_windows
 
-
 T0 = datetime(2026, 8, 20, tzinfo=timezone.utc)
 MODEL = "claude-sonnet-5"
 PRICES = {

@@ -1,13 +1,21 @@
 """Assemble the public JSON from probe rows, passive output, and static tables."""
 from __future__ import annotations
+
 import json
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
+
 from .capture import ACCEPTED
-from .detect import (MIN_POOL_D7, current_regime_points, detect_smoothed_changes, detect_weighted_changes,
-                     pooled_interval, weighted_regimes)
+from .detect import (
+    MIN_POOL_D7,
+    current_regime_points,
+    detect_smoothed_changes,
+    detect_weighted_changes,
+    pooled_interval,
+    weighted_regimes,
+)
 from .gs_passive import passive_dollar_readings
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE
@@ -604,6 +612,7 @@ def write_json(path: Path, obj: dict) -> None:
 def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetime | None = None) -> int:
     import argparse
     from datetime import timezone
+
     from .alert import ENV_FILE, _default_post
     from .weight import update_output_weight
     ap = argparse.ArgumentParser(description="Write the public claude-usage.json")

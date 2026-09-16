@@ -1,14 +1,15 @@
 """Read subscription utilization from the Claude OAuth usage endpoint."""
 from __future__ import annotations
+
 import functools
 import json
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 

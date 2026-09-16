@@ -7,10 +7,11 @@ single five-hour window and a single weekly window, gives the ratio directly
 -- no need to assume the published site multiplies by a fixed 28.
 """
 from __future__ import annotations
+
 import json
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
-from typing import Iterable
 
 from .detect import ratio_interval
 
@@ -213,7 +214,7 @@ def _iso_week_ending(ts: str) -> str:
     boundary.
     """
     d = datetime.fromisoformat(ts).date()
-    iso_year, iso_week, iso_weekday = d.isocalendar()
+    _iso_year, _iso_week, iso_weekday = d.isocalendar()
     sunday = d + timedelta(days=7 - iso_weekday)
     return sunday.isoformat()
 

@@ -13,7 +13,7 @@ import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from tracker.contributed import aggregate, fetch, main, merge, _weighted_median
+from tracker.contributed import _weighted_median, aggregate, fetch, main, merge
 
 NOW = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
 # Both windows are already closed at NOW, so every paired week is complete.

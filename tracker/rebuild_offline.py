@@ -24,7 +24,7 @@ def rebuild(root: Path, now: datetime) -> dict:
 
     raw_prices = read("data/prices.json")
     if not isinstance(raw_prices, dict):
-        raise ValueError("data/prices.json must contain a price table")
+        raise TypeError("data/prices.json must contain a price table")
     prices = {k: v for k, v in raw_prices.items() if not k.startswith("_")}
     matrix = read("data/effort_matrix.json", {})
     if matrix.get("_status") == "placeholder":

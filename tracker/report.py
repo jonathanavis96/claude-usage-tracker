@@ -17,6 +17,7 @@ CLI:  python3 -m tracker.report --model M --rc N --what "Rotation run" --log PAT
       [--payload output] [--tail 20]
 """
 from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path

@@ -36,9 +36,9 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
 
 CLIENT_VERSION = "contrib-sample/0.2.0"
 DEFAULT_ENDPOINT = "https://alldonesites.com/api/contribute"
@@ -99,7 +99,7 @@ def read_token(cfg: Path) -> str:
     if platform.system() == "Darwin":
         try:
             out = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                                 capture_output=True, text=True, timeout=10)
+                                 capture_output=True, text=True, timeout=10, check=False)
         except (OSError, subprocess.SubprocessError):
             out = None
         if out is not None and out.returncode == 0 and out.stdout.strip():
@@ -465,7 +465,7 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
         print(f"\nContributor id and plan are stored in {a.id_file} (nothing else is written).", file=out)
         print("\nSame body as one line, for pasting into the page instead of sending from here:\n", file=out)
         print(compact_line(body), file=out)
-        print("", file=out)
+        print(file=out)
 
     if a.dry_run:
         print("dry run: not sending.", file=out)
@@ -476,7 +476,7 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
             if not sys.stdin.isatty():
                 print("not sending: no terminal to ask on (use --yes to send, --dry-run to only look).", file=out)
                 return 0
-            ask = lambda prompt: input(prompt)  # noqa: E731
+            ask = lambda prompt: input(prompt)
         if ask("Send? [y/N] ").strip().lower() not in ("y", "yes"):
             print("not sent.", file=out)
             return 0

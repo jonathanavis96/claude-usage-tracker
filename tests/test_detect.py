@@ -1,12 +1,20 @@
 import json
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from tracker.detect import (current_regime_points, detect_changes, detect_smoothed_changes, detect_weighted_changes,
-                            latest_change, pooled_windows, weighted_regimes)
+
+from tracker.detect import (
+    current_regime_points,
+    detect_changes,
+    detect_smoothed_changes,
+    detect_weighted_changes,
+    latest_change,
+    pooled_windows,
+    weighted_regimes,
+)
 
 
-def readings(values, start=datetime(2026, 8, 20), step_days=7):
+def readings(values, start=datetime(2026, 8, 20, tzinfo=timezone.utc), step_days=7):
     return [(start + timedelta(days=i * step_days), v) for i, v in enumerate(values)]
 
 
@@ -87,7 +95,7 @@ class DetectTests(unittest.TestCase):
         # reported as a weekly-limit change.
         values = [6.58, 6.35]
         d0 = date(2026, 8, 28)
-        r = [(datetime(d0.year, d0.month, d0.day) + timedelta(days=i * 7), v) for i, v in enumerate(values)]
+        r = [(datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc) + timedelta(days=i * 7), v) for i, v in enumerate(values)]
         self.assertEqual(detect_changes(r), [])
 
     def test_max20_weekly_windows_synthetic_drop_fires_an_event(self):
@@ -96,7 +104,7 @@ class DetectTests(unittest.TestCase):
         # level -- once there is enough max20 history, a real step still fires.
         values = [6.58, 6.35, 6.5, 4.0, 4.0]
         d0 = date(2026, 8, 28)
-        r = [(datetime(d0.year, d0.month, d0.day) + timedelta(days=i * 7), v) for i, v in enumerate(values)]
+        r = [(datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc) + timedelta(days=i * 7), v) for i, v in enumerate(values)]
         ev = detect_changes(r)
         self.assertEqual(len(ev), 1)
         self.assertEqual(ev[0].direction, "decreased")
@@ -235,8 +243,8 @@ class WeightedDetectTests(unittest.TestCase):
         # two windows or as ten. Two pieces concede two points of rounding to each
         # total (92/18 = 5.11 at most, clear of the old level's 5.47); ten concede
         # 2 x sqrt(10) = 6.3 (96.3/13.7 = 7.04 at most), and the change is not certified.
-        base = [(datetime(2026, 9, 1, 5) + timedelta(hours=5 * i), 60.0, 10.0) for i in range(6)]
-        later = datetime(2026, 9, 5)
+        base = [(datetime(2026, 9, 1, 5, tzinfo=timezone.utc) + timedelta(hours=5 * i), 60.0, 10.0) for i in range(6)]
+        later = datetime(2026, 9, 5, tzinfo=timezone.utc)
         two = base + [(later + timedelta(hours=5 * i), 45.0, 10.0) for i in range(2)]
         ten = base + [(later + timedelta(hours=5 * i), 9.0, 2.0) for i in range(10)]
         self.assertEqual([(e.direction, e.percent) for e in detect_weighted_changes(two)], [("decreased", 25)])
@@ -247,7 +255,7 @@ class WeightedDetectTests(unittest.TestCase):
     def test_audit_finding_4_a_persistent_cut_in_light_windows_is_found(self):
         # Four windows at 60/10 then twenty-one at 18/4: no single window is heavy,
         # but the pooled evidence of a 25% cut is ample (84 points of d7 after it).
-        t0 = datetime(2026, 8, 20)
+        t0 = datetime(2026, 8, 20, tzinfo=timezone.utc)
         points = [(t0 + timedelta(days=i), 60.0, 10.0) for i in range(4)]
         points += [(t0 + timedelta(days=i), 18.0, 4.0) for i in range(4, 25)]
         ev = detect_weighted_changes(points)
@@ -260,7 +268,7 @@ class WeightedDetectTests(unittest.TestCase):
     def test_audit_finding_4_rounding_alone_does_not_invent_a_step(self):
         # Ten (11, 1) windows then two (47, 8): -47% on the raw ratios, yet every
         # reading is within a point of a constant ratio of 6 (true d7 11/6 and 47/6).
-        t0 = datetime(2026, 8, 20)
+        t0 = datetime(2026, 8, 20, tzinfo=timezone.utc)
         points = [(t0 + timedelta(hours=6 * i), 11.0, 1.0) for i in range(10)]
         points += [(t0 + timedelta(hours=6 * i), 47.0, 8.0) for i in range(10, 12)]
         self.assertEqual(detect_weighted_changes(points), [])
@@ -276,7 +284,7 @@ class WeightedDetectTests(unittest.TestCase):
         # against the level just before it (the second is +100% on 4.5, not +50% on
         # 6.0), and the eight windows on the 4.5 plateau fire nothing further. (The
         # issue #25 windows this test used to extend no longer certify on their own.)
-        day = datetime(2026, 9, 1)
+        day = datetime(2026, 9, 1, tzinfo=timezone.utc)
         pts = [(day + timedelta(hours=5 * i), 60.0, 10.0) for i in range(8)]
         pts += [(day + timedelta(days=3, hours=5 * i), 45.0, 10.0) for i in range(8)]
         pts += [(day + timedelta(days=6, hours=5 * i), 90.0, 10.0) for i in range(6)]
@@ -288,9 +296,9 @@ class WeightedDetectTests(unittest.TestCase):
     def test_a_slow_drift_never_fires_but_a_step_after_it_does(self):
         # A month drifting from 6.0 to 5.4 never fires (no split of it separates
         # two levels 15% apart); a 30% step on top of it still does.
-        slow = [(datetime(2026, 8, 1) + timedelta(days=i), 60.0 - i * 0.2, 10.0) for i in range(30)]
+        slow = [(datetime(2026, 8, 1, tzinfo=timezone.utc) + timedelta(days=i), 60.0 - i * 0.2, 10.0) for i in range(30)]
         self.assertEqual(detect_weighted_changes(slow), [])
-        stepped = slow + [(datetime(2026, 9, 1), 38.0, 10.0), (datetime(2026, 9, 2), 38.0, 10.0)]
+        stepped = slow + [(datetime(2026, 9, 1, tzinfo=timezone.utc), 38.0, 10.0), (datetime(2026, 9, 2, tzinfo=timezone.utc), 38.0, 10.0)]
         ev = detect_weighted_changes(stepped)
         self.assertEqual([(e.direction, e.date) for e in ev], [("decreased", date(2026, 9, 1))])
 
@@ -312,7 +320,7 @@ class WeightedDetectTests(unittest.TestCase):
     def test_pooled_windows_is_total_five_hour_over_total_seven_day(self):
         self.assertAlmostEqual(pooled_windows(window_points(ISSUE_25_WINDOWS[3:])), 4.5)
         self.assertIsNone(pooled_windows([]))
-        self.assertIsNone(pooled_windows([(datetime(2026, 9, 1), 5.0, 0.0)]))
+        self.assertIsNone(pooled_windows([(datetime(2026, 9, 1, tzinfo=timezone.utc), 5.0, 0.0)]))
 
 
 if __name__ == "__main__":
@@ -322,7 +330,7 @@ if __name__ == "__main__":
 class SmoothedDetectTests(unittest.TestCase):
     """detect_smoothed_changes: a rolling week's median against the regime before it."""
 
-    def daily(self, values, start=datetime(2026, 9, 5)):
+    def daily(self, values, start=datetime(2026, 9, 5, tzinfo=timezone.utc)):
         return readings(values, start=start, step_days=1)
 
     def test_a_noisy_flat_passive_series_fires_nothing(self):

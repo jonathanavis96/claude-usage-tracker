@@ -227,7 +227,7 @@ class PrivacyTests(unittest.TestCase):
 class PlanTests(unittest.TestCase):
     def test_first_run_without_plan_fails_and_writes_no_id_file(self):
         with Fixture() as f:
-            rc, out, err = f.run("--dry-run")
+            rc, _out, err = f.run("--dry-run")
             self.assertEqual(rc, 2)
             self.assertIn("--plan", err)
             self.assertFalse(f.id_file.exists())
@@ -268,12 +268,12 @@ class PlanTests(unittest.TestCase):
     def test_endpoint_plan_wins_and_is_recorded(self):
         usage = dict(USAGE, subscription_type="Claude Max 20x")
         with Fixture() as f:
-            rc, out, _ = f.run("--plan", "pro", "--dry-run", usage=usage)
+            _rc, out, _ = f.run("--plan", "pro", "--dry-run", usage=usage)
             body = body_from_print(out)
             self.assertEqual((body["plan"], body["plan_source"]), ("max20", "endpoint"))
             self.assertTrue(json.loads(f.id_file.read_text())["plan_from_endpoint"])
             # and a later run needs no --plan even if the endpoint stops exposing it
-            rc, out, _ = f.run("--dry-run", "--print")
+            _rc, out, _ = f.run("--dry-run", "--print")
             self.assertEqual(body_from_print(out)["plan"], "max20")
 
     def test_normalize_plan(self):
@@ -399,7 +399,7 @@ class PooledProjectsTests(unittest.TestCase):
 
     def test_filters_to_own_sessions_when_symlink_is_pooled(self):
         with tempfile.TemporaryDirectory() as t:
-            cfg, own_session, other_session = self._fake_configs(Path(t))
+            cfg, own_session, _other_session = self._fake_configs(Path(t))
             paths = sample.transcript_paths(cfg / "projects", None)
             self.assertEqual(len(paths), 2)
             err = io.StringIO()
@@ -450,9 +450,8 @@ class PooledProjectsTests(unittest.TestCase):
                 self.assertEqual(sample.read_token(sample.config_dir()), "t")
             with mock.patch.dict("os.environ", {}, clear=True), mock.patch.object(Path, "home", return_value=Path(d)):
                 self.assertEqual(sample.config_dir(), Path(d) / ".claude")
-            with mock.patch.object(sample.platform, "system", return_value="Linux"):
-                with self.assertRaises(FileNotFoundError):
-                    sample.read_token(Path(d) / "missing")
+            with mock.patch.object(sample.platform, "system", return_value="Linux"), self.assertRaises(FileNotFoundError):
+                sample.read_token(Path(d) / "missing")
 
 
 if __name__ == "__main__":

@@ -8,13 +8,16 @@ percent of a 1% interval is anywhere between 0 and 2% of real movement while
 one point of a 10% stretch is a tenth of that.
 """
 from __future__ import annotations
+
 import bisect
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from itertools import pairwise
 from statistics import median
+
 from .samples import Sample
-from .usage_api import same_reset
 from .turns import Turn, normalize_model, normalized_raw_model
+from .usage_api import same_reset
 from .weekly import _window_point
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
@@ -64,7 +67,7 @@ def build_intervals(samples: list[Sample], turns: list[Turn]) -> list[Interval]:
     keys = [t.ts for t in turns]
     out: list[Interval] = []
     cur: Interval | None = None
-    for a, b in zip(samples, samples[1:]):
+    for a, b in pairwise(samples):
         if _is_reset(a, b):
             cur = None
             continue
@@ -221,7 +224,7 @@ def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stre
     out: list[Stretch] = []
     cur: Stretch | None = None
     new_piece = True
-    for a, b in zip(samples, samples[1:]):
+    for a, b in pairwise(samples):
         if _is_reset(a, b) or b.ts - a.ts > max_gap:
             new_piece = True
             continue
@@ -260,7 +263,7 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
     samples = sorted(samples, key=lambda s: s.ts)
     windows: list[dict] = []
     chain: dict | None = None
-    for a, b in zip(samples, samples[1:]):
+    for a, b in pairwise(samples):
         if _is_reset(a, b) or b.ts - a.ts >= FIVE_HOURS:
             chain = None
             continue

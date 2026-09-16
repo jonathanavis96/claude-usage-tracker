@@ -1,7 +1,8 @@
 import json
 import unittest
 from pathlib import Path
-from tracker.cli_run import parse_result, run_prompt, build_argv
+
+from tracker.cli_run import build_argv, parse_result, run_prompt
 
 RESULT = json.dumps({"type": "result", "subtype": "success", "is_error": False, "duration_ms": 4321,
     "total_cost_usd": 0.0123,

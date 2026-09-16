@@ -1,5 +1,6 @@
 import unittest
 from datetime import date, timedelta
+
 from tracker.join import DailyRate
 from tracker.passive import passive_summary
 
@@ -12,7 +13,7 @@ class PassiveTests(unittest.TestCase):
     def test_ratio_and_split_from_last_14_days(self):
         change = date(2026, 8, 18)
         rates = {change - timedelta(days=i): dr(100000) for i in range(1, 15)}
-        rates.update({change + timedelta(days=i): dr(400000) for i in range(0, 15)})
+        rates.update({change + timedelta(days=i): dr(400000) for i in range(15)})
         s = passive_summary(rates, change)
         self.assertAlmostEqual(s["plan_ratio_5x_to_20x"], 0.25)
         self.assertEqual(s["split"]["cache_read"], .7)

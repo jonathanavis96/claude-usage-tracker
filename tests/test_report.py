@@ -157,7 +157,7 @@ class TestReport(unittest.TestCase):
             log.write_text(SKIP_LOG, encoding="utf-8")
             proc = subprocess.run([sys.executable, "-m", "tracker.report", "--model", "claude-opus-5",
                                    "--rc", "3", "--what", "Rotation run", "--log", str(log)],
-                                  cwd=ROOT, capture_output=True, text=True)
+                                  cwd=ROOT, capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(proc.stdout.startswith("Outcome: SKIPPED."))
         self.assertIn(f"lines of {log}; tracker.probe exit code 3", proc.stdout)
@@ -165,7 +165,7 @@ class TestReport(unittest.TestCase):
     def test_cli_with_a_missing_log_still_produces_a_body(self):
         proc = subprocess.run([sys.executable, "-m", "tracker.report", "--model", "claude-opus-5",
                                "--rc", "4", "--what", "Rotation run", "--log", "/nonexistent/x.log"],
-                              cwd=ROOT, capture_output=True, text=True)
+                              cwd=ROOT, capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("could not read /nonexistent/x.log", proc.stdout)
 

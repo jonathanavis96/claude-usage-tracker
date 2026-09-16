@@ -1,13 +1,16 @@
 """Run the passive join on masterrig and summarise it for the publisher."""
 from __future__ import annotations
+
 import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
+
 from .join import DailyRate, build_intervals, daily_rates
 from .samples import merge_samples, parse_ceiling_log, parse_moonlighter
 from .turns import iter_turns, session_tokens_by_model, transcript_paths
-from .weekly import parse_rows as parse_weekly_rows, weekly_windows
+from .weekly import parse_rows as parse_weekly_rows
+from .weekly import weekly_windows
 
 PLAN_CHANGE = date(2026, 8, 18)
 
@@ -45,7 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     with open(moonlighter_path, encoding="utf-8") as f:
         ml = parse_moonlighter(f)
     cl_path = home / ".paperclip/ops/mis-usage-ceiling-systemd.log"
-    cl = parse_ceiling_log(open(cl_path, encoding="utf-8")) if cl_path.exists() else []
+    cl = []
+    if cl_path.exists():
+        with open(cl_path, encoding="utf-8") as f:
+            cl = parse_ceiling_log(f)
     samples = merge_samples(ml, cl)
     paths = transcript_paths(home / ".claude/projects", None)
     turns = list(iter_turns(paths))

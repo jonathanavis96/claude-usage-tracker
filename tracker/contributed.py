@@ -72,16 +72,17 @@ figures; the block sits beside them (audit 2026-09-16, finding 14).
                           newest MAX_POINTS, sorted by `t` ascending.
 """
 from __future__ import annotations
-import json
+
 import hashlib
+import json
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median, quantiles
-from typing import Callable
 
 from .alert import ENV_FILE, USER_AGENT, read_env_file
 from .publish import meter_usd, write_json

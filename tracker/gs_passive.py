@@ -64,14 +64,17 @@ median was the median of the expensive half. Every priced stretch counts now
 matches, to watch the check catch deliberately missing capture on real data.
 """
 from __future__ import annotations
+
 import json
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from fnmatch import fnmatch
+from itertools import pairwise
 from pathlib import Path
 from statistics import mean, median, stdev
-from typing import Iterable
+
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
@@ -243,7 +246,7 @@ def _pieces(stretches: list[Stretch]) -> int:
     Consecutive stretches that meet at one reading telescope: the reading
     between them cancels, so they share a piece and its one point of rounding.
     """
-    joins = sum(1 for a, b in zip(stretches, stretches[1:]) if b.start == a.end)
+    joins = sum(1 for a, b in pairwise(stretches) if b.start == a.end)
     return sum(s.windows for s in stretches) - joins
 
 

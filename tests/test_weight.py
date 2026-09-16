@@ -5,6 +5,7 @@ the env file handed to the guard is a temp file with no address in it unless a
 test says otherwise.
 """
 from __future__ import annotations
+
 import io
 import json
 import tempfile
@@ -12,10 +13,18 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
+
+from tracker.publish import build_public_json, usd_per_pct
+from tracker.publish import main as publish_main
 from tracker.rows import is_output, prose_rows
-from tracker.weight import (GUARD, RECORD_KEY, WEIGHT_MODEL, latest_pair, solve_output_weight,
-                            update_output_weight)
-from tracker.publish import build_public_json, main as publish_main, usd_per_pct
+from tracker.weight import (
+    GUARD,
+    RECORD_KEY,
+    WEIGHT_MODEL,
+    latest_pair,
+    solve_output_weight,
+    update_output_weight,
+)
 
 NOW = datetime(2026, 9, 7, 5, 30, tzinfo=timezone.utc)
 FABLE = {"input": 10, "output": 50, "cache_read": 0.25, "cache_write": 12.5, "meter_weight": 1.0,
@@ -161,7 +170,7 @@ class UpdateTests(unittest.TestCase):
             record = written[RECORD_KEY]
             self.assertEqual((record["output_row"], record["value"], record["applied"]), (WILD_OUTPUT["ts"], 4.5, False))
             self.assertEqual(len(post.calls), 1)
-            url, headers, body = post.calls[0]
+            _url, headers, body = post.calls[0]
             self.assertEqual(headers["authorization"], "Bearer s3cr3t")
             self.assertEqual(body["to"], "jonathan@example.com")
             self.assertIn("Output class weight refused", body["subject"])

@@ -8,11 +8,12 @@ boundary there can only be inferred from the meter dropping; the meter log
 records them, in moonlighter's own row shape.
 """
 from __future__ import annotations
+
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
 
 _CEIL = re.compile(r"^(\S+) 5-hour (\d+)% / 7-day (\d+)%")
 _GS_CEIL = re.compile(r"^(\S+) (?:ok|warn|HARD CEILING \([\w-]+\)) five_hour=(\d+)% seven_day=(\d+)%")

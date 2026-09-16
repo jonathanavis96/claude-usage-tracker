@@ -1,12 +1,13 @@
 """Stream Claude Code transcripts into deduplicated per-turn token usage."""
 from __future__ import annotations
+
 import json
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
-from typing import Iterable, Iterator
 
 CANONICAL_MODELS = {"claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"}
 #: Older ids priced as a current model. Fable 5 lists at Fable 5.1's prices for

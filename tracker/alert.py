@@ -28,16 +28,17 @@ An environment variable of the same name overrides the file, which is how the
 tests and a dry run point the helper at a local server.
 """
 from __future__ import annotations
+
 import json
 import os
 import socket
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Mapping
 
 ENV_FILE = Path.home() / ".claude-usage-notify.env"
 USER_AGENT = "claude-usage-tracker/1.0 (+https://alldonesites.com/claude-usage-tracker/)"

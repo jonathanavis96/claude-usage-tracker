@@ -108,9 +108,10 @@ three pieces each) no longer certify anything: three points of rounding on a
 d7 of 19 or 18 lets both sides sit near 5.3.
 """
 from __future__ import annotations
+
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-import math
 from statistics import median
 
 MIN_HISTORY = 3

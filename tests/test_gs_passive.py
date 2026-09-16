@@ -2,9 +2,20 @@ import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from itertools import pairwise
 from pathlib import Path
-from tracker.gs_passive import (Account, JWORK_CEILING_SINCE, gs_accounts, load_samples, main, passive_dollar_readings,
-                                probe_readings, report, transcript_files)
+
+from tracker.gs_passive import (
+    JWORK_CEILING_SINCE,
+    Account,
+    gs_accounts,
+    load_samples,
+    main,
+    passive_dollar_readings,
+    probe_readings,
+    report,
+    transcript_files,
+)
 from tracker.publish import usd_per_pct
 
 T0 = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
@@ -204,6 +215,7 @@ class ReportTests(unittest.TestCase):
 
     def test_with_the_gate_on_a_withheld_stretch_never_reaches_the_publisher(self):
         from unittest import mock
+
         import tracker.gs_passive as gp
         with tempfile.TemporaryDirectory() as d, mock.patch.object(gp, "CAPTURE_GATE", True):
             home = dave_home(Path(d), withheld_stretch=6)
@@ -288,7 +300,7 @@ class ReportTests(unittest.TestCase):
             samples = load_samples(gs_accounts(home)["jwork"])
         self.assertEqual(sum(1 for s in samples if s.resets_at is None), 20)   # ceiling readings before `first`
         self.assertEqual(sum(1 for s in samples if s.resets_at is not None), 20)
-        self.assertTrue(all(a.ts < b.ts for a, b in zip(samples, samples[1:])))
+        self.assertTrue(all(a.ts < b.ts for a, b in pairwise(samples)))
 
     def test_a_transcript_directory_shared_with_other_config_dirs_is_named(self):
         with tempfile.TemporaryDirectory() as d:

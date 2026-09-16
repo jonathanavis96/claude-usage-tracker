@@ -7,6 +7,7 @@ tracker.alert but hands tracker.rotate to the real interpreter, against a scratc
 git clone with a bare origin.
 """
 from __future__ import annotations
+
 import json
 import os
 import re
@@ -15,6 +16,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
+
 from tracker.publish import usd_per_pct
 from tracker.rotate import _usd, expectation
 
@@ -32,7 +35,7 @@ class TestDeployScriptsSyntax(unittest.TestCase):
     def _check(self, name: str) -> None:
         script = BIN / name
         self.assertTrue(script.exists(), f"{script} missing")
-        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_probe_sh_syntax(self) -> None:
@@ -116,7 +119,7 @@ class TestDailyNotifyChange(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         text = (BIN / "daily.sh").read_text(encoding="utf-8")
-        match = re.search(r"^notify_change\(\) \{.*?^\}$", text, re.S | re.M)
+        match = re.search(r"^notify_change\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
         assert match, "notify_change not found in bin/daily.sh"
         cls.func = match.group(0)
 
@@ -166,6 +169,7 @@ class TestDailyNotifyChange(unittest.TestCase):
             stub_alert = 'alert_jonathan() { printf \'%s\\n\' "$1" "$2" >> "$ALERT_LOG"; }'
             proc = subprocess.run(
                 ["bash", "-c", f"set -uo pipefail\n{stub_alert}\n{self.func}\nnotify_change"],
+                check=False,
                 cwd=cwd,
                 env=env,
                 capture_output=True,
@@ -179,7 +183,7 @@ class TestDailyNotifyChange(unittest.TestCase):
             self.alerts = alert_path.read_text(encoding="utf-8") if alert_path.exists() else ""
             return proc, state, request
 
-    CHANGE = {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"}
+    CHANGE: ClassVar[dict] = {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"}
 
     def test_posts_a_new_change_and_records_it(self) -> None:
         proc, state, request = self._run(last_change=self.CHANGE)
@@ -332,7 +336,7 @@ class TestProbeShFlow(unittest.TestCase):
             for i, rc in enumerate(fake_rcs, start=1):
                 env[f"FAKE_RC_{i}"] = str(rc)
             proc = subprocess.run(["bash", str(repo / "bin" / "probe.sh")], cwd=repo, env=env,
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, check=False)
             args = (root / "probe-args.log").read_text(encoding="utf-8").splitlines() \
                 if (root / "probe-args.log").exists() else []
             alerts = (root / "alerts.log").read_text(encoding="utf-8") if (root / "alerts.log").exists() else ""
@@ -425,7 +429,7 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(log, ["seed"])
 
     def test_first_run_failure_body_leads_with_a_plain_language_summary(self):
-        proc, args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[4])
+        proc, _args, alerts, _rows, log = self._run([SONNET_0939], [None], fake_rcs=[4])
         self.assertEqual(proc.returncode, 4, proc.stderr + proc.stdout)
         self.assertIn("Probe aborted on claude-opus-5", alerts)
         # tracker.report ran for real (the stub only fakes probe and alert): summary first,
@@ -436,7 +440,7 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(log, ["seed"])
 
     def test_an_unknown_exit_code_is_reported_as_a_crash_not_swallowed(self):
-        proc, args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[1])
+        proc, _args, alerts, rows, log = self._run([SONNET_0939], [None], fake_rcs=[1])
         self.assertEqual(proc.returncode, 1, proc.stderr + proc.stdout)
         self.assertIn("Probe crashed on claude-opus-5 (exit 1)", alerts)
         self.assertIn("Outcome: CRASHED.", alerts)

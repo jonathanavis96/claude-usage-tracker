@@ -33,13 +33,15 @@ Exit codes: 0 sampled, 2 refused (the log belongs to another account, or the
 config dir is signed out), 4 the usage read failed.
 """
 from __future__ import annotations
+
 import functools
 import hashlib
 import json
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+
 from .usage_api import Utilization, _default_fetch, read_usage
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
