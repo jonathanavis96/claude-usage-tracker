@@ -1,0 +1,13 @@
+{
+  "id": "gs-passive-2026-09-16-v1",
+  "kind": "derived_scenario",
+  "source": "token-class shares of every published gs passive stretch in history/gs-passive.json as committed 2026-09-16T16:30Z (2026-09-05..16), the mix the page's token figures used until then",
+  "as_of": "2026-09-16",
+  "cache_write_duration": "legacy_assumed_5m",
+  "split": {
+    "input": 0.000035,
+    "output": 0.003485,
+    "cache_read": 0.971307,
+    "cache_write": 0.025173
+  }
+}

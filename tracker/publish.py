@@ -6,37 +6,51 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from .capture import ACCEPTED
-from .detect import (MIN_POOL_D7, current_regime_points, detect_changes, detect_smoothed_changes, detect_weighted_changes,
-                     pooled_windows, weighted_regimes)
+from .detect import (MIN_POOL_D7, current_regime_points, detect_smoothed_changes, detect_weighted_changes,
+                     pooled_interval, weighted_regimes)
 from .gs_passive import passive_dollar_readings
+from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE
 from .rows import usable_rows
 from .weekly import probe_weekly_windows
 
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
-# How many five-hour windows a week's cap holds, per plan, relative to max20. NOT
-# PLAN_RATIOS_BASE: that one is what a single window is worth in tokens (the published
-# 1:5:20), this one is how many windows a week contains, and the two pull in opposite
-# directions -- Max 5x holds more windows, Max 20x holds bigger ones.
-#
-# Frozen, and measured rather than published by Anthropic: it is one meter divided by
-# another over the same traffic, so whoever generated the usage cancels out. Three
-# independent routes over Jonathan's own 5x-to-20x move agree -- calendar weeks
-# 11.02/6.18 = 1.78, the weeks either side of PLAN_CHANGE 11.00/6.58 = 1.67, and the
-# per-window medians with the seven-day rounding guard applied 9.86/5.67 = 1.74 (80
-# windows against 20). 1.78 is the figure of record.
-#
-# Frozen is the right shape, not a shortcut: max5 is not coming back on this account
-# (see _plan_for_week), so the ratio can never be re-measured here. Recomputing it live
-# from two `current` fields is what issue #54 fixes -- max20's current tracks the newest
-# regime while max5's is a frozen August calendar-week median, so their quotient carries
-# whatever limit change has landed since (2.39 today, being 1.78 x the 14 Sep -29%) and
-# fires a plan move as a limit move. A real Max 5x contributor replaces this with
-# measurement; until then the gap-fill has one constant, not a drifting quotient.
-WEEKLY_WINDOW_RATIOS = {"pro": 1.78, "max5": 1.78, "max20": 1.0}
+# The published 1:5:20 scaling of ONE five-hour window between plans (Max 5x and Max 20x
+# are five and twenty times Pro's per-session usage). It says nothing about how many
+# windows a week holds on each plan: that is measured per plan in `weekly_windows`, and
+# the frozen cross-plan ratio of weekly windows (1.78) that used to fill Pro and Max 5x
+# from Max 20x is gone (audit 2026-09-16, finding 6).
+PLAN_RATIOS_SOURCE_URL = "https://support.claude.com/en/articles/11049741-what-is-the-max-plan"
 MAX_SAMPLE_AGE_DAYS = 10
 WEEKLY_CURRENT_DAYS = 14
 FIVE_HOURS = timedelta(hours=5)
+PLAN_SOURCE_URL = "https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan"
+REFERENCE_MIX = json.loads((Path(__file__).resolve().parent.parent / "data" / "reference_mix.json").read_text())
+
+
+def _model_plan_limits(prices: dict) -> dict:
+    """Which plans include each model's usage, and what share of the weekly limit it may use.
+
+    Published beside the rates rather than folded into them, because it is policy,
+    not measurement (audit finding 2): Fable is not included in Pro's subscription
+    usage, and on Max it may use at most half of the weekly allowance. Every other
+    priced model is included on every plan at the whole weekly allowance. A
+    consumer multiplying a window figure out to a week applies `weekly_fraction`;
+    an `included: false` model has no subscription capacity to show.
+    """
+    out = {}
+    for model in prices:
+        fable = model.startswith("claude-fable-")
+        out[model] = {}
+        for plan in ("pro", "max5", "max20"):
+            included = not (fable and plan == "pro")
+            out[model][plan] = {
+                "included": included,
+                "weekly_fraction": (0.5 if fable else 1.0) if included else 0.0,
+                "source_url": PLAN_SOURCE_URL,
+                "as_of": "2026-09-16",
+            }
+    return out
 
 
 def load_probes(path: Path) -> list[dict]:
@@ -67,7 +81,10 @@ def class_weight(price: dict, cls: str) -> float:
     class_weight, or a class missing from it, defaults to 1.0 (cache_write,
     the class the Sonnet invariant probe is made of).
     """
-    return price.get("class_weight", {}).get(cls, 1.0)
+    weights = price.get("class_weight", {})
+    if cls == "cache_write_1h":
+        return weights.get(cls, weights.get("cache_write", 1.0))
+    return weights.get(cls, 1.0)
 
 
 def meter_usd(tokens: dict, price: dict) -> float:
@@ -116,176 +133,118 @@ def blended_api_price_per_token(split: dict, price: dict) -> float:
     ) / 1e6
 
 
-def _gs_split(gs_passive: dict | None, *, allow_legacy_unverified: bool = False) -> dict:
-    """Token-class shares over every gs account's published stretches, weighted by tokens."""
-    tot = {c: 0.0 for c in ("input", "output", "cache_read", "cache_write")}
+def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_unverified: bool) -> list[dict]:
+    """The stretch records passive_dollar_readings reads, for the evidence published beside a rate."""
+    out = []
     for acct in (gs_passive or {}).get("accounts", {}).values():
         for st in acct.get("stretches", []):
-            if st.get("status") != ACCEPTED:
+            if st.get("status") != ACCEPTED or st.get("unpriced_tokens", 0) > 0:
                 continue
             if st.get("reset_verified") is not True and not allow_legacy_unverified:
                 continue
-            if st.get("unpriced_tokens", 0) > 0:
+            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in st.get("tokens", {}).items()):
                 continue
-            for by_class in st.get("tokens", {}).values():
-                for c in tot:
-                    tot[c] += by_class.get(c, 0)
-    grand = sum(tot.values())
-    if not grand:
-        return {}
-    out = {c: n / grand for c, n in tot.items()}
-    one_hour = sum(by_class.get("cache_write_1h", 0)
-                   for acct in (gs_passive or {}).get("accounts", {}).values()
-                   for st in acct.get("stretches", [])
-                   if st.get("status") == ACCEPTED
-                   and (st.get("reset_verified") is True or allow_legacy_unverified)
-                   and st.get("unpriced_tokens", 0) == 0
-                   for by_class in st.get("tokens", {}).values())
-    if one_hour:
-        out["cache_write_1h"] = one_hour / grand
+            out.append({**st, "_account": acct.get("account")})
     return out
 
 
-def _row_split(row: dict) -> dict:
-    tokens = row["tokens"]
-    total = sum(tokens[cls] for cls in ("input", "output", "cache_read", "cache_write"))
-    out = {cls: tokens[cls] / total for cls in ("input", "output", "cache_read", "cache_write")}
-    if tokens.get("cache_write_1h"):
-        out["cache_write_1h"] = tokens["cache_write_1h"] / total
-    return out
+def _reference_tokens(budget: float | None, meter_usd_per_token: float) -> int | None:
+    """Tokens of the reference mix a meter budget buys; None when there is no budget or no price."""
+    return round(budget / meter_usd_per_token) if budget is not None and meter_usd_per_token > 0 else None
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
                       effort_usd: dict | None = None, gs_passive: dict | None = None) -> dict:
-    """Derive every model's rate from one probed model's dollar value.
+    """The public JSON, schema_version 2 (the 2026-09-16 audit's implementation contract).
 
-    `effort` is the calibration matrix's median tokens per task (model -> effort) and
-    `effort_usd` its median meter dollars per task, passed through as `effort_usd`.
+    Rates. The measured quantity is the meter budget: the meter dollars (list
+    price x class_weight x meter_weight, tracker/join.py bundle_meter_usd) one
+    full five-hour window holds, read from the gs accounts' passive stretches
+    (tracker/gs_passive.py) and pooled per account per UTC day. It is published
+    as `meter_budget_per_window`. Everything per model is derived from it on a
+    frozen, versioned reference token mix (data/reference_mix.json): for mix s,
+    `tokens_per_window` = budget / sum(s[c] x price[c] x class_weight[c]) /
+    meter_weight, and `api_value_per_window` (also `api_list_value_per_window`)
+    is the API list value of exactly those tokens, cache reads included. Until
+    2026-09-16 `api_value_per_window` held the meter budget itself, which is a
+    different unit whenever a class weight is not 1 (audit finding 1). The mix is
+    frozen so that a change in how the watched accounts happen to work does not
+    restate every token figure (finding 11); per-model numbers are conversions
+    under it, not measurements of each model's cap, and `assumptions` says so.
 
-    Only one model is probed (see bin/probe.sh, weekly cadence). Its
-    meter-dollar value per window (list-dollar value x that model's own
-    meter_weight, see usd_per_pct) is the invariant: every other model's
-    tokens_per_window is that same meter-dollar amount divided by the
-    model's own blended price per token times its own meter_weight
-    (blended_price_per_token returns USD per token, not per million, so no
-    further scaling is needed there). meter_weight corrects for the 5-hour
-    meter charging models at a different rate than their list price implies
-    (see docs/spike-2026-09.md, 2026-09-06 ruling); a model missing the key
-    defaults to 1.0.
+    Instruments. Only passive readings are published, and only from stretches
+    whose meter log carried reset ids (`reset_verified`); those are "measured"
+    and the only ones change detection runs on. With none, stretches from a
+    reset-less log are used as a "conditional" reference with no change events
+    (finding 10). With neither, every rate field is null and `availability`
+    says why. Probe rows never stand in for missing passive readings (finding
+    13): they read the same meter on another scale. Capture completeness cannot
+    be proven from one host's transcripts, so every passive rate is `quality.status`
+    "conditional" with its reasons, and `evidence` carries what the current value
+    rests on: its readings, stretches, meter movement, window pieces and how many
+    stretches the capture check diagnosed (published anyway, CAPTURE_GATE off).
 
-    The published `history` is a step function of the measured limit, not
-    the raw daily series: Jonathan's own passive account is noisy 2x-5x day
-    to day (the rolling meter decays), and the public chart must show only
-    what change detection actually found, not that noise and not his plan
-    history. detect_changes splits the model-agnostic dollar series into
-    regimes; each regime is held flat at the median of the probe readings
-    that fall inside it, and every model's tokens_per_window for that regime
-    is that same median divided by the model's own blended price times its
-    own meter_weight -- so every model steps on the same dates, just at
-    different levels. Days before the first probe (when passive history
-    reaches further back) are folded into the first regime and held flat at
-    its value: the passive record certifies no step larger than the 30
-    July-18 August plan change happened before probing started, so nothing
-    in that gap can be measured, only held. A day's `source` is "probe" when
-    this exact model was probed that day, "derived" when the day falls in a
-    probed regime but another model was the one actually probed, and "held"
-    for the pre-first-probe fill. `interpolated` stays false everywhere --
-    it is a step function, not an interpolation, and the page should never
-    draw a dot on a held or derived day.
+    `meter_budget_per_window` is the median of the current regime's readings in
+    the trailing week (a regime starts at a detected change), so an older level
+    that detection never separated does not blend into it (finding 5). History
+    is one entry per UTC day that has a reading, from the first reading on: the
+    day's median, never held or backfilled (finding 12), with that day's quality.
+    Freshness is per metric (`freshness.stale` once the newest reading is older
+    than MAX_SAMPLE_AGE_DAYS), not a refusal to publish (finding 16).
 
-    `rates[model]["source"]` is a separate, coarser signal: "probe" when this
-    model has at least one usable prose row anywhere in the history (all
-    three models are probed in rotation, one per 12 hours, so each has its
-    own probe rows even on days it was not the one actually probed), else
-    "derived". `rates[model]["probed_at"]` is that model's own latest usable
-    prose row's timestamp, or null when it has never been probed.
-
-    `gs_passive` (tracker/gs_passive.py's `report()`, issue #39) supplies the
-    passive readings: `passive_dollar_readings(gs_passive, prices, by="day")`,
-    one (time, meter dollars per full window) reading per gs account per UTC
-    day, every priced stretch pooled. When there is at least one, the dollar
-    series IS that passive series -- probe rows do not join it. The probe read
-    the same meter on another scale (its payload was 98% cache_write by list
-    value; real sessions are 59% cache_read, 24% cache_write, 17% output) and
-    every attempt to scale one onto the other invented change events. The
-    probe rows still supply `probed_at`/`probe_effort`, the weekly windows and
-    the class-split fallback; with no passive readings at all the series is the
-    probe's, exactly as before 2026-09-16. `instrument` (top level) says which:
-    "passive" or "probe". Step detection on a passive series uses
-    detect_smoothed_changes (a rolling week's median against the regime before
-    it) because a passive day scatters 15-20% and detect_changes' two-readings
-    rule fires on that; the probe series keeps detect_changes. The freshness
-    guard reads the newest reading of the series, so a passive day 24 hours old
-    keeps the publish fresh with no probe ever run again. History days before
-    the first reading of the series are "held" at the first regime's value;
-    the passive series starts 2026-09-05, so probe days before it are held,
-    not shown at the probe's scale.
-
-    Every history day also carries `api_value_per_window`: the regime's
-    held dollar value itself, identical across models on any given day, so
-    the page can show dollars per window with the same step treatment as
-    tokens without re-deriving it from prices. `rates[model]` carries the
-    current regime's value under the same key.
+    Weekly windows, events and plan limits: see _weekly_block, _event_record and
+    _model_plan_limits.
     """
-    passive_split = passive.get("split", {})
-    # Weekly windows measured from probe rows' own before/after meter reads,
-    # independent of the passive log -- taken from every row regardless of the
-    # outlier/class-weighting filter below, since that filter is about dollar
-    # value, not the five-hour/seven-day deltas this measures.
+    if not prices:
+        raise ValueError("price table has no models")
     probe_weekly = probe_weekly_windows(probe_rows, now=now)
-
-    # Output rows (the weekly Fable weight run, payload "output") measure the meter's
-    # class weighting, not the limit, and a row flagged `outlier` by the rotation's
-    # drift check was contradicted by its rerun: neither enters the dollar series,
-    # the regime medians, change detection or the freshness check (tracker/rows.py).
+    # Output rows and outliers still stay out of everything the probe rows supply
+    # (probed_at, probe_effort, account counts; tracker/rows.py).
     probe_rows = usable_rows(probe_rows)
 
-    # One model-agnostic dollar series: what a full window (100%) of usage would
-    # have cost at API list prices, regardless of which model probed it, or
-    # whether it was probed at all. `passive_dollar_readings` returns the same
-    # (time, dollars-per-window) shape as a probe reading (see gs_passive.py),
-    # so the two concatenate directly; only the *kind* of each reading is
-    # tracked separately, for `instrument` and `rates[model]["source"]" below.
-    probe_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100, "probe")
-                      for r in probe_rows]
-    # Probe and passive payloads are incompatible instruments.  A missing
-    # passive report must not silently replace the public series with probe
-    # values on a different scale.  Archived reset-less stretches are retained
-    # as conditional references, but cannot produce a confident change event.
-    passive_readings = ([(ts, v, "passive") for ts, v in
-                         passive_dollar_readings(gs_passive, prices, by="day")]
-                        if gs_passive else [])
-    legacy_readings = ([(ts, v, "passive_legacy") for ts, v in
-                        passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True)]
-                       if gs_passive and not passive_readings else [])
-    evidence_status = "measured" if passive_readings else ("conditional" if legacy_readings else "unavailable")
-    combined = sorted(passive_readings or legacy_readings, key=lambda t: t[0])
+    all_readings = passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True) if gs_passive else []
+    verified_readings = passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else []
+    evidence_status = "measured" if verified_readings else ("conditional" if all_readings else "unavailable")
+    series = sorted(verified_readings if verified_readings else all_readings)
+    events = detect_smoothed_changes(series) if evidence_status == "measured" else []
+    regime_start = max((e.date for e in events), default=None)
 
-    dollar_readings = [(ts, v) for ts, v, _ in combined]
-    events = detect_smoothed_changes(dollar_readings) if evidence_status == "measured" else []
-    regime_starts = sorted({e.date for e in events})
+    measured_at = series[-1][0] if series else None
+    current = [(ts, v) for ts, v in series
+               if (regime_start is None or ts.date() >= regime_start) and ts >= measured_at - timedelta(days=7)]
+    current_value = median(v for _, v in current) if current else None
+    stale = measured_at < now - timedelta(days=MAX_SAMPLE_AGE_DAYS) if measured_at else None
 
-    def regime_index(d: date) -> int:
-        idx = 0
-        for rd in regime_starts:
-            if d >= rd:
-                idx += 1
-            else:
-                break
-        return idx
-
-    by_day_models: dict[date, set[str]] = {}
-    regime_values: dict[int, list[float]] = {}
-    # The newest reading in each regime, kind and all: what rates[model]["source"]
-    # and ["measured_at"] key off, so a passive-only day in the current regime
-    # reads "passive" for every model instead of silently keeping a stale "probe".
-    regime_newest: dict[int, tuple[datetime, str]] = {}
-    for ts, v, kind in combined:
-        idx = regime_index(ts.date())
-        regime_values.setdefault(idx, []).append(v)
-        if idx not in regime_newest or ts > regime_newest[idx][0]:
-            regime_newest[idx] = (ts, kind)
-    passive_days = {ts.date() for ts, _, kind in combined if kind.startswith("passive")}
+    stretches = _eligible_stretches(gs_passive, prices, allow_legacy_unverified=evidence_status == "conditional")
+    if current:
+        since = current[0][0].date().isoformat()
+        stretches = [st for st in stretches if st["end"][:10] >= since]
+    else:
+        stretches = []
+    movement = sum(float(st.get("delta_pct", 0)) for st in stretches)
+    pieces = sum(int(st.get("windows", 1)) for st in stretches)
+    reasons = {"measured": ["capture_completeness_not_verified"],
+               "conditional": ["legacy_reset_metadata_missing", "capture_completeness_not_verified"],
+               "unavailable": ["no_eligible_passive_measurement"]}[evidence_status]
+    if stale:
+        reasons = [*reasons, "evidence_stale"]
+    evidence = {"source": "passive" if series else None,
+                "reset_verified": evidence_status == "measured",
+                "observed_from": current[0][0].isoformat() if current else None,
+                "observed_to": measured_at.isoformat() if measured_at else None,
+                "readings": len(current),
+                "account_count": len({st["_account"] for st in stretches}),
+                "stretches": len(stretches),
+                "meter_movement_pct": round(movement, 1),
+                "window_pieces": pieces,
+                "rounding_relative": round(pieces / movement, 4) if movement else None,
+                "capture_diagnosed": sum(1 for st in stretches if st.get("capture_status") not in (None, ACCEPTED))}
+    quality = {"status": "unavailable" if evidence_status == "unavailable" else "conditional",
+               "reasons": reasons, "capture_complete": None,
+               "unpriced_work": False if series else None}
+    freshness = {"as_of": measured_at.isoformat() if measured_at else None,
+                 "stale_after": (measured_at + timedelta(days=MAX_SAMPLE_AGE_DAYS)).isoformat() if measured_at else None,
+                 "stale": stale}
 
     latest_row = max(probe_rows, key=lambda r: r["ts"]) if probe_rows else None
     latest_row_per_model: dict[str, dict] = {}
@@ -293,198 +252,76 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         m = r["model"]
         if m not in latest_row_per_model or r["ts"] > latest_row_per_model[m]["ts"]:
             latest_row_per_model[m] = r
-    # Counts, never names. The published JSON is world-readable, and the account names are
-    # the login names of real people's Claude accounts; how many accounts a figure rests on
-    # is the part a reader needs.
-    probe_account_count = len({r["account"] for r in probe_rows if r.get("account")})
-    passive_account_count = sum(1 for acct in (gs_passive or {}).get("accounts", {}).values()
-                                if any(s["status"] == ACCEPTED for s in acct.get("stretches", [])))
-    earliest_reading_day = combined[0][0].date() if combined else now.date()
-    first_probe_day = min(by_day_models, default=earliest_reading_day)
-    # The class split converts meter dollars to tokens. In passive mode it is the gs
-    # accounts' own mix (tracker/gs_passive.py `split`, token-weighted across accounts),
-    # the sessions the series is measured from; else masterrig's passive.json split; a
-    # missing/lagging passive.json is allowed (it arrives from masterrig), so fall back
-    # to the latest probe row's own class split rather than blowing up on an empty one.
-    gs_split = _gs_split(gs_passive, allow_legacy_unverified=evidence_status == "conditional")
-    passive_split = gs_split or passive_split
 
-    passive_history = passive.get("history", {})
-    # No retrospective held rows: before the first compatible observation the
-    # rate was not measured.  Consumers may present a separate current-mix
-    # scenario, but history does not masquerade as contemporaneous evidence.
-    first_day = earliest_reading_day
-    last_day = now.date()
-    current_regime = regime_index(last_day)
-    current_regime_value = median(regime_values[current_regime]) if current_regime in regime_values else None
-    measured_at, current_kind = regime_newest.get(current_regime, (None, "none"))
-    instrument = "passive" if evidence_status in ("measured", "conditional") else "unavailable"
+    mix = dict(REFERENCE_MIX["split"])
+    verified_days = {ts.date() for ts, _ in verified_readings}
+    by_day: dict[date, list[float]] = {}
+    for ts, v in (all_readings if evidence_status == "measured" else series):
+        if evidence_status == "measured" and ts.date() in verified_days and (ts, v) not in verified_readings:
+            continue  # a day with verified readings publishes those alone
+        by_day.setdefault(ts.date(), []).append(v)
 
-    # Published ratios only: the passive-observed 5x-to-20x ratio is too noisy to publish
-    # (see docs/spike-2026-09.md); the page cites it in caveats instead.
-    ratios = dict(PLAN_RATIOS_BASE)
     rates, history = {}, {}
     for model, price in prices.items():
-        blended = blended_price_per_token(passive_split, price) if passive_split else 0.0
-        api_blended = blended_api_price_per_token(passive_split, price) if passive_split else 0.0
-        weight = price.get("meter_weight", 1.0)
+        per_token = blended_price_per_token(mix, price) * price.get("meter_weight", 1.0)
+        api_per_token = blended_api_price_per_token(mix, price)
+
+        window_tokens = _reference_tokens(current_value, per_token)
         model_probe = latest_row_per_model.get(model)
-        tokens_per_window = (round(current_regime_value / (blended * weight))
-                             if current_regime_value is not None and blended > 0 else None)
-        api_list_value = (round(tokens_per_window * api_blended, 2)
-                          if tokens_per_window is not None else None)
-        stale = (measured_at < now - timedelta(days=MAX_SAMPLE_AGE_DAYS)) if measured_at else None
-        reasons = []
-        if evidence_status == "conditional":
-            reasons.extend(["legacy_reset_metadata_missing", "capture_completeness_not_certified"])
-        elif evidence_status == "unavailable":
-            reasons.append("no_eligible_passive_measurement")
-        rates[model] = {"tokens_per_window": tokens_per_window,
-                        "source": "derived_reference_mix" if tokens_per_window is not None else "unavailable",
-                        "probed_at": model_probe["ts"] if model_probe is not None else None,
-                        "measured_at": measured_at.isoformat() if measured_at else None,
-                        "probe_effort": latest_row["effort"] if latest_row is not None else None,
-                        "split": passive_split,
-                        "meter_budget_per_window": round(current_regime_value, 2) if current_regime_value is not None else None,
-                        "api_value_per_window": api_list_value,
-                        "api_list_value_per_window": api_list_value,
-                        "reference_mix": {"kind": "derived_scenario",
-                            "source": "passive_token_mix" if evidence_status == "measured" else "legacy_passive_token_mix",
-                            "as_of": measured_at.isoformat() if measured_at else None,
-                            "cache_write_duration": ("observed" if passive_split.get("cache_write_1h") is not None
-                                                     else "legacy_assumed_5m")},
-                        "assumptions": {
-                            "model_conversion": "meter budget converted with the shared reference mix and price-table weights",
-                            "direct_model_cap_measurement": False,
-                            "meter_weight": weight,
-                            "class_weight": {c: class_weight(price, c)
-                                             for c in ("input", "output", "cache_read", "cache_write", "cache_write_1h")},
-                            "cache_read_meter_weight_zero": class_weight(price, "cache_read") == 0,
-                            "cache_write_1h_meter_weight": "assumed_same_as_cache_write",
-                        },
-                        "evidence": {"source": "passive" if combined else "none",
-                            "observed_from": combined[0][0].isoformat() if combined else None,
-                            "observed_to": measured_at.isoformat() if measured_at else None,
-                            "measured_at": measured_at.isoformat() if measured_at else None,
-                            "account_count": passive_account_count,
-                            "reset_verified": evidence_status == "measured"},
-                        "quality": {"status": evidence_status, "reasons": reasons,
-                            "capture_complete": True if evidence_status == "measured" else None,
-                            "unpriced_work": False if evidence_status in ("measured", "conditional") else None,
-                            "rounding_relative": None},
-                        "freshness": {"as_of": measured_at.isoformat() if measured_at else None,
-                            "stale_after": ((measured_at + timedelta(days=MAX_SAMPLE_AGE_DAYS)).isoformat()
-                                            if measured_at else None), "stale": stale}}
-        hist = []
-        d = first_day
-        while combined and d <= last_day:
-            idx = regime_index(d)
-            regime_value = median(regime_values[idx])
-            day_tokens = round(regime_value / (blended * weight)) if blended > 0 else None
-            hist.append({"date": d.isoformat(), "tokens_per_window": day_tokens,
-                        "meter_budget_per_window": round(regime_value, 2),
-                        "api_value_per_window": round(day_tokens * api_blended, 2) if day_tokens is not None else None,
-                        "api_list_value_per_window": round(day_tokens * api_blended, 2) if day_tokens is not None else None,
-                        "source": "passive" if d in passive_days else "derived_reference_mix",
-                        "quality": evidence_status, "interpolated": False})
-            d += timedelta(days=1)
-        history[model] = hist
-    last_sample = combined[-1][0].isoformat() if combined else None
-    # The page freezes generated_at, so a stale publish would silently present old
-    # numbers as current instead of letting the page's own stale warning fire. The
-    # guard is on the newest reading of EITHER kind: passive keeps the figure
-    # fresh on its own now that probes are not scheduled (issue #39).
-    if not rates:
-        raise ValueError("price table has no models")
-    passive_weekly = passive.get("weekly_windows")
-    weekly_windows = None
-    weekly_window_ratios = {}
-    weekly_events: list = []
-    if passive_weekly is not None:
-        # The count of five-hour windows a week's cap holds is per plan, not one
-        # continuous series: Jonathan moved Max 5x -> Max 20x on PLAN_CHANGE, so
-        # the passive history is split at that date rather than treated as one
-        # series that happens to contain a plan-change artifact. The week whose
-        # (week_ending-7, week_ending] span straddles PLAN_CHANGE is dropped from
-        # both plans -- it mixes days from each plan and belongs to neither.
-        # max5 is frozen (Jonathan is not going back to it); only max20, the live
-        # plan, gets a probe series and change detection. Probe weeks (the Dave
-        # account, which probes on max20) replace passive max20 weeks from the
-        # first probe week on, same concatenation rule as before.
-        #
-        # The weekly rows are what the page charts. Detection and max20's
-        # `current` do NOT run on them: a calendar week blends a mid-week step
-        # into its average (the 2026-09-13 cut published as a -14.5% open week
-        # and could not have fired before 2026-10-02, issue #25). They run on
-        # the passive per-window series `by_window` instead, each point
-        # weighted by its own seven-day movement (tracker/detect.py:
-        # detect_weighted_changes, _max20_window_points for why the probe
-        # runs' own points stay out). A passive.json from before that series
-        # existed publishes its weekly rows as before, with no weekly
-        # detection and the old two-complete-weeks median as current, until
-        # masterrig's next passive run.
-        passive_history = [dict(h) for h in passive_weekly.get("history", [])]
-        # passive.json may lag: it can predate the flag, or carry a `partial` from
-        # when its newest week was still open. Recompute the flag against this
-        # publish's own time so every published weekly row honours the contract.
-        for h in passive_history:
-            h["partial"] = date.fromisoformat(h["week_ending"]) >= now.date()
-        probe_history = [dict(h, source="probe_paired_deltas", quality="measured",
-                              assumed=False) for h in probe_weekly["history"]]
-        for h in passive_history:
-            h.update({"source": h.get("source", "passive_paired_deltas"), "assumed": False,
-                      "quality": ("measured" if h.get("reset_verified") is True else "legacy_uncertain"),
-                      "reasons": ([] if h.get("reset_verified") is True
-                                  else ["historical_row_missing_reset_provenance"])})
-        max5_history = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max5"]
-        max20_history = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max20"]
-        max20_points = _max20_window_points(passive_weekly.get("by_window", []))
-        weekly_events = detect_weighted_changes(max20_points)
-        max20_current = _regime_current(max20_points)
-        # Levels, not weekly points. Windows per week is a plan constant, so the honest
-        # series is a step function and every weekly ratio is an estimate of it carrying
-        # several percent of assembly error (weighted_regimes' docstring lists the three
-        # sources). Published alongside the weekly rows rather than instead of them: the
-        # rows are the evidence, the regimes are what the evidence says.
-        max20_regimes = weighted_regimes(max20_points)
-        # max5 is frozen, so the only step its own windows can contain is the plan move
-        # itself, and the detector duly finds one -- dated 2026-08-15, three days before
-        # PLAN_CHANGE (the 15-18 Aug windows pool to 6.42 against 10.83 for 1-14 Aug, so
-        # the account was already on max20; see issue #56). Keep only the regimes before
-        # that first step, which is max5's real level, rather than publishing the plan
-        # move as a limit change on the frozen plan.
-        max5_regimes = weighted_regimes(_max5_window_points(passive_weekly.get("by_window", [])))
-        for r in max20_regimes + max5_regimes:
-            r.update({"source": "passive_paired_deltas", "assumed": False, "quality": "measured", "reasons": []})
-        current_estimate = ({"value": max20_current, "source": "passive_paired_deltas",
-                             "as_of": max20_points[-1][0].isoformat(), "stale": max20_points[-1][0] < now - timedelta(days=14),
-                             "assumed": False, "quality": "measured", "reasons": []}
-                            if max20_current is not None and max20_points else None)
-        weekly_windows = {
-            "max20": {"current": max20_current, "current_estimate": current_estimate,
-                      "history": max20_history, "assumed": False, "regimes": max20_regimes},
-            "max5": {"current": None, "current_estimate": None, "history": max5_history,
-                     "assumed": False, "regimes": max5_regimes,
-                     "availability": {"status": "historical_only", "reason": "no_current_max5_measurement"}},
-            "pro": {"current": None, "current_estimate": None, "history": [], "assumed": False,
-                    "regimes": [], "availability": {"status": "unavailable", "reason": "no_pro_measurement"}},
-            "passive": passive_weekly,
-            "probe": {**probe_weekly, "history": probe_history},
+        rates[model] = {
+            "meter_budget_per_window": round(current_value, 2) if current_value is not None else None,
+            "tokens_per_window": window_tokens,
+            "api_value_per_window": round(window_tokens * api_per_token, 2) if window_tokens is not None else None,
+            "api_list_value_per_window": round(window_tokens * api_per_token, 2) if window_tokens is not None else None,
+            "source": "derived_reference_mix" if window_tokens is not None else "unavailable",
+            "split": mix,
+            "reference_mix": {k: REFERENCE_MIX[k] for k in ("id", "kind", "source", "as_of", "cache_write_duration")},
+            "assumptions": {
+                "direct_model_cap_measurement": False,
+                "model_conversion": "meter budget converted on the reference mix with this model's price-table weights",
+                "meter_weight": price.get("meter_weight", 1.0),
+                "class_weight": {c: class_weight(price, c)
+                                 for c in ("input", "output", "cache_read", "cache_write", "cache_write_1h")},
+                "cache_write_1h_price_default": "2x input when the price table has no cache_write_1h",
+                "cache_write_1h_meter_weight": "assumed equal to cache_write's",
+            },
+            "evidence": evidence,
+            "quality": quality,
+            "freshness": freshness,
+            "measured_at": measured_at.isoformat() if measured_at else None,
+            "probed_at": model_probe["ts"] if model_probe is not None else None,
+            "probe_effort": latest_row["effort"] if latest_row is not None else None,
         }
-        weekly_window_ratios = {}
-    last_change = _latest_change_with_scope(events, weekly_events)
-    out = {
+        hist = []
+        for d in sorted(by_day):
+            budget = median(by_day[d])
+            day_tokens = _reference_tokens(budget, per_token)
+            day_api = round(day_tokens * api_per_token, 2) if day_tokens is not None else None
+            hist.append({"date": d.isoformat(), "meter_budget_per_window": round(budget, 2),
+                         "tokens_per_window": day_tokens, "api_value_per_window": day_api,
+                         "api_list_value_per_window": day_api, "source": "passive",
+                         "quality": "measured" if d in verified_days else "legacy_reset_unverified",
+                         "readings": len(by_day[d]), "interpolated": False})
+        history[model] = hist
+
+    weekly_windows, weekly_events = _weekly_block(passive.get("weekly_windows"), probe_weekly, now)
+    return {
         "schema_version": 2,
         "generated_at": now.isoformat(),
-        "last_sample_at": last_sample,
+        "last_sample_at": measured_at.isoformat() if measured_at else None,
         "meter_read_at": _last_meter_read(gs_passive),
         "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
-        "instrument": instrument,
-        "probe_account_count": probe_account_count,
-        "passive_account_count": passive_account_count,
-        "plan_ratios": ratios,
-        "weekly_window_ratios": weekly_window_ratios,
+        "instrument": "passive" if series else "unavailable",
+        "availability": {"rates": quality["status"], "evidence": evidence_status,
+                         "reason": {"measured": None, "conditional": "legacy_reset_metadata_missing",
+                                    "unavailable": "no_eligible_passive_measurement"}[evidence_status]},
+        "probe_account_count": len({r["account"] for r in probe_rows if r.get("account")}),
+        "passive_account_count": evidence["account_count"],
+        "plan_ratios": dict(PLAN_RATIOS_BASE),
+        "plan_ratios_basis": {"kind": "published_plan_scaling", "scope": "one five-hour window",
+                              "source_url": PLAN_RATIOS_SOURCE_URL},
+        "weekly_window_ratios": {},
         "rate_basis": "meter_budget",
         "model_plan_limits": _model_plan_limits(prices),
         "rates": rates,
@@ -492,16 +329,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "effort_usd": effort_usd or {},
         "api_price_per_mtok": prices,
         "history": history,
-        "last_change": last_change,
+        "weekly_windows": weekly_windows,
+        "last_change": _latest_change_with_scope(events, weekly_events),
         "events": _build_events(events, weekly_events),
-        "availability": {"rates": evidence_status,
-                         "reason": None if evidence_status == "measured" else
-                         ("legacy_reset_metadata_missing" if evidence_status == "conditional"
-                          else "no_eligible_passive_measurement")},
     }
-    if weekly_windows is not None:
-        out["weekly_windows"] = weekly_windows
-    return out
 
 
 def _plan_for_week(week_ending: str) -> str | None:
@@ -521,79 +352,144 @@ def _plan_for_week(week_ending: str) -> str | None:
     return None
 
 
-def _weekly_current(history: list[dict], now: datetime) -> float | None:
-    """Median of the last two complete weeks: max5's figure, and max20's only when
-    no per-window series has arrived yet (see _regime_current)."""
-    complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]
-    return round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
+def _repaired(row: dict) -> bool:
+    """Whether a passive.json weekly row or window point was paired after the finding-3 repair.
+
+    tracker/weekly.py adds `pieces` from that repair on. A row without it came
+    from pairing that dropped seven-day movement whenever the five-hour meter
+    held still, and dropped every pair across the weekly reset's jitter: it is
+    kept as legacy evidence, but nothing is computed from it.
+    """
+    return "pieces" in row
 
 
-def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float]]:
-    """The live plan's per-window series as (window_ending, d5, d7), oldest first.
+def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime) -> tuple[dict, list]:
+    """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
+
+    `max20` is the live plan. Its `current` is the pooled ratio of the current
+    regime's trailing fortnight of reset-verified, repaired passive window points
+    (_regime_current), with its rounding interval, evidence and staleness in
+    `current_estimate`; its `regimes` and the weekly events come from
+    tracker/detect.py on the same points. `max5` is history only: its weeks and
+    every regime its own points show, and no current value (audit finding 6: its
+    old median must not be published as current, nor scaled onto max20 across the
+    plan move). Its last regime begins before PLAN_CHANGE, a date taken from the
+    account owner's record rather than from independent metadata, so the plan
+    move itself cannot be told apart from a limit change there; `plan_change`
+    says so. `pro` has no measurement of its own and publishes none. Probe runs'
+    weekly rows are published as their own series and never replace passive weeks
+    (finding 13).
+    """
+    passive_weekly = dict(passive_weekly or {"current": None, "history": [], "by_window": []})
+    # passive.json may lag: it can predate the flag, or carry a `partial` from when its
+    # newest week was still open. Recompute it against this publish's own time.
+    passive_weekly["history"] = [dict(h, partial=date.fromisoformat(h["week_ending"]) >= now.date())
+                                 for h in passive_weekly.get("history", [])]
+    rows = [dict(h) for h in passive_weekly["history"]]
+    for h in rows:
+        h.update({"source": "passive_paired_deltas", "assumed": False}
+                 | ({"quality": "measured", "reasons": []} if _repaired(h)
+                    else {"quality": "legacy_uncertain", "reasons": ["paired_before_denominator_repair"]}))
+    points = passive_weekly.get("by_window", [])
+    legacy_only = bool(points) and not any(_repaired(p) for p in points)
+    max20_points = _max20_window_points(points)
+    max5_points = _max5_window_points(points)
+    events = detect_weighted_changes(max20_points)
+    estimate = _regime_current(max20_points, now)
+
+    def regimes(pts: list) -> list[dict]:
+        return [dict(r, source="passive_paired_deltas", assumed=False) for r in weighted_regimes(pts)]
+
+    if estimate is not None:
+        max20_availability = {"status": "measured", "reason": "evidence_stale" if estimate["stale"] else None}
+    elif legacy_only:
+        max20_availability = {"status": "unavailable", "reason": "passive_weekly_windows_predate_paired_delta_repair"}
+    elif not max20_points:
+        max20_availability = {"status": "unavailable", "reason": "no_paired_meter_data"}
+    else:
+        max20_availability = {"status": "unavailable", "reason": "insufficient_seven_day_movement"}
+    probe = dict(probe_weekly, history=[dict(h, source="probe_paired_deltas", assumed=False)
+                                        for h in probe_weekly["history"]])
+    block = {
+        "max20": {"current": estimate["value"] if estimate else None, "current_estimate": estimate,
+                  "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max20"],
+                  "regimes": regimes(max20_points), "assumed": False, "availability": max20_availability},
+        "max5": {"current": None, "current_estimate": None,
+                 "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max5"],
+                 "regimes": regimes(max5_points), "assumed": False,
+                 "availability": {"status": "historical_only", "reason": "no_current_max5_measurement"},
+                 "plan_change": {"date": PLAN_CHANGE.isoformat(), "source": "account owner's record",
+                                 "independently_verified": False}},
+        "pro": {"current": None, "current_estimate": None, "history": [], "regimes": [], "assumed": False,
+                "availability": {"status": "unavailable", "reason": "no_pro_measurement"}},
+        "passive": passive_weekly,
+        "probe": probe,
+    }
+    return block, events
+
+
+def _window_points(passive_points: list[dict], keep) -> list[tuple[datetime, float, float, int]]:
+    points = [(datetime.fromisoformat(p["window_ending"]), p["five_hour_pct"], p["seven_day_pct"], p["pieces"])
+              for p in passive_points
+              if _repaired(p) and p.get("reset_verified") is True and keep(datetime.fromisoformat(p["window_ending"]))]
+    return sorted(points, key=lambda p: p[0])
+
+
+def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:
+    """The live plan's per-window series as (window_ending, d5, d7, pieces), oldest first.
 
     Passive windows are Jonathan's own account, so only those that START
     after PLAN_CHANGE are max20: a window straddling or preceding the plan
     change would read at the Max 5x ratio (about 11 against 6.5) and, as the
-    first base of the max20 series, would fire Jonathan's own plan move as an
-    Anthropic cut. The whole of PLAN_CHANGE day is excluded, not just windows
-    before it, because the change is dated to a day and not an hour.
+    first base of the max20 series, would read Jonathan's own plan move as a
+    change. The whole of PLAN_CHANGE day is excluded, not just windows before
+    it, because the change is dated to a day and not an hour. Only points
+    paired after the finding-3 repair (_repaired) with recorded reset ids count.
 
     The probe runs' own per-window points (`weekly_windows.probe.by_window`)
     are published for the record but deliberately NOT pooled in here, even
-    though the probe accounts are on the same plan. A 3-tick run moves the
+    though the probe accounts are on the same plan: a 3-tick run moves the
     seven-day meter by one whole point or none, so each of its points is
-    pure rounding (d7 = 1 read against a true movement anywhere in 0.5-1.5),
-    and a fortnight of runs adds a handful of points of d7 next to a passive
-    window's eight or eleven: measured against the real 2026-09-13 cut,
-    pooling them in moved the base enough to report -31% for what the
-    passive windows alone put at -26%, without adding any information a
-    detector could use. Their weekly rows still replace the passive weeks in
-    the chart series once a probe week clears the floors (probe_weekly_windows).
+    almost pure rounding, and they are another instrument.
     """
-    points = [(datetime.fromisoformat(p["window_ending"]), p["five_hour_pct"], p["seven_day_pct"])
-              for p in passive_points if (datetime.fromisoformat(p["window_ending"]) - FIVE_HOURS).date() > PLAN_CHANGE]
-    return sorted(points, key=lambda p: p[0])
+    return _window_points(passive_points, lambda ending: (ending - FIVE_HOURS).date() > PLAN_CHANGE)
 
 
-def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float]]:
+def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:
     """The frozen plan's per-window series, the mirror of _max20_window_points.
 
     Only windows that END on or before PLAN_CHANGE: a window straddling the
     change mixes both plans' ratios and belongs to neither, the same rule
-    _plan_for_week applies to weeks. Max 5x is never detected on in production
-    (it is frozen, and the module docstring of tracker/detect.py uses it as the
-    out-of-sample check that a flat stretch reports nothing), so this exists to
-    give the chart a measured LEVEL for the months before the plan move rather
-    than a level inferred backwards from max20.
+    _plan_for_week applies to weeks.
     """
-    points = [(datetime.fromisoformat(p["window_ending"]), p["five_hour_pct"], p["seven_day_pct"])
-              for p in passive_points if datetime.fromisoformat(p["window_ending"]).date() <= PLAN_CHANGE]
-    return sorted(points, key=lambda p: p[0])
+    return _window_points(passive_points, lambda ending: ending.date() <= PLAN_CHANGE)
 
 
-def _regime_current(points: list[tuple[datetime, float, float]]) -> float | None:
-    """max20's `current`: the pooled ratio of the current regime's newest
-    WEEKLY_CURRENT_DAYS of per-window points, anchored on the newest point.
+def _regime_current(points: list[tuple], now: datetime) -> dict | None:
+    """max20's current estimate: the current regime's newest WEEKLY_CURRENT_DAYS of window points, pooled.
 
-    Pooled (total d5 over total d7) rather than a median of weeks, and bounded
-    by the regime rather than by calendar weeks, so that once a change is
-    detected `current` is the post-change level from the day it fires instead
-    of the median of two pre-change weeks for another fortnight (issue #25: the
-    page's sessions-per-week and dollars-per-week derive from it). With no
-    change in the series it is simply the trailing fortnight. None when that
-    fortnight holds less than MIN_POOL_D7 of seven-day movement (a series that
-    has only just started, or a passive log that has gone quiet): too little
-    to state a level from, and the caller falls back to the weekly rows.
+    Pooled (total d5 over total d7) and bounded by the regime, so once a change is
+    certified `current` is the post-change level instead of a blend of both.
+    None when that fortnight holds less than MIN_POOL_D7 of seven-day movement.
+    `stale` is judged against the publish time, not against the newest point, so
+    a weekly log that has stopped arriving is visible as such (audit finding 16).
     """
     regime = current_regime_points(points)
     if not regime:
         return None
     since = regime[-1][0] - timedelta(days=WEEKLY_CURRENT_DAYS)
     recent = [p for p in regime if p[0] >= since]
-    if sum(p[2] for p in recent) < MIN_POOL_D7:
+    d5, d7 = sum(p[1] for p in recent), sum(p[2] for p in recent)
+    if d7 < MIN_POOL_D7:
         return None
-    pooled = pooled_windows(recent)
-    return round(pooled, 2) if pooled is not None else None
+    lo, hi = pooled_interval(recent)
+    newest = recent[-1][0]
+    stale = newest < now - timedelta(days=WEEKLY_CURRENT_DAYS)
+    return {"value": round(d5 / d7, 2), "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
+            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1), "points": len(recent),
+            "pieces": sum(p[3] for p in recent), "from": recent[0][0].isoformat(), "as_of": newest.isoformat(),
+            "stale": stale, "source": "passive_paired_deltas", "assumed": False,
+            "quality": "measured", "reasons": ["evidence_stale"] if stale else []}
 
 
 def _last_meter_read(gs_passive: dict | None) -> str | None:
@@ -615,24 +511,51 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
 
 
 def _latest_change_with_scope(window_events: list, weekly_events: list) -> dict | None:
-    """The most recent change across both event series, tagged with which one it came from."""
+    """The most recent change across both event series, as its full event record."""
     candidates = [(e, "window") for e in window_events] + [(e, "weekly") for e in weekly_events]
     if not candidates:
         return None
     e, scope = max(candidates, key=lambda c: c[0].date)
-    return {"date": e.date.isoformat(), "direction": e.direction, "percent": e.percent, "model": e.model, "scope": scope}
+    return _event_record(e, scope)
+
+
+def _event_record(e, scope: str) -> dict:
+    """One published change: an observed change in this account's metric, not a dated policy change.
+
+    `onset` bounds when it happened (the last reading at the old level and the
+    first at the new one), `confirmation` says by when the evidence after it
+    alone was enough and how much there was. Weekly events are certified against
+    both levels' rounding intervals (tracker/detect.py); window events have no
+    uncertainty model behind them, so they are `provisional`, and bin/daily.sh
+    announces neither a provisional nor a legacy-uncertain change.
+    """
+    provisional = scope == "window"
+    return {
+        "date": e.date.isoformat(), "direction": e.direction, "percent": e.percent, "model": e.model,
+        "scope": scope, "metric": "meter_budget_per_window" if scope == "window" else "weekly_to_five_hour_ratio",
+        "observation_scope": "account", "attribution": "observed_account_metric_change",
+        "onset": {"earliest": e.onset_earliest.isoformat() if e.onset_earliest else None,
+                  "latest": (e.onset_latest or e.date).isoformat()},
+        "confirmation": {"at": e.confirmed_at.isoformat() if e.confirmed_at else None,
+                         "evidence_points": e.evidence_points, "seven_day_pct": e.denominator_pct},
+        "rounding_interval_before": _rounded(e.before_interval),
+        "rounding_interval_after": _rounded(e.after_interval),
+        "evidence_quality": "provisional" if provisional else "certified",
+        "provisional": provisional, "legacy_uncertain": False,
+    }
+
+
+def _rounded(interval: tuple | None) -> list | None:
+    return [round(x, 4) if x is not None else None for x in interval] if interval else None
 
 
 def _build_events(window_events: list, weekly_events: list) -> list[dict]:
-    events = [
-        {"date": e.date.isoformat(), "kind": "change", "scope": "window",
-         "label": f"Window changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
-        for e in window_events
-    ] + [
-        {"date": e.date.isoformat(), "kind": "change", "scope": "weekly",
-         "label": f"Weekly limit changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
-        for e in weekly_events
-    ]
+    events = [{**_event_record(e, "window"), "kind": "change",
+               "label": f"Observed window budget changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
+              for e in window_events]
+    events += [{**_event_record(e, "weekly"), "kind": "change",
+                "label": f"Observed weekly/window ratio changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
+               for e in weekly_events]
     return sorted(events, key=lambda ev: ev["date"])
 
 

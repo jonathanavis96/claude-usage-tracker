@@ -220,13 +220,26 @@ class PublisherExcludesOutputRowsTests(unittest.TestCase):
         self.assertEqual(with_output["rates"], without["rates"])
         self.assertEqual(with_output["history"], without["history"])
         self.assertEqual(with_output["last_change"], without["last_change"])
-        self.assertEqual(with_output["last_sample_at"], SONNET_ROWS[-1]["ts"])
-        self.assertEqual(with_output["rates"]["claude-fable-5-1"]["source"], "derived")
+        self.assertEqual(with_output["weekly_windows"], without["weekly_windows"])
+        # Probe rows no longer stand in for the passive series (audit finding 13), so
+        # last_sample_at is the passive evidence time, absent here; the probe rows'
+        # own freshness is probed_at, and the output row never becomes Fable's.
+        self.assertIsNone(with_output["last_sample_at"])
+        self.assertEqual(with_output["rates"]["claude-sonnet-5"]["probed_at"], SONNET_ROWS[-1]["ts"])
+        self.assertIsNone(with_output["rates"]["claude-fable-5-1"]["probed_at"])
+        self.assertEqual(with_output["probe_account_count"], without["probe_account_count"])
 
     def test_only_output_rows_is_nothing_to_publish(self):
+        # The publisher used to refuse here, because probe rows were its only rate
+        # source. With the meter budget measured passively (finding 13) and freshness
+        # published rather than enforced by refusal (finding 16), output rows alone
+        # contribute nothing: no probe time, no probe effort, no probe account.
         prices = {k: v for k, v in PRICES.items() if not k.startswith("_")}
-        with self.assertRaises(ValueError):
-            build_public_json([OUTPUT], PASSIVE, EFFORT, prices, NOW)
+        j = build_public_json([OUTPUT], PASSIVE, EFFORT, prices, NOW)
+        self.assertEqual(j["probe_account_count"], 0)
+        self.assertEqual({m: (r["probed_at"], r["probe_effort"]) for m, r in j["rates"].items()},
+                         {m: (None, None) for m in prices})
+        self.assertEqual(j["availability"]["rates"], "unavailable")
 
 
 class PublishMainTests(unittest.TestCase):
