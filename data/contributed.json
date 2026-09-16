@@ -1,54 +1,48 @@
 {
  "max20": {
-  "contributors": 1,
-  "samples": 1,
+  "contributors": 2,
+  "samples": 2,
   "tokens_per_pct": {
    "claude-fable-5-1": {
     "contributors": 1,
-    "median": 2762281,
+    "median": 2890480,
     "samples": 1,
     "spread": null
    },
    "claude-sonnet-5": {
     "contributors": 1,
-    "median": 104000,
+    "median": 2344895,
     "samples": 1,
     "spread": null
    }
   },
   "usd_per_pct": {
-   "claude-fable-5-1": {
-    "contributors": 1,
-    "median": 1.2646,
-    "samples": 1,
-    "spread": null
-   },
-   "claude-sonnet-5": {
-    "contributors": 1,
-    "median": 0.0587,
-    "samples": 1,
-    "spread": null
-   }
+   "contributors": 1,
+   "median": 1.3233,
+   "samples": 1,
+   "spread": null
   },
   "weekly_windows": {
-   "contributors": 0,
+   "contributors": 2,
    "dropped": 0,
    "measured": null,
-   "reason": "0 contributors with a complete week; 2 needed",
-   "weeks": 0
+   "reason": "2 contributors, none with a complete week yet; 2 needed",
+   "weeks": 0,
+   "with_complete_week": 0
   }
  },
  "max5": {
   "contributors": 0,
   "samples": 0,
   "tokens_per_pct": {},
-  "usd_per_pct": {},
+  "usd_per_pct": null,
   "weekly_windows": {
    "contributors": 0,
    "dropped": 0,
    "measured": null,
    "reason": "no samples",
-   "weeks": 0
+   "weeks": 0,
+   "with_complete_week": 0
   }
  },
  "max_deviation": 0.3,
@@ -58,14 +52,15 @@
   "contributors": 0,
   "samples": 0,
   "tokens_per_pct": {},
-  "usd_per_pct": {},
+  "usd_per_pct": null,
   "weekly_windows": {
    "contributors": 0,
    "dropped": 0,
    "measured": null,
    "reason": "no samples",
-   "weeks": 0
+   "weeks": 0,
+   "with_complete_week": 0
   }
  },
- "updated_at": "2026-09-15T23:44:23+00:00"
+ "updated_at": "2026-09-16T00:44:52+00:00"
 }
