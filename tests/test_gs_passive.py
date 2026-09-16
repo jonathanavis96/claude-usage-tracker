@@ -244,3 +244,19 @@ class CliTests(unittest.TestCase):
                        "--probes", str(Path(d) / "none.jsonl"), "--out", str(out)])
             self.assertEqual(rc, 0)
             self.assertEqual(list(json.loads(out.read_text())["accounts"]), ["dave"])
+
+
+class UtcArgTests(unittest.TestCase):
+    def test_a_bare_date_is_aware_utc_and_until_covers_the_whole_day(self):
+        from tracker.gs_passive import _utc_arg, _utc_until
+        since = _utc_arg("2026-09-05")
+        until = _utc_until("2026-09-15")
+        self.assertEqual(since.tzinfo, timezone.utc)
+        self.assertEqual((since.hour, since.minute, since.second), (0, 0, 0))
+        self.assertEqual((until.hour, until.minute, until.second), (23, 59, 59))
+        # An aware sample on the 15th afternoon falls inside the window.
+        self.assertTrue(since <= datetime(2026, 9, 15, 18, 0, tzinfo=timezone.utc) <= until)
+
+    def test_an_explicit_datetime_is_kept_as_given(self):
+        from tracker.gs_passive import _utc_until
+        self.assertEqual(_utc_until("2026-09-15T12:00:00+00:00"), datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc))

@@ -331,6 +331,25 @@ def calibrate(rpt: dict, probe_rows: list[dict], prices: dict, since: datetime, 
             "passive_n": len(passive_vals), "probe_n": len(probe_vals)}
 
 
+def _utc_arg(value: str, *, end_of_day: bool = False) -> datetime:
+    """An ISO date or date-time from the command line as an aware UTC datetime.
+
+    Meter samples and transcript turns are aware, so a naive argument would raise
+    on comparison. A bare date means the whole day: its start for --since, its
+    last second for --until, so `--since 2026-09-05 --until 2026-09-15` spans
+    both days inclusive."""
+    t = datetime.fromisoformat(value)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    if end_of_day and len(value) == 10:
+        t = t.replace(hour=23, minute=59, second=59)
+    return t
+
+
+def _utc_until(value: str) -> datetime:
+    return _utc_arg(value, end_of_day=True)
+
+
 def _summary(name: str, a: dict) -> str:
     statuses: dict[str, int] = {}
     for s in a["stretches"]:
@@ -348,13 +367,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--account", action="append", help="limit to these accounts (default: every gs account)")
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
     ap.add_argument("--probes", type=Path, default=Path("history/probes.jsonl"))
-    ap.add_argument("--until", type=datetime.fromisoformat, help="replay as of this time")
+    ap.add_argument("--until", type=_utc_until, help="replay as of this time (a bare date means its last second)")
     ap.add_argument("--withhold", action="append", default=[], metavar="ACCOUNT:GLOB",
                     help="leave out that account's transcripts matching GLOB under projects/")
     ap.add_argument("--calibrate", action="store_true",
                     help="print the passive/probe dollar-per-window ratio for --since..--until as JSON "
                          "and exit; never writes --out or prices.json (Jonathan pastes the ratio in by hand)")
-    ap.add_argument("--since", type=datetime.fromisoformat, help="calibration window start (with --calibrate)")
+    ap.add_argument("--since", type=_utc_arg, help="calibration window start (with --calibrate); a bare date means its first second")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args(argv)
     if a.calibrate and (a.since is None or a.until is None):
