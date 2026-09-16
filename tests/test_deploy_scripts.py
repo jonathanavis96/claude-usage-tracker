@@ -22,6 +22,12 @@ ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "bin"
 
 
+# The probe rotation is retired (2026-09-16) and its figures below were pinned at the
+# price table of its day (output class weight 1.8); data/prices.json has moved on to
+# the weight measured from the passive stretches, so the rotation is tested against
+# a frozen copy rather than today's table.
+ROTATION_PRICES = ROOT / "tests" / "fixtures" / "prices_output_weight_1.8.json"
+
 class TestDeployScriptsSyntax(unittest.TestCase):
     def _check(self, name: str) -> None:
         script = BIN / name
@@ -300,7 +306,7 @@ class TestProbeShFlow(unittest.TestCase):
             (repo / "history" / "probes.jsonl").write_text(
                 "".join(json.dumps(r) + "\n" for r in history), encoding="utf-8")
             (repo / "data").mkdir()
-            (repo / "data" / "prices.json").write_bytes((ROOT / "data" / "prices.json").read_bytes())
+            (repo / "data" / "prices.json").write_bytes(ROTATION_PRICES.read_bytes())
             self._git("-c", "user.name=t", "-c", "user.email=t@t", "checkout", "-q", "-b", "build", cwd=repo)
             self._git("add", "-A", cwd=repo)
             self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed", cwd=repo)
@@ -349,7 +355,7 @@ class TestProbeShFlow(unittest.TestCase):
         self.assertEqual(len(args), 2)
         # first run: Sonnet's turn, expectation through the dollar invariant from the
         # median of the Sonnet and Fable dollar values (about $1.03 per 1%)
-        prices = {k: v for k, v in json.loads((ROOT / "data" / "prices.json").read_text()).items() if not k.startswith("_")}
+        prices = {k: v for k, v in json.loads(ROTATION_PRICES.read_text()).items() if not k.startswith("_")}
         expect = expectation([SONNET_0939, FABLE], "claude-sonnet-5", prices)
         self.assertIn(f"--model claude-sonnet-5 --expect-usd-per-pct {_usd(expect.usd_per_pct)}", args[0])
         self.assertGreater(expect.usd_per_pct, 0.97)

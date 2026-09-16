@@ -6,9 +6,11 @@
 # Passive is the instrument now (issue #39, 2026-09-16): the probe crontab lines
 # are commented out, and tracker.gs_passive's per-account join (dave, jwork --
 # both used almost only through this host) is what keeps the published figure
-# moving. The probe code and history/probes.jsonl stay in the repo -- publish
-# still reads them, and the rotation script still runs by hand if anyone
-# wants a check reading -- nothing here schedules it.
+# moving, and since 2026-09-16 it is the published dollar series on its own:
+# probe rows never join it (the two read the meter on different scales). The
+# probe code and history/probes.jsonl stay in the repo -- publish still reads
+# the rows for probed_at, the weekly windows and the class-split fallback --
+# nothing here schedules a probe.
 #
 # history/passive.json arrives in THIS repo via masterrig's own cron pushing
 # it here, so pull this repo first. The site checkout is created on first run
@@ -55,10 +57,11 @@ python3 -m tracker.contributed \
   || echo "warning: tracker.contributed failed with exit $?, publishing with the previous contributed block" >&2
 
 # This host's own per-account passive join (issue #39): dave's and jwork's own
-# transcripts against their own meters, judged by the capture-completeness
-# check. Advisory, like tracker.contributed above -- a failed run publishes
-# with whatever history/gs-passive.json this repo already has (or none), and
-# the probe series (if a probe is ever run by hand) still carries the day.
+# transcripts (sub-agents included) against their own meters. The capture check
+# runs and is recorded per stretch but does not gate (CAPTURE_GATE in
+# tracker/gs_passive.py); only a stretch the transcripts leave empty is left
+# out. Advisory, like tracker.contributed above -- a failed run publishes with
+# whatever history/gs-passive.json this repo already has (or none).
 python3 -m tracker.gs_passive \
   --prices data/prices.json \
   --probes history/probes.jsonl \

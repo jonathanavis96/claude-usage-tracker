@@ -347,6 +347,20 @@ class PooledProjectsTests(unittest.TestCase):
             (plain / "projects").mkdir(parents=True)
             self.assertFalse(sample._is_pooled_projects(plain, plain / "projects"))
 
+    def test_a_sub_agent_transcript_follows_its_parent_session(self):
+        with tempfile.TemporaryDirectory() as t:
+            cfg, own_session, other_session = self._fake_configs(Path(t))
+            shared = cfg / "projects"
+            for sess in (own_session, other_session):
+                (shared / sess / "subagents").mkdir(parents=True)
+                (shared / sess / "subagents" / "agent-1.jsonl").write_text("{}")
+            paths = sample.transcript_paths(shared, None)
+            self.assertEqual(len(paths), 4)
+            with mock.patch("sys.stderr", io.StringIO()):
+                kept = sample.own_session_filter(paths, cfg)
+            self.assertEqual(sorted(str(p.relative_to(shared)) for p in kept),
+                             [f"{own_session}.jsonl", f"{own_session}/subagents/agent-1.jsonl"])
+
     def test_filters_to_own_sessions_when_symlink_is_pooled(self):
         with tempfile.TemporaryDirectory() as t:
             cfg, own_session, other_session = self._fake_configs(Path(t))

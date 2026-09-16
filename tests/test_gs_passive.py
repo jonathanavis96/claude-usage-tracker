@@ -94,7 +94,27 @@ class TranscriptFilesTests(unittest.TestCase):
             (cfg / "projects").symlink_to(d / "shared-projects")
             files, own_sessions = transcript_files(self._account(cfg), None)
             self.assertEqual([p.stem for p in files], ["own-session"])
-            self.assertEqual(own_sessions, {"kept": 1, "dropped": 1})
+            self.assertEqual(own_sessions, {"kept": 1, "dropped": 1, "subagent_files": 0})
+
+    def test_a_sub_agent_transcript_belongs_to_its_parent_session(self):
+        # Real jwork data, 2026-09-16: `<session>/subagents/agent-<id>.jsonl` has no
+        # session-env entry of its own, and matching the stem dropped all 191 of them
+        # (45% of the turns). It is kept when its parent session is this login's.
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            shared = d / "shared-projects" / "-proj"
+            (shared / "own-session" / "subagents").mkdir(parents=True)
+            (shared / "other-session" / "subagents").mkdir(parents=True)
+            (shared / "own-session.jsonl").write_text(turn_line(T0, "m1") + "\n")
+            (shared / "own-session" / "subagents" / "agent-abc.jsonl").write_text(turn_line(T0, "m2") + "\n")
+            (shared / "other-session.jsonl").write_text(turn_line(T0, "m3") + "\n")
+            (shared / "other-session" / "subagents" / "agent-def.jsonl").write_text(turn_line(T0, "m4") + "\n")
+            cfg = d / ".claude-javiswork"
+            (cfg / "session-env" / "own-session").mkdir(parents=True)
+            (cfg / "projects").symlink_to(d / "shared-projects")
+            files, own_sessions = transcript_files(self._account(cfg), None)
+            self.assertEqual(sorted(p.name for p in files), ["agent-abc.jsonl", "own-session.jsonl"])
+            self.assertEqual(own_sessions, {"kept": 2, "dropped": 2, "subagent_files": 1})
 
     def test_non_symlink_root_is_untouched_even_with_a_session_env_dir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -137,21 +157,80 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(r["spread"]["stretch"]["n"], 8)
         self.assertTrue(r["weekly_by_window"])
 
-    def test_withheld_transcripts_are_caught_and_never_reach_the_publisher(self):
+    def test_with_the_gate_off_a_stretch_the_transcripts_leave_empty_is_still_not_published(self):
+        # CAPTURE_GATE is False (2026-09-16): the check still judges every stretch and
+        # its verdict is kept as capture_status. A stretch outside the 15% band is
+        # published all the same (next test), but one the transcripts leave empty
+        # (capture under COLLECTION_GAP: the meter moved, gs saw nothing) is not.
         with tempfile.TemporaryDirectory() as d:
             home = dave_home(Path(d), withheld_stretch=6)
             full = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1))
             cut = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1),
                          withhold={"dave": ["-proj-b/*"]})
-        self.assertEqual(full["accounts"]["dave"]["stretches"][6]["status"], "accepted")
+        self.assertFalse(cut["capture_gate"])
+        self.assertEqual(full["accounts"]["dave"]["stretches"][6]["capture_status"], "accepted")
         held = cut["accounts"]["dave"]["stretches"][6]
-        self.assertEqual((held["status"], held["capture"]), ("unaccounted", 0.0))
+        self.assertEqual((held["status"], held["capture_status"], held["capture"]), ("unaccounted", "unaccounted", 0.0))
         self.assertEqual(cut["accounts"]["dave"]["transcripts"]["withheld_patterns"], ["-proj-b/*"])
         self.assertEqual([(r["kind"], r["stretches"]) for r in cut["accounts"]["dave"]["runs"]], [("collection_gap", 1)])
+        self.assertEqual(cut["accounts"]["dave"]["state"], {"state": "ok"})
         readings = passive_dollar_readings(cut, PRICES, by="stretch")
         self.assertEqual(len(readings), 7)
         self.assertNotIn(datetime.fromisoformat(held["end"]), [t for t, _ in readings])
         self.assertEqual([round(v, 6) for _, v in passive_dollar_readings(cut, PRICES)], [50.0])
+
+    def test_with_the_gate_off_a_stretch_outside_the_band_is_published(self):
+        # Three of stretch 6's five $1 turns withheld: capture 0.4, outside the 15% band
+        # (capture_status unaccounted) yet far above COLLECTION_GAP, so it is published
+        # and the day's pooled figure carries it: 80%, $37 -> $46.25 per window.
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d), withheld_stretch=6)
+            dave = home / ".claude-dave" / "projects" / "-proj-b" / "s2.jsonl"
+            lines = dave.read_text().splitlines()
+            (home / ".claude-dave" / "projects" / "-proj-b" / "s3.jsonl").write_text("\n".join(lines[len(lines) // 2:]) + "\n")
+            dave.write_text("\n".join(lines[:len(lines) // 2]) + "\n")
+            cut = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1),
+                         withhold={"dave": ["-proj-b/s3.jsonl"]})
+        half = cut["accounts"]["dave"]["stretches"][6]
+        self.assertEqual((half["status"], half["capture_status"]), ("accepted", "unaccounted"))
+        self.assertAlmostEqual(half["capture"], 0.4, places=2)
+        self.assertEqual(len(passive_dollar_readings(cut, PRICES, by="stretch")), 8)
+        self.assertEqual([round(v, 6) for _, v in passive_dollar_readings(cut, PRICES)], [46.25])
+
+    def test_with_the_gate_on_a_withheld_stretch_never_reaches_the_publisher(self):
+        from unittest import mock
+        import tracker.gs_passive as gp
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(gp, "CAPTURE_GATE", True):
+            home = dave_home(Path(d), withheld_stretch=6)
+            cut = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1),
+                         withhold={"dave": ["-proj-b/*"]})
+            held = cut["accounts"]["dave"]["stretches"][6]
+            self.assertEqual((held["status"], held["capture"]), ("unaccounted", 0.0))
+            readings = passive_dollar_readings(cut, PRICES, by="stretch")
+        self.assertTrue(cut["capture_gate"])
+        self.assertEqual(len(readings), 7)
+        self.assertNotIn(datetime.fromisoformat(held["end"]), [t for t, _ in readings])
+        self.assertEqual([round(v, 6) for _, v in passive_dollar_readings(cut, PRICES)], [50.0])
+
+    def test_the_report_carries_the_accounts_class_split(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1))["accounts"]["dave"]
+        self.assertEqual(r["split"], {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 1.0})
+
+    def test_fit_output_weight_recovers_the_weight_the_stretches_were_valued_at(self):
+        from tracker.gs_passive import fit_output_weight
+        # Stretch A: $2 of cache_write moves 10%; stretch B: $1 cache_write + $1 output moves 10%.
+        # Both classes move the meter alike, so the fitted output weight is 1.0.
+        rpt = {"accounts": {"x": {"stretches": [
+            {"status": "accepted", "delta_pct": 10, "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 800_000}}},
+            {"status": "accepted", "delta_pct": 10, "tokens": {"claude-sonnet-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 400_000}}},
+            {"status": "unpriced", "delta_pct": 10, "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1}}},
+        ]}}}
+        fit = fit_output_weight(rpt, PRICES)
+        self.assertEqual(fit["n"], 2)
+        self.assertAlmostEqual(fit["output_weight"], 1.0, places=3)
+        self.assertAlmostEqual(fit["usd_per_pct_at_fit"], 0.2, places=3)
 
     def test_a_stretch_with_a_model_the_prices_do_not_cover_is_left_out_not_valued_at_zero(self):
         # Review finding on #41: `bundle_meter_usd(...) or 0.0` made an unpriced model's

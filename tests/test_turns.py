@@ -50,9 +50,15 @@ class NormalizeModelTests(unittest.TestCase):
         self.assertEqual(normalize_model("claude-sonnet-5[1m]"), "claude-sonnet-5")
 
     def test_other_versions_dropped(self):
-        for m in ("claude-opus-4-7", "claude-fable-5", "claude-haiku-4-5-20251001",
+        for m in ("claude-opus-4-7", "claude-haiku-4-5-20251001",
                   "claude-sonnet-4-6", "<synthetic>"):
             self.assertIsNone(normalize_model(m))
+
+    def test_fable_5_is_priced_as_fable_5_1(self):
+        # Same list price for input, output and cache_write; cache_read differs but the
+        # meter weights that class at 0.0. Sub-agents on gs still run it.
+        self.assertEqual(normalize_model("claude-fable-5"), "claude-fable-5-1")
+        self.assertEqual(normalize_model("claude-fable-5-20260301"), "claude-fable-5-1")
 
 
 class SessionTokensByModelTests(unittest.TestCase):

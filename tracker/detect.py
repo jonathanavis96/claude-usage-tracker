@@ -180,6 +180,52 @@ def detect_changes(readings: list[tuple[datetime, float]], threshold: float = 0.
     return events
 
 
+SMOOTH_WINDOW = timedelta(days=7)
+SMOOTH_MIN_POINTS = 4
+
+
+def detect_smoothed_changes(readings: list[tuple[datetime, float]], threshold: float = 0.15,
+                            window: timedelta = SMOOTH_WINDOW,
+                            min_points: int = SMOOTH_MIN_POINTS) -> list[ChangeEvent]:
+    """Step changes in a per-day series too noisy for detect_changes (the passive one).
+
+    A passive day pools one account's real sessions and scatters 15-20% day to
+    day, so two consecutive readings past a 15% line (detect_changes) fire on
+    noise. Here the newest `window` of readings is read as one figure, its
+    median, and compared with the median of the regime's readings older than
+    that window. Both sides need `min_points` readings. When the two medians
+    differ by more than `threshold` a change is dated at the first reading in
+    the window that sits on the new side of the halfway line, and a new regime
+    starts there. The date the event carries is where the new level began, not
+    where it was confirmed.
+    """
+    ordered = sorted(readings, key=lambda r: r[0])
+    events: list[ChangeEvent] = []
+    regime_start = 0
+    i = 0
+    while i < len(ordered):
+        ts = ordered[i][0]
+        recent = [(t, v) for t, v in ordered[regime_start:i + 1] if t > ts - window]
+        base = [v for t, v in ordered[regime_start:i + 1] if t <= ts - window]
+        if len(recent) >= min_points and len(base) >= min_points:
+            base_level = median(base)
+            if base_level:
+                new_level = median(v for _, v in recent)
+                ratio = new_level / base_level - 1
+                if abs(ratio) > threshold:
+                    # The new regime starts at the first reading in the window that
+                    # sits on the new side of the halfway line, not at the window's
+                    # first reading: the window can still hold a few old-level days.
+                    halfway = (base_level + new_level) / 2
+                    onset = next(k for k in range(i + 1 - len(recent), i + 1)
+                                 if (ordered[k][1] > halfway) == (ratio > 0))
+                    events.append(ChangeEvent(ordered[onset][0].date(), "increased" if ratio > 0 else "decreased",
+                                              round(abs(ratio) * 100)))
+                    regime_start = onset
+        i += 1
+    return events
+
+
 def pooled_windows(points: list[tuple[datetime, float, float]]) -> float | None:
     """Total five-hour movement over total seven-day movement, or None with no d7."""
     d5 = sum(p[1] for p in points)

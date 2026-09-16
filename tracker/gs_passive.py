@@ -30,16 +30,25 @@ meter live. Assumptions it depends on, as of 2026-09-15:
 - Dave's meter is tracker.meter_log's own log, sampled from 2026-09-15; there
   is no Dave meter history before that.
 
-Units. A stretch is valued exactly as the publisher values a probe row
+Units. A stretch is valued exactly as the publisher valued a probe row
 (tracker/join.py bundle_meter_usd), and `passive_dollar_readings` returns
 (time, meter dollars per full window) pairs, the element shape of
 tracker/publish.py's `dollar_readings`, revalued at whatever prices the caller
-publishes with. The units are the probe's; the levels are not yet comparable.
-Real sessions are about 97% cache reads by tokens and the probe payload is
-cache writes, and `class_weight.cache_read` in data/prices.json is unmeasured
-(assumed 1.0), so passive readings sit well above the probe's on the same
-meter until that weight is measured. Only steps compare across the two, which
-is how tracker/capture.py uses the probe.
+publishes with. Since 2026-09-16 this is the published series on its own: the
+probe (retired, see bin/daily.sh) read the same meter on a different scale --
+its payload was 98% cache_write by list value where real sessions are 59%
+cache_read, 24% cache_write and 17% output -- and the two never joined
+cleanly. The probe rows stay in history/probes.jsonl and `calibrate` stays
+here for the record; nothing publishes through them.
+
+The capture-completeness check (tracker/capture.py) still runs and its verdict
+is recorded per stretch as `capture_status`, but it no longer decides what is
+published: CAPTURE_GATE is False. With its 15% tolerance on a quantity whose
+stretch-to-stretch spread is 15-20%, it withheld half of jwork's real
+stretches (49 of 99), and the half it withheld read low, so the published
+median was the median of the expensive half. Every priced stretch counts now
+(bar one the transcripts leave empty, see `publishable`), pooled per UTC day, and step detection smooths over a rolling week
+(tracker/detect.py detect_smoothed_changes) instead of gating stretch by stretch.
 
     python3 -m tracker.gs_passive --out history/passive-gs.json
     python3 -m tracker.gs_passive --account jwork --until 2026-09-13T00:00:00+00:00
@@ -57,13 +66,18 @@ from fnmatch import fnmatch
 from pathlib import Path
 from statistics import mean, median, stdev
 from typing import Iterable
-from .capture import ACCEPTED, UNJUDGED, UNPRICED, Verdict, check
+from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
 from .samples import Sample, parse_gs_ceiling_log, parse_meter_log
-from .turns import iter_turns, transcript_paths
+from .turns import iter_turns, transcript_paths, transcript_session_id
 
 JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
+#: When True, only stretches the capture check accepts are published (the
+#: 2026-09-15 design); when False, every priced stretch is, and the check's
+#: verdict is advisory (`capture_status`). Off since 2026-09-16 -- see the
+#: module docstring. The check itself is kept, not deleted.
+CAPTURE_GATE = False
 
 
 @dataclass(frozen=True)
@@ -105,8 +119,9 @@ def transcript_files(account: Account, since: datetime | None,
     `~/.claude-jono` config dirs (see the module docstring): a raw glob over it
     would count those other logins' tokens as jwork's own. Claude Code writes a
     per-config-dir `<config dir>/session-env/<sessionId>/` for every session it
-    runs under that login, and a transcript's own session id is its filename
-    stem -- the same rule contrib/sample.py's `own_session_filter` applies for
+    runs under that login, and a transcript's session id is its filename stem, or
+    its parent session's for a sub-agent file (tracker/turns.py
+    transcript_session_id) -- the same rule contrib/sample.py's `own_session_filter` applies for
     the contributed export. Here it fires whenever `projects/` is itself a
     symlink and the account has a `session-env` directory to filter by; with
     no `session-env` the filter is a no-op even for a symlinked root, since
@@ -126,8 +141,9 @@ def transcript_files(account: Account, since: datetime | None,
     if not session_env.is_dir():
         return paths, None
     own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
-    kept = [p for p in paths if p.stem in own_ids]
-    return kept, {"kept": len(kept), "dropped": len(paths) - len(kept)}
+    kept = [p for p in paths if transcript_session_id(p) in own_ids]
+    return kept, {"kept": len(kept), "dropped": len(paths) - len(kept),
+                  "subagent_files": sum(1 for p in kept if p.parent.name == "subagents")}
 
 
 def shared_with(account: Account, home: Path) -> list[str]:
@@ -157,6 +173,24 @@ def probe_readings(rows: list[dict], prices: dict) -> list[tuple[datetime, float
     return sorted(out)
 
 
+def publishable(v: Verdict) -> bool:
+    """Whether a stretch is published (see CAPTURE_GATE).
+
+    With the gate off every priced stretch is, except one the transcripts leave
+    all but empty: capture under COLLECTION_GAP (a tenth of the account's own
+    reference). That is not the 15% band -- it is the meter moving with nothing
+    on gs to explain it, which is off-gs use of the account. Real case: jwork's
+    meter rose 67% between 21:47 and 00:51 on 2026-09-13/14 with zero transcript
+    turns; published, those seven stretches read $0.00 per 1% and dragged the day
+    to nothing.
+    """
+    if CAPTURE_GATE:
+        return v.status == ACCEPTED
+    if v.status == UNPRICED:
+        return False
+    return v.capture is None or v.capture >= COLLECTION_GAP
+
+
 def _r(x: float | None, n: int = 4) -> float | None:
     return None if x is None or x == float("inf") else round(x, n)
 
@@ -166,7 +200,8 @@ def _stretch_record(v: Verdict) -> dict:
     lo, hi = s.bounds
     return {"start": s.start.isoformat(), "end": s.end.isoformat(), "delta_pct": s.delta_pct, "windows": s.windows,
             "usd": _r(s.usd), "usd_per_pct": _r(s.usd_per_pct), "bounds": [_r(lo), _r(hi)], "tokens": s.tokens,
-            "unpriced_tokens": s.unpriced_tokens, "turns": s.turns, "status": v.status,
+            "unpriced_tokens": s.unpriced_tokens, "turns": s.turns,
+            "status": ACCEPTED if publishable(v) else v.status, "capture_status": v.status,
             "reference": _r(v.reference), "capture": _r(v.capture)}
 
 
@@ -183,7 +218,7 @@ def _pieces(stretches: list[Stretch]) -> int:
 def _daily(verdicts: list[Verdict]) -> list[dict]:
     days: dict[str, list[Stretch]] = {}
     for v in verdicts:
-        if v.status == ACCEPTED:
+        if publishable(v):
             days.setdefault(v.stretch.end.astimezone(timezone.utc).date().isoformat(), []).append(v.stretch)
     out = []
     for day, ss in sorted(days.items()):
@@ -208,6 +243,8 @@ def _state(verdicts: list[Verdict], account_runs: list) -> dict:
     judged = [v for v in verdicts if v.status not in (UNJUDGED, UNPRICED)]
     if not verdicts:
         return {"state": "no data"}
+    if not CAPTURE_GATE:
+        return {"state": "ok"} if any(publishable(v) for v in verdicts) else {"state": "nothing publishable"}
     if not judged:
         return {"state": "unjudged"}
     if judged[-1].status == ACCEPTED:
@@ -220,6 +257,17 @@ def _run_record(run) -> dict:
     return {"start": run.start.isoformat(), "end": run.end.isoformat(), "kind": run.kind, "direction": run.direction,
             "stretches": len(run.verdicts), "step": _r(run.step), "capture": _r(run.capture),
             "corroborated_by": run.corroborated_by, "contradicted_by": run.contradicted_by}
+
+
+def _split(stretches: list[Stretch]) -> dict:
+    """Token-class shares over a set of stretches, what a full window buys divided into classes."""
+    tot = {c: 0 for c in ("input", "output", "cache_read", "cache_write")}
+    for s in stretches:
+        for by_class in s.tokens.values():
+            for c in tot:
+                tot[c] += by_class.get(c, 0)
+    grand = sum(tot.values())
+    return {c: round(n / grand, 6) for c, n in tot.items()} if grand else {}
 
 
 def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict] = (), now: datetime | None = None,
@@ -252,12 +300,13 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
     for name in accounts:
         vs, rs = checked.verdicts[name], checked.runs[name]
         daily = _daily(vs)
-        accepted = [v for v in vs if v.status == ACCEPTED]
+        accepted = [v for v in vs if publishable(v)]
         out_accounts[name] = {
             "account": name, **meta[name],
             "stretches": [_stretch_record(v) for v in vs],
             "runs": [_run_record(r) for r in rs],
             "daily": daily,
+            "split": _split([v.stretch for v in accepted]),
             "last_usable_at": accepted[-1].stretch.end.isoformat() if accepted else None,
             "state": _state(vs, rs),
             "spread": {"stretch": spread([v.stretch.usd_per_pct for v in accepted]),
@@ -265,15 +314,16 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
             "weekly_by_window": weekly[name],
         }
     return {"generated_at": now.isoformat(), "until": until.isoformat() if until else None,
-            "accounts": out_accounts, "changes": checked.changes}
+            "capture_gate": CAPTURE_GATE, "accounts": out_accounts, "changes": checked.changes}
 
 
 def passive_dollar_readings(report: dict, prices: dict, by: str = "day") -> list[tuple[datetime, float]]:
     """Accepted passive readings as (time, meter dollars per full window), revalued at `prices`.
 
     The publisher's hook: the same element shape as build_public_json's
-    `dollar_readings` (usd_per_pct x 100 per probe row). Only accepted
-    stretches are read, so nothing the capture check withheld can reach it.
+    `dollar_readings` (usd_per_pct x 100 per probe row). Only stretches whose
+    `status` is accepted are read: every priced one with CAPTURE_GATE off,
+    only what the capture check accepted with it on.
     `by="day"` pools each account's accepted stretches per UTC day (the
     precision the issue is after); `by="stretch"` returns them one by one.
     """
@@ -331,6 +381,54 @@ def calibrate(rpt: dict, probe_rows: list[dict], prices: dict, since: datetime, 
             "passive_n": len(passive_vals), "probe_n": len(probe_vals)}
 
 
+def fit_output_weight(rpt: dict, prices: dict) -> dict:
+    """Least-squares fit of class_weight.output from the passive stretches themselves.
+
+    Each published stretch says: meter movement (delta_pct) = a x (list dollars of
+    input + cache_write) + b x (list dollars of output), with cache_read at its
+    measured weight of 0.0. The output weight relative to cache_write is b / a.
+    Two unknowns, so the 2x2 normal equations are solved directly; no numpy.
+    The 1.8 hand-entered on 2026-09-06 came from one probe pair; this reads it
+    from every stretch the capture check accepted instead. `--fit-output-weight` prints it; the
+    value is pasted into data/prices.json by hand, as the calibration ratio
+    was meant to be, so it stays fixed while real movement in the series shows.
+    """
+    rows = []
+    for account in rpt.get("accounts", {}).values():
+        for st in account["stretches"]:
+            # The capture check's own accepted set, not everything published: a
+            # stretch with part of its use off gs has the wrong left-hand side.
+            if st.get("capture_status", st["status"]) != ACCEPTED:
+                continue
+            base = out = 0.0
+            for m, tok in st["tokens"].items():
+                price = prices.get(m)
+                if price is None:
+                    break
+                base += (tok.get("input", 0) * price["input"] + tok.get("cache_write", 0) * price["cache_write"]) / 1e6
+                out += tok.get("output", 0) * price["output"] / 1e6
+            else:
+                rows.append((base, out, st["delta_pct"]))
+    if len(rows) < 2:
+        return {"n": len(rows), "output_weight": None}
+    sxx = sum(b * b for b, _, _ in rows)
+    sxy = sum(b * o for b, o, _ in rows)
+    syy = sum(o * o for _, o, _ in rows)
+    sxz = sum(b * d for b, _, d in rows)
+    syz = sum(o * d for _, o, d in rows)
+    det = sxx * syy - sxy * sxy
+    if not det:
+        return {"n": len(rows), "output_weight": None}
+    a = (sxz * syy - syz * sxy) / det
+    b = (sxx * syz - sxy * sxz) / det
+    fitted = [a * base + b * out for base, out, _ in rows]
+    resid = [d - f for (_, _, d), f in zip(rows, fitted)]
+    rms = (sum(r * r for r in resid) / len(rows)) ** 0.5
+    return {"n": len(rows), "output_weight": _r(b / a) if a else None,
+            "usd_per_pct_at_fit": _r(1 / a) if a else None, "residual_rms_pct": _r(rms, 2),
+            "output_share_of_list_value": _r(sum(o for _, o, _ in rows) / sum(b + o for b, o, _ in rows))}
+
+
 def _utc_arg(value: str, *, end_of_day: bool = False) -> datetime:
     """An ISO date or date-time from the command line as an aware UTC datetime.
 
@@ -362,7 +460,7 @@ def _summary(name: str, a: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    ap = argparse.ArgumentParser(description="Passive join per gs account, with the capture-completeness check")
+    ap = argparse.ArgumentParser(description="Passive join per gs account; the capture check is advisory (CAPTURE_GATE)")
     ap.add_argument("--home", type=Path, default=Path.home())
     ap.add_argument("--account", action="append", help="limit to these accounts (default: every gs account)")
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
@@ -374,6 +472,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="print the passive/probe dollar-per-window ratio for --since..--until as JSON "
                          "and exit; never writes --out or prices.json (Jonathan pastes the ratio in by hand)")
     ap.add_argument("--since", type=_utc_arg, help="calibration window start (with --calibrate); a bare date means its first second")
+    ap.add_argument("--fit-output-weight", action="store_true",
+                    help="print the least-squares class_weight.output over the published stretches as JSON and exit")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args(argv)
     if a.calibrate and (a.since is None or a.until is None):
@@ -394,6 +494,9 @@ def main(argv: list[str] | None = None) -> int:
     r = report(accounts, prices, rows, withhold=withhold, until=a.until, home=a.home)
     if a.calibrate:
         print(json.dumps(calibrate(r, rows, prices, a.since, a.until)))
+        return 0
+    if a.fit_output_weight:
+        print(json.dumps(fit_output_weight(r, prices)))
         return 0
     for name, acct in r["accounts"].items():
         print(_summary(name, acct))

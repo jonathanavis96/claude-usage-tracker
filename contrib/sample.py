@@ -209,13 +209,23 @@ def _is_pooled_projects(cfg: Path, projects: Path) -> bool:
         return True
 
 
+def transcript_session_id(path: Path) -> str:
+    """The session a transcript belongs to: its stem, or for a sub-agent file
+    (`<session>/subagents/agent-<id>.jsonl`) the parent session's id. Sub-agents
+    run under the parent's login and spend on its meter, and session-env has no
+    entry of their own, so matching the stem alone dropped every one of them."""
+    if path.parent.name == "subagents":
+        return path.parent.parent.name
+    return path.stem
+
+
 def own_session_filter(paths: list[Path], cfg: Path, *, force: bool = False, disable: bool = False) -> list[Path]:
     """Drop transcripts that are not this login's own session when the projects
     directory is pooled across accounts.
 
     Claude Code writes a per-config-dir `<config dir>/session-env/<sessionId>/`
-    for each session it runs under that login; a transcript's own session id is
-    its filename stem. The filter applies when `projects` is a symlink resolving
+    for each session it runs under that login; a transcript's session id is
+    `transcript_session_id` (its stem, or its parent's for a sub-agent file). The filter applies when `projects` is a symlink resolving
     outside `cfg` (pooled) or `force` is set (--own-sessions), and session-env
     exists to tell sessions apart; `disable` (--all-sessions) always turns it
     off. With no session-env directory the filter is a no-op even if pooled,
@@ -230,7 +240,7 @@ def own_session_filter(paths: list[Path], cfg: Path, *, force: bool = False, dis
     if not session_env.is_dir():
         return paths
     own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
-    kept = [p for p in paths if p.stem in own_ids]
+    kept = [p for p in paths if transcript_session_id(p) in own_ids]
     print(f"projects dir is shared with other accounts; kept {len(kept)} of {len(paths)} transcripts "
           "that belong to this login (session-env)", file=sys.stderr)
     return kept

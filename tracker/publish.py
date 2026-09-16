@@ -6,7 +6,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from .capture import ACCEPTED
-from .detect import MIN_POOL_D7, current_regime_points, detect_changes, detect_weighted_changes, pooled_windows
+from .detect import (MIN_POOL_D7, current_regime_points, detect_changes, detect_smoothed_changes, detect_weighted_changes,
+                     pooled_windows)
 from .gs_passive import passive_dollar_readings
 from .passive import PLAN_CHANGE
 from .rows import usable_rows
@@ -70,6 +71,20 @@ def blended_price_per_token(split: dict, price: dict) -> float:
     return sum(frac * price[cls] * class_weight(price, cls) / 1e6 for cls, frac in split.items())
 
 
+def _gs_split(gs_passive: dict | None) -> dict:
+    """Token-class shares over every gs account's published stretches, weighted by tokens."""
+    tot = {c: 0.0 for c in ("input", "output", "cache_read", "cache_write")}
+    for acct in (gs_passive or {}).get("accounts", {}).values():
+        for st in acct.get("stretches", []):
+            if st.get("status") != ACCEPTED:
+                continue
+            for by_class in st.get("tokens", {}).values():
+                for c in tot:
+                    tot[c] += by_class.get(c, 0)
+    grand = sum(tot.values())
+    return {c: n / grand for c, n in tot.items()} if grand else {}
+
+
 def _row_split(row: dict) -> dict:
     tokens = row["tokens"]
     total = sum(tokens[cls] for cls in ("input", "output", "cache_read", "cache_write"))
@@ -77,8 +92,7 @@ def _row_split(row: dict) -> dict:
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
-                      effort_usd: dict | None = None, gs_passive: dict | None = None,
-                      passive_calibration: dict | None = None) -> dict:
+                      effort_usd: dict | None = None, gs_passive: dict | None = None) -> dict:
     """Derive every model's rate from one probed model's dollar value.
 
     `effort` is the calibration matrix's median tokens per task (model -> effort) and
@@ -122,40 +136,26 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     "derived". `rates[model]["probed_at"]` is that model's own latest usable
     prose row's timestamp, or null when it has never been probed.
 
-    `gs_passive` (tracker/gs_passive.py's `report()`, issue #39) supplies passive
-    per-account readings that extend the probe's dollar series rather than
-    replace it: `passive_dollar_readings(gs_passive, prices, by="day")` returns
-    the same (time, meter-dollars-per-window) shape as a probe reading, so the
-    two are concatenated and sorted before anything downstream (detect_changes,
-    regime medians, tokens_per_window, api_value_per_window) runs. Probes are no
-    longer scheduled (Jonathan, 2026-09-16); this is what keeps the series
-    moving without them. `instrument` (top level) is "passive" or "probe"
-    according to the newest reading of either kind; `rates[model]["source"]` is
-    "passive" when the *current regime's* newest reading is passive (a passive
-    reading is model-agnostic, so every model reads "passive" together),
-    "probe"/"derived" otherwise as before, and `rates[model]["measured_at"]" is
-    that current-regime newest reading's own timestamp (kept alongside the
-    older `probed_at`, which still means only this model's own latest probe
-    row's own timestamp). With no probe rows at all, publishing still works as
-    long as some reading -- probe or passive -- exists.
-
-    A passive reading is never joined to the probe series raw: the two
-    instruments read the same meter on different scales (measured on gs,
-    Jono Work's accepted passive days ran $1.26-$1.81 per window against the
-    probe's $0.97 -- see `tracker.gs_passive --calibrate`), and joining them
-    unscaled invented change events the live page never had. `passive_calibration`
-    (this repo's `data/prices.json._passive_calibration`, frozen -- this
-    function only ever reads it) supplies `ratio`, which every passive reading
-    is divided by before joining; with no calibration on file, passive readings
-    are left out entirely (a warning to stderr, never a failure) and the
-    publish is exactly the probe-only publish of today. The top-level
-    `passive_calibration` field in the output is `{ratio, window}` when applied,
-    `null` otherwise.
-
-    Top-level `probe_accounts` is the sorted list of distinct `account` tags
-    (tracker/probe.py's --account names, e.g. "dave", "jwork") carried on
-    usable prose rows -- which accounts actually did the probing, not which
-    were merely configured.
+    `gs_passive` (tracker/gs_passive.py's `report()`, issue #39) supplies the
+    passive readings: `passive_dollar_readings(gs_passive, prices, by="day")`,
+    one (time, meter dollars per full window) reading per gs account per UTC
+    day, every priced stretch pooled. When there is at least one, the dollar
+    series IS that passive series -- probe rows do not join it. The probe read
+    the same meter on another scale (its payload was 98% cache_write by list
+    value; real sessions are 59% cache_read, 24% cache_write, 17% output) and
+    every attempt to scale one onto the other invented change events. The
+    probe rows still supply `probed_at`/`probe_effort`, the weekly windows and
+    the class-split fallback; with no passive readings at all the series is the
+    probe's, exactly as before 2026-09-16. `instrument` (top level) says which:
+    "passive" or "probe". Step detection on a passive series uses
+    detect_smoothed_changes (a rolling week's median against the regime before
+    it) because a passive day scatters 15-20% and detect_changes' two-readings
+    rule fires on that; the probe series keeps detect_changes. The freshness
+    guard reads the newest reading of the series, so a passive day 24 hours old
+    keeps the publish fresh with no probe ever run again. History days before
+    the first reading of the series are "held" at the first regime's value;
+    the passive series starts 2026-09-05, so probe days before it are held,
+    not shown at the probe's scale.
 
     Every history day also carries `api_value_per_window`: the regime's
     held dollar value itself, identical across models on any given day, so
@@ -184,30 +184,19 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # tracked separately, for `instrument` and `rates[model]["source"]" below.
     probe_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100, "probe")
                       for r in probe_rows]
-    # The two instruments read the same meter on different scales (measured on gs,
-    # issue #39 follow-up: Jono Work's accepted passive days ran $1.26-$1.81 per
-    # window against the probe's $0.97), so a passive reading is divided by the
-    # frozen `_passive_calibration` ratio (tracker.gs_passive --calibrate) before
-    # it can join the probe series -- joining the two raw invented change events
-    # the live page never had. With no calibration on file, passive readings are
-    # left out entirely rather than joined unscaled, so a missing ratio can never
-    # fabricate a change: the publish is exactly the probe-only publish of today.
-    passive_readings: list[tuple[datetime, float, str]] = []
-    passive_calibration_applied = None
-    if gs_passive:
-        ratio = (passive_calibration or {}).get("ratio")
-        if ratio:
-            passive_readings = [(ts, v / ratio, "passive")
-                                for ts, v in passive_dollar_readings(gs_passive, prices, by="day")]
-            passive_calibration_applied = {"ratio": ratio, "window": passive_calibration.get("window")}
-        else:
-            print("gs-passive readings ignored: no _passive_calibration in prices", file=sys.stderr)
-    combined = sorted(probe_readings + passive_readings, key=lambda t: t[0])
+    # One instrument at a time (see the docstring): the passive series when gs_passive
+    # has any priced reading, else the probe's. Never both -- the scales differ.
+    passive_readings = ([(ts, v, "passive") for ts, v in passive_dollar_readings(gs_passive, prices, by="day")]
+                        if gs_passive else [])
+    passive_mode = bool(passive_readings)
+    combined = sorted(passive_readings if passive_mode else probe_readings, key=lambda t: t[0])
     if not combined:
         raise ValueError("no readings to publish")
+    if gs_passive and not passive_mode:
+        print("gs-passive report has no priced readings; publishing the probe series", file=sys.stderr)
 
     dollar_readings = [(ts, v) for ts, v, _ in combined]
-    events = detect_changes(dollar_readings)
+    events = detect_smoothed_changes(dollar_readings) if passive_mode else detect_changes(dollar_readings)
     regime_starts = sorted({e.date for e in events})
 
     def regime_index(d: date) -> int:
@@ -230,9 +219,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         regime_values.setdefault(idx, []).append(v)
         if idx not in regime_newest or ts > regime_newest[idx][0]:
             regime_newest[idx] = (ts, kind)
-    for r in probe_rows:
-        d = datetime.fromisoformat(r["ts"]).date()
-        by_day_models.setdefault(d, set()).add(r["model"])
+    if not passive_mode:
+        for r in probe_rows:
+            d = datetime.fromisoformat(r["ts"]).date()
+            by_day_models.setdefault(d, set()).add(r["model"])
     passive_days = {ts.date() for ts, _, kind in combined if kind == "passive"}
 
     latest_row = max(probe_rows, key=lambda r: r["ts"]) if probe_rows else None
@@ -246,11 +236,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                               if any(s["status"] == ACCEPTED for s in acct.get("stretches", [])))
     earliest_reading_day = combined[0][0].date()
     first_probe_day = min(by_day_models, default=earliest_reading_day)
-    # A missing/lagging passive.json is allowed (it arrives from masterrig), so fall back to
-    # the latest probe row's own class split rather than blowing up on an empty split. The
-    # gs-passive report (tracker/gs_passive.py) carries no class split of its own as of
-    # 2026-09-16 -- only per-model token totals per stretch -- so it is not consulted here.
-    passive_split = passive_split or (_row_split(latest_row) if latest_row is not None else {})
+    # The class split converts meter dollars to tokens. In passive mode it is the gs
+    # accounts' own mix (tracker/gs_passive.py `split`, token-weighted across accounts),
+    # the sessions the series is measured from; else masterrig's passive.json split; a
+    # missing/lagging passive.json is allowed (it arrives from masterrig), so fall back
+    # to the latest probe row's own class split rather than blowing up on an empty one.
+    gs_split = _gs_split(gs_passive) if passive_mode else {}
+    passive_split = gs_split or passive_split or (_row_split(latest_row) if latest_row is not None else {})
     if not passive_split:
         # Both sources are empty at once only with zero probe rows (no row split to fall
         # back to) and a passive.json with no `split` -- e.g. gs-passive readings alone,
@@ -375,7 +367,6 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "passive_generated_at": passive.get("generated_at"),
         "plan_measured": "max20",
         "instrument": instrument,
-        "passive_calibration": passive_calibration_applied,
         "probe_accounts": probe_accounts,
         "passive_accounts": passive_accounts,
         "plan_ratios": ratios,
@@ -549,8 +540,8 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
     ap.add_argument("--contributed", type=Path, default=None,
                     help="data/contributed.json from tracker.contributed; carried through as the `contributed` block when present")
     ap.add_argument("--gs-passive", type=Path, default=None, dest="gs_passive",
-                    help="history/gs-passive.json from tracker.gs_passive (issue #39); its accepted readings "
-                         "extend the probe's dollar series. Missing or unreadable is a warning, not a failure")
+                    help="history/gs-passive.json from tracker.gs_passive (issue #39); with any priced reading it IS "
+                         "the published dollar series (probe rows only fill in). Missing or unreadable is a warning, not a failure")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     now = now or datetime.now(timezone.utc)
@@ -570,7 +561,6 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         if effort_raw.get("_status") == "placeholder":
             raise ValueError(f"{a.effort} is still a placeholder; calibrate it before publishing")
         prices_raw = json.loads(a.prices.read_text())
-        passive_calibration = prices_raw.get("_passive_calibration")
         prices = {k: v for k, v in prices_raw.items() if not k.startswith("_")}
         # The matrix's cells and usd are derived from its stored runs at the prices
         # in force right now, after update_output_weight above may have changed
@@ -584,8 +574,7 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         effort = {k: v for k, v in effort_raw.items() if not k.startswith("_") and k != "usd"}
         effort_usd = {k: v for k, v in effort_raw.get("usd", {}).items() if not k.startswith("_")}
         gs_passive = load_gs_passive(a.gs_passive)
-        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd, gs_passive=gs_passive,
-                              passive_calibration=passive_calibration)
+        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd, gs_passive=gs_passive)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
