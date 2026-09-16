@@ -265,6 +265,59 @@ class PlanTests(unittest.TestCase):
                             usage_fetch=lambda: USAGE, now=NOW, out=out)
             self.assertNotIn(body_from_print(out.getvalue())["contributor_id"], (pro_id, max_id))
 
+    @staticmethod
+    def _run_profile(f, cfg, *argv):
+        out = io.StringIO()
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            rc = sample.main(["--id-file", str(f.id_file), "--claude-dir", str(cfg), *argv],
+                             usage_fetch=lambda: USAGE, now=NOW, out=out)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_a_0_1_0_id_file_keeps_its_contributor_id_and_plan(self):
+        # Review of PR 57, round 2, finding 5: 0.1.0 wrote no profile_scope, so the
+        # migration guard never matched a real old file. The upgraded sampler minted a
+        # new id (breaking pairing across the upgrade) and refused the stored plan.
+        legacy_id = "3f0c6a5e-1d2b-4c7a-9e8f-0a1b2c3d4e5f"
+        legacy = {"contributor_id": legacy_id, "created": "2026-09-01T00:00:00Z", "plan": "max20", "plan_from_endpoint": False}
+        with Fixture() as f:
+            # Given the same plan again, the old sampler still minted a new id.
+            f.id_file.write_text(json.dumps(legacy))
+            rc, out, err = f.run("--plan", "max20", "--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(body_from_print(out)["contributor_id"], legacy_id)
+        with Fixture() as f:
+            f.id_file.write_text(json.dumps(legacy))
+            rc, out, err = f.run("--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            body = body_from_print(out)
+            self.assertEqual((body["contributor_id"], body["plan"], body["plan_source"]), (legacy_id, "max20", "stored"))
+            # The file now names its profile, so a second profile does not inherit the id.
+            other = Path(f.tmp.name) / "claude-other"
+            (other / "projects").mkdir(parents=True)
+            rc, out, err = self._run_profile(f, other, "--plan", "max20", "--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            self.assertNotEqual(body_from_print(out)["contributor_id"], legacy_id)
+            rc, out, _ = f.run("--dry-run", "--print")
+            self.assertEqual(body_from_print(out)["contributor_id"], legacy_id)
+
+    def test_each_profile_keeps_its_own_stored_plan(self):
+        # Review of PR 57, round 2, finding 6: only the last run's profile kept its
+        # stored plan, so alternating two profiles asked for --plan on every run.
+        with Fixture() as f:
+            other = Path(f.tmp.name) / "claude-other"
+            (other / "projects").mkdir(parents=True)
+            _, first, _ = f.run("--plan", "max20", "--dry-run", "--print")
+            _, second, _ = self._run_profile(f, other, "--plan", "pro", "--dry-run", "--print")
+            rc, out, err = f.run("--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            body = body_from_print(out)
+            self.assertEqual((body["plan"], body["plan_source"], body["contributor_id"]),
+                             ("max20", "stored", body_from_print(first)["contributor_id"]))
+            rc, out, err = self._run_profile(f, other, "--dry-run", "--print")
+            self.assertEqual(rc, 0, err)
+            body = body_from_print(out)
+            self.assertEqual((body["plan"], body["contributor_id"]), ("pro", body_from_print(second)["contributor_id"]))
+
     def test_endpoint_plan_wins_and_is_recorded(self):
         usage = dict(USAGE, subscription_type="Claude Max 20x")
         with Fixture() as f:

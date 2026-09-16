@@ -419,8 +419,15 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
     plan_source = "endpoint"
     if plan is None and a.plan:
         plan, plan_source = a.plan, "flag"
-    if plan is None and stored.get("plan") and stored.get("profile_scope") == profile:
-        plan, plan_source = stored["plan"], "stored"
+    # A stored plan and id belong to one local profile. `plans` holds each profile's
+    # own plan, so alternating profiles never loses one. A file from before it holds
+    # a single plan and id, for `profile_scope`; a 0.1.0 file recorded no profile at
+    # all, so its plan and id go to the first profile that runs after the upgrade.
+    plans = stored.get("plans") if isinstance(stored.get("plans"), dict) else {}
+    legacy_owner = stored.get("profile_scope", profile)
+    stored_plan = plans.get(profile) or (stored.get("plan") if legacy_owner == profile else None)
+    if plan is None and stored_plan:
+        plan, plan_source = stored_plan, "stored"
     if plan is None:
         print("error: the usage endpoint does not expose your plan.\n"
               "If you are an assistant running this for someone: ASK THEM which plan they are on. "
@@ -433,12 +440,13 @@ def main(argv: list[str] | None = None, usage_fetch=None, now: datetime | None =
     scope = f"{profile}:{plan}"
     if scope not in identities:
         # Migrate an old one-ID file for the same plan, preserving pairing.
-        legacy = stored.get("contributor_id") if stored.get("profile_scope") == profile and stored.get("plan") == plan else None
+        legacy = stored.get("contributor_id") if legacy_owner == profile and stored.get("plan") == plan else None
         identities[scope] = legacy if isinstance(legacy, str) else str(uuid.uuid4())
     contributor_id = identities[scope]
     stored["contributor_id"] = contributor_id  # compatibility with old local tooling
     stored["profile_scope"] = profile
     stored["plan"] = plan
+    stored["plans"] = {**plans, profile: plan}
     stored["plan_from_endpoint"] = plan_source == "endpoint"
     save_id_file(a.id_file, stored)
 
