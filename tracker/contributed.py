@@ -62,8 +62,11 @@ Aggregation rules, per plan (pro, max5, max20):
                           Each window also carries a `..._by_model` map splitting the
                           utilization by each model's dollar share (the attribution
                           `tokens_per_pct` above uses), so one model's figure can be
-                          compared against the page's own per-model rate; it is
-                          omitted whole when any model present has no price.
+                          compared against the page's own per-model rate. It is omitted
+                          whole when any model present has no price, and a model whose
+                          slice of the meter is under MIN_UTILIZATION is left out of it:
+                          a model used almost entirely for cache_read has almost no
+                          priced value, and dividing its tokens by that slice runs away.
                           `c` is a per-plan ordinal (0, 1, 2 ...) assigned in
                           order of each contributor's first sample time in the
                           window -- never the contributor id itself. `coarse`
@@ -386,8 +389,17 @@ def _per_pct_both_windows(row: dict, prices: dict) -> tuple[dict | None, dict | 
                 for model, value in values.items():
                     if value <= 0:
                         continue
-                    # u_m = u * value_m / total_value.
-                    by_model[model] = sum(present[model].values()) * total_value / (value * u)
+                    # The share of the meter this model is judged to have moved.
+                    u_m = u * value / total_value
+                    # The same floor the whole meter has to clear, applied to the slice.
+                    # Dividing a model's tokens by a slice near zero is what produced a
+                    # Sonnet week reading 187M tokens per 1% -- three times the plan's
+                    # own figure -- off a 0.46-point slice of a 7% meter. A model that
+                    # is nearly all cache_read has nearly no priced value, so its slice
+                    # collapses and the quotient runs away.
+                    if u_m < MIN_UTILIZATION:
+                        continue
+                    by_model[model] = sum(present[model].values()) / u_m
                 if by_model:
                     out["by_model"] = by_model
         return out

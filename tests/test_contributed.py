@@ -311,6 +311,34 @@ class PointsTests(unittest.TestCase):
         self.assertIsNone(pts[0]["tokens_per_pct_week"])
         self.assertIsNone(pts[0]["windows"])
 
+    def test_by_model_splits_the_meter_by_dollar_share(self):
+        tokens = {"claude-sonnet-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0},
+                  "claude-opus-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0}}
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        # Opus output is priced 2.5x Sonnet's, so it is charged 5/7 of the 60% meter and
+        # Sonnet 2/7. Same tokens, so Sonnet reads 2.5x more per 1%.
+        by_model = pts[0]["tokens_per_pct_by_model"]
+        self.assertAlmostEqual(by_model["claude-sonnet-5"] / by_model["claude-opus-5"], 2.5, places=2)
+
+    def test_a_model_whose_slice_is_under_the_floor_is_left_out(self):
+        # Sonnet here is almost all cache_read, which the meter does not charge, so its
+        # slice collapses -- exactly the case that made one week read three times the plan.
+        prices = {m: {**p, "class_weight": {**p["class_weight"], "cache_read": 0.0}}
+                  for m, p in PRICES.items()}
+        tokens = {"claude-opus-5": {"input": 0, "output": 1_000_000, "cache_read": 0, "cache_write": 0},
+                  "claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 50_000_000, "cache_write": 0}}
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
+        pts = aggregate(rows, NOW, prices)["max20"]["points"]
+        self.assertEqual(list(pts[0]["tokens_per_pct_by_model"]), ["claude-opus-5"])
+
+    def test_an_unpriced_model_drops_the_split_whole(self):
+        tokens = {"claude-sonnet-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0},
+                  "claude-mystery-9": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0}}
+        rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 60.0, 10.0, tokens, tokens)]
+        pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
+        self.assertNotIn("tokens_per_pct_by_model", pts[0])
+
     def test_points_are_sorted_by_t_ascending(self):
         pts = aggregate(fixture_rows(), NOW, PRICES)["max20"]["points"]
         self.assertEqual([p["t"] for p in pts], sorted(p["t"] for p in pts))
