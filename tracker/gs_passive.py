@@ -73,11 +73,10 @@ from .samples import Sample, parse_gs_ceiling_log, parse_meter_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 
 JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
-#: When True, only stretches the capture check accepts are published (the
-#: 2026-09-15 design); when False, every priced stretch is, and the check's
-#: verdict is advisory (`capture_status`). Off since 2026-09-16 -- see the
-#: module docstring. The check itself is kept, not deleted.
-CAPTURE_GATE = False
+# Monetary estimates require complete captured work.  A diagnosed deficit or
+# surplus remains in the report as evidence, but cannot become a rate merely by
+# lying near the desired result.
+CAPTURE_GATE = True
 
 
 @dataclass(frozen=True)
@@ -94,7 +93,7 @@ def gs_accounts(home: Path | None = None) -> dict[str, Account]:
     home = Path(home) if home is not None else Path.home()
     ops = home / ".paperclip" / "ops"
     return {
-        "jwork": Account("jwork", home / ".claude-javiswork", ops / "gs-usage-ceiling.log", "gs-ceiling",
+        "jwork": Account("jwork", home / ".claude-javiswork", ops / "claude-usage-meter-jwork.log", "meter",
                          JWORK_CEILING_SINCE),
         "dave": Account("dave", home / ".claude-dave", ops / "claude-usage-meter-dave.log", "meter"),
     }
@@ -184,11 +183,11 @@ def publishable(v: Verdict) -> bool:
     turns; published, those seven stretches read $0.00 per 1% and dragged the day
     to nothing.
     """
-    if CAPTURE_GATE:
-        return v.status == ACCEPTED
-    if v.status == UNPRICED:
+    if v.stretch.unpriced_tokens > 0:
         return False
-    return v.capture is None or v.capture >= COLLECTION_GAP
+    if not v.stretch.reset_verified:
+        return False
+    return v.status == ACCEPTED
 
 
 def _r(x: float | None, n: int = 4) -> float | None:
@@ -198,10 +197,17 @@ def _r(x: float | None, n: int = 4) -> float | None:
 def _stretch_record(v: Verdict) -> dict:
     s = v.stretch
     lo, hi = s.bounds
+    tokens = {**s.tokens, **s.unpriced}
+    if s.unpriced_tokens:
+        status = UNPRICED
+    elif not s.reset_verified:
+        status = "reset_unverified"
+    else:
+        status = ACCEPTED if publishable(v) else v.status
     return {"start": s.start.isoformat(), "end": s.end.isoformat(), "delta_pct": s.delta_pct, "windows": s.windows,
-            "usd": _r(s.usd), "usd_per_pct": _r(s.usd_per_pct), "bounds": [_r(lo), _r(hi)], "tokens": s.tokens,
-            "unpriced_tokens": s.unpriced_tokens, "turns": s.turns,
-            "status": ACCEPTED if publishable(v) else v.status, "capture_status": v.status,
+            "usd": _r(s.usd), "usd_per_pct": _r(s.usd_per_pct), "bounds": [_r(lo), _r(hi)], "tokens": tokens,
+            "unpriced_tokens": s.unpriced_tokens, "unpriced": s.unpriced, "turns": s.turns,
+            "reset_verified": s.reset_verified, "status": status, "capture_status": v.status,
             "reference": _r(v.reference), "capture": _r(v.capture)}
 
 
@@ -223,8 +229,14 @@ def _daily(verdicts: list[Verdict]) -> list[dict]:
     out = []
     for day, ss in sorted(days.items()):
         delta = sum(s.delta_pct for s in ss)
-        out.append({"date": day, "usd_per_pct": _r(sum(s.usd for s in ss) / delta), "delta_pct": delta,
-                    "stretches": len(ss), "rounding": _r(_pieces(ss) / delta)})
+        pieces = _pieces(ss)
+        usd = sum(s.usd for s in ss)
+        lo = usd / (delta + pieces)
+        hi = usd / (delta - pieces) if delta > pieces else None
+        out.append({"date": day, "usd_per_pct": _r(usd / delta), "delta_pct": delta,
+                    "stretches": len(ss), "rounding": _r(pieces / delta),
+                    "bounds": [_r(lo), _r(hi)], "pieces": pieces,
+                    "quality": "measured", "reset_verified": True})
     return out
 
 
@@ -267,7 +279,14 @@ def _split(stretches: list[Stretch]) -> dict:
             for c in tot:
                 tot[c] += by_class.get(c, 0)
     grand = sum(tot.values())
-    return {c: round(n / grand, 6) for c, n in tot.items()} if grand else {}
+    if not grand:
+        return {}
+    out = {c: round(n / grand, 6) for c, n in tot.items()}
+    one_hour = sum(by_class.get("cache_write_1h", 0)
+                   for s in stretches for by_class in s.tokens.values())
+    if one_hour:
+        out["cache_write_1h"] = round(one_hour / grand, 6)
+    return out
 
 
 def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict] = (), now: datetime | None = None,
@@ -314,10 +333,14 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
             "weekly_by_window": weekly[name],
         }
     return {"generated_at": now.isoformat(), "until": until.isoformat() if until else None,
-            "capture_gate": CAPTURE_GATE, "accounts": out_accounts, "changes": checked.changes}
+            "capture_gate": CAPTURE_GATE, "model_normalization": {"version": 1,
+             "aliases": {"claude-fable-5": "claude-fable-5-1"},
+             "rule": "strip date suffix and [1m]; retain every other raw model id"},
+            "accounts": out_accounts, "changes": checked.changes}
 
 
-def passive_dollar_readings(report: dict, prices: dict, by: str = "day") -> list[tuple[datetime, float]]:
+def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
+                            allow_legacy_unverified: bool = False) -> list[tuple[datetime, float]]:
     """Accepted passive readings as (time, meter dollars per full window), revalued at `prices`.
 
     The publisher's hook: the same element shape as build_public_json's
@@ -332,6 +355,13 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day") -> list
         groups: dict[str, list[dict]] = {}
         for s in account["stretches"]:
             if s["status"] != ACCEPTED:
+                continue
+            # Archived ceiling-log stretches lack reset ids.  They remain
+            # available as explicitly conditional references, but never enter
+            # the certified series or its change detector.
+            if s.get("reset_verified") is not True and not allow_legacy_unverified:
+                continue
+            if s.get("unpriced_tokens", 0) > 0:
                 continue
             # A stretch with a model these prices do not cover is left out whole:
             # valuing that model at $0 would deflate the reading and look like a

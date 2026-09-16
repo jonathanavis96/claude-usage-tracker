@@ -109,10 +109,15 @@ def cut1_line(text):
 
 
 EXPECT_FIVE = {
+    # Unknown models are retained (after only date/[1m] normalization) so
+    # downstream pricing can withhold a monetary estimate instead of losing
+    # meter-moving work.
+    "claude-haiku-4-5": {"input": 7, "output": 20, "cache_read": 300, "cache_write": 400},
     "claude-opus-5": {"input": 15, "output": 25, "cache_read": 305, "cache_write": 405},   # m1 + m7
     "claude-sonnet-5": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4},        # m2
 }
 EXPECT_SEVEN = {
+    "claude-haiku-4-5": {"input": 7, "output": 20, "cache_read": 300, "cache_write": 400},
     "claude-opus-5": {"input": 115, "output": 225, "cache_read": 305, "cache_write": 405},  # + m3
     "claude-sonnet-5": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4},
 }
@@ -146,7 +151,8 @@ class BodyTests(unittest.TestCase):
             _, out, _ = f.run("--plan", "pro", "--dry-run")
             self.assertEqual(set(body_from_print(out)), {
                 "contributor_id", "plan", "plan_source", "ts", "five_hour", "seven_day",
-                "tokens_since_five_hour_reset", "tokens_since_seven_day_reset", "client_version"})
+                "tokens_since_five_hour_reset", "tokens_since_seven_day_reset", "capture", "client_version"})
+            self.assertEqual(body_from_print(out)["capture"]["ownership"], "configured_profile")
 
     def test_body_under_2kb(self):
         with Fixture() as f:
@@ -228,6 +234,16 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual((body["plan"], body["plan_source"]), ("max5", "stored"))
             self.assertEqual(body["contributor_id"], first_id)
+
+    def test_ids_are_local_profile_and_plan_scoped(self):
+        with Fixture() as f:
+            _, first, _ = f.run("--plan", "pro", "--dry-run")
+            pro_id = body_from_print(first)["contributor_id"]
+            _, second, _ = f.run("--plan", "max20", "--dry-run", "--print")
+            max_id = body_from_print(second)["contributor_id"]
+            self.assertNotEqual(pro_id, max_id)
+            stored = json.loads(f.id_file.read_text())
+            self.assertEqual(set(stored["identities"]), {"configured_profile:pro", "configured_profile:max20"})
 
     def test_endpoint_plan_wins_and_is_recorded(self):
         usage = dict(USAGE, subscription_type="Claude Max 20x")

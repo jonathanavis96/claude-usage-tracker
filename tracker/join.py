@@ -14,9 +14,10 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from .samples import Sample
 from .usage_api import same_reset
-from .turns import Turn, normalize_model
+from .turns import Turn, normalize_model, normalized_raw_model
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
+DETAIL_CLASSES = ("cache_write_1h",)
 ATTRIBUTION = 0.90
 MIN_INTERVALS_PER_DAY = 5
 STRETCH_PCT = 10
@@ -130,7 +131,15 @@ def bundle_meter_usd(model: str, tokens: dict, prices: dict) -> float | None:
     if price is None:
         return None
     weights = price.get("class_weight", {})
-    return (sum(tokens.get(c, 0) * price[c] * weights.get(c, 1.0) / 1e6 for c in CLASSES)
+    value = sum(tokens.get(c, 0) * price[c] * weights.get(c, 1.0) / 1e6 for c in CLASSES)
+    # cache_write_1h is a subset of cache_write.  Add only the price/weight
+    # premium over the aggregate's default five-minute valuation.
+    one_hour = tokens.get("cache_write_1h", 0)
+    if one_hour:
+        one_hour_price = price.get("cache_write_1h", 2 * price["input"])
+        value += (one_hour * (one_hour_price * weights.get("cache_write_1h", weights.get("cache_write", 1.0))
+                              - price["cache_write"] * weights.get("cache_write", 1.0)) / 1e6)
+    return (value
             * price.get("meter_weight", 1.0))
 
 
@@ -157,7 +166,9 @@ class Stretch:
     usd: float = 0.0
     tokens: dict = field(default_factory=dict)
     unpriced_tokens: int = 0
+    unpriced: dict = field(default_factory=dict)
     turns: int = 0
+    reset_verified: bool = True
 
     @property
     def usd_per_pct(self) -> float:
@@ -181,10 +192,15 @@ class Stretch:
         usd = turn_meter_usd(turn, prices)
         if usd is None:
             self.unpriced_tokens += turn.total
+            by_class = self.unpriced.setdefault(normalized_raw_model(turn.model),
+                                                {c: 0 for c in CLASSES + DETAIL_CLASSES})
+            for c in CLASSES + DETAIL_CLASSES:
+                by_class[c] += getattr(turn, c)
             return
         self.usd += usd
-        by_class = self.tokens.setdefault(normalize_model(turn.model), {c: 0 for c in CLASSES})
-        for c in CLASSES:
+        by_class = self.tokens.setdefault(normalize_model(turn.model),
+                                          {c: 0 for c in CLASSES + DETAIL_CLASSES})
+        for c in CLASSES + DETAIL_CLASSES:
             by_class[c] += getattr(turn, c)
 
 
@@ -211,6 +227,8 @@ def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stre
         elif new_piece:
             cur.windows += 1
         new_piece = False
+        if a.resets_at is None or b.resets_at is None:
+            cur.reset_verified = False
         cur.end = b.ts
         cur.delta_pct += b.five_hour - a.five_hour
         for t in turns[bisect.bisect_left(keys, a.ts):bisect.bisect_left(keys, b.ts)]:
@@ -242,7 +260,7 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
         if b.ts - a.ts > max_gap or a.seven_day is None or b.seven_day is None:
             continue
         d5, d7 = b.five_hour - a.five_hour, b.seven_day - a.seven_day
-        if d5 > 0 and d7 >= 0:
+        if d5 >= 0 and d7 >= 0 and (d5 > 0 or d7 > 0):
             if cur is None:
                 cur = {"resets_at": a.resets_at, "end": b.ts, "d5": 0.0, "d7": 0.0}
                 windows.append(cur)
@@ -251,4 +269,5 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
             cur["end"] = b.ts
     return [{"window_ending": w["resets_at"] or w["end"].isoformat(),
              "windows": round(w["d5"] / w["d7"], 2) if w["d7"] > 0 else None,
-             "five_hour_pct": round(w["d5"], 1), "seven_day_pct": round(w["d7"], 1)} for w in windows]
+             "five_hour_pct": round(w["d5"], 1), "seven_day_pct": round(w["d7"], 1),
+             "reset_verified": w["resets_at"] is not None} for w in windows]

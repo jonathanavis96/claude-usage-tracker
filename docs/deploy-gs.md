@@ -85,57 +85,72 @@ cd ~/claude-usage-tracker && python3 -m tracker.contributed --offline --history 
 
 ## Passive measurement on the gs accounts
 
-Issue #39. Each probe account is joined on its own: its own transcripts
-against its own meter log, valued in the probe's meter dollars
-(`tracker/gs_passive.py`, account mapping in `gs_accounts`), and every
-stretch is judged by the capture-completeness check (`tracker/capture.py`)
-before anything can be published. Nothing runs it on a schedule yet and the
-publisher does not read it yet.
+Each account's transcripts must be joined to that account's reset-bearing meter
+log. Both samplers use `tracker.meter_log`; they record the five-hour and
+seven-day reset identifiers as well as the displayed percentages. The old
+`gs-usage-ceiling.log` lacks reset identifiers and cannot establish that two
+increasing readings belong to the same window. Keep that log as historical
+evidence, but do not treat its stretches as certified limit measurements.
 
-Meter logs, one account per file:
-
-| Account | Meter log | Written by |
+| Account | Configuration | Meter log |
 |---|---|---|
-| jwork | `~/.paperclip/ops/gs-usage-ceiling.log` | `gs-usage-ceiling.timer` (greenscape-org `usage-ceiling.py`); jwork only from 2026-09-05T06:14:32Z, when the seat.conf drop-in pointed it at `~/.claude-javiswork`. Before that it read `~/.claude`, another account, and the join ignores it. |
-| dave | `~/.paperclip/ops/claude-usage-meter-dave.log` | `claude-usage-meter-dave.timer` (`tracker.meter_log`), from 2026-09-15 |
+| jwork | `~/.claude-javiswork` | `~/.paperclip/ops/claude-usage-meter-jwork.log` |
+| dave | `~/.claude-dave` | `~/.paperclip/ops/claude-usage-meter-dave.log` |
 
-The Dave sampler's units are in `deploy/systemd/`. It reads the meter every
-five minutes, never pauses anything, and refuses (exit 2) to write into a
-log that already holds another account. A failed read is an `error` line and
-exit 4, which the unit counts as success. To install on gs:
+The sampler reads every five minutes, never pauses anything, and refuses
+(exit 2) to append to a log belonging to another account. A failed read is an
+`error` line and exit 4; that gap must not become a zero-use observation.
+Installing these units is an operational deployment step, separate from
+reviewing or rebuilding the public JSON:
 
-```
-cp ~/claude-usage-tracker/deploy/systemd/claude-usage-meter-dave.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now claude-usage-meter-dave.timer
-```
-
-(Installed 2026-09-15 before the branch merged, with a drop-in
-`~/.config/systemd/user/claude-usage-meter-dave.service.d/worktree.conf`
-that runs it from the branch's worktree. Delete that drop-in and
-daemon-reload once `main` carries `tracker/meter_log.py`.)
-
-jwork's `projects/` is a symlink to `~/.claude/projects`, shared with
-`~/.claude` and `~/.claude-jono`; the report lists the sharers under
-`shared_with`, and anything they write shows up in the check as surplus.
-
-To run it (read-only; `--until` replays as of a time, `--withhold
-'ACCOUNT:GLOB'` leaves transcripts out to watch the check catch it):
-
-```
-cd ~/claude-usage-tracker && python3 -m tracker.gs_passive --out history/passive-gs.json
+```sh
+cp ~/claude-usage-tracker/deploy/systemd/claude-usage-meter-{jwork,dave}.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now claude-usage-meter-jwork.timer claude-usage-meter-dave.timer
 ```
 
-Per account the JSON carries every stretch with its status (`accepted`,
-`unaccounted`, `surplus`, `unpriced`, `unjudged`), reference and capture;
-the withheld runs with their kind (`collection_gap`, `level_shift`,
-`unaccounted`, `surplus`) and what corroborated or contradicted them;
-accepted stretches pooled per UTC day; `last_usable_at`; the spread of the
-accepted series; and per-window weekly points. For the publisher,
-`passive_dollar_readings(report, prices)` returns accepted readings as
-(time, meter dollars per window), the shape of its probe `dollar_readings`.
-Do not merge the two series yet: real sessions are ~97% cache reads, and
-until `class_weight.cache_read` is measured the passive level sits well above
-the probe's, so only steps compare.
+Dave was initially installed with a `worktree.conf` service drop-in. Check
+`systemctl --user cat claude-usage-meter-dave.service` and retire an obsolete
+checkout override when deploying the new code. Installing these units does not
+replace greenscape's separate seat-control service.
+
+jwork's `projects/` can be shared with other configuration directories. Shared
+transcripts, web/mobile use, delayed meter updates and extra-usage billing make
+capture attribution conditional. Reset identifiers solve reset ambiguity; they
+do not prove that a transcript bundle caused all meter movement. Review the
+published evidence and quality fields before interpreting a change as an
+account capacity change.
+
+Rebuild the joined report on the collection host:
+
+```sh
+python3 -m tracker.gs_passive --out history/gs-passive.json
+```
+
+The report preserves uncertain and rejected stretches for inspection. Only
+eligible evidence supports current measured rates; unknown positive token
+classes or models cannot silently disappear from monetary totals. Probe
+estimates and passive estimates remain separate instruments. API list value is
+the price of the declared reference token mix, whereas the meter budget applies
+class and model weights and excludes cache reads. They are different units and
+must not share a displayed label.
+
+## Offline review before deployment
+
+The scheduled publisher can update price weights and send alerts. For a local
+review snapshot, use the separate file-only command with an explicit as-of time:
+
+```sh
+python3 -m tracker.rebuild_offline --root . --now 2026-09-16T15:30:00Z --out /tmp/claude-usage-review.json
+```
+
+This reads archived probes, passive reports, contributor rows and calibration
+runs. It never reads credentials, samples accounts, contacts the contribution
+server, sends alerts, changes price weights, or invokes Git. Raw history remains
+unchanged. Missing reset or capture metadata cannot be reconstructed: the
+rebuilt snapshot may correctly withhold rates previously displayed as measured.
+Review its availability and evidence fields before deploying the schema and UI
+together. This command is not a substitute for installing the two meter timers.
 
 ## Crontab on masterrig
 

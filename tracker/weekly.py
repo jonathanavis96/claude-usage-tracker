@@ -72,7 +72,22 @@ def _same_weekly_window(prev: dict, cur: dict) -> bool:
     return prev["seven_resets_at"][:13] == cur["seven_resets_at"][:13]
 
 
-def _window_point(window_ending: str, d5: float, d7: float) -> dict:
+def _ratio_interval(d5: float, d7: float, pieces: int = 1) -> list[float | None]:
+    """Conservative ratio interval for rounded endpoint differences.
+
+    Each disconnected piece is a difference of two whole-percent displays and
+    can be wrong by almost one point in either meter.  The interval therefore
+    grows with pieces instead of pretending a pooled denominator has only one
+    half-point of error.
+    """
+    err = float(pieces)
+    lo = max(0.0, d5 - err) / (d7 + err) if d7 + err > 0 else None
+    hi_denom = d7 - err
+    hi = (d5 + err) / hi_denom if hi_denom > 0 else None
+    return [round(lo, 4) if lo is not None else None, round(hi, 4) if hi is not None else None]
+
+
+def _window_point(window_ending: str, d5: float, d7: float, pieces: int = 1) -> dict:
     """One per-window point of the `by_window` series (weekly_windows, probe_weekly_windows).
 
     `windows` is null when the seven-day meter did not move: the point is real
@@ -80,7 +95,9 @@ def _window_point(window_ending: str, d5: float, d7: float) -> dict:
     its own.
     """
     return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 > 0 else None,
-            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1)}
+            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1),
+            "rounding_interval": _ratio_interval(d5, d7, pieces), "pieces": pieces,
+            "reset_verified": True}
 
 
 def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict:
@@ -123,19 +140,22 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
         if prev is not None and _same_five_hour_window(prev, cur) and _same_weekly_window(prev, cur):
             d5 = cur["five_hour"] - prev["five_hour"]
             d7 = cur["seven_day"] - prev["seven_day"]
-            if d5 > 0 and d7 >= 0:
+            if d5 >= 0 and d7 >= 0 and (d5 > 0 or d7 > 0):
                 week_key = cur["seven_resets_at"][:10]
-                b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0, "resets_at": cur["seven_resets_at"]})
+                b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0, "resets_at": cur["seven_resets_at"],
+                                                 "window_ids": set()})
                 b["d5"] += d5
                 b["d7"] += d7
+                b["window_ids"].add(prev["five_resets_at"])
                 b["resets_at"] = cur["seven_resets_at"]
                 if windows and _same_five_hour_window(windows[-1], cur):
                     windows[-1]["d5"] += d5
                     windows[-1]["d7"] += d7
                 else:
-                    windows.append({"five_resets_at": prev["five_resets_at"], "d5": d5, "d7": d7})
+                    windows.append({"five_resets_at": prev["five_resets_at"], "d5": d5, "d7": d7,
+                                    "pieces": 1})
         prev = cur
-    by_window = [_window_point(w["five_resets_at"], w["d5"], w["d7"]) for w in windows]
+    by_window = [_window_point(w["five_resets_at"], w["d5"], w["d7"], w.get("pieces", 1)) for w in windows]
 
     history = []
     for week_key in sorted(buckets):
@@ -146,6 +166,9 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
                 "windows": round(b["d5"] / b["d7"], 2),
                 "five_hour_pct": round(b["d5"], 1),
                 "seven_day_pct": round(b["d7"], 1),
+                "rounding_interval": _ratio_interval(b["d5"], b["d7"], len(b["window_ids"])),
+                "pieces": len(b["window_ids"]),
+                "source": "paired_meter_deltas", "reset_verified": True,
                 "_resets_at": b["resets_at"],
             })
 
@@ -216,10 +239,10 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
         if fhb is None or fha is None or sdb is None or sda is None:
             continue
         d5 = fha - fhb
-        if d5 <= 0:
+        if d5 < 0:
             continue
         d7 = sda - sdb
-        if d7 < 0:
+        if d7 < 0 or (d5 == 0 and d7 == 0):
             continue
         by_window.append(_window_point(r["ts"], d5, d7))
         resets_at = r.get("seven_day_resets_at")

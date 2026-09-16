@@ -163,6 +163,9 @@ except (OSError, ValueError) as exc:
     raise SystemExit(0)
 if not isinstance(change, dict):
     raise SystemExit(0)
+if change.get("provisional") or change.get("legacy_uncertain"):
+    print("notify: change evidence is provisional or legacy-uncertain, skipping", file=sys.stderr)
+    raise SystemExit(0)
 date = change.get("date")
 if not date or date == os.environ.get("NOTIFIED", "").strip():
     raise SystemExit(0)
@@ -212,7 +215,7 @@ model = f" ({c['model']})" if c.get("model") else ""
 print(f"{c['direction']} {c['percent']}% on {c['date']}{model}")
 PYEOF
 )"
-  alert_jonathan "Change confirmed: $summary" \
+  alert_jonathan "Observed change: $summary" \
     "$(printf 'The publisher found a new last_change in %s:\n\n%s\n\nSubscriber send via /api/notify/send: HTTP %s\n' "$json" "$body" "$status")"
 }
 

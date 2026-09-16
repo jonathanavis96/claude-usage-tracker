@@ -154,6 +154,13 @@ class ChangeEvent:
     direction: str
     percent: int
     model: str = "all"
+    onset_earliest: date | None = None
+    onset_latest: date | None = None
+    confirmed_at: date | None = None
+    evidence_points: int | None = None
+    denominator_pct: float | None = None
+    before_interval: tuple[float | None, float | None] | None = None
+    after_interval: tuple[float | None, float | None] | None = None
 
 
 def detect_changes(readings: list[tuple[datetime, float]], threshold: float = 0.15) -> list[ChangeEvent]:
@@ -201,29 +208,44 @@ def detect_smoothed_changes(readings: list[tuple[datetime, float]], threshold: f
     """
     ordered = sorted(readings, key=lambda r: r[0])
     events: list[ChangeEvent] = []
-    regime_start = 0
-    i = 0
-    while i < len(ordered):
-        ts = ordered[i][0]
-        recent = [(t, v) for t, v in ordered[regime_start:i + 1] if t > ts - window]
-        base = [v for t, v in ordered[regime_start:i + 1] if t <= ts - window]
-        if len(recent) >= min_points and len(base) >= min_points:
-            base_level = median(base)
-            if base_level:
-                new_level = median(v for _, v in recent)
-                ratio = new_level / base_level - 1
-                if abs(ratio) > threshold:
-                    # The new regime starts at the first reading in the window that
-                    # sits on the new side of the halfway line, not at the window's
-                    # first reading: the window can still hold a few old-level days.
-                    halfway = (base_level + new_level) / 2
-                    onset = next(k for k in range(i + 1 - len(recent), i + 1)
-                                 if (ordered[k][1] > halfway) == (ratio > 0))
-                    events.append(ChangeEvent(ordered[onset][0].date(), "increased" if ratio > 0 else "decreased",
-                                              round(abs(ratio) * 100)))
-                    regime_start = onset
-        i += 1
-    return events
+
+    def segment(lo: int, hi: int) -> None:
+        """Binary segmentation using persistent levels on both sides.
+
+        Looking at the entire candidate sides prevents one stray value in a
+        rolling window from stealing the onset and prevents the remainder of
+        one transition from firing a second event.
+        """
+        best: tuple[float, int, float, float] | None = None
+        for split in range(lo + min_points, hi - min_points + 1):
+            left = [v for _, v in ordered[lo:split]]
+            right = [v for _, v in ordered[split:hi]]
+            before, after = median(left), median(right)
+            if not before:
+                continue
+            change = after / before - 1
+            if abs(change) <= threshold:
+                continue
+            # Prefer a large persistent shift with evidence on both sides.
+            score = abs(change) * min(len(left), len(right))
+            if best is None or score > best[0]:
+                best = (score, split, before, after)
+        if best is None:
+            return
+        _, split, before, after = best
+        segment(lo, split)
+        ratio = after / before - 1
+        events.append(ChangeEvent(
+            ordered[split][0].date(), "increased" if ratio > 0 else "decreased",
+            round(abs(ratio) * 100), onset_earliest=ordered[split - 1][0].date(),
+            onset_latest=ordered[split][0].date(),
+            confirmed_at=ordered[min(hi - 1, split + min_points - 1)][0].date(),
+            evidence_points=hi - lo,
+        ))
+        segment(split, hi)
+
+    segment(0, len(ordered))
+    return sorted(events, key=lambda e: e.date)
 
 
 def pooled_windows(points: list[tuple[datetime, float, float]]) -> float | None:
@@ -231,6 +253,24 @@ def pooled_windows(points: list[tuple[datetime, float, float]]) -> float | None:
     d5 = sum(p[1] for p in points)
     d7 = sum(p[2] for p in points)
     return d5 / d7 if d7 > 0 else None
+
+
+def pooled_interval(points: list[tuple[datetime, float, float]]) -> tuple[float | None, float | None]:
+    """Worst-case ratio interval from whole-percent endpoint rounding.
+
+    Each window point is a disconnected difference and can contribute almost
+    one point of error to either total.  Treating a large pool as though it had
+    one half-point of denominator error manufactured certainty in the audit's
+    repeated (11, 1) counterexample.
+    """
+    if not points:
+        return None, None
+    d5 = sum(p[1] for p in points)
+    d7 = sum(p[2] for p in points)
+    err = float(len(points))
+    lo = max(0.0, d5 - err) / (d7 + err) if d7 + err > 0 else None
+    hi = (d5 + err) / (d7 - err) if d7 - err > 0 else None
+    return lo, hi
 
 
 def _conceded_ratio(d5: float, d7: float, base: float) -> float:
@@ -302,6 +342,8 @@ def weighted_regimes(points: list[tuple[datetime, float, float]],
             "windows": round(level, 2),
             "seven_day_pct": round(sum(p[2] for p in span), 1),
             "points": len(span),
+            "rounding_interval": [round(x, 4) if x is not None else None for x in pooled_interval(span)],
+            "quality": "bounded" if pooled_interval(span)[1] is not None else "insufficient_precision",
         })
     return regimes
 
@@ -311,43 +353,63 @@ def _detect_weighted(points: list[tuple[datetime, float, float]],
     """(events, ordered points, regime start indices). `starts` always begins with 0 --
     the series before any event is itself a regime -- and gains the candidate index each
     time one fires, so starts[-1] is the current regime's start."""
-    ordered = sorted((p for p in points if p[1] > 0 and p[2] >= 0), key=lambda p: p[0])
+    ordered = sorted((p for p in points if p[1] >= 0 and p[2] >= 0 and (p[1] > 0 or p[2] > 0)),
+                     key=lambda p: p[0])
     events: list[ChangeEvent] = []
     starts = [0]
-    i = 0
-    while i < len(ordered):
-        ts, d5, d7 = ordered[i]
-        base_from = ts - timedelta(days=BASE_DAYS)
-        base_pts = [p for p in ordered[starts[-1]:i] if p[0] >= base_from]
-        base = pooled_windows(base_pts)
-        if d7 < MIN_VOTE_D7 or base is None or sum(p[2] for p in base_pts) < MIN_BASE_D7:
-            i += 1
-            continue
-        ratio = d5 / d7 / base - 1
-        conceded = _conceded_ratio(d5, d7, base) / base - 1
-        if abs(conceded) <= threshold or (conceded > 0) != (ratio > 0):
-            i += 1
-            continue
-        # A candidate: pool forward until enough seven-day movement has accumulated.
-        pool_d5 = pool_d7 = 0.0
-        confirmed_at: int | None = None
-        for j in range(i, len(ordered)):
-            pool_d5 += ordered[j][1]
-            pool_d7 += ordered[j][2]
-            if pool_d7 >= MIN_POOL_D7 and j - i + 1 >= MIN_POOL_POINTS:
-                confirmed_at = j
-                break
-        if confirmed_at is None:
-            i += 1  # not enough movement after it yet: unconfirmed until more windows land
-            continue
-        pool_ratio = pool_d5 / pool_d7 / base - 1
-        pool_conceded = _conceded_ratio(pool_d5, pool_d7, base) / base - 1
-        if abs(pool_conceded) > threshold and (pool_conceded > 0) == (ratio > 0) and (pool_ratio > 0) == (ratio > 0):
-            events.append(ChangeEvent(ts.date(), "increased" if ratio > 0 else "decreased",
-                                      round(abs(pool_ratio) * 100)))
-            starts.append(i)
-        i += 1
-    return events, ordered, starts
+
+    def separated(left: list, right: list) -> bool:
+        before, after = pooled_windows(left), pooled_windows(right)
+        if before is None or after is None:
+            return False
+        blo, bhi = pooled_interval(left)
+        alo, ahi = pooled_interval(right)
+        if None in (blo, bhi, alo, ahi):
+            return False
+        if after < before:
+            return ahi < blo * (1 - threshold)
+        return alo > bhi * (1 + threshold)
+
+    def segment(lo: int, hi: int) -> None:
+        best: tuple[float, int, float, float] | None = None
+        for split in range(lo + MIN_POOL_POINTS, hi - MIN_POOL_POINTS + 1):
+            left, right = ordered[lo:split], ordered[split:hi]
+            if sum(p[2] for p in left) < MIN_BASE_D7 or sum(p[2] for p in right) < MIN_POOL_D7:
+                continue
+            before, after = pooled_windows(left), pooled_windows(right)
+            if before is None or after is None:
+                continue
+            change = after / before - 1
+            if abs(change) <= threshold or not separated(left, right):
+                continue
+            score = abs(change) * min(sum(p[2] for p in left), sum(p[2] for p in right))
+            if best is None or score > best[0]:
+                best = (score, split, before, after)
+        if best is None:
+            return
+        _, split, before, after = best
+        segment(lo, split)
+        ratio = after / before - 1
+        left, right = ordered[lo:split], ordered[split:hi]
+        confirmed = split
+        accumulated = 0.0
+        while confirmed < hi and (confirmed - split < MIN_POOL_POINTS or accumulated < MIN_POOL_D7):
+            accumulated += ordered[confirmed][2]
+            confirmed += 1
+        events.append(ChangeEvent(
+            ordered[split][0].date(), "increased" if ratio > 0 else "decreased",
+            round(abs(ratio) * 100), onset_earliest=ordered[split - 1][0].date(),
+            onset_latest=ordered[split][0].date(),
+            confirmed_at=ordered[max(split, confirmed - 1)][0].date(),
+            evidence_points=len(left) + len(right), denominator_pct=round(sum(p[2] for p in right), 1),
+            before_interval=pooled_interval(left), after_interval=pooled_interval(right),
+        ))
+        starts.append(split)
+        segment(split, hi)
+
+    segment(0, len(ordered))
+    starts = sorted(set(starts))
+    return sorted(events, key=lambda e: e.date), ordered, starts
 
 
 def latest_change(events: list[ChangeEvent]) -> ChangeEvent | None:

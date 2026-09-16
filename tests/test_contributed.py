@@ -88,14 +88,22 @@ class FixtureShapeTests(unittest.TestCase):
         self.assertEqual(j["max20"]["samples"], 4)
         self.assertNotIn("team", j)
 
+    def test_old_history_is_excluded_and_freshness_explains_the_cohort(self):
+        old = sample(A, "max20", "2026-07-01T10:00:00Z", 80.0, 10.0, sonnet(9_000_000))
+        j = aggregate(fixture_rows() + [old], NOW, PRICES)["max20"]
+        self.assertEqual(j["samples"], 4)
+        self.assertEqual(j["evidence"]["ignored_old_samples"], 1)
+        self.assertFalse(j["evidence"]["stale"])
+
 
 class TokensPerPctTests(unittest.TestCase):
     def test_median_across_contributors_of_each_contributors_median(self):
         j = aggregate(fixture_rows(), NOW, PRICES)
         s = j["max20"]["tokens_per_pct"]["claude-sonnet-5"]
-        # A: 200k/20 = 10000 and 800k/80 = 10000 -> 10000. B: 300k/20 = 15000 and 600k/80 = 7500 -> 11250.
-        self.assertEqual(s["median"], round((10000 + 11250) / 2))
-        self.assertEqual((s["contributors"], s["samples"]), (2, 4))
+        # Current estimates use each source's latest cumulative snapshot, so
+        # old overlapping readings cannot dominate A=10k, B=7.5k.
+        self.assertEqual(s["median"], round((10000 + 7500) / 2))
+        self.assertEqual((s["contributors"], s["samples"]), (2, 2))
 
     def test_usd_per_pct_values_tokens_as_publish_does(self):
         rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000, output=100_000)),
@@ -242,14 +250,14 @@ class WeeklyWindowsTests(unittest.TestCase):
 
 
 class PointsTests(unittest.TestCase):
-    def test_ordinal_assigned_by_first_sample_time_never_the_contributor_id(self):
-        # B's first sample precedes A's, so B gets c=0 and A gets c=1.
+    def test_pseudonym_is_stable_and_never_the_contributor_id(self):
         rows = [sample(A, "max20", "2026-09-02T14:00:00Z", 50.0, 10.0, sonnet(100_000)),
                 sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(100_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         by_t = {p["t"]: p["c"] for p in pts}
-        self.assertEqual(by_t["2026-09-02T10:00:00Z"], 0)
-        self.assertEqual(by_t["2026-09-02T14:00:00Z"], 1)
+        self.assertNotEqual(by_t["2026-09-02T10:00:00Z"], by_t["2026-09-02T14:00:00Z"])
+        again = {p["t"]: p["c"] for p in aggregate(list(reversed(rows)), NOW, PRICES)["max20"]["points"]}
+        self.assertEqual(by_t, again)
         self.assertNotIn(A, json.dumps(pts))
         self.assertNotIn(B, json.dumps(pts))
 
@@ -284,7 +292,7 @@ class PointsTests(unittest.TestCase):
         self.assertEqual(len(pts), 1)
         self.assertEqual(pts[0]["t"], "2026-09-02T10:00:00Z")
 
-    def test_point_carries_both_windows_per_pct_and_their_quotient(self):
+    def test_point_never_claims_weekly_windows_from_two_token_mixes(self):
         # 100k tokens moved the five-hour meter 50% (2,000 per 1%); 800k moved the
         # seven-day meter 10% (80,000 per 1%). A week holds 40 five-hour windows.
         rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0,
@@ -292,7 +300,7 @@ class PointsTests(unittest.TestCase):
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(pts[0]["tokens_per_pct"], 2000)
         self.assertEqual(pts[0]["tokens_per_pct_week"], 80_000)
-        self.assertAlmostEqual(pts[0]["windows"], 40.0, places=3)
+        self.assertNotIn("windows", pts[0])
 
     def test_a_meter_under_the_floor_nulls_its_own_side_and_the_quotient(self):
         rows = [week_sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 1.0,
@@ -300,7 +308,7 @@ class PointsTests(unittest.TestCase):
                 week_sample(B, "max20", "2026-09-02T11:00:00Z", 1.0, 10.0,
                             sonnet(100_000), sonnet(800_000))]
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
-        self.assertEqual([p["windows"] for p in pts], [None, None])
+        self.assertTrue(all("windows" not in p for p in pts))
         self.assertEqual([p["tokens_per_pct_week"] for p in pts], [None, 80_000])
         self.assertEqual([p["tokens_per_pct"] for p in pts], [2000, None])
 
@@ -309,7 +317,7 @@ class PointsTests(unittest.TestCase):
         pts = aggregate(rows, NOW, PRICES)["max20"]["points"]
         self.assertEqual(pts[0]["tokens_per_pct"], 2000)
         self.assertIsNone(pts[0]["tokens_per_pct_week"])
-        self.assertIsNone(pts[0]["windows"])
+        self.assertNotIn("windows", pts[0])
 
     def test_by_model_splits_the_meter_by_dollar_share(self):
         tokens = {"claude-sonnet-5": {"input": 0, "output": 100_000, "cache_read": 0, "cache_write": 0},

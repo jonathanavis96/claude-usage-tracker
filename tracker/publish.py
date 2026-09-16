@@ -50,7 +50,11 @@ def load_probes(path: Path) -> list[dict]:
 
 def tokens_usd(tokens: dict, price: dict) -> float:
     """API-list value of a token bundle. `price` is USD per million tokens, per class."""
-    return sum(tokens[cls] * price[cls] / 1e6 for cls in ("input", "output", "cache_read", "cache_write"))
+    value = sum(tokens.get(cls, 0) * price[cls] / 1e6
+                for cls in ("input", "output", "cache_read", "cache_write"))
+    one_hour = tokens.get("cache_write_1h", 0)
+    return value + one_hour * (price.get("cache_write_1h", 2 * price["input"])
+                               - price["cache_write"]) / 1e6
 
 
 def class_weight(price: dict, cls: str) -> float:
@@ -68,8 +72,14 @@ def class_weight(price: dict, cls: str) -> float:
 
 def meter_usd(tokens: dict, price: dict) -> float:
     """Meter-dollar value of a token bundle: list value per class x class_weight."""
-    return sum(tokens[cls] * price[cls] * class_weight(price, cls) / 1e6
-               for cls in ("input", "output", "cache_read", "cache_write"))
+    value = sum(tokens.get(cls, 0) * price[cls] * class_weight(price, cls) / 1e6
+                for cls in ("input", "output", "cache_read", "cache_write"))
+    one_hour = tokens.get("cache_write_1h", 0)
+    return value + one_hour * (
+        price.get("cache_write_1h", 2 * price["input"])
+        * class_weight(price, "cache_write_1h")
+        - price["cache_write"] * class_weight(price, "cache_write")
+    ) / 1e6
 
 
 def usd_per_pct(row: dict, price: dict) -> float:
@@ -88,27 +98,61 @@ def usd_per_pct(row: dict, price: dict) -> float:
 
 def blended_price_per_token(split: dict, price: dict) -> float:
     """Meter dollars per token for a class split (class_weight applied, meter_weight not)."""
-    return sum(frac * price[cls] * class_weight(price, cls) / 1e6 for cls, frac in split.items())
+    value = sum(split.get(cls, 0) * price[cls] * class_weight(price, cls) / 1e6
+                for cls in ("input", "output", "cache_read", "cache_write"))
+    one_hour = split.get("cache_write_1h", 0)
+    return value + one_hour * (
+        price.get("cache_write_1h", 2 * price["input"]) * class_weight(price, "cache_write_1h")
+        - price["cache_write"] * class_weight(price, "cache_write")
+    ) / 1e6
 
 
-def _gs_split(gs_passive: dict | None) -> dict:
+def blended_api_price_per_token(split: dict, price: dict) -> float:
+    """API list dollars per token for a declared reference mix."""
+    value = sum(split.get(cls, 0) * price[cls] / 1e6
+                for cls in ("input", "output", "cache_read", "cache_write"))
+    return value + split.get("cache_write_1h", 0) * (
+        price.get("cache_write_1h", 2 * price["input"]) - price["cache_write"]
+    ) / 1e6
+
+
+def _gs_split(gs_passive: dict | None, *, allow_legacy_unverified: bool = False) -> dict:
     """Token-class shares over every gs account's published stretches, weighted by tokens."""
     tot = {c: 0.0 for c in ("input", "output", "cache_read", "cache_write")}
     for acct in (gs_passive or {}).get("accounts", {}).values():
         for st in acct.get("stretches", []):
             if st.get("status") != ACCEPTED:
                 continue
+            if st.get("reset_verified") is not True and not allow_legacy_unverified:
+                continue
+            if st.get("unpriced_tokens", 0) > 0:
+                continue
             for by_class in st.get("tokens", {}).values():
                 for c in tot:
                     tot[c] += by_class.get(c, 0)
     grand = sum(tot.values())
-    return {c: n / grand for c, n in tot.items()} if grand else {}
+    if not grand:
+        return {}
+    out = {c: n / grand for c, n in tot.items()}
+    one_hour = sum(by_class.get("cache_write_1h", 0)
+                   for acct in (gs_passive or {}).get("accounts", {}).values()
+                   for st in acct.get("stretches", [])
+                   if st.get("status") == ACCEPTED
+                   and (st.get("reset_verified") is True or allow_legacy_unverified)
+                   and st.get("unpriced_tokens", 0) == 0
+                   for by_class in st.get("tokens", {}).values())
+    if one_hour:
+        out["cache_write_1h"] = one_hour / grand
+    return out
 
 
 def _row_split(row: dict) -> dict:
     tokens = row["tokens"]
     total = sum(tokens[cls] for cls in ("input", "output", "cache_read", "cache_write"))
-    return {cls: tokens[cls] / total for cls in ("input", "output", "cache_read", "cache_write")}
+    out = {cls: tokens[cls] / total for cls in ("input", "output", "cache_read", "cache_write")}
+    if tokens.get("cache_write_1h"):
+        out["cache_write_1h"] = tokens["cache_write_1h"] / total
+    return out
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
@@ -204,19 +248,21 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # tracked separately, for `instrument` and `rates[model]["source"]" below.
     probe_readings = [(datetime.fromisoformat(r["ts"]), usd_per_pct(r, prices[r["model"]]) * 100, "probe")
                       for r in probe_rows]
-    # One instrument at a time (see the docstring): the passive series when gs_passive
-    # has any priced reading, else the probe's. Never both -- the scales differ.
-    passive_readings = ([(ts, v, "passive") for ts, v in passive_dollar_readings(gs_passive, prices, by="day")]
+    # Probe and passive payloads are incompatible instruments.  A missing
+    # passive report must not silently replace the public series with probe
+    # values on a different scale.  Archived reset-less stretches are retained
+    # as conditional references, but cannot produce a confident change event.
+    passive_readings = ([(ts, v, "passive") for ts, v in
+                         passive_dollar_readings(gs_passive, prices, by="day")]
                         if gs_passive else [])
-    passive_mode = bool(passive_readings)
-    combined = sorted(passive_readings if passive_mode else probe_readings, key=lambda t: t[0])
-    if not combined:
-        raise ValueError("no readings to publish")
-    if gs_passive and not passive_mode:
-        print("gs-passive report has no priced readings; publishing the probe series", file=sys.stderr)
+    legacy_readings = ([(ts, v, "passive_legacy") for ts, v in
+                        passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True)]
+                       if gs_passive and not passive_readings else [])
+    evidence_status = "measured" if passive_readings else ("conditional" if legacy_readings else "unavailable")
+    combined = sorted(passive_readings or legacy_readings, key=lambda t: t[0])
 
     dollar_readings = [(ts, v) for ts, v, _ in combined]
-    events = detect_smoothed_changes(dollar_readings) if passive_mode else detect_changes(dollar_readings)
+    events = detect_smoothed_changes(dollar_readings) if evidence_status == "measured" else []
     regime_starts = sorted({e.date for e in events})
 
     def regime_index(d: date) -> int:
@@ -239,11 +285,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         regime_values.setdefault(idx, []).append(v)
         if idx not in regime_newest or ts > regime_newest[idx][0]:
             regime_newest[idx] = (ts, kind)
-    if not passive_mode:
-        for r in probe_rows:
-            d = datetime.fromisoformat(r["ts"]).date()
-            by_day_models.setdefault(d, set()).add(r["model"])
-    passive_days = {ts.date() for ts, _, kind in combined if kind == "passive"}
+    passive_days = {ts.date() for ts, _, kind in combined if kind.startswith("passive")}
 
     latest_row = max(probe_rows, key=lambda r: r["ts"]) if probe_rows else None
     latest_row_per_model: dict[str, dict] = {}
@@ -257,79 +299,106 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     probe_account_count = len({r["account"] for r in probe_rows if r.get("account")})
     passive_account_count = sum(1 for acct in (gs_passive or {}).get("accounts", {}).values()
                                 if any(s["status"] == ACCEPTED for s in acct.get("stretches", [])))
-    earliest_reading_day = combined[0][0].date()
+    earliest_reading_day = combined[0][0].date() if combined else now.date()
     first_probe_day = min(by_day_models, default=earliest_reading_day)
     # The class split converts meter dollars to tokens. In passive mode it is the gs
     # accounts' own mix (tracker/gs_passive.py `split`, token-weighted across accounts),
     # the sessions the series is measured from; else masterrig's passive.json split; a
     # missing/lagging passive.json is allowed (it arrives from masterrig), so fall back
     # to the latest probe row's own class split rather than blowing up on an empty one.
-    gs_split = _gs_split(gs_passive) if passive_mode else {}
-    passive_split = gs_split or passive_split or (_row_split(latest_row) if latest_row is not None else {})
-    if not passive_split:
-        # Both sources are empty at once only with zero probe rows (no row split to fall
-        # back to) and a passive.json with no `split` -- e.g. gs-passive readings alone,
-        # before masterrig has ever published one. blended_price_per_token({}, ...) is
-        # 0.0, which would divide-by-zero below; raise here so main()'s existing
-        # publish-failed path (it already catches ValueError) applies instead.
-        raise ValueError("no class split to convert dollars to tokens")
+    gs_split = _gs_split(gs_passive, allow_legacy_unverified=evidence_status == "conditional")
+    passive_split = gs_split or passive_split
 
     passive_history = passive.get("history", {})
-    first_day = min((date.fromisoformat(ds) for ds in passive_history), default=first_probe_day)
-    first_day = min(first_day, first_probe_day)
+    # No retrospective held rows: before the first compatible observation the
+    # rate was not measured.  Consumers may present a separate current-mix
+    # scenario, but history does not masquerade as contemporaneous evidence.
+    first_day = earliest_reading_day
     last_day = now.date()
     current_regime = regime_index(last_day)
-    current_regime_value = median(regime_values[current_regime])
-    api_value_per_window = current_regime_value
-    measured_at, current_kind = regime_newest[current_regime]
-    instrument = combined[-1][2]  # the newest reading overall, of either kind
+    current_regime_value = median(regime_values[current_regime]) if current_regime in regime_values else None
+    measured_at, current_kind = regime_newest.get(current_regime, (None, "none"))
+    instrument = "passive" if evidence_status in ("measured", "conditional") else "unavailable"
 
     # Published ratios only: the passive-observed 5x-to-20x ratio is too noisy to publish
     # (see docs/spike-2026-09.md); the page cites it in caveats instead.
     ratios = dict(PLAN_RATIOS_BASE)
     rates, history = {}, {}
     for model, price in prices.items():
-        blended = blended_price_per_token(passive_split, price)
+        blended = blended_price_per_token(passive_split, price) if passive_split else 0.0
+        api_blended = blended_api_price_per_token(passive_split, price) if passive_split else 0.0
         weight = price.get("meter_weight", 1.0)
         model_probe = latest_row_per_model.get(model)
-        source = "passive" if current_kind == "passive" else ("probe" if model_probe is not None else "derived")
-        rates[model] = {"tokens_per_window": round(current_regime_value / (blended * weight)),
-                        "source": source,
+        tokens_per_window = (round(current_regime_value / (blended * weight))
+                             if current_regime_value is not None and blended > 0 else None)
+        api_list_value = (round(tokens_per_window * api_blended, 2)
+                          if tokens_per_window is not None else None)
+        stale = (measured_at < now - timedelta(days=MAX_SAMPLE_AGE_DAYS)) if measured_at else None
+        reasons = []
+        if evidence_status == "conditional":
+            reasons.extend(["legacy_reset_metadata_missing", "capture_completeness_not_certified"])
+        elif evidence_status == "unavailable":
+            reasons.append("no_eligible_passive_measurement")
+        rates[model] = {"tokens_per_window": tokens_per_window,
+                        "source": "derived_reference_mix" if tokens_per_window is not None else "unavailable",
                         "probed_at": model_probe["ts"] if model_probe is not None else None,
-                        "measured_at": measured_at.isoformat(),
+                        "measured_at": measured_at.isoformat() if measured_at else None,
                         "probe_effort": latest_row["effort"] if latest_row is not None else None,
                         "split": passive_split,
-                        "api_value_per_window": round(api_value_per_window, 2)}
+                        "meter_budget_per_window": round(current_regime_value, 2) if current_regime_value is not None else None,
+                        "api_value_per_window": api_list_value,
+                        "api_list_value_per_window": api_list_value,
+                        "reference_mix": {"kind": "derived_scenario",
+                            "source": "passive_token_mix" if evidence_status == "measured" else "legacy_passive_token_mix",
+                            "as_of": measured_at.isoformat() if measured_at else None,
+                            "cache_write_duration": ("observed" if passive_split.get("cache_write_1h") is not None
+                                                     else "legacy_assumed_5m")},
+                        "assumptions": {
+                            "model_conversion": "meter budget converted with the shared reference mix and price-table weights",
+                            "direct_model_cap_measurement": False,
+                            "meter_weight": weight,
+                            "class_weight": {c: class_weight(price, c)
+                                             for c in ("input", "output", "cache_read", "cache_write", "cache_write_1h")},
+                            "cache_read_meter_weight_zero": class_weight(price, "cache_read") == 0,
+                            "cache_write_1h_meter_weight": "assumed_same_as_cache_write",
+                        },
+                        "evidence": {"source": "passive" if combined else "none",
+                            "observed_from": combined[0][0].isoformat() if combined else None,
+                            "observed_to": measured_at.isoformat() if measured_at else None,
+                            "measured_at": measured_at.isoformat() if measured_at else None,
+                            "account_count": passive_account_count,
+                            "reset_verified": evidence_status == "measured"},
+                        "quality": {"status": evidence_status, "reasons": reasons,
+                            "capture_complete": True if evidence_status == "measured" else None,
+                            "unpriced_work": False if evidence_status in ("measured", "conditional") else None,
+                            "rounding_relative": None},
+                        "freshness": {"as_of": measured_at.isoformat() if measured_at else None,
+                            "stale_after": ((measured_at + timedelta(days=MAX_SAMPLE_AGE_DAYS)).isoformat()
+                                            if measured_at else None), "stale": stale}}
         hist = []
         d = first_day
-        while d <= last_day:
+        while combined and d <= last_day:
             idx = regime_index(d)
             regime_value = median(regime_values[idx])
-            if d < first_probe_day:
-                day_source = "held"
-            elif model in by_day_models.get(d, set()):
-                day_source = "probe"
-            elif d in passive_days:
-                day_source = "passive"
-            else:
-                day_source = "derived"
-            hist.append({"date": d.isoformat(), "tokens_per_window": round(regime_value / (blended * weight)),
-                        "api_value_per_window": round(regime_value, 2),
-                        "source": day_source, "interpolated": False})
+            day_tokens = round(regime_value / (blended * weight)) if blended > 0 else None
+            hist.append({"date": d.isoformat(), "tokens_per_window": day_tokens,
+                        "meter_budget_per_window": round(regime_value, 2),
+                        "api_value_per_window": round(day_tokens * api_blended, 2) if day_tokens is not None else None,
+                        "api_list_value_per_window": round(day_tokens * api_blended, 2) if day_tokens is not None else None,
+                        "source": "passive" if d in passive_days else "derived_reference_mix",
+                        "quality": evidence_status, "interpolated": False})
             d += timedelta(days=1)
         history[model] = hist
-    last_sample = combined[-1][0].isoformat()
+    last_sample = combined[-1][0].isoformat() if combined else None
     # The page freezes generated_at, so a stale publish would silently present old
     # numbers as current instead of letting the page's own stale warning fire. The
     # guard is on the newest reading of EITHER kind: passive keeps the figure
     # fresh on its own now that probes are not scheduled (issue #39).
     if not rates:
-        raise ValueError("no rates to publish")
-    if datetime.fromisoformat(last_sample) < now - timedelta(days=MAX_SAMPLE_AGE_DAYS):
-        raise ValueError(f"newest sample {last_sample} is older than {MAX_SAMPLE_AGE_DAYS} days")
+        raise ValueError("price table has no models")
     passive_weekly = passive.get("weekly_windows")
     weekly_windows = None
-    weekly_window_ratios = dict(WEEKLY_WINDOW_RATIOS)
+    weekly_window_ratios = {}
     weekly_events: list = []
     if passive_weekly is not None:
         # The count of five-hour windows a week's cap holds is per plan, not one
@@ -354,26 +423,24 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         # existed publishes its weekly rows as before, with no weekly
         # detection and the old two-complete-weeks median as current, until
         # masterrig's next passive run.
-        passive_history = passive_weekly.get("history", [])
+        passive_history = [dict(h) for h in passive_weekly.get("history", [])]
         # passive.json may lag: it can predate the flag, or carry a `partial` from
         # when its newest week was still open. Recompute the flag against this
         # publish's own time so every published weekly row honours the contract.
         for h in passive_history:
             h["partial"] = date.fromisoformat(h["week_ending"]) >= now.date()
-        probe_history = probe_weekly["history"]
+        probe_history = [dict(h, source="probe_paired_deltas", quality="measured",
+                              assumed=False) for h in probe_weekly["history"]]
+        for h in passive_history:
+            h.update({"source": h.get("source", "passive_paired_deltas"), "assumed": False,
+                      "quality": ("measured" if h.get("reset_verified") is True else "legacy_uncertain"),
+                      "reasons": ([] if h.get("reset_verified") is True
+                                  else ["historical_row_missing_reset_provenance"])})
         max5_history = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max5"]
-        passive_max20 = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max20"]
-        if probe_history:
-            first_probe_week = min(h["week_ending"] for h in probe_history)
-            max20_history = [h for h in passive_max20 if h["week_ending"] < first_probe_week] + probe_history
-        else:
-            max20_history = list(passive_max20)
+        max20_history = [h for h in passive_history if _plan_for_week(h["week_ending"]) == "max20"]
         max20_points = _max20_window_points(passive_weekly.get("by_window", []))
         weekly_events = detect_weighted_changes(max20_points)
         max20_current = _regime_current(max20_points)
-        if max20_current is None:
-            max20_current = _weekly_current(max20_history, now)
-        max5_current = _weekly_current(max5_history, now)
         # Levels, not weekly points. Windows per week is a plan constant, so the honest
         # series is a step function and every weekly ratio is an estimate of it carrying
         # several percent of assembly error (weighted_regimes' docstring lists the three
@@ -386,33 +453,28 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         # the account was already on max20; see issue #56). Keep only the regimes before
         # that first step, which is max5's real level, rather than publishing the plan
         # move as a limit change on the frozen plan.
-        max5_regimes = weighted_regimes(_max5_window_points(passive_weekly.get("by_window", [])))[:1]
-        # Derive the plan ratio from those two levels rather than the frozen constant when both
-        # exist. The levels are pooled over 183 and 80 windows against the constant's two
-        # calendar-week medians, and deriving it here makes the plan boundary continuous BY
-        # CONSTRUCTION: the last max5 level and the first max20 level are the same limit seen
-        # on two plans, so a step between them would be the account move drawn as a limit move
-        # -- the exact class of error issue #54 was about, one seam further along.
-        ratios_w = dict(WEEKLY_WINDOW_RATIOS)
-        if max5_regimes and max20_regimes and max20_regimes[0]["windows"]:
-            seam = max5_regimes[-1]["windows"] / max20_regimes[0]["windows"]
-            ratios_w["max5"] = ratios_w["pro"] = round(seam, 3)
+        max5_regimes = weighted_regimes(_max5_window_points(passive_weekly.get("by_window", [])))
+        for r in max20_regimes + max5_regimes:
+            r.update({"source": "passive_paired_deltas", "assumed": False, "quality": "measured", "reasons": []})
+        current_estimate = ({"value": max20_current, "source": "passive_paired_deltas",
+                             "as_of": max20_points[-1][0].isoformat(), "stale": max20_points[-1][0] < now - timedelta(days=14),
+                             "assumed": False, "quality": "measured", "reasons": []}
+                            if max20_current is not None and max20_points else None)
         weekly_windows = {
-            "max20": {"current": max20_current, "history": max20_history, "assumed": False,
-                      "regimes": max20_regimes},
-            "max5": {"current": max5_current, "history": max5_history, "assumed": False,
-                     "regimes": max5_regimes},
-            # Pro has no measurement of its own yet: publish max5's frozen figures
-            # as a stand-in (same 5x-ratio era) flagged "assumed" so the page can
-            # show Pro numbers while labelling them unmeasured.
-            "pro": {"current": max5_current, "history": max5_history, "assumed": True,
-                    "regimes": max5_regimes},
+            "max20": {"current": max20_current, "current_estimate": current_estimate,
+                      "history": max20_history, "assumed": False, "regimes": max20_regimes},
+            "max5": {"current": None, "current_estimate": None, "history": max5_history,
+                     "assumed": False, "regimes": max5_regimes,
+                     "availability": {"status": "historical_only", "reason": "no_current_max5_measurement"}},
+            "pro": {"current": None, "current_estimate": None, "history": [], "assumed": False,
+                    "regimes": [], "availability": {"status": "unavailable", "reason": "no_pro_measurement"}},
             "passive": passive_weekly,
-            "probe": probe_weekly,
+            "probe": {**probe_weekly, "history": probe_history},
         }
-        weekly_window_ratios = ratios_w
+        weekly_window_ratios = {}
     last_change = _latest_change_with_scope(events, weekly_events)
     out = {
+        "schema_version": 2,
         "generated_at": now.isoformat(),
         "last_sample_at": last_sample,
         "meter_read_at": _last_meter_read(gs_passive),
@@ -423,7 +485,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "passive_account_count": passive_account_count,
         "plan_ratios": ratios,
         "weekly_window_ratios": weekly_window_ratios,
-        "rate_basis": "api_value",
+        "rate_basis": "meter_budget",
+        "model_plan_limits": _model_plan_limits(prices),
         "rates": rates,
         "effort": effort,
         "effort_usd": effort_usd or {},
@@ -431,7 +494,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "history": history,
         "last_change": last_change,
         "events": _build_events(events, weekly_events),
-        "session_tokens": passive.get("session_tokens", {}),
+        "availability": {"rates": evidence_status,
+                         "reason": None if evidence_status == "measured" else
+                         ("legacy_reset_metadata_missing" if evidence_status == "conditional"
+                          else "no_eligible_passive_measurement")},
     }
     if weekly_windows is not None:
         out["weekly_windows"] = weekly_windows

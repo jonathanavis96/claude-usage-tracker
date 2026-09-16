@@ -86,6 +86,7 @@ or passive figure).
 """
 from __future__ import annotations
 import json
+import hashlib
 import sys
 import urllib.error
 import urllib.parse
@@ -107,6 +108,7 @@ MIN_UTILIZATION = 5.0
 MAX_DEVIATION = 0.30
 MIN_CONTRIBUTORS = 2
 POINTS_DAYS = 30
+EVIDENCE_DAYS = 30
 MAX_POINTS = 2000
 FETCH_TIMEOUT_S = 20
 CURSOR_LINE_KEY = "next_cursor"
@@ -248,6 +250,8 @@ def _model_tokens(row: dict, field: str = "tokens_since_five_hour_reset") -> dic
             continue
         try:
             out[model] = {c: int(counts.get(c) or 0) for c in CLASSES}
+            if counts.get("cache_write_1h") is not None:
+                out[model]["cache_write_1h"] = int(counts["cache_write_1h"])
         except (TypeError, ValueError):
             continue
     return out
@@ -289,11 +293,17 @@ def _sample_values(r: dict, prices: dict) -> tuple[dict[str, dict], dict[str, fl
     present = {m: c for m, c in _model_tokens(r).items() if sum(c.values()) > 0}
     if not present:
         return None
-    if any(m not in prices for m in present):
+    def price_for(model: str):
+        if model in prices:
+            return prices[model]
+        # Price alias only: preserve the observed old Fable ID in the row.
+        return prices.get("claude-fable-5-1") if model == "claude-fable-5" else None
+    resolved = {m: price_for(m) for m in present}
+    if any(p is None for p in resolved.values()):
         return None
     values = {}
     for model, counts in present.items():
-        price = prices[model]
+        price = resolved[model]
         values[model] = meter_usd(counts, price) * price.get("meter_weight", 1.0)
     return present, values
 
@@ -321,7 +331,7 @@ def _per_pct(rows_by_contributor: dict[str, list[dict]], prices: dict) -> tuple[
             for model, value in values.items():
                 if value <= 0:
                     continue
-                model_total = sum(present[model].values())
+                model_total = sum(present[model].get(c, 0) for c in CLASSES)
                 # u_m = u * value_m / total; tokens_per_pct_m = model_total / u_m.
                 tokens.setdefault(model, {}).setdefault(cid, []).append(model_total * total / (value * u))
 
@@ -376,7 +386,7 @@ def _per_pct_both_windows(row: dict, prices: dict) -> tuple[dict | None, dict | 
         if u is None or u < MIN_UTILIZATION:
             return None
         present = {m: c for m, c in _model_tokens(row, field).items() if sum(c.values()) > 0}
-        total_tokens = sum(sum(c.values()) for c in present.values())
+        total_tokens = sum(sum(c.get(k, 0) for k in CLASSES) for c in present.values())
         if total_tokens <= 0:
             return None
         out: dict = {"all": total_tokens / u}
@@ -399,7 +409,7 @@ def _per_pct_both_windows(row: dict, prices: dict) -> tuple[dict | None, dict | 
                     # collapses and the quotient runs away.
                     if u_m < MIN_UTILIZATION:
                         continue
-                    by_model[model] = sum(present[model].values()) / u_m
+                    by_model[model] = sum(present[model].get(c, 0) for c in CLASSES) / u_m
                 if by_model:
                     out["by_model"] = by_model
         return out
@@ -426,8 +436,11 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
             entries.sort(key=lambda e: e[0])
             per_contributor[cid] = entries
 
-    ordinals = {cid: i for i, cid in enumerate(
-        sorted(per_contributor, key=lambda cid: per_contributor[cid][0][0]))}
+    # Stable opaque per-plan pseudonym: identifiers cannot shift just because a
+    # source enters/leaves the rolling period, and the submitted UUID is not
+    # exposed.  The caller invokes this separately for each plan.
+    ordinals = {cid: int.from_bytes(hashlib.sha256(("contrib:" + cid).encode()).digest()[:4], "big")
+                for cid in per_contributor}
 
     points: list[tuple[datetime, dict]] = []
     for cid, entries in per_contributor.items():
@@ -446,17 +459,13 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
                 if priced is not None:
                     _, values = priced
                     usd_per_pct = round(sum(values.values()) / u, 4)
-            # Both windows, each normalised by its own tokens. Their quotient is how many
-            # five-hour windows a week holds: the week's capacity over the window's, with
-            # the traffic cancelling on both sides. (A bare five-hour percent over a
-            # seven-day percent is not that -- the seven-day meter also carries a week of
-            # other work, so it understates the count badly.)
+            # Never derive windows/week from two cumulative raw-token maps.
+            # Their model and cache mixes differ, so the work does not cancel.
             five, seven = _per_pct_both_windows(r, prices)
-            windows = round(seven["all"] / five["all"], 3) if five and seven else None
             point = {"t": ts_norm, "usd_per_pct": usd_per_pct,
                      "tokens_per_pct": round(five["all"]) if five else None,
                      "tokens_per_pct_week": round(seven["all"]) if seven else None,
-                     "windows": windows, "c": c, "coarse": coarse}
+                     "c": c, "coarse": coarse}
             for key, side in (("tokens_per_pct_by_model", five), ("tokens_per_pct_week_by_model", seven)):
                 if side and "by_model" in side:
                     point[key] = {m: round(v) for m, v in sorted(side["by_model"].items())}
@@ -477,33 +486,97 @@ def _contributor_weeks(rows: list[dict], now: datetime) -> list[float]:
 
 
 def _weekly(rows_by_contributor: dict[str, list[dict]], now: datetime) -> dict:
-    per_contributor: list[tuple[float, float]] = []  # (median windows, weeks)
+    """Recent paired meter evidence per source, without outlier rejection or promotion."""
+    estimates = []
     for rows in rows_by_contributor.values():
-        weeks = _contributor_weeks(rows, now)
-        if weeks:
-            per_contributor.append((median(weeks), float(len(weeks))))
-    total_contributors = len(rows_by_contributor)
-    out = {"measured": None, "reason": None, "contributors": total_contributors,
-           "with_complete_week": len(per_contributor),
-           "dropped": 0, "weeks": int(sum(w for _, w in per_contributor))}
-    if not rows_by_contributor:
-        out["reason"] = "no samples"
-        return out
-    if len(per_contributor) < MIN_CONTRIBUTORS:
-        who = "none" if not per_contributor else str(len(per_contributor))
-        suffix = " yet" if not per_contributor else ""
-        out["reason"] = (f"{total_contributors} contributor{'s' if total_contributors != 1 else ''}, "
-                         f"{who} with a complete week{suffix}; {MIN_CONTRIBUTORS} needed")
-        return out
-    centre = _weighted_median(per_contributor)
-    kept = [(v, w) for v, w in per_contributor if abs(v - centre) <= MAX_DEVIATION * centre]
-    out["dropped"] = len(per_contributor) - len(kept)
-    out["weeks"] = int(sum(w for _, w in kept))
-    if len(kept) < MIN_CONTRIBUTORS:
-        out["reason"] = f"contributors more than {int(MAX_DEVIATION * 100)}% apart; {MIN_CONTRIBUTORS} agreeing needed"
-        return out
-    out["measured"] = round(_weighted_median(kept), 2)
-    return out
+        ordered = sorted(rows, key=lambda r: r.get("ts") or "")
+        result = weekly_windows([parse_row(r) for r in ordered], now=now)
+        # Use the latest observed weekly reset cohort. Never blend old regimes
+        # by taking an all-history median or reject a disagreeing new source.
+        history = result.get("history", [])
+        if history:
+            h = history[-1]
+            interval = h.get("rounding_interval")
+            if interval and interval[0] is not None and interval[1] is not None:
+                estimates.append({"value": h["windows"], "interval": interval,
+                                  "through": h["week_ending"], "partial": h.get("partial", True)})
+    return {"measured": None, "reason": "separate unverified source estimates; no fleet promotion",
+            "contributors": len(rows_by_contributor), "with_complete_week": 0,
+            "dropped": 0, "weeks": len(estimates), "estimates": estimates,
+            "quality": "conditional_paired_meter_deltas"}
+
+
+def _paired_rows(rows: list[dict]) -> list[dict]:
+    """Non-overlapping same-reset spans, including zero-movement endpoints."""
+    result = []
+    anchor = None
+    for row in sorted(rows, key=lambda r: r.get("ts", "")):
+        if not row.get("capture"):
+            anchor = None
+            continue
+        if anchor is None:
+            anchor = row
+            continue
+        if any((row.get(m) or {}).get("resets_at") != (anchor.get(m) or {}).get("resets_at")
+               for m in ("five_hour", "seven_day")):
+            anchor = row
+            continue
+        d5 = row["five_hour"]["utilization"] - anchor["five_hour"]["utilization"]
+        d7 = row["seven_day"]["utilization"] - anchor["seven_day"]["utilization"]
+        if d5 < 0 or d7 < 0:
+            anchor = row
+            continue
+        if d5 < MIN_UTILIZATION:
+            continue
+        maps = []
+        valid = True
+        for field in ("tokens_since_five_hour_reset", "tokens_since_seven_day_reset"):
+            before, after = _model_tokens(anchor, field), _model_tokens(row, field)
+            delta = {}
+            for model in set(before) | set(after):
+                counts = {c: after.get(model, {}).get(c, 0) - before.get(model, {}).get(c, 0)
+                          for c in (*CLASSES, "cache_write_1h")}
+                if any(n < 0 for n in counts.values()) or counts["cache_write_1h"] > counts["cache_write"]:
+                    valid = False
+                delta[model] = counts
+            maps.append(delta)
+        if valid:
+            paired = dict(row, five_hour=dict(row["five_hour"], utilization=d5),
+                          seven_day=dict(row["seven_day"], utilization=d7),
+                          tokens_since_five_hour_reset=maps[0], tokens_since_seven_day_reset=maps[1],
+                          evidence_start=anchor["ts"], quality="conditional_paired_local_transcripts")
+            result.append(paired)
+        anchor = row
+    return result
+
+
+def _current_rows(rows: list[dict], now: datetime) -> tuple[dict[str, list[dict]], dict]:
+    """Return the current evidence cohort and enough freshness detail to audit it."""
+    cutoff = now - timedelta(days=EVIDENCE_DAYS)
+    current: dict[str, list[dict]] = {}
+    old = bad_time = 0
+    newest: datetime | None = None
+    for r in rows:
+        ts = _iso_z(r.get("ts"))
+        if ts is None:
+            bad_time += 1
+            continue
+        dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        if dt < cutoff or dt > now:
+            old += 1
+            continue
+        current.setdefault(str(r.get("contributor_id")), []).append(r)
+        if newest is None or dt > newest:
+            newest = dt
+    return current, {
+        "as_of": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        "current_since": cutoff.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        "freshest_sample_at": newest.isoformat(timespec="seconds") if newest else None,
+        "stale": newest is None or newest < now - timedelta(days=7),
+        "reason": "no current samples" if newest is None else None,
+        "ignored_old_samples": old,
+        "ignored_invalid_time_samples": bad_time,
+    }
 
 
 def aggregate(rows: list[dict], now: datetime, prices: dict | None = None) -> dict:
@@ -528,17 +601,28 @@ def aggregate(rows: list[dict], now: datetime, prices: dict | None = None) -> di
 
     out: dict = {"updated_at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
                  "min_utilization": MIN_UTILIZATION, "max_deviation": MAX_DEVIATION,
-                 "min_contributors": MIN_CONTRIBUTORS}
+                 "min_contributors": MIN_CONTRIBUTORS, "evidence_window_days": EVIDENCE_DAYS}
     for plan in PLANS:
-        contributors = by_plan[plan]
-        tokens_per_pct, usd_per_pct = _per_pct(contributors, prices)
+        all_rows = [r for source_rows in by_plan[plan].values() for r in source_rows]
+        contributors, evidence = _current_rows(all_rows, now)
+        # Cumulative readings overlap.  Each current source contributes its
+        # newest reading to a current cross-source statistic, avoiding a
+        # historical/oversampled median.
+        paired = {cid: _paired_rows(source_rows) for cid, source_rows in contributors.items()}
+        latest = {cid: source_rows[-1:] for cid, source_rows in paired.items() if source_rows}
+        tokens_per_pct, usd_per_pct = _per_pct(latest, prices)
         out[plan] = {
             "contributors": len(contributors),
             "samples": sum(len(v) for v in contributors.values()),
             "tokens_per_pct": tokens_per_pct,
             "usd_per_pct": usd_per_pct,
             "weekly_windows": _weekly(contributors, now),
-            "points": _points(contributors, prices, now),
+            "points": _points(paired, prices, now),
+            "quality": "conditional_paired_local_transcripts",
+            "identity_basis": "unverified_source_ids",
+            "missing_reasons": ["two same-reset samples with >=5 points of movement and priced tokens required",
+                                "local transcript capture and subscription billing are not independently verified"],
+            "evidence": evidence,
         }
     return out
 

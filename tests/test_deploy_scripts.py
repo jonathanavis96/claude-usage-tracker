@@ -194,8 +194,17 @@ class TestDailyNotifyChange(unittest.TestCase):
             {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"},
         )
         # Jonathan gets his own alert for the confirmed change, quoting the outcome.
-        self.assertIn("Change confirmed: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
+        self.assertIn("Observed change: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
         self.assertIn("HTTP 200", self.alerts)
+
+    def test_skips_provisional_or_legacy_uncertain_evidence(self) -> None:
+        for flag in ("provisional", "legacy_uncertain"):
+            with self.subTest(flag=flag):
+                proc, state, request = self._run(last_change={**self.CHANGE, flag: True})
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(request, "")
+                self.assertEqual(self.alerts, "")
+                self.assertIsNone(state)
 
     def test_skips_a_change_already_announced(self) -> None:
         proc, _state, request = self._run(last_change=self.CHANGE, notified="2026-09-11")
@@ -221,7 +230,7 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIsNone(state, "a failed POST must not be recorded as announced")
         self.assertIn("will retry tomorrow", proc.stderr)
         # The alert still goes out, and says the list send failed.
-        self.assertIn("Change confirmed: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
+        self.assertIn("Observed change: increased 7% on 2026-09-11 (claude-opus-5)", self.alerts)
         self.assertIn("HTTP 500", self.alerts)
 
     def test_incomplete_change_is_skipped(self) -> None:
