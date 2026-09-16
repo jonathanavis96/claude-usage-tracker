@@ -184,6 +184,28 @@ class BuildTests(unittest.TestCase):
                                    "source": "passive", "quality": "measured", "readings": 1, "interpolated": False})
         self.assertEqual(len(hist), 5)
 
+    def test_fable_is_not_included_on_pro_and_has_half_the_weekly_limit_on_max(self):
+        # Audit finding 2: the plan matrix offered Fable allowance Pro does not include, and
+        # a full weekly allowance on Max where Fable has half. Each cell names its source.
+        prices = {**PRICES, "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25, "cache_write": 12.5}}
+        j = build_public_json([], PASSIVE, EFFORT, prices, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 5))
+        limits = j["model_plan_limits"]
+        self.assertEqual({plan: (cell["included"], cell["weekly_fraction"]) for plan, cell in limits["claude-fable-5-1"].items()},
+                         {"pro": (False, 0.0), "max5": (True, 0.5), "max20": (True, 0.5)})
+        self.assertEqual({plan: (cell["included"], cell["weekly_fraction"]) for plan, cell in limits["claude-opus-5"].items()},
+                         {"pro": (True, 1.0), "max5": (True, 1.0), "max20": (True, 1.0)})
+        self.assertTrue(all(cell["source_url"].startswith("https://") and cell["as_of"]
+                            for model in limits.values() for cell in model.values()))
+
+    def test_no_session_count_is_published(self):
+        # Audit finding 11: sessions per window divided token totals from different mixes;
+        # nothing measures a session's meter cost, so no session figure is published.
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc),
+                              gs_passive=daily_report([15.0] * 5))
+        self.assertNotIn("session_tokens", j)
+        self.assertEqual(j["rates"]["claude-sonnet-5"]["reference_mix"]["kind"], "derived_scenario")
+
     def test_history_days_carry_the_days_meter_budget_for_every_model(self):
         # Every history day carries the meter budget, one figure per day and the same for
         # every model; the API list value is a different unit, the list price of the tokens
