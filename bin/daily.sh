@@ -136,42 +136,83 @@ notify_change() {
   # The script cd'd to the repo root on entry and the push above ran in a
   # subshell, so $PWD is still that root.
   local state="$PWD/.notified-change"
+  local seen="$PWD/.weekly-change-seen"
   local env_file="$HOME/.claude-usage-notify.env"
 
   [ -f "$json" ] || { echo "notify: $json missing, skipping" >&2; return 0; }
-  if [ ! -r "$env_file" ]; then
-    echo "notify: $env_file missing or unreadable, skipping" >&2
-    return 0
-  fi
 
-  local secret
-  # Anchored so the explanatory comment in the file, which also names the
-  # variable, cannot be picked up as the value.
-  secret="$(sed -n 's/^NOTIFY_SEND_SECRET=//p' "$env_file" | head -1 | tr -d '\r\n')"
-  [ -n "$secret" ] || { echo "notify: no NOTIFY_SEND_SECRET in $env_file, skipping" >&2; return 0; }
-
-  # One python3 read: emit the POST body, or nothing at all when last_change is
-  # null or already announced.
+  # One python3 read: record what this publish shows, then emit the POST body, or
+  # nothing at all when there is nothing to announce yet. Weekly segmentation is
+  # retrospective: on masterrig's 2026-09-15 history a partial post-cut pool
+  # certified -19% dated 2026-08-28, and the next day's windows moved it to the
+  # real cut on 2026-09-14 (tracker/detect.py, why these constants). So a change is
+  # announced only once two consecutive publishes of new weekly evidence show it
+  # dated within a day of each other, and never when it is within a day of a date
+  # already announced. New evidence means a newer window in weekly_windows.passive:
+  # this script publishes hourly but masterrig's history arrives daily, and an
+  # hourly re-read of the same windows is not a second look. The observation is
+  # recorded before the env file is checked, so it never skips a day.
   local body
-  body="$(NOTIFIED="$(cat "$state" 2>/dev/null || true)" python3 - "$json" <<'PYEOF'
+  body="$(SEEN="$seen" NOTIFIED="$state" python3 - "$json" <<'PYEOF'
 import json, os, sys
+from datetime import date
+
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
-        change = json.load(fh).get("last_change")
+        public = json.load(fh)
 except (OSError, ValueError) as exc:
     print(f"notify: could not read {sys.argv[1]}: {exc}", file=sys.stderr)
     raise SystemExit(0)
-if not isinstance(change, dict):
+if not isinstance(public, dict):
     raise SystemExit(0)
-if change.get("provisional") or change.get("legacy_uncertain"):
-    print("notify: change evidence is provisional or legacy-uncertain, skipping", file=sys.stderr)
-    raise SystemExit(0)
-date = change.get("date")
-if not date or date == os.environ.get("NOTIFIED", "").strip():
-    raise SystemExit(0)
+change = public.get("last_change")
 required = ("date", "direction", "percent")
-if any(change.get(k) is None for k in required):
-    print("notify: last_change is missing date/direction/percent, skipping", file=sys.stderr)
+shown = None
+if isinstance(change, dict):
+    if change.get("provisional") or change.get("legacy_uncertain"):
+        print("notify: change evidence is provisional or legacy-uncertain, skipping", file=sys.stderr)
+    elif any(change.get(k) is None for k in required):
+        print("notify: last_change is missing date/direction/percent, skipping", file=sys.stderr)
+    else:
+        shown = change["date"]
+
+
+def same_event(a, b):
+    try:
+        return abs((date.fromisoformat(str(a)[:10]) - date.fromisoformat(str(b)[:10])).days) <= 1
+    except ValueError:
+        return False
+
+
+windows = ((public.get("weekly_windows") or {}).get("passive") or {}).get("by_window") or []
+evidence = (max((str(w["window_ending"]) for w in windows if isinstance(w, dict) and w.get("window_ending")), default=None)
+            or public.get("passive_generated_at") or public.get("generated_at"))
+try:
+    with open(os.environ["SEEN"], encoding="utf-8") as fh:
+        seen = json.load(fh)
+except (OSError, ValueError):
+    seen = {}
+if not isinstance(seen, dict):
+    seen = {}
+if seen.get("evidence") != evidence:
+    seen = {"evidence": evidence, "date": shown, "previous": seen.get("date")}
+else:
+    seen["date"] = shown
+with open(os.environ["SEEN"], "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(seen) + "\n")
+
+if shown is None:
+    raise SystemExit(0)
+if not same_event(seen.get("previous"), shown):
+    print(f"notify: change on {shown} is not yet on two consecutive publishes of new weekly evidence, waiting",
+          file=sys.stderr)
+    raise SystemExit(0)
+try:
+    with open(os.environ["NOTIFIED"], encoding="utf-8") as fh:
+        announced = [line.strip() for line in fh if line.strip()]
+except OSError:
+    announced = []
+if any(same_event(d, shown) for d in announced):
     raise SystemExit(0)
 payload = {k: change[k] for k in required}
 if change.get("model"):
@@ -182,6 +223,17 @@ print(json.dumps(payload))
 PYEOF
 )"
   [ -n "$body" ] || return 0
+
+  if [ ! -r "$env_file" ]; then
+    echo "notify: $env_file missing or unreadable, skipping" >&2
+    return 0
+  fi
+
+  local secret
+  # Anchored so the explanatory comment in the file, which also names the
+  # variable, cannot be picked up as the value.
+  secret="$(sed -n 's/^NOTIFY_SEND_SECRET=//p' "$env_file" | head -1 | tr -d '\r\n')"
+  [ -n "$secret" ] || { echo "notify: no NOTIFY_SEND_SECRET in $env_file, skipping" >&2; return 0; }
 
   local date
   date="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["date"])')"
@@ -195,8 +247,9 @@ PYEOF
 
   case "$status" in
     2??)
-      # Recorded only on success, so a failed call simply retries tomorrow.
-      printf '%s\n' "$date" > "$state"
+      # Recorded only on success, so a failed call simply retries on the next
+      # publish. One announced date per line: none is ever announced twice.
+      printf '%s\n' "$date" >> "$state"
       echo "notify: announced $date (HTTP $status)"
       ;;
     *)

@@ -3,6 +3,7 @@ __pycache__/
 out/
 .cron.lock
 .notified-change
+.weekly-change-seen
 .playwright-mcp/
 *.png
 docs/handoffs/

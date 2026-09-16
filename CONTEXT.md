@@ -153,7 +153,7 @@ A drifted row whose rerun agreed with the earlier median. It stays in history bu
 _Avoid_: bad row, glitch
 
 **Change**:
-A step detected in one published series: an observed change in this account's metric, not a proven change to Anthropic's limits. Published events and `last_change` carry a `scope`, `"window"` or `"weekly"`, naming which series the change was detected on, plus `metric`, `onset`, `confirmation` and `attribution: observed_account_metric_change`. Window-scope events (the smoothed passive detector) are `provisional`, and bin/daily.sh announces neither provisional nor legacy-uncertain ones.
+A step detected in one published series: an observed change in this account's metric, not a proven change to Anthropic's limits. Published events and `last_change` carry a `scope`, `"window"` or `"weekly"`, naming which series the change was detected on, plus `metric`, `onset`, `confirmation` and `attribution: observed_account_metric_change`. Window-scope events (the smoothed passive detector) are `provisional`, and bin/daily.sh announces neither provisional nor legacy-uncertain ones. It announces a change only once two consecutive publishes of new weekly evidence (a newer window in `weekly_windows.passive`) show it dated within a day of each other, and never announces a date within a day of one it has already announced (`.notified-change`, one date per line; the last observation is in `.weekly-change-seen`).
 _Avoid_: shift, event
 
 **Weekly ratio change**:

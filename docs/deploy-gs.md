@@ -219,7 +219,8 @@ left in place), 6 the tracker lock was still held after waiting 600s.
 `tracker/alert.py` sends one email to Jonathan through the site's
 `/api/notify/send` endpoint (its admin `to` mode, bearer-secret guarded).
 `bin/probe.sh` and `bin/output-probe.sh` raise one when the probe exits 3 or
-4, `bin/daily.sh` when a new `last_change` is announced, the weekly weight
+4, `bin/daily.sh` when a new `last_change` is announced (once two consecutive
+publishes of new weekly evidence agree on it; see `notify_change`), the weekly weight
 guard (`tracker/weight.py`, inside `tracker.publish`) when it refuses a
 recomputed output class weight, and `bin/probe.sh` after a drift rerun
 (outlier, change confirmed, or inconclusive; and a rerun that wrote no row),
