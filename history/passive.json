@@ -1,11 +1,11 @@
 {
- "generated_at": "2026-09-15T23:43:54.136290+00:00",
+ "generated_at": "2026-09-16T01:15:17.694984+00:00",
  "plan_ratio_5x_to_20x": 0.6612,
  "split": {
   "input": 0.0001,
-  "output": 0.0046,
-  "cache_read": 0.9698,
-  "cache_write": 0.0257
+  "output": 0.0047,
+  "cache_read": 0.9699,
+  "cache_write": 0.0256
  },
  "history": {
   "2026-08-11": {
@@ -151,11 +151,15 @@
   "2026-09-15": {
    "tokens_per_pct": 2034137,
    "interpolated": false
+  },
+  "2026-09-16": {
+   "tokens_per_pct": 2034137,
+   "interpolated": true
   }
  },
  "session_tokens": {
   "claude-opus-5": 1565359,
-  "claude-sonnet-5": 514380,
+  "claude-sonnet-5": 520063,
   "claude-fable-5-1": 6852277
  },
  "weekly_windows": {
@@ -254,9 +258,9 @@
    },
    {
     "week_ending": "2026-09-18",
-    "windows": 5.1,
-    "five_hour_pct": 153.0,
-    "seven_day_pct": 30.0,
+    "windows": 5.19,
+    "five_hour_pct": 166.0,
+    "seven_day_pct": 32.0,
     "partial": true
    }
   ],
@@ -1943,9 +1947,9 @@
    },
    {
     "window_ending": "2026-09-16T02:30:01.005070+00:00",
-    "windows": 3.67,
-    "five_hour_pct": 11.0,
-    "seven_day_pct": 3.0
+    "windows": 4.8,
+    "five_hour_pct": 24.0,
+    "seven_day_pct": 5.0
    }
   ]
  }
