@@ -361,12 +361,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
 
     current_regime_idx = None
     if day_readings:
-        current_regime_idx = regime_index(last_day)
-        if current_regime_idx not in regime_values:
-            # `now` fell before the newest reading's own day (a test fixture, or a
-            # publish run against stale readings): fall back to the newest regime that
-            # actually has evidence, which is what the history's own newest row shows.
-            current_regime_idx = max(regime_values)
+        # `now` may fall before the newest reading's own day (a test fixture, or a
+        # publish run against stale readings): hold at the newest regime that
+        # actually has evidence, which is what the history's own newest row shows.
+        current_regime_idx = _regime_with_evidence(regime_index(last_day), regime_values)
     regime_current_value = median(regime_values[current_regime_idx]) if current_regime_idx is not None else None
 
     rates, history = {}, {}
@@ -404,7 +402,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         if first_day is not None:
             d = first_day
             while d <= last_day:
-                idx = regime_index(d)
+                idx = _regime_with_evidence(regime_index(d), regime_values)
                 budget = median(regime_values[idx])
                 day_tokens = _reference_tokens(budget, per_token)
                 day_api = round(day_tokens * api_per_token, 2) if day_tokens is not None else None
@@ -607,6 +605,21 @@ def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, flo
     almost pure rounding, and they are another instrument.
     """
     return _window_points(passive_points, lambda ending: (ending - FIVE_HOURS).date() > PLAN_CHANGE)
+
+
+def _regime_with_evidence(idx: int, regime_values: dict) -> int:
+    """The regime index to hold a day at: `idx` itself when readings landed in it,
+    else the newest earlier regime with readings, else the oldest one there is.
+
+    A day can index a regime with no readings when the publish time precedes
+    the newest reading's day, or when held days before the first reading fall
+    in a bucket the detector opened on that same day. Holding at the nearest
+    evidenced regime keeps the history a step function of measured levels.
+    """
+    if idx in regime_values:
+        return idx
+    earlier = [k for k in regime_values if k < idx]
+    return max(earlier) if earlier else min(regime_values)
 
 
 def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:

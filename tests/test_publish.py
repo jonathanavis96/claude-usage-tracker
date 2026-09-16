@@ -6,6 +6,7 @@ from statistics import median
 from typing import ClassVar
 
 from tracker.publish import (
+    _regime_with_evidence,
     REFERENCE_MIX,
     blended_api_price_per_token,
     blended_price_per_token,
@@ -1026,6 +1027,16 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(j["weekly_windows"]["max5"]["current"], 10.91)
         self.assertEqual([r["windows"] for r in j["weekly_windows"]["max5"]["regimes"]], [11.0])
         self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
+
+    def test_history_days_hold_at_the_nearest_regime_with_readings(self):
+        # Buckets 1 and 3 have readings; a day indexing the empty bucket 2 holds at 1, a
+        # held day before the first reading (bucket 0) holds at the oldest evidenced
+        # regime, and a day past the newest reading holds at 3.
+        values = {1: [60.0], 3: [40.0]}
+        self.assertEqual(_regime_with_evidence(1, values), 1)
+        self.assertEqual(_regime_with_evidence(2, values), 1)
+        self.assertEqual(_regime_with_evidence(0, values), 1)
+        self.assertEqual(_regime_with_evidence(7, values), 3)
 
     def test_weekly_window_ratio_seam_uses_max5s_best_supported_regime(self):
         # Max 5x ran about 11 windows a week for nine days, then a short 6.6 tail right
