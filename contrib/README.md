@@ -49,7 +49,7 @@ every transcript found.
 
 Paste this into Claude Code on your machine:
 
-> Run `python3 -c "$(curl -fsSL https://raw.githubusercontent.com/jonathanavis96/claude-usage-tracker/main/contrib/sample.py)" --print`, show me the JSON it prints, explain each field, and post it only if I say yes.
+> Run `python3 -c "$(curl -fsSL https://raw.githubusercontent.com/jonathanavis96/claude-usage-tracker/main/contrib/sample.py)" --print`, show me the JSON it prints, explain each field, and post it only if I say yes. If it asks which plan I am on, ask me -- do not guess.
 
 The script prints the body, a one-line explanation of each field, and the
 same body again as one compact line starting `CUT1:`. Then it asks
@@ -67,7 +67,10 @@ Both carry the same body to the same endpoint. Nothing is left behind except
 `~/.claude-usage-contrib.json` holding your contributor id and plan.
 
 If the usage endpoint does not expose your plan, the first run stops and asks
-for `--plan pro`, `--plan max5` or `--plan max20`. It is stored, so later runs
+for `--plan pro`, `--plan max5` or `--plan max20`. **Answer it yourself.** An
+assistant running the script has no way to tell which plan an account is on, and
+a guess files your reading under the wrong plan, where it shifts a published
+median. It is stored, so later runs
 never need it again.
 
 Useful flags:
@@ -88,7 +91,7 @@ A continuous contributor's personal page becomes a line rather than a point,
 so "did my meter change, or everyone's?" is answerable from your own page.
 Paste this into Claude Code:
 
-> Clone `https://github.com/jonathanavis96/claude-usage-tracker` into `~/claude-usage-tracker`, read `contrib/README.md`, then run `python3 ~/claude-usage-tracker/contrib/sample.py --print` and show me the JSON it prints with an explanation of each field. Do not send anything and do not install anything until I type `approve`. When I do, install the hourly schedule from the README for my operating system and show me the line you added.
+> Clone `https://github.com/jonathanavis96/claude-usage-tracker` into `~/claude-usage-tracker`, read `contrib/README.md`, then run `python3 ~/claude-usage-tracker/contrib/sample.py --print` and show me the JSON it prints with an explanation of each field. If it asks which plan I am on, ask me -- do not guess. Do not send anything and do not install anything until I type `approve`. When I do, install the hourly schedule from the README for my operating system and show me the line you added.
 
 Want it more or less often? Say so in the prompt ("every 30 minutes", "every
 12 hours") or change the schedule line afterwards; the table below has the

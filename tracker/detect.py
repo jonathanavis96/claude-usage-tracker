@@ -262,20 +262,63 @@ def current_regime_points(points: list[tuple[datetime, float, float]],
     candidate window on, or the whole series when nothing has fired. Compared by
     full timestamp, so an earlier window on the event's own day (still at the old
     level) stays out of the new regime."""
-    _, ordered, start = _detect_weighted(points, threshold)
-    return ordered[start:]
+    _, ordered, starts = _detect_weighted(points, threshold)
+    return ordered[starts[-1]:]
+
+
+def weighted_regimes(points: list[tuple[datetime, float, float]],
+                     threshold: float = 0.15) -> list[dict]:
+    """Every regime the detector found, oldest first, each held flat at its pooled level.
+
+    Windows per week is a plan constant: it moves when the limit moves and not
+    otherwise, so the honest series is a step function, not one point per
+    calendar week. Each week's ratio is an estimate of the constant, and the
+    estimate carries several percent of assembly error -- whole-percent rounding
+    on a denominator that mostly moves by 1, an interval filter that keys on the
+    numerator (`d5 > 0` in weekly.weekly_windows drops a quiet interval's
+    seven-day movement along with it), and work spanning a reset or a sampling
+    gap dropped entirely. Charting the raw weekly ratios therefore draws movement
+    the limit never made.
+
+    Each regime is {"start", "end", "windows", "seven_day_pct", "points"}:
+    `windows` is `pooled_windows` over the regime (total d5 over total d7, which
+    weights a busy window above a thin one, rather than a median of ratios),
+    `seven_day_pct` its pooled denominator so a consumer can see how much is
+    behind the level, and `points` its window count. `end` is the last window's
+    timestamp; the newest regime's end is simply the newest window, not a claim
+    that it has finished.
+    """
+    _, ordered, starts = _detect_weighted(points, threshold)
+    regimes = []
+    for n, start in enumerate(starts):
+        stop = starts[n + 1] if n + 1 < len(starts) else len(ordered)
+        span = ordered[start:stop]
+        level = pooled_windows(span)
+        if not span or level is None:
+            continue
+        regimes.append({
+            "start": span[0][0].isoformat(),
+            "end": span[-1][0].isoformat(),
+            "windows": round(level, 2),
+            "seven_day_pct": round(sum(p[2] for p in span), 1),
+            "points": len(span),
+        })
+    return regimes
 
 
 def _detect_weighted(points: list[tuple[datetime, float, float]],
-                     threshold: float) -> tuple[list[ChangeEvent], list[tuple[datetime, float, float]], int]:
+                     threshold: float) -> tuple[list[ChangeEvent], list[tuple[datetime, float, float]], list[int]]:
+    """(events, ordered points, regime start indices). `starts` always begins with 0 --
+    the series before any event is itself a regime -- and gains the candidate index each
+    time one fires, so starts[-1] is the current regime's start."""
     ordered = sorted((p for p in points if p[1] > 0 and p[2] >= 0), key=lambda p: p[0])
     events: list[ChangeEvent] = []
-    regime_start = 0
+    starts = [0]
     i = 0
     while i < len(ordered):
         ts, d5, d7 = ordered[i]
         base_from = ts - timedelta(days=BASE_DAYS)
-        base_pts = [p for p in ordered[regime_start:i] if p[0] >= base_from]
+        base_pts = [p for p in ordered[starts[-1]:i] if p[0] >= base_from]
         base = pooled_windows(base_pts)
         if d7 < MIN_VOTE_D7 or base is None or sum(p[2] for p in base_pts) < MIN_BASE_D7:
             i += 1
@@ -302,9 +345,9 @@ def _detect_weighted(points: list[tuple[datetime, float, float]],
         if abs(pool_conceded) > threshold and (pool_conceded > 0) == (ratio > 0) and (pool_ratio > 0) == (ratio > 0):
             events.append(ChangeEvent(ts.date(), "increased" if ratio > 0 else "decreased",
                                       round(abs(pool_ratio) * 100)))
-            regime_start = i
+            starts.append(i)
         i += 1
-    return events, ordered, regime_start
+    return events, ordered, starts
 
 
 def latest_change(events: list[ChangeEvent]) -> ChangeEvent | None:

@@ -51,7 +51,22 @@ Aggregation rules, per plan (pro, max5, max20):
                           complete week, else null with a `reason`.
   points                  one entry per (thinned) sample from the last
                           POINTS_DAYS days, for the page's per-contributor
-                          scatter/line chart: {"t", "usd_per_pct", "c", "coarse"}.
+                          scatter/line chart: {"t", "usd_per_pct",
+                          "tokens_per_pct", "tokens_per_pct_week", "windows",
+                          "c", "coarse"}. `tokens_per_pct` is the sample's tokens
+                          since the five-hour reset over its five-hour percent and
+                          `tokens_per_pct_week` the same for the seven-day window;
+                          `windows` is their quotient, how many five-hour windows
+                          that reading says a week holds. Each is null when its own
+                          meter is under MIN_UTILIZATION or its token count is zero.
+                          Each window also carries a `..._by_model` map splitting the
+                          utilization by each model's dollar share (the attribution
+                          `tokens_per_pct` above uses), so one model's figure can be
+                          compared against the page's own per-model rate. It is omitted
+                          whole when any model present has no price, and a model whose
+                          slice of the meter is under MIN_UTILIZATION is left out of it:
+                          a model used almost entirely for cache_read has almost no
+                          priced value, and dividing its tokens by that slice runs away.
                           `c` is a per-plan ordinal (0, 1, 2 ...) assigned in
                           order of each contributor's first sample time in the
                           window -- never the contributor id itself. `coarse`
@@ -223,8 +238,8 @@ def _utilization(row: dict) -> float | None:
         return None
 
 
-def _model_tokens(row: dict) -> dict[str, dict]:
-    t = row.get("tokens_since_five_hour_reset")
+def _model_tokens(row: dict, field: str = "tokens_since_five_hour_reset") -> dict[str, dict]:
+    t = row.get(field)
     if not isinstance(t, dict):
         return {}
     out = {}
@@ -339,6 +354,59 @@ def _iso_z(ts) -> str | None:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _per_pct_both_windows(row: dict, prices: dict) -> tuple[dict | None, dict | None]:
+    """Per-window tokens per 1%, for the whole sample and for each model in it.
+
+    Each window divides its own token count by its own percent, so neither is polluted
+    by traffic the other window did not see. A window returns None when its meter is
+    under MIN_UTILIZATION or its token count is zero -- the meters step in whole
+    percents, so a low reading makes the quotient swing hard.
+
+    Per model, the sample's utilization is split by each model's dollar share and the
+    model's tokens divided by its own slice, the same attribution `_per_pct` uses. A
+    model with no price leaves the split unsound, so `by_model` is omitted whole rather
+    than published with one model's share silently folded into another's.
+    """
+    def side(meter: str, field: str) -> dict | None:
+        u = (row.get(meter) or {}).get("utilization")
+        try:
+            u = float(u) if u is not None else None
+        except (TypeError, ValueError):
+            return None
+        if u is None or u < MIN_UTILIZATION:
+            return None
+        present = {m: c for m, c in _model_tokens(row, field).items() if sum(c.values()) > 0}
+        total_tokens = sum(sum(c.values()) for c in present.values())
+        if total_tokens <= 0:
+            return None
+        out: dict = {"all": total_tokens / u}
+        if present and all(m in prices for m in present):
+            values = {m: meter_usd(c, prices[m]) * prices[m].get("meter_weight", 1.0)
+                      for m, c in present.items()}
+            total_value = sum(values.values())
+            if total_value > 0:
+                by_model = {}
+                for model, value in values.items():
+                    if value <= 0:
+                        continue
+                    # The share of the meter this model is judged to have moved.
+                    u_m = u * value / total_value
+                    # The same floor the whole meter has to clear, applied to the slice.
+                    # Dividing a model's tokens by a slice near zero is what produced a
+                    # Sonnet week reading 187M tokens per 1% -- three times the plan's
+                    # own figure -- off a 0.46-point slice of a 7% meter. A model that
+                    # is nearly all cache_read has nearly no priced value, so its slice
+                    # collapses and the quotient runs away.
+                    if u_m < MIN_UTILIZATION:
+                        continue
+                    by_model[model] = sum(present[model].values()) / u_m
+                if by_model:
+                    out["by_model"] = by_model
+        return out
+
+    return side("five_hour", "tokens_since_five_hour_reset"), side("seven_day", "tokens_since_seven_day_reset")
+
+
 def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datetime) -> list[dict]:
     """Anonymised per-sample points for the page's contributor chart, see the
     module docstring's `points` entry for the shape and thinning rules."""
@@ -377,9 +445,22 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
                 priced = _sample_values(r, prices)
                 if priced is not None:
                     _, values = priced
-                    total = sum(values.values())
-                    usd_per_pct = round(total / u, 4)
-            points.append((dt, {"t": ts_norm, "usd_per_pct": usd_per_pct, "c": c, "coarse": coarse}))
+                    usd_per_pct = round(sum(values.values()) / u, 4)
+            # Both windows, each normalised by its own tokens. Their quotient is how many
+            # five-hour windows a week holds: the week's capacity over the window's, with
+            # the traffic cancelling on both sides. (A bare five-hour percent over a
+            # seven-day percent is not that -- the seven-day meter also carries a week of
+            # other work, so it understates the count badly.)
+            five, seven = _per_pct_both_windows(r, prices)
+            windows = round(seven["all"] / five["all"], 3) if five and seven else None
+            point = {"t": ts_norm, "usd_per_pct": usd_per_pct,
+                     "tokens_per_pct": round(five["all"]) if five else None,
+                     "tokens_per_pct_week": round(seven["all"]) if seven else None,
+                     "windows": windows, "c": c, "coarse": coarse}
+            for key, side in (("tokens_per_pct_by_model", five), ("tokens_per_pct_week_by_model", seven)):
+                if side and "by_model" in side:
+                    point[key] = {m: round(v) for m, v in sorted(side["by_model"].items())}
+            points.append((dt, point))
 
     points.sort(key=lambda p: p[0])
     if len(points) > MAX_POINTS:
