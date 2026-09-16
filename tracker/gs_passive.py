@@ -14,12 +14,18 @@ passive reading publishable.
 `gs_accounts` is the one place that says where each account's transcripts and
 meter live. Assumptions it depends on, as of 2026-09-15:
 
-- jwork's meter is gs-usage-ceiling.log, written by greenscape-org's
-  usage-ceiling.py. That log read the default `~/.claude` -- a different
-  account -- until the seat.conf drop-in of 2026-09-05 (its first jwork
-  reading is 06:14:32Z, the meter falling from 100%/31% to 2%/18%), so
-  everything before JWORK_CEILING_SINCE is dropped. The log records no reset
-  times; resets are inferred from the meter falling.
+- jwork's meter is tracker.meter_log's own reset-bearing log,
+  claude-usage-meter-jwork.log (deploy/systemd, not yet installed on
+  2026-09-16). Until its first reading, jwork is read from
+  gs-usage-ceiling.log, written by greenscape-org's usage-ceiling.py. That log
+  read the default `~/.claude` -- a different account -- until the seat.conf
+  drop-in of 2026-09-05 (its first jwork reading is 06:14:32Z, the meter
+  falling from 100%/31% to 2%/18%), so everything before JWORK_CEILING_SINCE
+  is dropped. It records no reset times; resets are inferred from the meter
+  falling, which misses a reset when the new window has already passed the old
+  reading by the next read (audit finding 10). Stretches built on it are
+  `reset_verified: false`, and the publisher keeps them out of the measured
+  series.
 - jwork's `projects/` is a symlink to `~/.claude/projects`, which
   `~/.claude` and `~/.claude-jono` also write to. Neither held credentials on
   2026-09-15, but the takeoff pipeline ran 95 sessions under `~/.claude-jono`
@@ -73,10 +79,15 @@ from .samples import Sample, parse_gs_ceiling_log, parse_meter_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 
 JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
-# Monetary estimates require complete captured work.  A diagnosed deficit or
-# surplus remains in the report as evidence, but cannot become a rate merely by
-# lying near the desired result.
-CAPTURE_GATE = True
+#: When True, only stretches the capture check accepts are published (the
+#: 2026-09-15 design); when False, every priced stretch is, and the check's
+#: verdict is advisory (`capture_status`). Off since 2026-09-16 -- see the
+#: module docstring. The check itself is kept, not deleted. The 2026-09-16
+#: audit (finding 10) asked for incomplete capture to be exposed and the rate
+#: qualified, and warned against reviving a narrow band around the expected
+#: rate: the band selects observations toward the answer. So the gate stays off
+#: and the publisher labels every passive rate conditional on capture instead.
+CAPTURE_GATE = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +97,10 @@ class Account:
     meter_log: Path
     meter_format: str  # "meter" (tracker.meter_log) or "gs-ceiling" (usage-ceiling.py)
     meter_since: datetime | None = None
+    #: A reset-less log this account was read from before `meter_log` existed. Its
+    #: readings are used only up to the first reading of `meter_log`, and every
+    #: stretch built on them is `reset_verified: false` (audit finding 10).
+    legacy_meter_log: Path | None = None
 
 
 def gs_accounts(home: Path | None = None) -> dict[str, Account]:
@@ -94,19 +109,24 @@ def gs_accounts(home: Path | None = None) -> dict[str, Account]:
     ops = home / ".paperclip" / "ops"
     return {
         "jwork": Account("jwork", home / ".claude-javiswork", ops / "claude-usage-meter-jwork.log", "meter",
-                         JWORK_CEILING_SINCE),
+                         JWORK_CEILING_SINCE, legacy_meter_log=ops / "gs-usage-ceiling.log"),
         "dave": Account("dave", home / ".claude-dave", ops / "claude-usage-meter-dave.log", "meter"),
     }
 
 
 def load_samples(account: Account, until: datetime | None = None) -> list[Sample]:
-    if not account.meter_log.exists():
-        return []
-    with open(account.meter_log, encoding="utf-8") as fh:
-        if account.meter_format == "gs-ceiling":
-            samples = parse_gs_ceiling_log(fh, since=account.meter_since)
-        else:
-            samples = [s for s in parse_meter_log(fh) if account.meter_since is None or s.ts >= account.meter_since]
+    samples: list[Sample] = []
+    if account.meter_log.exists():
+        with open(account.meter_log, encoding="utf-8") as fh:
+            if account.meter_format == "gs-ceiling":
+                samples = parse_gs_ceiling_log(fh, since=account.meter_since)
+            else:
+                samples = [s for s in parse_meter_log(fh) if account.meter_since is None or s.ts >= account.meter_since]
+    if account.legacy_meter_log is not None and account.legacy_meter_log.exists():
+        first = min((s.ts for s in samples), default=None)
+        with open(account.legacy_meter_log, encoding="utf-8") as fh:
+            legacy = [s for s in parse_gs_ceiling_log(fh, since=account.meter_since) if first is None or s.ts < first]
+        samples = sorted(legacy + samples, key=lambda s: s.ts)
     return [s for s in samples if until is None or s.ts <= until]
 
 
@@ -182,12 +202,21 @@ def publishable(v: Verdict) -> bool:
     meter rose 67% between 21:47 and 00:51 on 2026-09-13/14 with zero transcript
     turns; published, those seven stretches read $0.00 per 1% and dragged the day
     to nothing.
+
+    A stretch with any unpriced token is never published, whatever its share of
+    the raw tokens (audit finding 9): a small share of unpriced output can be most
+    of the meter dollars next to a large free cache-read bundle, so no raw-token
+    tolerance bounds the error.
+
+    Whether the stretch's meter log carried reset ids is not decided here: it is
+    recorded as `reset_verified` and the publisher treats reset-less stretches as
+    legacy, conditional evidence.
     """
-    if v.stretch.unpriced_tokens > 0:
+    if v.status == UNPRICED or v.stretch.unpriced_tokens > 0:
         return False
-    if not v.stretch.reset_verified:
-        return False
-    return v.status == ACCEPTED
+    if CAPTURE_GATE:
+        return v.status == ACCEPTED
+    return v.capture is None or v.capture >= COLLECTION_GAP
 
 
 def _r(x: float | None, n: int = 4) -> float | None:
@@ -197,13 +226,10 @@ def _r(x: float | None, n: int = 4) -> float | None:
 def _stretch_record(v: Verdict) -> dict:
     s = v.stretch
     lo, hi = s.bounds
+    # Unpriced work is kept by raw model id beside the priced models, so the record
+    # shows what the meter was charged for even when no price covers it.
     tokens = {**s.tokens, **s.unpriced}
-    if s.unpriced_tokens:
-        status = UNPRICED
-    elif not s.reset_verified:
-        status = "reset_unverified"
-    else:
-        status = ACCEPTED if publishable(v) else v.status
+    status = ACCEPTED if publishable(v) else (UNPRICED if s.unpriced_tokens else v.status)
     return {"start": s.start.isoformat(), "end": s.end.isoformat(), "delta_pct": s.delta_pct, "windows": s.windows,
             "usd": _r(s.usd), "usd_per_pct": _r(s.usd_per_pct), "bounds": [_r(lo), _r(hi)], "tokens": tokens,
             "unpriced_tokens": s.unpriced_tokens, "unpriced": s.unpriced, "turns": s.turns,
@@ -222,12 +248,20 @@ def _pieces(stretches: list[Stretch]) -> int:
 
 
 def _daily(verdicts: list[Verdict]) -> list[dict]:
-    days: dict[str, list[Stretch]] = {}
+    """Published stretches pooled per UTC day, with their rounding bounds and what qualifies them.
+
+    `bounds` concedes one point of rounding per separate window piece, as a
+    stretch's own bounds do; `reset_verified` is true only when every stretch of
+    the day came from a log with reset ids; `capture_diagnosed` counts the day's
+    stretches the capture check did not accept (published with CAPTURE_GATE off).
+    """
+    days: dict[str, list[Verdict]] = {}
     for v in verdicts:
         if publishable(v):
-            days.setdefault(v.stretch.end.astimezone(timezone.utc).date().isoformat(), []).append(v.stretch)
+            days.setdefault(v.stretch.end.astimezone(timezone.utc).date().isoformat(), []).append(v)
     out = []
-    for day, ss in sorted(days.items()):
+    for day, vs in sorted(days.items()):
+        ss = [v.stretch for v in vs]
         delta = sum(s.delta_pct for s in ss)
         pieces = _pieces(ss)
         usd = sum(s.usd for s in ss)
@@ -236,7 +270,8 @@ def _daily(verdicts: list[Verdict]) -> list[dict]:
         out.append({"date": day, "usd_per_pct": _r(usd / delta), "delta_pct": delta,
                     "stretches": len(ss), "rounding": _r(pieces / delta),
                     "bounds": [_r(lo), _r(hi)], "pieces": pieces,
-                    "quality": "measured", "reset_verified": True})
+                    "reset_verified": all(s.reset_verified for s in ss),
+                    "capture_diagnosed": sum(1 for v in vs if v.status != ACCEPTED)})
     return out
 
 
@@ -306,6 +341,8 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         root = account.config_dir / "projects"
         meta[name] = {
             "meter": {"log": str(account.meter_log), "format": account.meter_format,
+                      "legacy_log": str(account.legacy_meter_log) if account.legacy_meter_log else None,
+                      "reset_verified_samples": sum(1 for s in samples if s.resets_at is not None),
                       "since": account.meter_since.isoformat() if account.meter_since else None,
                       "samples": len(samples), "first": since.isoformat() if since else None,
                       "last": samples[-1].ts.isoformat() if samples else None},
@@ -346,7 +383,11 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
     The publisher's hook: the same element shape as build_public_json's
     `dollar_readings` (usd_per_pct x 100 per probe row). Only stretches whose
     `status` is accepted are read: every priced one with CAPTURE_GATE off,
-    only what the capture check accepted with it on.
+    only what the capture check accepted with it on. A stretch whose meter log
+    carried no reset ids (`reset_verified` false, or absent in a report from
+    before the field existed) is read only with `allow_legacy_unverified`: it can
+    miss a reset between two readings (audit finding 10), so the publisher keeps
+    it out of the measured series.
     `by="day"` pools each account's accepted stretches per UTC day (the
     precision the issue is after); `by="stretch"` returns them one by one.
     """
@@ -361,7 +402,8 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             # the certified series or its change detector.
             if s.get("reset_verified") is not True and not allow_legacy_unverified:
                 continue
-            if s.get("unpriced_tokens", 0) > 0:
+            if s.get("unpriced_tokens", 0) > 0 or not s.get("tokens"):
+                # No captured work at all is a collection gap, not a free window.
                 continue
             # A stretch with a model these prices do not cover is left out whole:
             # valuing that model at $0 would deflate the reading and look like a

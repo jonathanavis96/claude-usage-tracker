@@ -145,7 +145,7 @@ def bundle_meter_usd(model: str, tokens: dict, prices: dict) -> float | None:
 
 
 def turn_meter_usd(turn: Turn, prices: dict) -> float | None:
-    return bundle_meter_usd(turn.model, {c: getattr(turn, c) for c in CLASSES}, prices)
+    return bundle_meter_usd(turn.model, {c: getattr(turn, c) for c in CLASSES + DETAIL_CLASSES}, prices)
 
 
 @dataclass

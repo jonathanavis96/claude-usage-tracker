@@ -32,8 +32,10 @@ recent accepted stretches before it can be published:
   15%, the same as the drift rule and change detection, rather than a width
   learned from the accepted readings: a band fitted to what it accepts widens
   with every noisy reading it lets in.
-- A stretch whose tokens are more than MAX_UNPRICED from a model the price
-  table does not have is `unpriced`: it cannot be valued, so it is not judged.
+- A stretch with any token from a model the price table does not have is
+  `unpriced`: it cannot be valued, so it is not judged. There is no tolerated
+  raw-token share (audit 2026-09-16, finding 9): a sliver of unpriced output can
+  be most of the meter dollars beside a large, nearly free cache-read bundle.
 
 Only `accepted` stretches are ever published (`published`). A withheld one is
 kept, with its capture (its rate over the reference), so it can be inspected.
@@ -75,7 +77,6 @@ TOLERANCE = 0.15
 BOOTSTRAP = 5
 MIN_REFERENCE = 4
 LOOKBACK = 8
-MAX_UNPRICED = 0.05
 COLLECTION_GAP = 0.10
 MIN_SHIFT = 3
 MIN_PROBE_HISTORY = 3  # detect.py's MIN_HISTORY
@@ -126,7 +127,9 @@ def judge(stretches: Iterable[Stretch], restarts: Iterable[datetime] = ()) -> li
     for segment in segments:
         priced = []
         for i in segment:
-            if ordered[i].priced_share < 1 - MAX_UNPRICED:
+            # Raw-token share cannot bound monetary error: a tiny amount of an
+            # unknown output class can dominate a large free-cache-read bundle.
+            if ordered[i].unpriced_tokens > 0:
                 out[i] = Verdict(ordered[i], UNPRICED)
             else:
                 priced.append(i)
