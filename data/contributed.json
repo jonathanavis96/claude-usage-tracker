@@ -1,94 +1,104 @@
 {
+ "evidence_window_days": 30,
  "max20": {
   "contributors": 2,
-  "points": [
-   {
-    "c": 0,
-    "coarse": false,
-    "t": "2026-09-09T13:16:16Z",
-    "tokens_per_pct": 2866282,
-    "tokens_per_pct_by_model": {
-     "claude-fable-5-1": 2948230
-    },
-    "tokens_per_pct_week": 13323833,
-    "tokens_per_pct_week_by_model": {
-     "claude-fable-5-1": 11159414
-    },
-    "usd_per_pct": 0.8977,
-    "windows": 4.648
-   },
-   {
-    "c": 1,
-    "coarse": true,
-    "t": "2026-09-16T00:11:31Z",
-    "tokens_per_pct": null,
-    "tokens_per_pct_week": 28716453,
-    "usd_per_pct": 1.2843,
-    "windows": null
-   }
+  "evidence": {
+   "as_of": "2026-09-16T19:30:12+00:00",
+   "current_since": "2026-08-17T19:30:12+00:00",
+   "freshest_sample_at": "2026-09-16T00:11:31+00:00",
+   "ignored_invalid_time_samples": 0,
+   "ignored_old_samples": 0,
+   "reason": null,
+   "samples_without_capture": 2,
+   "stale": false
+  },
+  "identity_basis": "unverified_source_ids",
+  "missing_reasons": [
+   "two same-reset samples with >=5 points of movement and priced tokens required",
+   "local transcript capture and subscription billing are not independently verified"
   ],
+  "points": [],
+  "quality": "conditional_paired_local_transcripts",
   "samples": 2,
-  "tokens_per_pct": {
-   "claude-fable-5-1": {
-    "contributors": 1,
-    "median": 2948230,
-    "samples": 1,
-    "spread": null
-   },
-   "claude-sonnet-5": {
-    "contributors": 1,
-    "median": 1648933,
-    "samples": 1,
-    "spread": null
-   }
-  },
-  "usd_per_pct": {
-   "contributors": 1,
-   "median": 0.8977,
-   "samples": 1,
-   "spread": null
-  },
+  "tokens_per_pct": {},
+  "usd_per_pct": null,
   "weekly_windows": {
    "contributors": 2,
    "dropped": 0,
+   "estimates": [],
    "measured": null,
-   "reason": "2 contributors, none with a complete week yet; 2 needed",
+   "quality": "conditional_paired_meter_deltas",
+   "reason": "2 contributors, none with a complete week yet; per-source estimates only, never pooled into a plan figure",
    "weeks": 0,
    "with_complete_week": 0
   }
  },
  "max5": {
   "contributors": 0,
+  "evidence": {
+   "as_of": "2026-09-16T19:30:12+00:00",
+   "current_since": "2026-08-17T19:30:12+00:00",
+   "freshest_sample_at": null,
+   "ignored_invalid_time_samples": 0,
+   "ignored_old_samples": 0,
+   "reason": "no current samples",
+   "samples_without_capture": 0,
+   "stale": true
+  },
+  "identity_basis": "unverified_source_ids",
+  "missing_reasons": [
+   "two same-reset samples with >=5 points of movement and priced tokens required",
+   "local transcript capture and subscription billing are not independently verified"
+  ],
   "points": [],
+  "quality": "conditional_paired_local_transcripts",
   "samples": 0,
   "tokens_per_pct": {},
   "usd_per_pct": null,
   "weekly_windows": {
    "contributors": 0,
    "dropped": 0,
+   "estimates": [],
    "measured": null,
+   "quality": "conditional_paired_meter_deltas",
    "reason": "no samples",
    "weeks": 0,
    "with_complete_week": 0
   }
  },
- "max_deviation": 0.3,
- "min_contributors": 2,
  "min_utilization": 5.0,
  "pro": {
   "contributors": 0,
+  "evidence": {
+   "as_of": "2026-09-16T19:30:12+00:00",
+   "current_since": "2026-08-17T19:30:12+00:00",
+   "freshest_sample_at": null,
+   "ignored_invalid_time_samples": 0,
+   "ignored_old_samples": 0,
+   "reason": "no current samples",
+   "samples_without_capture": 0,
+   "stale": true
+  },
+  "identity_basis": "unverified_source_ids",
+  "missing_reasons": [
+   "two same-reset samples with >=5 points of movement and priced tokens required",
+   "local transcript capture and subscription billing are not independently verified"
+  ],
   "points": [],
+  "quality": "conditional_paired_local_transcripts",
   "samples": 0,
   "tokens_per_pct": {},
   "usd_per_pct": null,
   "weekly_windows": {
    "contributors": 0,
    "dropped": 0,
+   "estimates": [],
    "measured": null,
+   "quality": "conditional_paired_meter_deltas",
    "reason": "no samples",
    "weeks": 0,
    "with_complete_week": 0
   }
  },
- "updated_at": "2026-09-16T18:30:12+00:00"
+ "updated_at": "2026-09-16T19:30:12+00:00"
 }
