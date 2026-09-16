@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-16T13:30:13.929821+00:00",
+ "generated_at": "2026-09-16T14:30:13.984642+00:00",
  "until": null,
  "capture_gate": false,
  "accounts": {
@@ -9,9 +9,9 @@
     "log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "format": "gs-ceiling",
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 2897,
+    "samples": 2908,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-16T13:27:39+00:00"
+    "last": "2026-09-16T14:28:08+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -20,13 +20,13 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1461,
-    "turns": 35124,
+    "files": 1470,
+    "turns": 35506,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1461,
+     "kept": 1470,
      "dropped": 932,
-     "subagent_files": 519
+     "subagent_files": 523
     }
    },
    "stretches": [
@@ -3299,6 +3299,44 @@
      "capture_status": "surplus",
      "reference": 1.2859,
      "capture": 1.9761
+    },
+    {
+     "start": "2026-09-15T22:58:39+00:00",
+     "end": "2026-09-16T13:33:09+00:00",
+     "delta_pct": 10.0,
+     "windows": 4,
+     "usd": 12.2756,
+     "usd_per_pct": 1.2276,
+     "bounds": [
+      0.8768,
+      2.0459
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 772,
+       "output": 103090,
+       "cache_read": 27470118,
+       "cache_write": 1803594
+      },
+      "claude-opus-5": {
+       "input": 272,
+       "output": 11538,
+       "cache_read": 12823203,
+       "cache_write": 357330
+      },
+      "claude-fable-5-1": {
+       "input": 1164,
+       "output": 48456,
+       "cache_read": 4780627,
+       "cache_write": 142125
+      }
+     },
+     "unpriced_tokens": 127808,
+     "turns": 566,
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.2859,
+     "capture": 0.9546
     }
    ],
    "runs": [
@@ -3513,32 +3551,39 @@
      "delta_pct": 40.0,
      "stretches": 4,
      "rounding": 0.375
+    },
+    {
+     "date": "2026-09-16",
+     "usd_per_pct": 1.2276,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.4
     }
    ],
    "split": {
     "input": 3.6e-05,
-    "output": 0.003619,
-    "cache_read": 0.970814,
-    "cache_write": 0.025531
+    "output": 0.003617,
+    "cache_read": 0.970592,
+    "cache_write": 0.025755
    },
-   "last_usable_at": "2026-09-15T22:58:39+00:00",
+   "last_usable_at": "2026-09-16T13:33:09+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 92,
-     "median": 1.3431,
-     "half_range": 0.8152,
-     "mad": 0.27,
-     "cv": 0.3036
+     "n": 93,
+     "median": 1.3406,
+     "half_range": 0.8167,
+     "mad": 0.2733,
+     "cv": 0.3022
     },
     "daily": {
-     "n": 9,
-     "median": 1.2596,
-     "half_range": 0.2431,
-     "mad": 0.1327,
-     "cv": 0.1479
+     "n": 10,
+     "median": 1.2542,
+     "half_range": 0.2441,
+     "mad": 0.1111,
+     "cv": 0.1397
     }
    },
    "weekly_by_window": [
@@ -3771,10 +3816,10 @@
      "seven_day_pct": 0.0
     },
     {
-     "window_ending": "2026-09-16T13:27:39+00:00",
-     "windows": 4.0,
-     "five_hour_pct": 4.0,
-     "seven_day_pct": 1.0
+     "window_ending": "2026-09-16T14:28:08+00:00",
+     "windows": 5.5,
+     "five_hour_pct": 11.0,
+     "seven_day_pct": 2.0
     }
    ]
   },
@@ -3784,16 +3829,16 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "since": null,
-    "samples": 179,
+    "samples": 190,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-16T13:27:39+00:00"
+    "last": "2026-09-16T14:28:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 41,
-    "turns": 66,
+    "files": 45,
+    "turns": 71,
     "withheld_patterns": [],
     "own_sessions": null
    },

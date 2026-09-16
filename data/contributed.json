@@ -6,13 +6,25 @@
     "c": 0,
     "coarse": false,
     "t": "2026-09-09T13:16:16Z",
-    "usd_per_pct": 0.8977
+    "tokens_per_pct": 2866282,
+    "tokens_per_pct_by_model": {
+     "claude-fable-5-1": 2948230
+    },
+    "tokens_per_pct_week": 13323833,
+    "tokens_per_pct_week_by_model": {
+     "claude-fable-5-1": 11159414
+    },
+    "usd_per_pct": 0.8977,
+    "windows": 4.648
    },
    {
     "c": 1,
     "coarse": true,
     "t": "2026-09-16T00:11:31Z",
-    "usd_per_pct": 1.2843
+    "tokens_per_pct": null,
+    "tokens_per_pct_week": 28716453,
+    "usd_per_pct": 1.2843,
+    "windows": null
    }
   ],
   "samples": 2,
@@ -78,5 +90,5 @@
    "with_complete_week": 0
   }
  },
- "updated_at": "2026-09-16T13:30:13+00:00"
+ "updated_at": "2026-09-16T14:30:13+00:00"
 }
