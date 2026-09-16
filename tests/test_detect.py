@@ -252,6 +252,19 @@ class WeightedDetectTests(unittest.TestCase):
         # A point that is itself two pieces (a gap inside one window) counts as two.
         self.assertEqual(detect_weighted_changes(base + [(later, 45.0, 10.0, 5), (later + timedelta(hours=5), 45.0, 10.0, 5)]), [])
 
+    def test_a_five_hour_meter_that_stops_moving_is_not_a_hundred_percent_cut(self):
+        # Review of PR 57: finding 3's pairing keeps windows where only the seven-day
+        # meter moved, so a capped or stale five-hour meter now reaches the detector as
+        # d5 = 0 points. Pooled to 0/12 they must not certify a -100% step, whichever
+        # side of the split the zero level is on.
+        t = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        four = [t + timedelta(hours=5 * i) for i in range(4)]
+        capped_after = [(four[0], 40.0, 6.0, 1), (four[1], 40.0, 6.0, 1), (four[2], 0.0, 6.0, 1), (four[3], 0.0, 6.0, 1)]
+        self.assertEqual(detect_weighted_changes(capped_after), [])
+        capped_before = [(four[0], 0.0, 6.0, 1), (four[1], 0.0, 6.0, 1), (four[2], 40.0, 6.0, 1), (four[3], 40.0, 6.0, 1)]
+        self.assertEqual(detect_weighted_changes(capped_before), [])
+        self.assertEqual(len(weighted_regimes(capped_after)), 1)
+
     def test_audit_finding_4_a_persistent_cut_in_light_windows_is_found(self):
         # Four windows at 60/10 then twenty-one at 18/4: no single window is heavy,
         # but the pooled evidence of a 25% cut is ample (84 points of d7 after it).

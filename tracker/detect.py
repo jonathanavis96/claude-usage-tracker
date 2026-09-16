@@ -282,7 +282,11 @@ def _certified_change(before: list[tuple], after: list[tuple], threshold: float)
     if sum(p[2] for p in before) < MIN_BASE_D7 or sum(p[2] for p in after) < MIN_POOL_D7:
         return None
     level_before, level_after = pooled_windows(before), pooled_windows(after)
-    if not level_before or level_after is None:
+    # A zero level on either side is not a window budget: over at least MIN_POOL_D7
+    # points of seven-day movement the five-hour meter never moved, which is a
+    # capped or stale five-hour meter, not a plan with no windows. Without this a
+    # capped tail certified as "decreased 100%".
+    if not level_before or not level_after:
         return None
     change = level_after / level_before - 1
     if abs(change) <= threshold:
