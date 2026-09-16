@@ -46,25 +46,71 @@ things follow that the sample detector above gets wrong on it:
 2. Weight. A window is not a reading of equal standing: what makes a level
    credible is accumulated seven-day movement, not a count of readings. Every
    level here is POOLED (total d5 over total d7, `pooled_windows`), and both
-   sides of a split need MIN_POOL_POINTS windows and MIN_POOL_D7 points of d7.
+   sides of a split need MIN_POOL_POINTS windows and MIN_BASE_D7 / MIN_POOL_D7
+   points of d7.
    No single window has to be heavy enough to "vote": the detector that
    required one (a d7 >= 7 candidate) could miss a real cut indefinitely when
    every post-cut window was light (audit 2026-09-16, finding 4: four windows
    at 60/10 then twenty-one at 18/4 fired nothing).
 
-3. Rounding. Every window point is a difference of two whole-percent readings
-   of each meter, so each piece carries up to one point of error on d5 and on
-   d7, and pieces are disconnected, so their errors do not cancel. The old
-   rule conceded half a point to a whole pool, which let ten (11, 1) windows
-   and two (47, 8) windows -- all compatible with a constant ratio of 6 --
-   fire a -47% change (finding 4 again). A pool of n pieces now concedes
+3. Rounding and window scatter. Every window point is a difference of two
+   whole-percent readings of each meter. The meters are polled on a clock
+   (masterrig's log reads them every 30 minutes), not when a meter ticks, so
+   a reading's rounding error is uniform on (-0.5, 0.5) whatever the meter's
+   fractional part, and independent of the next reading's. A piece's error,
+   the difference of two such errors, is triangular on (-1, 1) with variance
+   1/6, and a total pooled from n disconnected pieces has variance n/6 on d5
+   and on d7 alike.
 
-       e(n) = min(n, ROUNDING_Z * sqrt(n))
+   Real windows scatter more than rounding alone: which work fills a window
+   moves its five-hour to seven-day ratio as well. That extra scatter is
+   measured, not assumed (WINDOW_DISPERSION, below), and a pool of n pieces
+   concedes
 
-   points to each total: the worst case while n is small, and ROUNDING_Z
-   standard deviations of the sum once it is not (a piece's error lies inside
-   (-1, 1), so its variance is at most 1 whatever its distribution). Each
+       e(n) = ROUNDING_Z * sqrt(WINDOW_DISPERSION * n / 6)
+
+   points to each total, taken in opposite directions on d5 and d7: each
    level's `rounding_interval` is (d5 - e)/(d7 + e) .. (d5 + e)/(d7 - e).
+   The published field keeps its name; the interval carries the measured
+   window scatter as well as the rounding.
+
+   Independence is the model's one assumption, and the one thing it cannot
+   exclude is a run of same-sign rounding errors long enough to fake a step.
+   Ten (11, 1) windows then two (47, 8) windows (finding 4) are all
+   compatible with a constant ratio of 6 if every d7 rounded the same way;
+   under independent rounding that is too improbable to concede, so the
+   interval alone would certify it. The floors are what bound it: each side
+   of a split needs MIN_BASE_D7 / MIN_POOL_D7 points of seven-day movement,
+   20, one to two days of real use, so a faked step needs its same-sign run
+   held across that many clock-polled readings on both sides. The finding-4
+   example (10 points before, 16 after) is refused by the floor; the same
+   example scaled to twenty (11, 1) and three (47, 8) windows clears it and
+   certifies -47%, which under independent rounding is what that evidence
+   says. The floors are equal because segmentation is symmetric: the level
+   on either side of a split is the same kind of pooled evidence.
+
+   WINDOW_DISPERSION is the variance ratio of window residuals over the
+   rounding model on a stretch with no change in it. For a flat run at pooled
+   level L, a window's residual d5 - L * d7 has rounding variance
+   pieces * (1 + L^2) / 6; the sum of squared residuals over those variances,
+   per degree of freedom, is the ratio. Measured on history/passive.json as
+   regenerated on masterrig on 2026-09-16, routed through the publish path's
+   plan split:
+
+       stretch (window_ending, UTC)                       windows  d7    level  ratio
+       Max 20x 2026-08-28T01:50 .. 2026-09-13T21:30       63       228   6.21   3.70   <- used
+       Max 20x 2026-08-19T17:00 .. 2026-09-13T21:30       94       290   6.50   5.13   (with the 27 Aug spike)
+       Max 5x  2026-06-13T01:30 .. 2026-08-14T16:20       204      773   10.86  1.51
+       Max 20x 2026-09-14T11:30 .. 2026-09-16T17:30       9        31    4.68   0.27   (after the cut)
+
+   The value used is the flat Max 20x run, the live plan's, excluding the
+   27 Aug spike: the windows ending 2026-08-27T15:10Z and 20:09Z read 95/11
+   and 87/9, a burst of heavy work at 8.6 and 9.7 against a level of 6.2.
+   Two windows of real workload variation are not rounding, and letting them
+   set the scatter for every pool widens every interval for their sake (at
+   5.1, replayed window by window, the 14 Sep cut certifies with the window
+   ending 2026-09-15T16:30Z, is lost again at 21:30Z and returns at
+   2026-09-16T02:30Z).
 
 A change is certified when a split of the series leaves both sides above
 their floors, the pooled levels differ by more than `threshold`, AND the two
@@ -80,32 +126,38 @@ pool alone certified. Segmentation is retrospective: a later window can move
 or remove an event, which is why the events are published as observed
 account metric changes and never as a dated policy change.
 
-Why ROUNDING_Z is 2
+Why these constants
 -------------------
 
-Swept over the two audit counterexamples and over masterrig's whole usage log
-as it stood on 2026-09-16T17:30Z, paired by tracker/weekly.py after the
-finding-3 repair and routed through the publish path's plan split:
+Swept with ROUNDING_Z = 2 and both floors at 20 over the audit's
+counterexamples and over the committed history/passive.json (windows to
+2026-09-16T17:30Z); "daily" replays the Max 20x series as masterrig's
+03:15Z push would have delivered it (windows ending by 02:30Z):
 
-    Z     60/10 x4, 18/4 x21   (11,1) x10, (47,8) x2   max20 08-19..09-12   max5 06-13..08-14   max20 to 09-16T03
-    1.5   -25% (correct)       -47% (false)            none                 none                -29% (09-14)
-    2     -25% (correct)       none                    none                 none                -29% (09-14)
-    2.5   none (missed)        none                    none                 none                none
-    3     none (missed)        none                    none                 none                none
+    dispersion  60/10 x4, 18/4 x21  (11,1) x10, (47,8) x2  x20, x3        max20 to 09-13     max5 flat   max20 all    daily 09-15 / 09-16
+    1           -25% (correct)      none (floor)           -47%           +33% 08-27, -32%   +18% 08-13  3 events     3 events / 3 events
+    3.7         -25% (correct)      none (floor)           -47%           none               none        -28% 09-14   -19% 08-28 / -29% 09-14
+    5.1         -25% (correct)      none (floor)           -47%           none               none        -28% 09-14   none / -29% 09-14
 
-2 is the only value that both catches the persistent light-window cut and
-refuses the rounding artefact, and neither flat stretch of the real log fires
-at it. The real 2026-09-13 cut is close to its resolution: two days after it
-the post-cut pool (about 9 pieces, d7 of 30) reads 4.6 against 6.5 before,
-and the upper end of its interval sits within a few hundredths of the lower
-end of the pre-cut one, so the event certifies on some publishes and not on
-others until more post-cut windows arrive. That is the method stating its
-resolution, not a fault to tune away: a narrower concession is exactly what
-fired on (11, 1).
+With no dispersion (the bare triangular model) the 27 Aug spike and the fall
+back from it certify as changes, and so does a Max 5x step inside its flat
+run. At the measured 3.7 the Max 20x series certifies exactly one event, a
+decrease dated 2026-09-14, and nothing on the flat run before it. Max 5x
+keeps its decrease dated 2026-08-14 (-39%), which is the plan move itself:
+PLAN_CHANGE in tracker/publish.py is the account owner's approximate date
+and the step is published as not independently verified.
+
+Segmentation is retrospective, and a partial post-cut pool can be misread:
+the 2026-09-15 daily replay certifies -19% dated 2026-08-28 (7.58 over the
+windows to the 27 Aug spike against 6.10 after, a level the four post-cut
+windows it holds have pulled down just far enough), and the next day's replay
+replaces it with the real -29% dated 2026-09-14. bin/daily.sh
+therefore announces a change only once two consecutive publishes of new
+weekly evidence show it, dated within a day of each other, and never
+announces a date twice.
 
 The quoted six windows of issue #25 on their own (116/19 before, 81/18 after,
-three pieces each) no longer certify anything: three points of rounding on a
-d7 of 19 or 18 lets both sides sit near 5.3.
+three pieces each) certify nothing: neither side carries 20 points of d7.
 """
 from __future__ import annotations
 
@@ -118,10 +170,14 @@ MIN_HISTORY = 3
 LOOKBACK = 4
 
 # detect_weighted_changes: all in whole points of seven-day meter movement (d7).
-MIN_BASE_D7 = 10.0       # the level before a split needs this much movement behind it
-MIN_POOL_D7 = 10.0       # ...and so does the level after it
+MIN_BASE_D7 = 20.0       # the level before a split needs this much movement behind it
+MIN_POOL_D7 = 20.0       # ...and so does the level after it (the bound on same-sign rounding runs)
 MIN_POOL_POINTS = 2      # ...spread over at least this many windows on each side
-ROUNDING_Z = 2.0         # standard deviations of pooled rounding error conceded (why 2: module docstring)
+ROUNDING_Z = 2.0         # standard deviations of pooled error conceded
+# Variance of a window's error over the triangular rounding model's, measured on the
+# flat Max 20x run 2026-08-28T01:50Z..2026-09-13T21:30Z, excluding the 27 Aug spike
+# (derivation: module docstring, 3.).
+WINDOW_DISPERSION = 3.7
 
 
 @dataclass(frozen=True)
@@ -252,8 +308,8 @@ def _pieces(point: tuple) -> int:
 
 
 def rounding_error(pieces: int) -> float:
-    """Points of rounding error conceded to a total pooled from `pieces` separate differences."""
-    return min(float(pieces), ROUNDING_Z * math.sqrt(pieces))
+    """Points of error conceded to a total pooled from `pieces` separate differences (module docstring, 3.)."""
+    return ROUNDING_Z * math.sqrt(WINDOW_DISPERSION * pieces / 6)
 
 
 def ratio_interval(d5: float, d7: float, pieces: int) -> tuple[float | None, float | None]:

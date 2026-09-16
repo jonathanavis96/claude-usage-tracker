@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
+from tracker import detect
 from tracker.capture import judge
 from tracker.detect import detect_smoothed_changes, detect_weighted_changes
 from tracker.gs_passive import publishable
@@ -39,9 +41,30 @@ class PairedMeterRepairTests(unittest.TestCase):
         self.assertEqual(result["history"][0]["seven_day_pct"], 10.0)
 
     def test_independent_rounding_errors_do_not_invent_a_step(self):
+        # Ten (11, 1) windows then two (47, 8): every reading is within a point of a
+        # constant ratio of 6 if every d7 rounded the same way. Independent rounding
+        # cannot exclude such a run, so the refusal rests on the floor: 10 points of
+        # d7 before the split and 16 after, both under 20. With the floors lowered
+        # to 10 the rounding intervals alone separate and the same points certify.
         points = [(T0 + timedelta(hours=6 * i), 11, 1) for i in range(10)]
         points += [(T0 + timedelta(hours=6 * i), 47, 8) for i in range(10, 12)]
+        self.assertEqual((sum(p[2] for p in points[:10]), sum(p[2] for p in points[10:])), (10, 16))
+        self.assertLess(16, min(detect.MIN_BASE_D7, detect.MIN_POOL_D7))
         self.assertEqual(detect_weighted_changes(points), [])
+        with mock.patch.object(detect, "MIN_BASE_D7", 10.0), mock.patch.object(detect, "MIN_POOL_D7", 10.0):
+            self.assertEqual([(e.direction, e.percent) for e in detect_weighted_changes(points)], [("decreased", 47)])
+
+    def test_the_rounding_example_scaled_past_the_floor_certifies(self):
+        # The same example with twenty (11, 1) windows and three (47, 8): 20 and 24
+        # points of d7 clear the floor, and under independent rounding a same-sign
+        # run that long is not a concession the method makes, so it is evidence of
+        # a change.
+        points = [(T0 + timedelta(hours=6 * i), 11, 1) for i in range(20)]
+        points += [(T0 + timedelta(hours=6 * i), 47, 8) for i in range(20, 23)]
+        events = detect_weighted_changes(points)
+        self.assertEqual([(e.direction, e.percent, e.date) for e in events],
+                         [("decreased", 47, points[20][0].date())])
+        self.assertLess(events[0].after_interval[1], events[0].before_interval[0])
 
     def test_disconnected_pairs_keep_separate_rounding_error_budgets(self):
         reset5 = (T0 + timedelta(hours=5)).isoformat()

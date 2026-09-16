@@ -1013,55 +1013,69 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
 
 
-# weekly_windows() over the real ~/.moonlighter/usage_log.jsonl on masterrig as it
-# stood on 2026-09-15, paired as tracker/weekly.py pairs since the audit's finding-3
-# repair: every five-hour window from 2026-06-13.
-REAL_WEEKLY = json.loads((Path(__file__).parent / "fixtures" / "passive_weekly_windows_2026-09-15.json")
-                         .read_text(encoding="utf-8"))
+# The weekly_windows block of the committed history/passive.json: masterrig's whole
+# ~/.moonlighter/usage_log.jsonl (every five-hour window from 2026-06-13), paired as
+# tracker/weekly.py pairs since the audit's finding-3 repair and regenerated on
+# masterrig on 2026-09-16. Only the windows ending by that regeneration are read, so
+# the pins below do not move as the file grows (tests/test_detect.py, HISTORY_CUTOFF).
+HISTORY_CUTOFF = "2026-09-16T17:31"
+REAL_WEEKLY = json.loads((Path(__file__).resolve().parents[1] / "history" / "passive.json")
+                         .read_text(encoding="utf-8"))["weekly_windows"]
 
 
 class RealLogTests(unittest.TestCase):
-    def _publish(self, until: str) -> dict:
-        """The public JSON from the real log's windows ending before `until` (an ISO prefix)."""
-        weekly = dict(REAL_WEEKLY, by_window=[w for w in REAL_WEEKLY["by_window"] if w["window_ending"] < until])
+    def _publish(self, until: str, now: datetime) -> dict:
+        """The public JSON from the committed history's windows ending before `until` (an ISO prefix)."""
+        weekly = dict(REAL_WEEKLY, by_window=[w for w in REAL_WEEKLY["by_window"]
+                                              if w["window_ending"] < min(until, HISTORY_CUTOFF)])
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(8, 15)]
-        return build_public_json(rows, dict(PASSIVE, weekly_windows=weekly), EFFORT, PRICES,
-                                 datetime(2026, 9, 15, 21, 0, tzinfo=timezone.utc))
+        return build_public_json(rows, dict(PASSIVE, weekly_windows=weekly), EFFORT, PRICES, now)
 
-    def test_the_real_log_publishes_one_weekly_change_the_14_sep_cut(self):
-        # Through the real publish path, the whole max20 series up to the evening of
-        # 2026-09-14 gives exactly one event: the cut, -31%, dated by its first window,
-        # certified against both levels' rounding intervals, and published as an observed
-        # change in this account's weekly/window ratio. A day later the same cut sits
-        # just inside the method's resolution and publishes no event (tracker/detect.py,
-        # why ROUNDING_Z is 2); and nothing before the cut ever fires.
-        j = self._publish("2026-09-14T22")
+    def test_the_committed_history_publishes_one_weekly_change_the_14_sep_cut(self):
+        # Through the real publish path, the committed Max 20x series gives exactly one
+        # event: the cut, -28%, dated by its first window, certified against both
+        # levels' intervals, and published as an observed change in this account's
+        # weekly/window ratio. Max 20x current is the new regime's own level, 145/31.
+        j = self._publish(HISTORY_CUTOFF, datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc))
         self.assertEqual([(e["date"], e["percent"], e["label"]) for e in j["events"]],
-                         [("2026-09-14", 31, "Observed weekly/window ratio changed -31%")])
+                         [("2026-09-14", 28, "Observed weekly/window ratio changed -28%")])
         c = j["last_change"]
         self.assertEqual((c["scope"], c["direction"], c["metric"], c["attribution"], c["provisional"]),
                          ("weekly", "decreased", "weekly_to_five_hour_ratio", "observed_account_metric_change", False))
         self.assertEqual((c["onset"], c["confirmation"]),
                          ({"earliest": "2026-09-13", "latest": "2026-09-14"},
-                          {"at": "2026-09-14", "evidence_points": 97, "seven_day_pct": 14.0}))
-        self.assertLess(c["rounding_interval_after"][1], c["rounding_interval_before"][0])
-        self.assertEqual(self._publish("2026-09-16")["events"], [])
-        self.assertEqual(self._publish("2026-09-13")["events"], [])
+                          {"at": "2026-09-15", "evidence_points": 103, "seven_day_pct": 31.0}))
+        self.assertEqual((c["rounding_interval_before"], c["rounding_interval_after"]),
+                         ([6.1258, 6.9156], [3.9284, 5.695]))
+        max20 = j["weekly_windows"]["max20"]
+        self.assertEqual((max20["current"], max20["availability"]), (4.68, {"status": "measured", "reason": None}))
+        est = max20["current_estimate"]
+        self.assertEqual((est["five_hour_pct"], est["seven_day_pct"], est["points"], est["from"][:16], est["stale"]),
+                         (145.0, 31.0, 9, "2026-09-14T11:30", False))
+        # The Max 5x step on 2026-08-14 is the plan move, left published as it is.
+        self.assertEqual([(r["start"][:10], r["windows"]) for r in j["weekly_windows"]["max5"]["regimes"]],
+                         [("2026-06-13", 10.86), ("2026-08-14", 6.61)])
+        self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
-    def test_max20_current_follows_the_cut_from_the_publish_that_detects_it(self):
-        # Before the cut current is the trailing fortnight, 6.27. From the publish that
-        # certifies the cut it is the new regime's own level (46/10 = 4.6 on 09-14T17,
-        # 63/14 = 4.5 on 09-14T22), with the interval that level really has; once the cut
-        # no longer certifies (09-16) it is the trailing fortnight again, mostly pre-cut.
-        self.assertEqual(REAL_WEEKLY["current"], 6.24)
-        for until, fired, current in [("2026-09-13", False, 6.27), ("2026-09-14T17", True, 4.6),
-                                      ("2026-09-14T22", True, 4.5), ("2026-09-16", False, 6.15)]:
-            with self.subTest(until=until):
-                j = self._publish(until)
-                self.assertEqual(j["last_change"] is not None, fired)
-                self.assertEqual(j["weekly_windows"]["max20"]["current"], current)
-                lo, hi = j["weekly_windows"]["max20"]["current_estimate"]["rounding_interval"]
-                self.assertTrue(lo <= current <= hi)
+    def test_nothing_publishes_before_the_cut_and_the_daily_replays_settle_on_it(self):
+        # As masterrig's daily push would have delivered the history (windows ending by
+        # 02:30Z): nothing through 2026-09-14; on 2026-09-15 a partial post-cut pool
+        # misdates the cut to 2026-08-28 (tests/test_detect.py); from 2026-09-16 it is
+        # the cut, with current following it.
+        for day in ("2026-08-25", "2026-09-01", "2026-09-08", "2026-09-14"):
+            with self.subTest(day=day):
+                j = self._publish(day + "T02:31", datetime.fromisoformat(day + "T03:30:00+00:00"))
+                self.assertEqual((j["events"], j["last_change"]), ([], None))
+        j = self._publish("2026-09-14T02:31", datetime(2026, 9, 14, 3, 30, tzinfo=timezone.utc))
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.3)
+        j = self._publish("2026-09-15T02:31", datetime(2026, 9, 15, 3, 30, tzinfo=timezone.utc))
+        self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [("2026-08-28", 19)])
+        j = self._publish("2026-09-16T02:31", datetime(2026, 9, 16, 3, 30, tzinfo=timezone.utc))
+        self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [("2026-09-14", 29)])
+        current = j["weekly_windows"]["max20"]["current"]
+        lo, hi = j["weekly_windows"]["max20"]["current_estimate"]["rounding_interval"]
+        self.assertEqual(current, 4.61)
+        self.assertTrue(lo <= current <= hi)
 
 
 class LastChangeScopeTests(unittest.TestCase):

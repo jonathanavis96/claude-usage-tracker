@@ -42,17 +42,17 @@ class WeeklyWindowsTests(unittest.TestCase):
         ]
         now = datetime(2027, 1, 1, tzinfo=timezone.utc)
         result = weekly_windows(rows, now=now)
-        # One chain of readings: one piece, so one point of rounding conceded to each total
-        # (tracker/detect.py ratio_interval): 59/11 .. 61/9.
+        # One chain of readings: one piece, so 2 x sqrt(3.7 / 6) = 1.57 points conceded to
+        # each total (tracker/detect.py ratio_interval): 58.43/11.57 .. 61.57/8.43.
         self.assertEqual(result["history"], [
             {"week_ending": "2026-09-04", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0,
-             "rounding_interval": [5.3636, 6.7778], "pieces": 1, "source": "paired_meter_deltas",
+             "rounding_interval": [5.0498, 7.3042], "pieces": 1, "source": "paired_meter_deltas",
              "reset_verified": True, "partial": False},
         ])
         self.assertEqual(result["current"], 6.0)
         self.assertEqual(result["by_window"], [
             {"window_ending": "2026-09-06T16:59:59+00:00", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0,
-             "rounding_interval": [5.3636, 6.7778], "pieces": 1, "reset_verified": True},
+             "rounding_interval": [5.0498, 7.3042], "pieces": 1, "reset_verified": True},
         ])
 
     def test_by_window_keeps_one_point_per_five_hour_window(self):
@@ -255,7 +255,7 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
         # ...from the weekly rows only: the run is still one per-window point.
         self.assertEqual(result["by_window"], [
             {"window_ending": "2026-09-01T00:00:00+00:00", "windows": 2.5, "five_hour_pct": 5.0, "seven_day_pct": 2.0,
-             "rounding_interval": [1.3333, 6.0], "pieces": 1, "reset_verified": False},
+             "rounding_interval": [0.9605, 15.3004], "pieces": 1, "reset_verified": False},
         ])
 
     def test_below_min_seven_day_pct_skipped(self):
