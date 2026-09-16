@@ -5,3 +5,4 @@ out/
 .notified-change
 .playwright-mcp/
 *.png
+docs/handoffs/
