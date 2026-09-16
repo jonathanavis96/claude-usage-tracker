@@ -82,25 +82,38 @@ Useful flags:
 --id-file    where to keep the contributor id (default ~/.claude-usage-contrib.json)
 ```
 
-## Path 2: continuous, every 30 minutes
+## Path 2: continuous, hourly by default
 
 A continuous contributor's personal page becomes a line rather than a point,
 so "did my meter change, or everyone's?" is answerable from your own page.
 Paste this into Claude Code:
 
-> Clone `https://github.com/jonathanavis96/claude-usage-tracker` into `~/claude-usage-tracker`, read `contrib/README.md`, then run `python3 ~/claude-usage-tracker/contrib/sample.py --print` and show me the JSON it prints with an explanation of each field. Do not send anything and do not install anything until I type `approve`. When I do, install the 30-minute schedule from the README for my operating system and show me the line you added.
+> Clone `https://github.com/jonathanavis96/claude-usage-tracker` into `~/claude-usage-tracker`, read `contrib/README.md`, then run `python3 ~/claude-usage-tracker/contrib/sample.py --print` and show me the JSON it prints with an explanation of each field. Do not send anything and do not install anything until I type `approve`. When I do, install the hourly schedule from the README for my operating system and show me the line you added.
 
-The one-off prompt above is the spec's wording verbatim; this continuous
-prompt is written to the spec's description of it (clone, read this README,
-print once, wait for `approve`, only then schedule).
+Want it more or less often? Say so in the prompt ("every 30 minutes", "every
+6 hours") or change the schedule line afterwards; the table below has the
+values. Each sample is one small request to the usage endpoint and a read of
+your own transcripts, so any interval from 30 minutes up is fine. The
+one-off prompt above is the spec's wording verbatim; this continuous prompt is
+written to the spec's description of it (clone, read this README, print once,
+wait for `approve`, only then schedule).
+
+### Choosing an interval
+
+| every | cron (Linux) | `StartInterval` (macOS, seconds) |
+|---|---|---|
+| 30 minutes | `*/30 * * * *` | `1800` |
+| 1 hour (default) | `0 * * * *` | `3600` |
+| 2 hours | `0 */2 * * *` | `7200` |
+| 6 hours | `0 */6 * * *` | `21600` |
 
 ### Linux (cron)
 
 ```
-*/30 * * * * python3 $HOME/claude-usage-tracker/contrib/sample.py --yes >> $HOME/.claude-usage-contrib.log 2>&1
+0 * * * * python3 $HOME/claude-usage-tracker/contrib/sample.py --yes >> $HOME/.claude-usage-contrib.log 2>&1
 ```
 
-Add it with `crontab -e`. Cron does not read your shell profile: if Claude
+Add it with `crontab -e` (swap the first field from the table for another interval). Cron does not read your shell profile: if Claude
 Code uses a non-default config dir, add `CLAUDE_CONFIG_DIR=/path/to/dir` on a
 line above, or pass `--claude-dir`.
 
@@ -121,7 +134,7 @@ replacing `YOURNAME`:
     <string>/Users/YOURNAME/claude-usage-tracker/contrib/sample.py</string>
     <string>--yes</string>
   </array>
-  <key>StartInterval</key><integer>1800</integer>
+  <key>StartInterval</key><integer>3600</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/Users/YOURNAME/.claude-usage-contrib.log</string>
   <key>StandardErrorPath</key><string>/Users/YOURNAME/.claude-usage-contrib.log</string>
