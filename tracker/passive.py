@@ -12,7 +12,15 @@ from .turns import iter_turns, session_tokens_by_model, transcript_paths
 from .weekly import parse_rows as parse_weekly_rows
 from .weekly import weekly_windows
 
-PLAN_CHANGE = date(2026, 8, 18)
+PLAN_CHANGE = date(2026, 8, 14)
+# The precise seam within PLAN_CHANGE day: the meter's weekly-to-window ratio drops
+# from about 11 windows/week to about 6.6 between the passive window ending 16:20 UTC
+# (last Max 5x) and the one ending 19:19 UTC (which itself straddles the seam --
+# its own 5-hour span starts before it -- and so belongs to neither plan).
+# tracker/publish.py's _max5_window_points/_max20_window_points split on this
+# instant rather than on the whole day, so the plan-move seam lands where the
+# meter itself moved.
+PLAN_CHANGE_AT = datetime(2026, 8, 14, 17, 0, tzinfo=timezone.utc)
 
 
 def passive_summary(rates: dict[date, DailyRate], plan_change: date = PLAN_CHANGE,
