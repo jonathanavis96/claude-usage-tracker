@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-17T11:30:12.917269+00:00",
+ "generated_at": "2026-09-17T12:30:13.359578+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 130,
+    "reset_verified_samples": 140,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3137,
+    "samples": 3148,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-17T11:26:39+00:00"
+    "last": "2026-09-17T12:26:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -29,13 +29,13 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1572,
-    "turns": 40581,
+    "files": 1576,
+    "turns": 40676,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1572,
+     "kept": 1576,
      "dropped": 932,
-     "subagent_files": 595
+     "subagent_files": 597
     }
    },
    "stretches": [
@@ -5389,13 +5389,25 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-09-17T11:26:39+00:00",
-     "windows": 4.0,
-     "five_hour_pct": 20.0,
+     "window_ending": "2026-09-17T11:37:15+00:00",
+     "windows": 4.4,
+     "five_hour_pct": 22.0,
      "seven_day_pct": 5.0,
      "rounding_interval": [
-      2.8048,
-      6.2898
+      3.1092,
+      6.873
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-17T12:26:39+00:00",
+     "windows": 2.0,
+     "five_hour_pct": 2.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      0.1671,
+      null
      ],
      "pieces": 1,
      "reset_verified": false
@@ -5410,16 +5422,16 @@
     "legacy_log": null,
     "reset_verified_samples": 4,
     "since": null,
-    "samples": 393,
+    "samples": 404,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-17T11:26:39+00:00"
+    "last": "2026-09-17T12:26:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 105,
-    "turns": 155,
+    "files": 109,
+    "turns": 161,
     "withheld_patterns": [],
     "own_sessions": null
    },
