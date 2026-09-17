@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-17T20:30:12.459431+00:00",
+ "generated_at": "2026-09-17T21:30:12.533481+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 227,
+    "reset_verified_samples": 238,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3235,
+    "samples": 3246,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-17T20:25:08+00:00"
+    "last": "2026-09-17T21:25:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -29,13 +29,13 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1625,
-    "turns": 44275,
+    "files": 1627,
+    "turns": 44305,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1625,
+     "kept": 1627,
      "dropped": 1018,
-     "subagent_files": 637
+     "subagent_files": 638
     }
    },
    "stretches": [
@@ -5799,12 +5799,12 @@
     },
     {
      "window_ending": "2026-09-17T21:40:00.921650+00:00",
-     "windows": 4.0,
-     "five_hour_pct": 20.0,
+     "windows": 4.4,
+     "five_hour_pct": 22.0,
      "seven_day_pct": 5.0,
      "rounding_interval": [
-      2.8048,
-      6.2898
+      3.1092,
+      6.873
      ],
      "pieces": 1,
      "reset_verified": true
@@ -5819,16 +5819,16 @@
     "legacy_log": null,
     "reset_verified_samples": 4,
     "since": null,
-    "samples": 491,
+    "samples": 502,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-17T20:25:09+00:00"
+    "last": "2026-09-17T21:25:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 140,
-    "turns": 205,
+    "files": 144,
+    "turns": 211,
     "withheld_patterns": [],
     "own_sessions": null
    },
