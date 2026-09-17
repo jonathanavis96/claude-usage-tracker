@@ -18,7 +18,7 @@ from .detect import (
 )
 from .gs_passive import passive_dollar_readings
 from .join import bundle_meter_usd
-from .passive import PLAN_CHANGE
+from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
 from .weekly import probe_weekly_windows
 
@@ -570,7 +570,7 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
         "max5": {"current": max5_current, "current_estimate": None,
                  "history": max5_history, "regimes": max5_regimes, "assumed": False,
                  "availability": {"status": "historical_only", "reason": "no_current_max5_measurement"},
-                 "plan_change": {"date": PLAN_CHANGE.isoformat(), "source": "account owner's record",
+                 "plan_change": {"date": PLAN_CHANGE.isoformat(), "source": "the meter's own step",
                                  "independently_verified": False}},
         "pro": {"current": max5_current, "current_estimate": None, "history": [], "regimes": [], "assumed": True,
                 "availability": {"status": "unavailable", "reason": "no_pro_measurement"}},
@@ -590,13 +590,18 @@ def _window_points(passive_points: list[dict], keep) -> list[tuple[datetime, flo
 def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:
     """The live plan's per-window series as (window_ending, d5, d7, pieces), oldest first.
 
-    Passive windows are Jonathan's own account, so only those that START
-    after PLAN_CHANGE are max20: a window straddling or preceding the plan
+    Passive windows are Jonathan's own account, so only those that START at or
+    after PLAN_CHANGE_AT are max20: a window straddling or preceding the plan
     change would read at the Max 5x ratio (about 11 against 6.5) and, as the
     first base of the max20 series, would read Jonathan's own plan move as a
-    change. The whole of PLAN_CHANGE day is excluded, not just windows before
-    it, because the change is dated to a day and not an hour. Only points
-    paired after the finding-3 repair (_repaired) with recorded reset ids count.
+    change. The split is on PLAN_CHANGE_AT, the precise seam within PLAN_CHANGE
+    day where the meter's ratio actually drops (the last Max 5x window ends
+    16:20 UTC), not on the whole day: a window whose own 5-hour start lands at
+    or after PLAN_CHANGE_AT is max20 even if it ends on PLAN_CHANGE day itself.
+    A window straddling PLAN_CHANGE_AT -- starting before it, ending after it --
+    is dropped from both series by the two functions together, the mirror of
+    _plan_for_week's rule for weeks. Only points paired after the finding-3
+    repair (_repaired) with recorded reset ids count.
 
     The probe runs' own per-window points (`weekly_windows.probe.by_window`)
     are published for the record but deliberately NOT pooled in here, even
@@ -604,7 +609,7 @@ def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, flo
     seven-day meter by one whole point or none, so each of its points is
     almost pure rounding, and they are another instrument.
     """
-    return _window_points(passive_points, lambda ending: (ending - FIVE_HOURS).date() > PLAN_CHANGE)
+    return _window_points(passive_points, lambda ending: (ending - FIVE_HOURS) >= PLAN_CHANGE_AT)
 
 
 def _regime_with_evidence(idx: int, regime_values: dict) -> int:
@@ -625,11 +630,12 @@ def _regime_with_evidence(idx: int, regime_values: dict) -> int:
 def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:
     """The frozen plan's per-window series, the mirror of _max20_window_points.
 
-    Only windows that END on or before PLAN_CHANGE: a window straddling the
-    change mixes both plans' ratios and belongs to neither, the same rule
+    Only windows that END at or before PLAN_CHANGE_AT, the precise seam within
+    PLAN_CHANGE day (see _max20_window_points): a window straddling the change
+    mixes both plans' ratios and belongs to neither, the same rule
     _plan_for_week applies to weeks.
     """
-    return _window_points(passive_points, lambda ending: ending.date() <= PLAN_CHANGE)
+    return _window_points(passive_points, lambda ending: ending <= PLAN_CHANGE_AT)
 
 
 def _regime_current(points: list[tuple], now: datetime) -> dict | None:

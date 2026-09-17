@@ -815,9 +815,11 @@ class GuardTests(unittest.TestCase):
 
 
 class WeeklyWindowsPassthroughTests(unittest.TestCase):
-    # 2026-08-14 is the last full Max 5x week (ends before PLAN_CHANGE 2026-08-18);
-    # 2026-08-21's (2026-08-14, 2026-08-21] span straddles PLAN_CHANGE and belongs
-    # to neither plan; 2026-08-28 and 2026-09-04 are full Max 20x weeks.
+    # 2026-08-14 is the last full Max 5x week (ends on PLAN_CHANGE itself, at or
+    # before it); 2026-08-21's (2026-08-14, 2026-08-21] span starts right at
+    # PLAN_CHANGE and is a full Max 20x week, along with 2026-08-28 and 2026-09-04.
+    # Weekly buckets are date-only (_plan_for_week), so none of these straddle the
+    # precise within-day seam the per-window series uses (PLAN_CHANGE_AT).
     PASSIVE_WEEKLY: ClassVar[dict] = {"current": 6.46, "history": [
         {"week_ending": "2026-08-14", "windows": 10.91, "five_hour_pct": 400.0, "seven_day_pct": 36.7},
         {"week_ending": "2026-08-21", "windows": 6.8, "five_hour_pct": 300.0, "seven_day_pct": 44.1},
@@ -836,14 +838,15 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
             "max5": (None, {"status": "historical_only", "reason": "no_current_max5_measurement"}),
             "pro": (None, {"status": "unavailable", "reason": "no_pro_measurement"})})
 
-    def test_passive_weeks_are_split_by_plan_and_the_straddling_week_is_dropped(self):
+    def test_passive_weeks_are_split_by_plan(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         ww = j["weekly_windows"]
         self.assertEqual([h["week_ending"] for h in ww["max5"]["history"]], ["2026-08-14"])
-        self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]], ["2026-08-28", "2026-09-04"])
+        self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]],
+                         ["2026-08-21", "2026-08-28", "2026-09-04"])
         self.assertEqual(ww["passive"]["history"], [dict(h, partial=False) for h in self.PASSIVE_WEEKLY["history"]])
         self.assertEqual(ww["probe"], {"current": None, "history": [], "by_window": []})
         # passive.json's own two-weeks median is not a current value (audit finding 6), and
@@ -888,7 +891,8 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         ww = j["weekly_windows"]
         self.assertEqual(len(ww["probe"]["history"]), 3)
         self.assertEqual({h["source"] for h in ww["probe"]["history"]}, {"probe_paired_deltas"})
-        self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]], ["2026-08-28", "2026-09-04"])
+        self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]],
+                         ["2026-08-21", "2026-08-28", "2026-09-04"])
         self.assertEqual({h["source"] for h in ww["max20"]["history"]}, {"passive_paired_deltas"})
         self.assertIsNone(ww["max20"]["current"])
         # max5 is untouched by any of this -- it is frozen passive-era history.
@@ -914,7 +918,7 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         by_week = {h["week_ending"]: h["partial"] for h in j["weekly_windows"]["probe"]["history"]}
         self.assertEqual(by_week, {"2026-08-28": False, "2026-09-04": False, "2026-09-11": True})
         self.assertEqual({h["week_ending"]: h["partial"] for h in j["weekly_windows"]["max20"]["history"]},
-                         {"2026-08-28": False, "2026-09-04": False})
+                         {"2026-08-21": False, "2026-08-28": False, "2026-09-04": False})
 
     def test_passive_partial_flags_are_recomputed_from_the_publish_time(self):
         # A lagging passive.json from before the flag existed: the open week is
@@ -1010,11 +1014,12 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(later["weekly_windows"]["max20"]["availability"], {"status": "measured", "reason": "evidence_stale"})
 
     def test_per_window_points_from_before_the_plan_change_stay_out_of_max20(self):
-        # Max 5x windows (about 11) right up to PLAN_CHANGE, then Max 20x at 6.5:
+        # Max 5x windows (about 11) right up to PLAN_CHANGE_AT, then Max 20x at 6.5:
         # the plan change is Jonathan's, not Anthropic's, and must not fire.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        by_window = ([window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(10, 19)]
-                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 65.0, 10.0) for d in range(19, 31)])
+        by_window = ([window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(6, 15)]
+                     + [window("2026-08-14T22:00:00+00:00", 65.0, 10.0)]
+                     + [window(f"2026-08-{d:02d}T22:00:00+00:00", 65.0, 10.0) for d in range(15, 27)])
         passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.PASSIVE_WEEKLY["history"],
                                                 "by_window": by_window})
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
@@ -1028,6 +1033,28 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual([r["windows"] for r in j["weekly_windows"]["max5"]["regimes"]], [11.0])
         self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
+    def test_per_window_seam_splits_within_plan_change_day_not_by_whole_day(self):
+        # The real seam: a window ending 16:20 UTC on PLAN_CHANGE day is the last Max 5x
+        # point (ends at or before PLAN_CHANGE_AT, 17:00); a window whose own 5-hour
+        # start lands at or after PLAN_CHANGE_AT that same day is the first Max 20x
+        # point -- both land on 2026-08-14. Max 5x has exactly one regime and Max 20x's
+        # first regime starts that day, not four days later.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        by_window = ([window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(1, 14)]
+                     + [window("2026-08-14T16:20:00+00:00", 110.0, 10.0)]  # last Max 5x window
+                     + [window("2026-08-14T22:00:00+00:00", 65.0, 10.0)]  # first Max 20x window
+                     + [window(f"2026-08-{d:02d}T22:00:00+00:00", 65.0, 10.0) for d in range(15, 27)])
+        passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.PASSIVE_WEEKLY["history"],
+                                                "by_window": by_window})
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, passive, EFFORT, PRICES, now)
+        max5, max20 = j["weekly_windows"]["max5"], j["weekly_windows"]["max20"]
+        self.assertEqual([r["windows"] for r in max5["regimes"]], [11.0])
+        self.assertEqual(max5["regimes"][0]["end"][:10], "2026-08-14")
+        self.assertEqual(max20["regimes"][0]["windows"], 6.5)
+        self.assertEqual(max20["regimes"][0]["start"][:10], "2026-08-14")
+        self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
+
     def test_history_days_hold_at_the_nearest_regime_with_readings(self):
         # Buckets 1 and 3 have readings; a day indexing the empty bucket 2 holds at 1, a
         # held day before the first reading (bucket 0) holds at the oldest evidenced
@@ -1039,21 +1066,25 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(_regime_with_evidence(7, values), 3)
 
     def test_weekly_window_ratio_seam_uses_max5s_best_supported_regime(self):
-        # Max 5x ran about 11 windows a week for nine days, then a short 6.6 tail right
-        # before PLAN_CHANGE (the four-day step the detector splits off the plan move);
-        # Max 20x follows at 6.5. The published ratio is the 11 era over 6.5, not the
-        # tail over 6.5, which would read about 1.0 and collapse Pro and Max 5x onto Max 20x.
+        # Max 5x ran a short 6.6 dip early on (unrelated to the plan move -- some other
+        # stretch of heavier use), then about 11 windows a week for most of its run up
+        # to PLAN_CHANGE_AT; Max 20x follows at 6.5 from the seam. The published ratio
+        # is the 11 era over 6.5, not the dip over 6.5, which would read about 1.0 and
+        # collapse Pro and Max 5x onto Max 20x.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        by_window = ([window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(6, 15)]
-                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 66.0, 10.0) for d in range(15, 19)]
-                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 65.0, 10.0) for d in range(19, 31)])
+        by_window = ([window(f"2026-06-{d:02d}T10:00:00+00:00", 66.0, 10.0) for d in range(20, 24)]
+                     + [window(f"2026-07-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(1, 32)]
+                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(1, 14)]
+                     + [window("2026-08-14T16:20:00+00:00", 110.0, 10.0)]
+                     + [window("2026-08-14T22:00:00+00:00", 65.0, 10.0)]
+                     + [window(f"2026-08-{d:02d}T22:00:00+00:00", 65.0, 10.0) for d in range(15, 27)])
         passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": self.PASSIVE_WEEKLY["history"],
                                                 "by_window": by_window})
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         regimes = j["weekly_windows"]["max5"]["regimes"]
-        self.assertEqual([r["windows"] for r in regimes], [11.0, 6.6])
-        self.assertGreater(regimes[0]["points"], regimes[1]["points"])
+        self.assertEqual([r["windows"] for r in regimes], [6.6, 11.0])
+        self.assertGreater(regimes[1]["points"], regimes[0]["points"])
         self.assertEqual(j["weekly_windows"]["max20"]["regimes"][0]["windows"], 6.5)
         self.assertEqual(j["weekly_window_ratios"], {"pro": 1.692, "max5": 1.692, "max20": 1.0})
 
@@ -1121,24 +1152,28 @@ class RealLogTests(unittest.TestCase):
                          ("weekly", "decreased", "weekly_to_five_hour_ratio", "observed_account_metric_change", False))
         self.assertEqual((c["onset"], c["confirmation"]),
                          ({"earliest": "2026-09-13", "latest": "2026-09-14"},
-                          {"at": "2026-09-15", "evidence_points": 103, "seven_day_pct": 31.0}))
+                          {"at": "2026-09-15", "evidence_points": 118, "seven_day_pct": 31.0}))
         self.assertEqual((c["rounding_interval_before"], c["rounding_interval_after"]),
-                         ([6.1258, 6.9156], [3.9284, 5.695]))
+                         ([6.1892, 6.8754], [3.9284, 5.695]))
         max20 = j["weekly_windows"]["max20"]
         self.assertEqual((max20["current"], max20["availability"]), (4.68, {"status": "measured", "reason": None}))
         est = max20["current_estimate"]
         self.assertEqual((est["five_hour_pct"], est["seven_day_pct"], est["points"], est["from"][:16], est["stale"]),
                          (145.0, 31.0, 9, "2026-09-14T11:30", False))
-        # The Max 5x step on 2026-08-14 is the plan move, left published as it is.
+        # The Max 5x step on 2026-08-14 is the plan move: with the seam corrected onto
+        # the meter's own boundary (16:20/PLAN_CHANGE_AT), the whole run is one regime,
+        # not split by a four-day tail misdated to the plan-change day.
         self.assertEqual([(r["start"][:10], r["windows"]) for r in j["weekly_windows"]["max5"]["regimes"]],
-                         [("2026-06-13", 10.86), ("2026-08-14", 6.61)])
+                         [("2026-06-13", 10.86)])
         self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
     def test_nothing_publishes_before_the_cut_and_the_daily_replays_settle_on_it(self):
         # As masterrig's daily push would have delivered the history (windows ending by
-        # 02:30Z): nothing through 2026-09-14; on 2026-09-15 a partial post-cut pool
-        # misdates the cut to 2026-08-28 (tests/test_detect.py); from 2026-09-16 it is
-        # the cut, with current following it.
+        # 02:30Z): nothing through 2026-09-14 or 2026-09-15 (with the seam corrected onto
+        # PLAN_CHANGE_AT, the max20 series no longer starts four days short, so the
+        # 09-15 partial post-cut pool no longer misdates a change to 2026-08-28 the way
+        # it used to under the whole-day exclusion); from 2026-09-16 it is the cut, with
+        # current following it.
         for day in ("2026-08-25", "2026-09-01", "2026-09-08", "2026-09-14"):
             with self.subTest(day=day):
                 j = self._publish(day + "T02:31", datetime.fromisoformat(day + "T03:30:00+00:00"))
@@ -1146,7 +1181,7 @@ class RealLogTests(unittest.TestCase):
         j = self._publish("2026-09-14T02:31", datetime(2026, 9, 14, 3, 30, tzinfo=timezone.utc))
         self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.3)
         j = self._publish("2026-09-15T02:31", datetime(2026, 9, 15, 3, 30, tzinfo=timezone.utc))
-        self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [("2026-08-28", 19)])
+        self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [])
         j = self._publish("2026-09-16T02:31", datetime(2026, 9, 16, 3, 30, tzinfo=timezone.utc))
         self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [("2026-09-14", 29)])
         current = j["weekly_windows"]["max20"]["current"]
