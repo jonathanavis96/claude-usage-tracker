@@ -584,7 +584,9 @@ def aggregate(rows: list[dict], now: datetime, prices: dict | None = None) -> di
             "points": points,
             "quality": "conditional_local_transcripts",
             "identity_basis": "unverified_source_ids",
-            "missing_reasons": [] if points else
+            # Keyed on the cost figure, not the points: a sample under the utilization
+            # floor is still drawn as a coarse point but votes in no median.
+            "missing_reasons": [] if usd_per_pct is not None else
                 ["no current sample cleared the utilization floor with priced tokens"],
             "evidence": dict(evidence, samples_without_capture=sum(1 for rs in contributors.values() for r in rs if not r.get("capture"))),
         }

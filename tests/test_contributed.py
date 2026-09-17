@@ -128,6 +128,18 @@ class TokensPerPctTests(unittest.TestCase):
         self.assertEqual(j["points"][0]["usd_per_pct"], 0.02)
         self.assertEqual(j["missing_reasons"], [])
 
+    def test_a_coarse_only_sample_is_a_point_but_the_cost_figure_is_still_missing(self):
+        # Utilization 3% is under MIN_UTILIZATION: the reading is drawn as a coarse point,
+        # votes in no median, and missing_reasons says why the cost figure is absent.
+        rows = [sample(A, "max20", "2026-09-09T10:00:00Z", 3.0, 10.0, sonnet(400_000))]
+        j = aggregate(rows, NOW, PRICES)["max20"]
+        self.assertEqual(len(j["points"]), 1)
+        self.assertTrue(j["points"][0]["coarse"])
+        self.assertIsNone(j["usd_per_pct"])
+        self.assertEqual(j["tokens_per_pct"], {})
+        self.assertEqual(j["missing_reasons"],
+                         ["no current sample cleared the utilization floor with priced tokens"])
+
     def test_usd_per_pct_values_tokens_as_publish_does(self):
         rows = [sample(A, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000, output=100_000)),
                 sample(B, "max20", "2026-09-02T10:00:00Z", 50.0, 10.0, sonnet(400_000, output=100_000))]
