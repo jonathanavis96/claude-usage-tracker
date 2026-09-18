@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-18T20:30:12.682629+00:00",
+ "generated_at": "2026-09-18T21:30:12.808425+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 445,
+    "reset_verified_samples": 455,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3497,
+    "samples": 3508,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-18T20:29:39+00:00"
+    "last": "2026-09-18T21:30:08+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -30,7 +30,7 @@
      ".claude-jono"
     ],
     "files": 1695,
-    "turns": 49261,
+    "turns": 49304,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1695,
@@ -5306,6 +5306,47 @@
      "capture_status": "accepted",
      "reference": 1.9576,
      "capture": 0.9525
+    },
+    {
+     "start": "2026-09-18T17:44:39+00:00",
+     "end": "2026-09-18T20:57:09+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 16.9486,
+     "usd_per_pct": 1.6949,
+     "bounds": [
+      1.5408,
+      1.8832
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 428,
+       "output": 131170,
+       "cache_read": 42945922,
+       "cache_write": 345705,
+       "cache_write_1h": 345705
+      },
+      "claude-opus-5": {
+       "input": 90,
+       "output": 14984,
+       "cache_read": 9418922,
+       "cache_write": 466300
+      },
+      "claude-sonnet-5": {
+       "input": 96,
+       "output": 6412,
+       "cache_read": 12045435,
+       "cache_write": 47213
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 278,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.969,
+     "capture": 0.8608
     }
    ],
    "runs": [
@@ -5614,13 +5655,13 @@
     },
     {
      "date": "2026-09-18",
-     "usd_per_pct": 2.0167,
-     "delta_pct": 70.0,
-     "stretches": 7,
-     "rounding": 0.0571,
+     "usd_per_pct": 1.9764,
+     "delta_pct": 80.0,
+     "stretches": 8,
+     "rounding": 0.05,
      "bounds": [
-      1.9076,
-      2.1389
+      1.8823,
+      2.0805
      ],
      "pieces": 4,
      "reset_verified": true,
@@ -5629,29 +5670,29 @@
    ],
    "split": {
     "input": 2.5e-05,
-    "output": 0.002876,
-    "cache_read": 0.972897,
-    "cache_write": 0.024202,
-    "cache_write_1h": 0.011513
+    "output": 0.00287,
+    "cache_read": 0.973023,
+    "cache_write": 0.024082,
+    "cache_write_1h": 0.011445
    },
-   "last_usable_at": "2026-09-18T17:44:39+00:00",
+   "last_usable_at": "2026-09-18T20:57:09+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 96,
+     "n": 97,
      "median": 1.6943,
-     "half_range": 0.7682,
-     "mad": 0.3304,
-     "cv": 0.3431
+     "half_range": 0.7681,
+     "mad": 0.3288,
+     "cv": 0.3412
     },
     "daily": {
      "n": 12,
      "median": 1.4405,
-     "half_range": 0.3458,
+     "half_range": 0.3319,
      "mad": 0.2461,
-     "cv": 0.2133
+     "cv": 0.2097
     }
    },
    "weekly_by_window": [
@@ -6341,12 +6382,12 @@
     },
     {
      "window_ending": "2026-09-18T21:30:00.174114+00:00",
-     "windows": 3.83,
-     "five_hour_pct": 23.0,
+     "windows": 4.17,
+     "five_hour_pct": 25.0,
      "seven_day_pct": 6.0,
      "rounding_interval": [
-      2.8306,
-      5.5471
+      3.0948,
+      5.9986
      ],
      "pieces": 1,
      "reset_verified": true
@@ -6359,18 +6400,18 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "legacy_log": null,
-    "reset_verified_samples": 179,
+    "reset_verified_samples": 190,
     "since": null,
-    "samples": 724,
+    "samples": 735,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-18T20:29:39+00:00"
+    "last": "2026-09-18T21:30:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 176,
-    "turns": 650,
+    "files": 184,
+    "turns": 1084,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -6462,6 +6503,64 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-18T19:45:39+00:00",
+     "end": "2026-09-18T21:02:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 7.7187,
+     "usd_per_pct": 0.7719,
+     "bounds": [
+      0.7017,
+      0.8576
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 172,
+       "output": 77595,
+       "cache_read": 7890905,
+       "cache_write": 162380,
+       "cache_write_1h": 162380
+      },
+      "claude-opus-5": {
+       "input": 296,
+       "output": 107293,
+       "cache_read": 11401701,
+       "cache_write": 313594,
+       "cache_write_1h": 313594
+      },
+      "claude-fable-5-1": {
+       "input": 2,
+       "output": 295,
+       "cache_read": 10126,
+       "cache_write": 22918,
+       "cache_write_1h": 22918
+      },
+      "claude-haiku-4-5": {
+       "input": 18,
+       "output": 194,
+       "cache_read": 44382,
+       "cache_write": 19194,
+       "cache_write_1h": 19194
+      }
+     },
+     "unpriced_tokens": 63788,
+     "unpriced": {
+      "claude-haiku-4-5": {
+       "input": 18,
+       "output": 194,
+       "cache_read": 44382,
+       "cache_write": 19194,
+       "cache_write_1h": 19194
+      }
+     },
+     "turns": 237,
+     "reset_verified": true,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
     }
    ],
    "runs": [],
@@ -6518,12 +6617,12 @@
     },
     {
      "window_ending": "2026-09-18T21:30:00.957879+00:00",
-     "windows": 5.0,
-     "five_hour_pct": 15.0,
+     "windows": 7.0,
+     "five_hour_pct": 21.0,
      "seven_day_pct": 3.0,
      "rounding_interval": [
-      2.9382,
-      11.5924
+      4.251,
+      15.7898
      ],
      "pieces": 1,
      "reset_verified": true
