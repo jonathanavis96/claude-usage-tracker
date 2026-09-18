@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-18T01:30:13.337837+00:00",
+ "generated_at": "2026-09-18T02:30:13.038870+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 281,
+    "reset_verified_samples": 292,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3290,
+    "samples": 3301,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-18T01:27:09+00:00"
+    "last": "2026-09-18T02:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -30,7 +30,7 @@
      ".claude-jono"
     ],
     "files": 1650,
-    "turns": 45780,
+    "turns": 45810,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1650,
@@ -6008,13 +6008,13 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-09-18T01:27:09+00:00",
-     "windows": 4.0,
-     "five_hour_pct": 40.0,
+     "window_ending": "2026-09-18T02:27:39+00:00",
+     "windows": 4.1,
+     "five_hour_pct": 41.0,
      "seven_day_pct": 10.0,
      "rounding_interval": [
-      3.3213,
-      4.9316
+      3.4077,
+      5.0502
      ],
      "pieces": 1,
      "reset_verified": false
@@ -6027,11 +6027,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "legacy_log": null,
-    "reset_verified_samples": 28,
+    "reset_verified_samples": 39,
     "since": null,
-    "samples": 545,
+    "samples": 556,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-18T01:27:09+00:00"
+    "last": "2026-09-18T02:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -6060,7 +6060,7 @@
    },
    "weekly_by_window": [
     {
-     "window_ending": "2026-09-18T01:27:09+00:00",
+     "window_ending": "2026-09-18T02:27:39+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
