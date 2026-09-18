@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-18T15:30:12.691464+00:00",
+ "generated_at": "2026-09-18T16:30:12.899438+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 390,
+    "reset_verified_samples": 401,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3442,
+    "samples": 3453,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-18T15:27:39+00:00"
+    "last": "2026-09-18T16:27:38+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -29,13 +29,13 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1676,
-    "turns": 47638,
+    "files": 1687,
+    "turns": 48356,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1676,
+     "kept": 1687,
      "dropped": 1018,
-     "subagent_files": 677
+     "subagent_files": 688
     }
    },
    "stretches": [
@@ -5189,6 +5189,47 @@
      "capture_status": "accepted",
      "reference": 1.9231,
      "capture": 1.234
+    },
+    {
+     "start": "2026-09-18T14:11:09+00:00",
+     "end": "2026-09-18T16:00:09+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 21.0427,
+     "usd_per_pct": 2.1043,
+     "bounds": [
+      1.913,
+      2.3381
+     ],
+     "tokens": {
+      "claude-opus-5": {
+       "input": 578,
+       "output": 53976,
+       "cache_read": 42688411,
+       "cache_write": 2163526
+      },
+      "claude-sonnet-5": {
+       "input": 6,
+       "output": 4478,
+       "cache_read": 647043,
+       "cache_write": 5422
+      },
+      "claude-fable-5-1": {
+       "input": 180,
+       "output": 56435,
+       "cache_read": 17221589,
+       "cache_write": 164325,
+       "cache_write_1h": 164325
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 372,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.9231,
+     "capture": 1.0942
     }
    ],
    "runs": [
@@ -5497,13 +5538,13 @@
     },
     {
      "date": "2026-09-18",
-     "usd_per_pct": 2.1008,
-     "delta_pct": 40.0,
-     "stretches": 4,
-     "rounding": 0.075,
+     "usd_per_pct": 2.1015,
+     "delta_pct": 50.0,
+     "stretches": 5,
+     "rounding": 0.06,
      "bounds": [
-      1.9542,
-      2.2711
+      1.9825,
+      2.2356
      ],
      "pieces": 3,
      "reset_verified": true,
@@ -5512,29 +5553,29 @@
    ],
    "split": {
     "input": 2.6e-05,
-    "output": 0.002922,
-    "cache_read": 0.973031,
-    "cache_write": 0.024021,
-    "cache_write_1h": 0.011905
+    "output": 0.00291,
+    "cache_read": 0.972901,
+    "cache_write": 0.024163,
+    "cache_write_1h": 0.011804
    },
-   "last_usable_at": "2026-09-18T14:11:09+00:00",
+   "last_usable_at": "2026-09-18T16:00:09+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 93,
-     "median": 1.6097,
-     "half_range": 0.8085,
-     "mad": 0.35,
-     "cv": 0.3486
+     "n": 94,
+     "median": 1.6519,
+     "half_range": 0.7878,
+     "mad": 0.3551,
+     "cv": 0.3472
     },
     "daily": {
      "n": 12,
      "median": 1.4405,
-     "half_range": 0.375,
+     "half_range": 0.3753,
      "mad": 0.2461,
-     "cv": 0.2215
+     "cv": 0.2216
     }
    },
    "weekly_by_window": [
@@ -6212,12 +6253,12 @@
     },
     {
      "window_ending": "2026-09-18T16:30:00.958554+00:00",
-     "windows": 4.38,
-     "five_hour_pct": 35.0,
-     "seven_day_pct": 8.0,
+     "windows": 4.18,
+     "five_hour_pct": 46.0,
+     "seven_day_pct": 11.0,
      "rounding_interval": [
-      3.4929,
-      5.688
+      3.5344,
+      5.0449
      ],
      "pieces": 1,
      "reset_verified": true
@@ -6230,11 +6271,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "legacy_log": null,
-    "reset_verified_samples": 152,
+    "reset_verified_samples": 163,
     "since": null,
-    "samples": 696,
+    "samples": 707,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-18T15:27:39+00:00"
+    "last": "2026-09-18T16:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -6325,7 +6366,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-09-18T15:27:39+00:00",
+     "window_ending": "2026-09-18T16:27:39+00:00",
      "windows": 6.5,
      "five_hour_pct": 13.0,
      "seven_day_pct": 2.0,
