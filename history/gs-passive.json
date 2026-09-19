@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-19T21:30:13.464612+00:00",
+ "generated_at": "2026-09-19T22:30:12.750653+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 668,
+    "reset_verified_samples": 679,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3767,
+    "samples": 3778,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-19T21:27:09+00:00"
+    "last": "2026-09-19T22:26:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -29,12 +29,12 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1708,
-    "turns": 49993,
+    "files": 1709,
+    "turns": 49994,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1708,
-     "dropped": 1027,
+     "kept": 1709,
+     "dropped": 1029,
      "subagent_files": 697
     }
    },
@@ -6593,18 +6593,18 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "legacy_log": null,
-    "reset_verified_samples": 442,
+    "reset_verified_samples": 453,
     "since": null,
-    "samples": 995,
+    "samples": 1006,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-19T21:27:09+00:00"
+    "last": "2026-09-19T22:26:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 400,
-    "turns": 9525,
+    "files": 403,
+    "turns": 9938,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -7488,6 +7488,47 @@
      "capture_status": "accepted",
      "reference": 1.5458,
      "capture": 1.1492
+    },
+    {
+     "start": "2026-09-19T21:16:08+00:00",
+     "end": "2026-09-19T21:43:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 11.8863,
+     "usd_per_pct": 1.1886,
+     "bounds": [
+      1.0806,
+      1.3207
+     ],
+     "tokens": {
+      "claude-opus-5": {
+       "input": 218,
+       "output": 26807,
+       "cache_read": 12393555,
+       "cache_write": 433712
+      },
+      "claude-fable-5-1": {
+       "input": 1916,
+       "output": 69423,
+       "cache_read": 16165844,
+       "cache_write": 164944,
+       "cache_write_1h": 164944
+      },
+      "claude-sonnet-5": {
+       "input": 440,
+       "output": 30324,
+       "cache_read": 22765815,
+       "cache_write": 564393
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 411,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.5458,
+     "capture": 0.7689
     }
    ],
    "runs": [
@@ -7520,13 +7561,13 @@
     },
     {
      "date": "2026-09-19",
-     "usd_per_pct": 1.5996,
-     "delta_pct": 115.0,
-     "stretches": 11,
-     "rounding": 0.0348,
+     "usd_per_pct": 1.5667,
+     "delta_pct": 125.0,
+     "stretches": 12,
+     "rounding": 0.032,
      "bounds": [
-      1.5458,
-      1.6572
+      1.5181,
+      1.6185
      ],
      "pieces": 4,
      "reset_verified": true,
@@ -7534,30 +7575,30 @@
     }
    ],
    "split": {
-    "input": 1.6e-05,
-    "output": 0.00283,
-    "cache_read": 0.982387,
-    "cache_write": 0.014767,
-    "cache_write_1h": 0.006321
+    "input": 1.8e-05,
+    "output": 0.002811,
+    "cache_read": 0.982078,
+    "cache_write": 0.015093,
+    "cache_write_1h": 0.006179
    },
-   "last_usable_at": "2026-09-19T21:16:08+00:00",
+   "last_usable_at": "2026-09-19T21:43:39+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 13,
-     "median": 1.5541,
-     "half_range": 0.2993,
-     "mad": 0.1558,
-     "cv": 0.1554
+     "n": 14,
+     "median": 1.5458,
+     "half_range": 0.3243,
+     "mad": 0.171,
+     "cv": 0.167
     },
     "daily": {
      "n": 2,
-     "median": 1.5736,
-     "half_range": 0.0165,
-     "mad": 0.0244,
-     "cv": 0.0233
+     "median": 1.5572,
+     "half_range": 0.0061,
+     "mad": 0.009,
+     "cv": 0.0086
     }
    },
    "weekly_by_window": [
@@ -7647,12 +7688,12 @@
     },
     {
      "window_ending": "2026-09-19T23:20:00.937050+00:00",
-     "windows": 4.17,
-     "five_hour_pct": 25.0,
-     "seven_day_pct": 6.0,
+     "windows": 4.56,
+     "five_hour_pct": 41.0,
+     "seven_day_pct": 9.0,
      "rounding_interval": [
-      3.0948,
-      5.9986
+      3.7301,
+      5.73
      ],
      "pieces": 1,
      "reset_verified": true
