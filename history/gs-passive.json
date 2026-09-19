@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-19T11:30:12.698469+00:00",
+ "generated_at": "2026-09-19T12:30:12.616609+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 559,
+    "reset_verified_samples": 570,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3658,
+    "samples": 3669,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-19T11:26:09+00:00"
+    "last": "2026-09-19T12:26:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -29,11 +29,11 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1703,
-    "turns": 49660,
+    "files": 1705,
+    "turns": 49701,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1703,
+     "kept": 1705,
      "dropped": 1019,
      "subagent_files": 697
     }
@@ -5391,6 +5391,57 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-18T23:47:39+00:00",
+     "end": "2026-09-19T12:26:09+00:00",
+     "delta_pct": 10.0,
+     "windows": 4,
+     "usd": 16.0614,
+     "usd_per_pct": 1.6061,
+     "bounds": [
+      1.1472,
+      2.6769
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 511,
+       "output": 157859,
+       "cache_read": 44149192,
+       "cache_write": 389187,
+       "cache_write_1h": 389187
+      },
+      "claude-sonnet-5": {
+       "input": 40,
+       "output": 549,
+       "cache_read": 958926,
+       "cache_write": 132273,
+       "cache_write_1h": 28908
+      },
+      "claude-haiku-4-5": {
+       "input": 28,
+       "output": 590,
+       "cache_read": 27606,
+       "cache_write": 33543,
+       "cache_write_1h": 18489
+      }
+     },
+     "unpriced_tokens": 61767,
+     "unpriced": {
+      "claude-haiku-4-5": {
+       "input": 28,
+       "output": 590,
+       "cache_read": 27606,
+       "cache_write": 33543,
+       "cache_write_1h": 18489
+      }
+     },
+     "turns": 239,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
     }
    ],
    "runs": [
@@ -6459,6 +6510,18 @@
      ],
      "pieces": 1,
      "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-19T16:29:59.914996+00:00",
+     "windows": null,
+     "five_hour_pct": 3.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.9101,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": true
     }
    ]
   },
@@ -6468,18 +6531,18 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "legacy_log": null,
-    "reset_verified_samples": 332,
+    "reset_verified_samples": 343,
     "since": null,
-    "samples": 885,
+    "samples": 896,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-19T11:26:09+00:00"
+    "last": "2026-09-19T12:26:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 252,
-    "turns": 2876,
+    "files": 305,
+    "turns": 3395,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -6912,12 +6975,12 @@
     },
     {
      "window_ending": "2026-09-19T13:20:00.166308+00:00",
-     "windows": 5.5,
-     "five_hour_pct": 11.0,
-     "seven_day_pct": 2.0,
+     "windows": 5.0,
+     "five_hour_pct": 15.0,
+     "seven_day_pct": 3.0,
      "rounding_interval": [
-      2.6409,
-      29.2722
+      2.9382,
+      11.5924
      ],
      "pieces": 1,
      "reset_verified": true
