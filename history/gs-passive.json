@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-19T12:30:12.616609+00:00",
+ "generated_at": "2026-09-19T13:30:12.719908+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 570,
+    "reset_verified_samples": 581,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3669,
+    "samples": 3680,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-19T12:26:09+00:00"
+    "last": "2026-09-19T13:26:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -30,7 +30,7 @@
      ".claude-jono"
     ],
     "files": 1705,
-    "turns": 49701,
+    "turns": 49718,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1705,
@@ -6513,11 +6513,11 @@
     },
     {
      "window_ending": "2026-09-19T16:29:59.914996+00:00",
-     "windows": null,
-     "five_hour_pct": 3.0,
-     "seven_day_pct": 0.0,
+     "windows": 4.0,
+     "five_hour_pct": 4.0,
+     "seven_day_pct": 1.0,
      "rounding_interval": [
-      0.9101,
+      0.9451,
       null
      ],
      "pieces": 1,
@@ -6531,18 +6531,18 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "legacy_log": null,
-    "reset_verified_samples": 343,
+    "reset_verified_samples": 354,
     "since": null,
-    "samples": 896,
+    "samples": 907,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-19T12:26:09+00:00"
+    "last": "2026-09-19T13:26:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 305,
-    "turns": 3395,
+    "files": 325,
+    "turns": 3777,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -6866,6 +6866,98 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-19T10:42:09+00:00",
+     "end": "2026-09-19T12:31:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 11.4547,
+     "usd_per_pct": 1.1455,
+     "bounds": [
+      1.0413,
+      1.2727
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 1110,
+       "output": 365194,
+       "cache_read": 57082548,
+       "cache_write": 1419077,
+       "cache_write_1h": 1419077
+      },
+      "claude-opus-5": {
+       "input": 96,
+       "output": 31833,
+       "cache_read": 4131709,
+       "cache_write": 132790,
+       "cache_write_1h": 132790
+      },
+      "claude-haiku-4-5": {
+       "input": 1640,
+       "output": 301,
+       "cache_read": 9713579,
+       "cache_write": 671782
+      }
+     },
+     "unpriced_tokens": 10387302,
+     "unpriced": {
+      "claude-haiku-4-5": {
+       "input": 1640,
+       "output": 301,
+       "cache_read": 9713579,
+       "cache_write": 671782
+      }
+     },
+     "turns": 774,
+     "reset_verified": true,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
+    },
+    {
+     "start": "2026-09-19T12:31:39+00:00",
+     "end": "2026-09-19T13:26:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 14.2019,
+     "usd_per_pct": 1.4202,
+     "bounds": [
+      1.1835,
+      1.7752
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 240,
+       "output": 61018,
+       "cache_read": 13731825,
+       "cache_write": 344975,
+       "cache_write_1h": 344975
+      },
+      "claude-opus-5": {
+       "input": 370,
+       "output": 187431,
+       "cache_read": 32659088,
+       "cache_write": 477927,
+       "cache_write_1h": 477927
+      },
+      "claude-fable-5-1": {
+       "input": 356,
+       "output": 17592,
+       "cache_read": 900124,
+       "cache_write": 93062,
+       "cache_write_1h": 93062
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 318,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "unjudged",
+     "reference": null,
+     "capture": null
     }
    ],
    "runs": [],
@@ -6883,33 +6975,47 @@
      "pieces": 1,
      "reset_verified": true,
      "capture_diagnosed": 2
+    },
+    {
+     "date": "2026-09-19",
+     "usd_per_pct": 1.4202,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.2,
+     "bounds": [
+      1.1835,
+      1.7752
+     ],
+     "pieces": 2,
+     "reset_verified": true,
+     "capture_diagnosed": 1
     }
    ],
    "split": {
-    "input": 1.6e-05,
-    "output": 0.006511,
-    "cache_read": 0.977389,
-    "cache_write": 0.016084,
-    "cache_write_1h": 0.016084
+    "input": 1.7e-05,
+    "output": 0.006205,
+    "cache_read": 0.976853,
+    "cache_write": 0.016926,
+    "cache_write_1h": 0.016926
    },
-   "last_usable_at": "2026-09-18T23:25:39+00:00",
+   "last_usable_at": "2026-09-19T13:26:39+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 2,
-     "median": 1.5392,
-     "half_range": 0.1158,
-     "mad": 0.1717,
-     "cv": 0.1638
+     "n": 3,
+     "median": 1.4202,
+     "half_range": 0.1255,
+     "mad": 0.0618,
+     "cv": 0.1274
     },
     "daily": {
-     "n": 1,
-     "median": 1.5477,
-     "half_range": 0.0,
-     "mad": 0.0,
-     "cv": null
+     "n": 2,
+     "median": 1.484,
+     "half_range": 0.043,
+     "mad": 0.0637,
+     "cv": 0.0608
     }
    },
    "weekly_by_window": [
@@ -6975,12 +7081,24 @@
     },
     {
      "window_ending": "2026-09-19T13:20:00.166308+00:00",
-     "windows": 5.0,
-     "five_hour_pct": 15.0,
-     "seven_day_pct": 3.0,
+     "windows": 6.5,
+     "five_hour_pct": 26.0,
+     "seven_day_pct": 4.0,
      "rounding_interval": [
-      2.9382,
-      11.5924
+      4.3855,
+      11.3485
+     ],
+     "pieces": 1,
+     "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-19T18:19:59.931112+00:00",
+     "windows": 1.0,
+     "five_hour_pct": 1.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      0.0,
+      null
      ],
      "pieces": 1,
      "reset_verified": true
