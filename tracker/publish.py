@@ -22,30 +22,42 @@ from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
 from .weekly import probe_weekly_windows
 
-PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
-# The published 1:5:20 scaling of ONE five-hour window between plans (Max 5x and Max 20x
-# are five and twenty times Pro's per-session usage). It says nothing about how many
-# windows a week holds on each plan: that is measured per plan in `weekly_windows`.
-PLAN_RATIOS_SOURCE_URL = "https://support.claude.com/en/articles/11049741-what-is-the-max-plan"
+# The credits table (she-llac.com/claude-limits, undated) gives each plan's credits per
+# five-hour window and per week. One window is worth 1 : 6 : 20 between Pro, Max 5x and
+# Max 20x; that says nothing about how many windows a week holds on each plan, which is
+# WEEKLY_WINDOW_RATIOS below. A documented figure is a reference to compare a
+# measurement against, never a substitute for one.
+CREDITS_TABLE_URL = "https://she-llac.com/claude-limits"
+CREDITS_PER_WINDOW = {"pro": 550_000, "max5": 3_300_000, "max20": 11_000_000}
+CREDITS_PER_WEEK = {"pro": 5_000_000, "max5": 41_666_700, "max20": 83_333_300}
+PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.30, "max20": 1.0}
+PLAN_RATIOS_BASIS = {"kind": "credits_table", "scope": "one five-hour window",
+                     "credits_per_window": dict(CREDITS_PER_WINDOW),
+                     "source_url": CREDITS_TABLE_URL, "dated": False}
 # How many five-hour windows a week's cap holds, per plan, relative to max20. NOT
-# PLAN_RATIOS_BASE: that one is what a single window is worth in tokens (the published
-# 1:5:20), this one is how many windows a week contains, and the two pull in opposite
-# directions -- Max 5x holds more windows, Max 20x holds bigger ones.
-#
-# Frozen, and measured rather than published by Anthropic: it is one meter divided by
-# another over the same traffic, so whoever generated the usage cancels out. Three
-# independent routes over Jonathan's own 5x-to-20x move agree -- calendar weeks
-# 11.02/6.18 = 1.78, the weeks either side of PLAN_CHANGE 11.00/6.58 = 1.67, and the
-# per-window medians with the seven-day rounding guard applied 9.86/5.67 = 1.74 (80
-# windows against 20). 1.78 is the figure of record.
-#
-# Restored 2026-09-17 by Jonathan's decision (reverses part of audit finding 6): the
-# 2026-09-16 audit deleted this and left `weekly_windows.max5.current`/`.pro.current`
-# null, which made the live page's graphs and top figures look wrong against what
-# Jonathan had before. max5 is not coming back on this account (see _plan_for_week), so
-# the ratio can never be re-measured here; it stays frozen, published beside a live seam
-# ratio derived from the two plans' own regimes where both exist (_weekly_block).
-WEEKLY_WINDOW_RATIOS = {"pro": 1.78, "max5": 1.78, "max20": 1.0}
+# PLAN_RATIOS_BASE: that one is what a single window is worth (the 1 : 6 : 20 above),
+# this one is how many windows a week contains, and the two pull in opposite
+# directions -- Max 5x holds more windows, Max 20x holds bigger ones. From the credits
+# table: a week holds 9.09 / 12.63 / 7.58 windows on Pro / Max 5x / Max 20x, so relative
+# to Max 20x that is 1.20 and 1.667. The tracker's own measurement confirms the Max 5x
+# figure: 10.85 windows a week measured on Max 5x (Jun-Aug) over 6.54 on Max 20x (19 Aug
+# to 11 Sep) is 1.66. Max 5x and Pro are not measured any more on any watched account,
+# so their weekly `current` is the live Max 20x figure scaled by these, marked inferred.
+DOCUMENTED_WINDOWS_PER_WEEK = {"pro": 9.09, "max5": 12.63, "max20": 7.58}
+WEEKLY_WINDOW_RATIOS = {"pro": 1.20, "max5": 1.667, "max20": 1.0}
+WEEKLY_WINDOW_RATIOS_BASIS = {
+    "kind": "credits_table", "scope": "five-hour windows per week, relative to max20",
+    "credits_per_week": dict(CREDITS_PER_WEEK),
+    "documented_windows_per_week": dict(DOCUMENTED_WINDOWS_PER_WEEK),
+    "source_url": CREDITS_TABLE_URL, "dated": False,
+    "measured_confirmation": {"max5_over_max20": 1.66,
+                              "spans": "Max 5x Jun-Aug over Max 20x 19 Aug-11 Sep"},
+}
+# The watched Max 20x accounts, in the fixed order their published labels follow. Names
+# are never published: the JSON carries `a1`, `a2`, `a3` and counts. masterrig's points
+# are history/passive.json's `weekly_windows.by_window` (its own meter log); the others'
+# are history/gs-passive.json's `accounts.<name>.weekly_by_window`, the same point shape.
+ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"))
 MAX_SAMPLE_AGE_DAYS = 10
 WEEKLY_CURRENT_DAYS = 14
 FIVE_HOURS = timedelta(hours=5)
@@ -419,7 +431,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 d += timedelta(days=1)
         history[model] = hist
 
-    weekly_windows, weekly_events, weekly_window_ratios = _weekly_block(passive.get("weekly_windows"), probe_weekly, now)
+    weekly_windows, weekly_events = _weekly_block(passive.get("weekly_windows"), probe_weekly, now,
+                                                  gs_passive=gs_passive)
+    # Accounts behind the passive evidence: those with an accepted stretch (the rates)
+    # plus those with Max 20x window points (the weekly series), by name, never published.
+    weekly_accounts = {name for name, label in ACCOUNT_LABELS
+                       if weekly_windows["max20"]["by_account"][label]["n"]}
+    passive_accounts = {st["_account"] for st in stretches} | weekly_accounts
     return {
         "schema_version": 2,
         "generated_at": now.isoformat(),
@@ -432,11 +450,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                          "reason": {"measured": None, "conditional": "legacy_reset_metadata_missing",
                                     "unavailable": "no_eligible_passive_measurement"}[evidence_status]},
         "probe_account_count": len({r["account"] for r in probe_rows if r.get("account")}),
-        "passive_account_count": evidence["account_count"],
+        "passive_account_count": len(passive_accounts),
         "plan_ratios": dict(PLAN_RATIOS_BASE),
-        "plan_ratios_basis": {"kind": "published_plan_scaling", "scope": "one five-hour window",
-                              "source_url": PLAN_RATIOS_SOURCE_URL},
-        "weekly_window_ratios": weekly_window_ratios,
+        "plan_ratios_basis": json.loads(json.dumps(PLAN_RATIOS_BASIS)),
+        "weekly_window_ratios": dict(WEEKLY_WINDOW_RATIOS),
+        "weekly_window_ratios_basis": json.loads(json.dumps(WEEKLY_WINDOW_RATIOS_BASIS)),
         "rate_basis": "meter_budget",
         "model_plan_limits": _model_plan_limits(prices),
         "rates": rates,
