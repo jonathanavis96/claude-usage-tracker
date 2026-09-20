@@ -320,3 +320,48 @@ which is why the test is proximity rather than containment. `tests/test_harness_
 `collect()` itself: a row of the same window is deduplicated, a row three days away is not, a row
 of another account, another model or another reading never is, and the aborted run in the same
 log still becomes a row of its own.
+
+## 9. 2026-09-20 follow-up: disagreeing fits publish a value now, not a status sentence
+
+`tools.model_rates.adopt` used to withhold a family's rate entirely when its per-fit intervals
+did not all overlap (`agree: False`): the family kept the union of the per-fit intervals but no
+point value, and the publisher printed `"rate not yet identified"` in its place. Fable is the
+family this hit -- its jwork-pre, jwork-post and dave-post fits disagree by more than their own
+intervals -- and the published page carried that sentence instead of a figure.
+
+The rule now publishes a value whether or not the fits agree: the median of the per-fit rates,
+with the union of their intervals as before, `status: null`, and `agree: false` kept on the
+record along with a `why` sentence naming the disagreement. `agree` and `why` are what a reader
+checks to see how much to trust the median; they no longer gate whether a number appears at all.
+`NOT_IDENTIFIED` is gone from `tools/model_rates.py` -- the rate-not-yet-identified shape (an
+interval with no value) could never actually occur once `n_fits >= 2` implies a median, so the
+constant was dead code. `NOT_MEASURABLE` (Haiku: no clean stretch is Haiku-heavy at all) is
+unchanged.
+
+Regenerating `history/model-rates.json` from the same command as before now publishes Fable at
+**1.3068 credits per input token, 1.960x Opus**, interval **[1.179, 3.036]** (**1.769x to
+4.553x** Opus), from three fits -- dave/post 1.927x [1.769, 2.803], jwork/post 3.962x
+[3.296, 4.553], jwork/pre 1.960x [1.854, 2.151] -- median 1.960x, union interval as stated.
+`agree` is `false`. Every consumer of `measured_rates.per_family` (`tracker/credits.py`'s
+`family_rate`, `window_tokens`'s per-family conversion, `tracker/publish.py`'s per-model rate
+row) reads `input`/`interval`/`status` generically and needed no change: a family with a value
+and an interval was always the primary published shape, and Fable now takes it. The Fable line
+of the tokens-per-window block accordingly carries a token figure and an interval rather than
+the status sentence.
+
+The masterrig ungated joint fit (`tools/masterrig_fable.py`, PR #70, Fable/Opus 2.56, 80%
+interval 2.07 to 3.45 on 70 rows since 2026-09-06) was considered as a fourth Fable fit point.
+It is not wired in: it is a different pipeline on a different account (its own claude-opus-4-7
+column, its own row gate, no `capture_status` filter, `tools/rounding_feasibility.py`'s LP) that
+this file's own `FIT_ACCOUNTS = ("jwork", "dave")` and `group_fits` do not accept a masterrig
+entry from, and masterrig's own fit through *this* file's ordinary route is explicitly excluded
+from adoption (§6, residual median 0.455 against 0.055-0.065). Folding its ratio in as a fourth
+point would mean adapting `adopt`/`group_fits` to accept a fit from outside `s3`'s own shape,
+which is more than the small change this pass scoped for. The published Fable rate stays the
+three gs fits above.
+
+Tests: `tests/test_model_rates.py`'s `PoolingTests` covers the new median-and-union shape
+directly (`test_fits_that_do_not_agree_still_publish_the_median_with_the_union_of_their_intervals`,
+`test_a_family_no_fit_carries_is_not_measurable_and_a_disagreeing_one_still_publishes`);
+`tests/test_credits.py`'s `SolvedFableCarryThroughTests` and `PublishedBlockTests` were updated
+from asserting the status sentence to asserting the published value and interval.

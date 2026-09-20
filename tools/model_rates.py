@@ -575,14 +575,15 @@ def group_fits(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict[st
 
 
 def adopt(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
-    """Pool the gs fits into one rate per family, where the fits agree within their intervals.
+    """Pool the gs fits into one rate per family, whether or not the fits agree.
 
     A family's point estimate is the median of the fits' point estimates and its interval is
-    the union of theirs, as before -- but only when every fit's interval for that family
-    overlaps every other's (`agree`). Where they do not, the family keeps the union interval
-    and no point value at all: Fable fits 1.754 [1.619, 1.927] times Opus on jwork before
-    14 September and 3.798 [3.324, 4.324] after, and a median of two figures whose intervals
-    do not meet would publish a rate no fit measured.
+    the union of theirs. `agree` is still recorded (every fit's interval for the family
+    overlaps every other's, or not) and still published, because it says how much the median
+    is trusted -- but it no longer withholds the value: Fable fits 1.754 [1.619, 1.927] times
+    Opus on jwork before 14 September and 3.798 [3.324, 4.324] after, and where those disagree
+    the published rate is the median of the two with the union of their intervals as its
+    interval, not a status sentence in place of a number.
     """
     fits = group_fits(s3, variant, mult)
     out = {}
@@ -600,7 +601,7 @@ def adopt(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
         if len(pts) >= MIN_N - 1 and ivs:
             row["agree"] = agree(ivs)
             row["interval"] = [min(i[0] for i in ivs), max(i[1] for i in ivs)]
-            row["measured"] = st.median(pts) if row["agree"] else None
+            row["measured"] = st.median(pts)
         out[f] = row
     return out
 
@@ -626,21 +627,23 @@ def weight_pool(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
     return row
 
 
-#: Why a family has no single measured rate, in the words the published row carries. The
-#: publisher prints these instead of a number, and the page shows the reference figure beside
-#: them: neither is used in any arithmetic.
+#: Why a family has no measured rate at all, in the words the published row carries. The
+#: publisher prints this instead of a number, and the page shows the reference figure beside
+#: it: it is used in no arithmetic. A family whose fits disagree is not this case any more --
+#: it gets a value (the median) and an interval (the union) and `status: null`, with `agree:
+#: false` on the record and a `why` sentence saying so; see `adopt`.
 NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
-NOT_IDENTIFIED = "rate not yet identified"
 
 
 def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
     """The rates the publisher adopts, per family, with Opus as the unit anchor.
 
     This is the block `tracker/credits.py` reads out of history/model-rates.json. Every family
-    carries one of three things and never two: a value with an interval, an interval with the
-    sentence saying the rate is not yet identified, or the sentence saying it is not measurable
-    at all. `reference_input` is the January table's figure, carried so the page can draw it
-    beside the measurement; nothing here divides by it.
+    carries one of two things and never both: a value with an interval (whether or not its
+    fits agreed -- `agree` and `why` say which, and `status` is null either way), or no value
+    at all and the sentence saying the rate is not measurable. `reference_input` is the January
+    table's figure, carried so the page can draw it beside the measurement; nothing here
+    divides by it.
     """
     pooled = adopt(s3, variant, mult)
     out_mult = int(mult.removeprefix("out").removesuffix("x"))
@@ -652,10 +655,7 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
         row = pooled[f]
         anchor = f == "opus"
         value = opus_in if anchor else row["measured"]
-        status = None
-        if not anchor and value is None:
-            status = (NOT_IDENTIFIED if row["n_fits"] >= MIN_N - 1
-                      else NOT_MEASURABLE.format(family=f.capitalize()))
+        status = None if anchor or value is not None else NOT_MEASURABLE.format(family=f.capitalize())
         per_family[f] = {
             "input": value,
             "interval": None if anchor else row["interval"],
@@ -680,16 +680,21 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
         "coefficient to this figure, so every rate beside it is measured relative to it and "
         "none of them tests it. If this row is wrong every credit figure scales with it and "
         "nothing in our stretches would show it.")
-    if per_family["fable"]["status"] == NOT_IDENTIFIED:
+    for f in FAMILIES:
+        row = per_family[f]
+        if f == "opus" or row["agree"] is not False:
+            continue
         sides = ", ".join(f"{label} {v['rate'] / opus_in:.3f}x Opus "
                           f"[{v['interval'][0] / opus_in:.3f}, {v['interval'][1] / opus_in:.3f}]"
-                          for label, v in per_family["fable"]["per_fit"].items())
-        per_family["fable"]["why"] = (
-            f"the fits do not agree within their intervals ({sides}), so the interval is the "
-            "claim and there is no single rate. The data cannot say whether Fable's rate moved "
-            "or the five-hour window did: the window fitted on the same stretches moves the "
-            "same way.")
-    if per_family["haiku"]["status"] and per_family["haiku"]["status"] != NOT_IDENTIFIED:
+                          for label, v in row["per_fit"].items())
+        row["why"] = (
+            f"the fits disagree within their intervals ({sides}), so the published rate is the "
+            f"median of the per-fit rates ({row['input']:.4f} credits per input token, "
+            f"{row['times_opus']:.3f}x Opus) and the interval is the union of the per-fit "
+            "intervals rather than a single fit's. The data cannot say whether the family's "
+            "rate moved or the five-hour window did: the window fitted on the same stretches "
+            "moves the same way.")
+    if per_family["haiku"]["status"]:
         per_family["haiku"]["why"] = (
             f"the highest Haiku share of any clean stretch on a fitted account is "
             f"{max_share['haiku']:.3f}, and no fit includes Haiku at all, so there is nothing "
