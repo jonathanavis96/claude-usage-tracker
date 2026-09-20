@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-20T19:30:13.323655+00:00",
+ "generated_at": "2026-09-20T20:30:12.303397+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 904,
+    "reset_verified_samples": 915,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 4009,
+    "samples": 4020,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-20T19:28:08+00:00"
+    "last": "2026-09-20T20:28:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -31,12 +31,12 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1733,
-    "turns": 51160,
+    "files": 1737,
+    "turns": 51202,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1733,
-     "dropped": 1053,
+     "kept": 1737,
+     "dropped": 1056,
      "subagent_files": 697
     }
    },
@@ -6792,12 +6792,12 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-20T19:28:08+00:00",
+     "window_ending": "2026-09-20T20:28:39+00:00",
      "windows": null,
-     "five_hour_pct": 1.0,
+     "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
      "rounding_interval": [
-      0.0,
+      0.2734,
       null
      ],
      "pieces": 1,
@@ -6813,18 +6813,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 677,
+    "reset_verified_samples": 688,
     "since": null,
-    "samples": 1237,
+    "samples": 1248,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-20T19:28:09+00:00"
+    "last": "2026-09-20T20:28:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 568,
-    "turns": 19500,
+    "files": 572,
+    "turns": 19609,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -8702,6 +8702,18 @@
      "rounding_interval": [
       4.0991,
       5.9993
+     ],
+     "pieces": 1,
+     "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-21T00:40:00.203132+00:00",
+     "windows": 5.0,
+     "five_hour_pct": 5.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      1.3341,
+      null
      ],
      "pieces": 1,
      "reset_verified": true
