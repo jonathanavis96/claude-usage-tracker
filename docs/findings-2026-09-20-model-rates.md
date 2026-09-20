@@ -283,6 +283,25 @@ The Opus row cannot be checked by this work at all. Every rate here is measured 
 Opus, and Opus is fixed at Shellac's 10/15 to set the scale; if that one row is wrong, every
 credit figure on the page scales with it and nothing in our data would show it.
 
+## Follow-ups, not done here
+
+1. **Wire `history/harness-runs.jsonl` into the selection rule.** `clean()` in
+   `tools/reconcile_window.py` and the same rule in `tracker/credits.py` (PR #65) build their
+   exclusion list from `history/probes.jsonl` and the effort matrix; they should read
+   `history/harness-runs.jsonl` instead, which is a superset of both and carries the aborted and
+   crashed runs as well. `tools.harness_runs.load_runs()` already returns the list in the shape
+   `clean()` takes, and `tools/model_rates.py` uses it that way, so the change is the two
+   readers plus a test that an aborted run excludes a stretch. It is held back here because
+   PR #65 owns `tracker/credits.py` and is in its review gate, and because moving
+   `reconcile_window.py`'s rule would restate published figures in the same commit as this
+   analysis. On the evidence above the effect is one jwork stretch and under half a percent on
+   the jwork pre-14-September fit.
+2. **Keep the run log current.** `tools/harness_runs.py` reads two machine-local ops logs; the
+   committed JSONL is the record for anyone without them. It should be rebuilt whenever a probe
+   runs, which is the same moment `history/probes.jsonl` gains a row.
+3. **Adopt the rate table** into `data/prices.json`'s `_credits` block, as written above, once
+   PR #65 merges.
+
 ## Limits
 
 - Every rate is relative to Opus. Nothing here tests the absolute credit values.
