@@ -178,8 +178,11 @@ def fit_bootstrap(recs: list[dict], out_mult: int, rng: random.Random, resamples
     families = base["families"]
     X, y = design(usable, out_mult, families)
     draws: dict[str, list[float]] = {f: [] for f in families}
+    pairs = [(num, den, free) for num, den, free in PAIRS if num in families and den in families]
+    ratio_draws: dict[str, list[float]] = {f"{num}:{den}": [] for num, den, _ in pairs}
     windows = []
     n = len(y)
+    at = {f: i for i, f in enumerate(families)}
     for _ in range(resamples):
         idx = [rng.randrange(n) for _ in range(n)]
         b = nnls(X[idx], y[idx])
@@ -187,9 +190,21 @@ def fit_bootstrap(recs: list[dict], out_mult: int, rng: random.Random, resamples
             continue
         for f, v in zip(families, b):
             draws[f].append(v / b[0] * SHELLAC["opus"])
+        for num, den, _ in pairs:
+            if b[at[den]] > 0:
+                ratio_draws[f"{num}:{den}"].append(b[at[num]] / b[at[den]])
         windows.append(SHELLAC["opus"] / (b[0] / 1e6))
     base["interval"] = {f: interval(v) for f, v in draws.items() if v}
     base["window_interval"] = interval(windows) if windows else None
+    base["ratios"] = {}
+    for num, den, free in pairs:
+        key = f"{num}:{den}"
+        rates = base["rates"]
+        if not rates.get(den) or not rates.get(num) or len(ratio_draws[key]) < resamples // 2:
+            base["ratios"][key] = {"measurable": False, "n_draws": len(ratio_draws[key])}
+            continue
+        base["ratios"][key] = {"measurable": True,
+                               **verdict(num, den, free, rates[num] / rates[den], list(interval(ratio_draws[key])))}
     return base
 
 
@@ -215,6 +230,25 @@ PAIRS = (("opus", "sonnet", "sonnet"), ("sonnet", "haiku", "haiku"), ("fable", "
 PAIR_PRIOR = {("opus", "sonnet"): lambda: SHELLAC["opus"] / SHELLAC["sonnet"],
               ("sonnet", "haiku"): lambda: SHELLAC["sonnet"] / SHELLAC["haiku"],
               ("fable", "opus"): lambda: FABLE_POINT / SHELLAC["opus"]}
+
+
+def verdict(num: str, den: str, free: str, value: float, iv: list[float]) -> dict:
+    """One ratio against its prior: does the interval hold it, and what does the page's row do.
+
+    The free model's tokens-per-window row is the window over its rate, so it scales with the
+    ratio when the free model is the denominator and against it when it is the numerator.
+    """
+    prior = PAIR_PRIOR[(num, den)]()
+    lo, hi = iv
+    if (num, den) == ("fable", "opus"):
+        pl, ph = FABLE_INTERVAL  # already in multiples of the Opus rate
+        agrees = not (hi < pl or lo > ph)
+    else:
+        agrees = lo <= prior <= hi
+    move = (value / prior - 1) if free == den else (prior / value - 1)
+    return {"ratio": value, "interval": [lo, hi], "prior": prior, "free": free,
+            "verdict": "agrees" if agrees else "disagrees", "row_move": move,
+            "interval_width": hi / lo if lo else None}
 
 
 def window_check(S: dict, lists: dict[str, list]) -> dict:
@@ -250,14 +284,13 @@ def section1(data: dict[str, list[dict]]) -> dict:
             sub = [r for r in recs if r["era"] == era]
             if not sub:
                 continue
-            row = {}
+            row = {"max_share": {f: max(r["share"][f] for r in sub) for f in FAMILIES}}
             for m in OUT_MULTS:
                 for f, v in single_model(sub, m).items():
                     q = quantiles(v)
                     q["measurable"] = q["n"] >= MIN_N
                     row.setdefault(f, {})[f"out{m}x"] = q
-            if row:
-                out[f"{a}/{era}"] = row
+            out[f"{a}/{era}"] = row
     return out
 
 
@@ -282,19 +315,8 @@ def section2(data: dict[str, list[dict]], rng: random.Random, resamples: int) ->
                     # tokens per 1% is the window over the rate, so the rate ratio num:den is
                     # the token ratio the other way up.
                     r = ratio_bootstrap(vb, va, rng, resamples)
-                    prior = PAIR_PRIOR[(num, den)]()
-                    lo, hi = r["interval"]
-                    if (num, den) == ("fable", "opus"):
-                        pl, ph = FABLE_INTERVAL  # already in multiples of the Opus rate
-                        agrees = not (hi < pl or lo > ph)
-                    else:
-                        agrees = lo <= prior <= hi
-                    move = (r["ratio"] / prior - 1) if free == den else (prior / r["ratio"] - 1)
                     per_mult[f"out{m}x"] = {"measurable": True, "n_num": len(va), "n_den": len(vb),
-                                            "ratio": r["ratio"], "interval": r["interval"],
-                                            "prior": prior, "verdict": "agrees" if agrees else "disagrees",
-                                            "free": free, "row_move": move,
-                                            "interval_width": r["interval"][1] / r["interval"][0]}
+                                            **verdict(num, den, free, r["ratio"], r["interval"])}
                 out[key] = per_mult
     return out
 
@@ -314,12 +336,7 @@ def section3(data: dict[str, list[dict]], rng: random.Random, resamples: int) ->
                         "window_interval": f["window_interval"],
                         "residual_median_abs_rel": f["residual_median_abs_rel"],
                         "residual_p90_abs_rel": f["residual_p90_abs_rel"],
-                        "ratios": {"opus:sonnet": (f["rates"]["opus"] / f["rates"]["sonnet"]
-                                                   if f["rates"].get("sonnet") else None),
-                                   "fable:opus": (f["rates"]["fable"] / f["rates"]["opus"]
-                                                  if f["rates"].get("fable") else None),
-                                   "sonnet:haiku": (f["rates"]["sonnet"] / f["rates"]["haiku"]
-                                                    if f["rates"].get("haiku") else None)}}
+                        "ratios": f["ratios"]}
     return out
 
 
@@ -444,7 +461,11 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
 
     print(f"\n1. Input-equivalent tokens per 1%, stretches one model carries at >= {DOMINANCE:.0%} of raw tokens")
     for key, row in s1.items():
+        print(f"   {key:16} highest share one model reaches: "
+              + " ".join(f"{f}={v:.3f}" for f, v in row["max_share"].items()))
         for f, per in row.items():
+            if f == "max_share":
+                continue
             q5, q3 = per["out5x"], per["out3x"]
             tag = "" if q5["measurable"] else "   NOT MEASURABLE (n < %d)" % MIN_N
             print(f"   {key:16} {f:7} n={q5['n']:3} out5x median={q5['median']:11,.0f} "
@@ -470,12 +491,27 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
 
     print("\n3. Rates fitted across every clean stretch, Opus fixed at 10/15")
     for key, f in s3.items():
-        rates = " ".join(f"{k}={v:.3f}[{f['interval'][k][0]:.3f},{f['interval'][k][1]:.3f}]"
-                         for k, v in f["rates"].items())
-        print(f"   {key:22} n={f['n']:3} {rates}")
-        print(f"   {'':22} window={f['window_credits_per_pct']:,.0f} credits per 1% "
+        print(f"   {key:22} n={f['n']:3} window={f['window_credits_per_pct']:,.0f} credits per 1% "
               f"[{f['window_interval'][0]:,.0f}, {f['window_interval'][1]:,.0f}]  "
               f"residual |rel| median={f['residual_median_abs_rel']:.3f} p90={f['residual_p90_abs_rel']:.3f}")
+        for fam, v in f["rates"].items():
+            lo, hi = f["interval"][fam]
+            if fam == "opus":
+                against = "Shellac 0.667, fixed to set the scale"
+            elif SHELLAC.get(fam) is None:
+                against = "no Shellac rate: Fable is not in the table"
+            else:
+                against = (f"Shellac {SHELLAC[fam]:.3f} "
+                           f"{'inside' if lo <= SHELLAC[fam] <= hi else 'OUTSIDE'} the interval")
+            print(f"      {fam:7} rate={v:.3f} [{lo:.3f}, {hi:.3f}]  {against}")
+        for pair, r in f["ratios"].items():
+            if not r["measurable"]:
+                print(f"      {pair:13} NOT MEASURABLE (the fit put one of the two rates at zero)")
+                continue
+            wide = f"  interval spans x{r['interval_width']:.1f}" if r["interval_width"] > 3 else ""
+            print(f"      {pair:13} {r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}] "
+                  f"prior={r['prior']:.3f} {r['verdict'].upper()}; {r['free']} row moves "
+                  f"{pct(r['row_move'])}{wide}")
 
     print("\n4. The jwork/Dave gap after 14 September")
     print(f"   n: jwork {s4['n']['jwork']}, dave {s4['n']['dave']}   median raw-token shares:")
