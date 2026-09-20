@@ -162,12 +162,13 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(j["generated_at"], "2026-09-05T20:15:00+00:00")
         self.assertEqual(j["last_sample_at"], "2026-09-05T08:00:00+00:00")
         self.assertEqual(j["plan_measured"], "max20")
-        # One window's published 1:5:20 scaling, labelled as such; nothing about windows per week.
-        self.assertEqual(j["plan_ratios"], {"pro": 0.05, "max5": 0.25, "max20": 1.0})
-        self.assertEqual(j["plan_ratios_basis"]["kind"], "published_plan_scaling")
-        # The frozen cross-plan weekly ratio is published again (restored 2026-09-17,
-        # reverses part of audit finding 6 by Jonathan's decision).
-        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.78, "max5": 1.78, "max20": 1.0})
+        # One window's 1 : 6 : 20 scaling from the credits table, labelled as such;
+        # nothing about windows per week.
+        self.assertEqual(j["plan_ratios"], {"pro": 0.05, "max5": 0.30, "max20": 1.0})
+        self.assertEqual(j["plan_ratios_basis"]["kind"], "credits_table")
+        # How many windows a week holds per plan, relative to Max 20x: the other
+        # quantity, from the same table, with the tracker's own confirmation beside it.
+        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.20, "max5": 1.667, "max20": 1.0})
         self.assertEqual(j["rate_basis"], "meter_budget")
         r = j["rates"]["claude-sonnet-5"]
         self.assertEqual(r["meter_budget_per_window"], 15.0)
@@ -833,10 +834,12 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         ww = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)["weekly_windows"]
+        # max5 and pro are scaled off max20's own figure, so with nothing to scale
+        # from they say that rather than borrowing a weekly-row median.
         self.assertEqual({p: (ww[p]["current"], ww[p]["availability"]) for p in ("max20", "max5", "pro")}, {
             "max20": (None, {"status": "unavailable", "reason": "no_paired_meter_data"}),
-            "max5": (None, {"status": "historical_only", "reason": "no_current_max5_measurement"}),
-            "pro": (None, {"status": "unavailable", "reason": "no_pro_measurement"})})
+            "max5": (None, {"status": "unavailable", "reason": "no_max20_current_to_scale_from"}),
+            "pro": (None, {"status": "unavailable", "reason": "no_max20_current_to_scale_from"})})
 
     def test_passive_weeks_are_split_by_plan(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
@@ -849,26 +852,39 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
                          ["2026-08-21", "2026-08-28", "2026-09-04"])
         self.assertEqual(ww["passive"]["history"], [dict(h, partial=False) for h in self.PASSIVE_WEEKLY["history"]])
         self.assertEqual(ww["probe"], {"current": None, "history": [], "by_window": []})
-        # passive.json's own two-weeks median is not a current value (audit finding 6), and
-        # weeks paired before the finding-3 repair are published as legacy evidence.
+        # passive.json's own two-weeks median is not a current value (audit finding 6) and
+        # is not published on the raw series either, and weeks paired before the finding-3
+        # repair are published as legacy evidence.
         self.assertIsNone(ww["max20"]["current"])
+        self.assertEqual((ww["passive"]["current"], ww["passive"]["reason"]),
+                         (None, "median_of_two_complete_weeks_is_not_a_measurement"))
         self.assertEqual({(h["quality"], tuple(h["reasons"])) for h in ww["max20"]["history"]},
                          {("legacy_uncertain", ("paired_before_denominator_repair",))})
         self.assertFalse(ww["max20"]["assumed"])
-        self.assertFalse(ww["max5"]["assumed"])
+        # max5's `current` is inferred from max20 now, so the block says `assumed`; its
+        # weekly rows are still its own measured Max 5x era.
+        self.assertTrue(ww["max5"]["assumed"])
+        self.assertEqual({h["assumed"] for h in ww["max5"]["history"]}, {False})
 
-    def test_pro_borrows_max5s_current_again(self):
-        # Restored 2026-09-17 (reverses part of finding 6 by Jonathan's decision): Pro
-        # has no measurement of its own, so its `current` is Max 5x's own figure,
-        # `assumed: true`, the same gap-fill pre-2026-09-16 used. Its history and
-        # regimes stay empty -- only `current` is borrowed.
+    def test_max5_and_pro_currents_are_scaled_off_the_live_max20_figure(self):
+        # Neither plan is measured on any watched account any more, so each one's
+        # `current` is the live max20 figure times its weekly-window ratio from the
+        # credits table, marked inferred. Pro's history and regimes stay empty; max5
+        # keeps its own measured Jun-Aug weeks.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
-        passive = dict(PASSIVE, weekly_windows=self.PASSIVE_WEEKLY)
-        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        by_window = [window(f"2026-08-{d:02d}T22:00:00+00:00", 60.0, 10.0) for d in range(15, 27)]
+        passive = dict(PASSIVE, weekly_windows=dict(self.PASSIVE_WEEKLY, by_window=by_window))
+        now = datetime(2026, 8, 27, 20, 15, tzinfo=timezone.utc)
         ww = build_public_json(rows, passive, EFFORT, PRICES, now)["weekly_windows"]
-        self.assertEqual((ww["pro"]["current"], ww["pro"]["history"], ww["pro"]["regimes"], ww["pro"]["assumed"]),
-                         (ww["max5"]["current"], [], [], True))
-        self.assertIsNotNone(ww["max5"]["current"])
+        self.assertEqual(ww["max20"]["current"], 6.0)
+        self.assertEqual((ww["max5"]["current"], ww["pro"]["current"]),
+                         (round(6.0 * 1.667, 2), round(6.0 * 1.20, 2)))
+        for plan, ratio in (("max5", 1.667), ("pro", 1.20)):
+            self.assertEqual((ww[plan]["assumed"], ww[plan]["inferred_from"],
+                              ww[plan]["weekly_window_ratio"]), (True, "max20", ratio), plan)
+            self.assertEqual(ww[plan]["availability"], {
+                "status": "inferred", "reason": "scaled_from_max20_by_weekly_window_ratio"}, plan)
+        self.assertEqual((ww["pro"]["history"], ww["pro"]["regimes"]), ([], []))
         self.assertTrue(ww["max5"]["history"])
 
     def test_probe_weeks_publish_beside_passive_max20_weeks_not_in_place_of_them(self):
@@ -1026,10 +1042,9 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
         self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.5)
-        # Max 5x's own weekly-row median is published as current again (restored 2026-09-17,
-        # reverses part of finding 6 by Jonathan's decision): the account is not going back to
-        # it, but the last-two-complete-weeks figure is still what the page had.
-        self.assertEqual(j["weekly_windows"]["max5"]["current"], 10.91)
+        # Max 5x's own era is still published as measured regimes and weeks; only its
+        # `current` is inferred, 6.5 scaled by the weekly-window ratio.
+        self.assertEqual(j["weekly_windows"]["max5"]["current"], round(6.5 * 1.667, 2))
         self.assertEqual([r["windows"] for r in j["weekly_windows"]["max5"]["regimes"]], [11.0])
         self.assertFalse(j["weekly_windows"]["max5"]["plan_change"]["independently_verified"])
 
@@ -1065,12 +1080,13 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(_regime_with_evidence(0, values), 1)
         self.assertEqual(_regime_with_evidence(7, values), 3)
 
-    def test_weekly_window_ratio_seam_uses_max5s_best_supported_regime(self):
+    def test_weekly_window_ratios_are_the_credits_table_figures_not_a_measured_seam(self):
         # Max 5x ran a short 6.6 dip early on (unrelated to the plan move -- some other
         # stretch of heavier use), then about 11 windows a week for most of its run up
-        # to PLAN_CHANGE_AT; Max 20x follows at 6.5 from the seam. The published ratio
-        # is the 11 era over 6.5, not the dip over 6.5, which would read about 1.0 and
-        # collapse Pro and Max 5x onto Max 20x.
+        # to PLAN_CHANGE_AT; Max 20x follows at 6.5 from the seam. Both eras still
+        # publish as regimes, but the ratio itself is the credits table's (1.667 and
+        # 1.20), not this account's own seam: one account's two eras are a
+        # confirmation of that figure, not a replacement for it.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         by_window = ([window(f"2026-06-{d:02d}T10:00:00+00:00", 66.0, 10.0) for d in range(20, 24)]
                      + [window(f"2026-07-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(1, 32)]
@@ -1086,7 +1102,17 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual([r["windows"] for r in regimes], [6.6, 11.0])
         self.assertGreater(regimes[1]["points"], regimes[0]["points"])
         self.assertEqual(j["weekly_windows"]["max20"]["regimes"][0]["windows"], 6.5)
-        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.692, "max5": 1.692, "max20": 1.0})
+        self.assertEqual(j["weekly_window_ratios"], {"pro": 1.20, "max5": 1.667, "max20": 1.0})
+        # The seam this account actually shows, 11.0 over 6.5, is 1.69: close to the
+        # table's 1.667 and published as `measured_confirmation`, not as the ratio.
+        basis = j["weekly_window_ratios_basis"]
+        self.assertEqual((basis["kind"], basis["dated"], basis["source_url"]),
+                         ("credits_table", False, "https://she-llac.com/claude-limits"))
+        self.assertEqual(basis["documented_windows_per_week"],
+                         {"pro": 9.09, "max5": 12.63, "max20": 7.58})
+        self.assertEqual(basis["credits_per_week"],
+                         {"pro": 5_000_000, "max5": 41_666_700, "max20": 83_333_300})
+        self.assertEqual(basis["measured_confirmation"]["max5_over_max20"], 1.66)
 
     def test_probe_runs_per_window_points_are_published_but_stay_out_of_the_max20_series(self):
         # The real 2026-09-14/15 probe rows: each run moves the seven-day meter
@@ -1150,8 +1176,11 @@ class RealLogTests(unittest.TestCase):
         c = j["last_change"]
         self.assertEqual((c["scope"], c["direction"], c["metric"], c["attribution"], c["provisional"]),
                          ("weekly", "decreased", "weekly_to_five_hour_ratio", "observed_account_metric_change", False))
+        # One account: the onset bounds are its own step's date, with the detector's
+        # own window bounds kept under `from_windows`.
         self.assertEqual((c["onset"], c["confirmation"]),
-                         ({"earliest": "2026-09-13", "latest": "2026-09-14"},
+                         ({"earliest": "2026-09-14", "latest": "2026-09-14",
+                           "from_windows": {"earliest": "2026-09-13", "latest": "2026-09-14"}},
                           {"at": "2026-09-15", "evidence_points": 118, "seven_day_pct": 31.0}))
         self.assertEqual((c["rounding_interval_before"], c["rounding_interval_after"]),
                          ([6.1892, 6.8754], [3.9284, 5.695]))
