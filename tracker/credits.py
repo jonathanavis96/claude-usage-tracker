@@ -156,17 +156,25 @@ class Priced:
     stretch cannot be priced and must be left out rather than under-counted.
     `fable_input`/`fable_output` are kept apart from `known` because Fable has no
     single rate to fold in -- they are what an interval or a solve is applied to.
+
+    Two token totals, because "what share of this stretch was Fable" has two honest
+    answers. `raw` counts every token of every class. `charged` counts only the tokens
+    the meter charges for: the input side at the current cache-read weight, plus
+    output. At a cache-read weight of 0 they differ by the whole cache-read column,
+    which is 97% of a typical stretch, so a share taken against one is nothing like a
+    share taken against the other.
     """
     priced: bool
     known: float
     fable_input: float
     fable_output: float
     raw: int
+    charged: float
 
 
 def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Priced:
     weight = cache_read_weight(credits) if weight is None else weight
-    known = fable_in = fable_out = 0.0
+    known = fable_in = fable_out = charged = 0.0
     raw = 0
     priced = True
     for model, tok in tokens.items():
@@ -174,6 +182,7 @@ def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Pr
             continue
         at_in, at_out = input_side(tok, weight), tok.get("output", 0)
         raw += raw_tokens(tok)
+        charged += at_in + at_out
         fam = family(model, credits)
         pair = rates(fam, credits) if fam else None
         if fam is None:
@@ -183,7 +192,7 @@ def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Pr
             fable_out += at_out
         else:
             known += at_in * pair[0] + at_out * pair[1]
-    return Priced(priced, known, fable_in, fable_out, raw)
+    return Priced(priced, known, fable_in, fable_out, raw, charged)
 
 
 @dataclass(frozen=True)
