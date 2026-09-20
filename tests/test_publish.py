@@ -32,6 +32,16 @@ def window(window_ending, d5, d7, pieces=1):
             "five_hour_pct": d5, "seven_day_pct": d7, "pieces": pieces, "reset_verified": True}
 
 
+def gs_weekly(**accounts):
+    """A tracker.gs_passive report carrying only each account's own weekly_by_window points.
+
+    The shape history/gs-passive.json has for jwork and dave: the same per-window
+    points tracker/weekly.py writes, under accounts.<name>.weekly_by_window.
+    """
+    return {"accounts": {name: {"account": name, "stretches": [], "weekly_by_window": points}
+                         for name, points in accounts.items()}}
+
+
 def legacy_window(window_ending, d5, d7):
     """The same point as a passive.json from before that repair wrote it: no pieces, no reset flag."""
     return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 else None,
@@ -1080,6 +1090,19 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(_regime_with_evidence(0, values), 1)
         self.assertEqual(_regime_with_evidence(7, values), 3)
 
+    def test_plan_ratios_basis_names_the_credits_table_and_that_it_is_undated(self):
+        # What one five-hour window is worth between plans, 1 : 6 : 20, with the
+        # credits it came from and the note that the table carries no date. A
+        # documented figure is a reference to compare a measurement against.
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        self.assertEqual(j["plan_ratios"], {"pro": 0.05, "max5": 0.30, "max20": 1.0})
+        self.assertEqual(j["plan_ratios_basis"], {
+            "kind": "credits_table", "scope": "one five-hour window",
+            "credits_per_window": {"pro": 550_000, "max5": 3_300_000, "max20": 11_000_000},
+            "source_url": "https://she-llac.com/claude-limits", "dated": False})
+
     def test_weekly_window_ratios_are_the_credits_table_figures_not_a_measured_seam(self):
         # Max 5x ran a short 6.6 dip early on (unrelated to the plan move -- some other
         # stretch of heavier use), then about 11 windows a week for most of its run up
@@ -1145,6 +1168,137 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         self.assertIsNone(j["weekly_windows"]["max20"]["current"])
         self.assertEqual([e for e in j["events"] if e.get("scope") == "weekly"], [])
+
+
+def flat(days, d5, d7=10.0, hour=10):
+    """One per-window point a day, each moving the meters by d5 and d7."""
+    return [window(f"2026-09-{d:02d}T{hour:02d}:00:00+00:00", d5, d7) for d in days]
+
+
+class ThreeAccountWeeklyTests(unittest.TestCase):
+    """weekly_windows.max20 over every watched Max 20x account, not masterrig alone.
+
+    a1 is masterrig (history/passive.json's own by_window), a2 and a3 are the gs
+    accounts' weekly_by_window. a1 and a2 both step, at their own seven-day
+    resets three days apart; a3 has too little history to step at all.
+    """
+
+    A1 = flat(range(8, 14), 60.0) + flat(range(14, 18), 45.0)
+    A2 = flat(range(8, 14), 60.0) + flat(range(16, 20), 45.0)
+    A3 = flat(range(10, 14), 60.0)
+    NOW = datetime(2026, 9, 20, 6, tzinfo=timezone.utc)
+
+    def _publish(self):
+        passive = dict(PASSIVE, weekly_windows={"current": 6.0, "history": [],
+                                                "by_window": self.A1})
+        return build_public_json([], passive, EFFORT, PRICES, self.NOW,
+                                 gs_passive=gs_weekly(jwork=self.A2, dave=self.A3))
+
+    def test_every_accounts_points_are_pooled_and_tagged_but_never_named(self):
+        j = self._publish()
+        max20 = j["weekly_windows"]["max20"]
+        counts = {label: sum(1 for p in max20["by_window"] if p["account"] == label)
+                  for label in ("a1", "a2", "a3")}
+        self.assertEqual(counts, {"a1": 10, "a2": 10, "a3": 4})
+        self.assertEqual({label: max20["by_account"][label]["n"] for label in counts}, counts)
+        self.assertEqual([p["window_ending"] for p in max20["by_window"]],
+                         sorted(p["window_ending"] for p in max20["by_window"]))
+        # The current regime is the post-cut one: eight windows at 45/10 across a1 and a2.
+        self.assertEqual(max20["current"], 4.5)
+        estimate = max20["current_estimate"]
+        self.assertEqual((estimate["points"], estimate["seven_day_pct"]), (8, 80.0))
+        # Three accounts stand behind the published evidence, and none of them is named.
+        self.assertEqual(j["passive_account_count"], 3)
+        for name in ("masterrig", "jwork", "dave"):
+            self.assertNotIn(name, json.dumps(j))
+
+    def test_each_accounts_step_is_dated_on_its_own_points(self):
+        # The cut reaches a1 on 09-14 and a2 on 09-16, each at its own seven-day
+        # reset; a3 has one regime and no step. before/after are the pooled levels
+        # the step separates and percent is signed.
+        by_account = self._publish()["weekly_windows"]["max20"]["by_account"]
+        self.assertEqual(by_account["a1"]["step"],
+                         {"onset": "2026-09-14", "before": 6.0, "after": 4.5, "percent": -25})
+        self.assertEqual(by_account["a2"]["step"],
+                         {"onset": "2026-09-16", "before": 6.0, "after": 4.5, "percent": -25})
+        self.assertIsNone(by_account["a3"]["step"])
+        self.assertEqual({label: by_account[label]["current"] for label in ("a1", "a2", "a3")},
+                         {"a1": 4.5, "a2": 4.5, "a3": 6.0})
+        self.assertEqual([r["windows"] for r in by_account["a3"]["regimes"]], [6.0])
+
+    def test_the_pooled_event_carries_the_accounts_own_onsets(self):
+        # One published event, bounded by the earliest and the latest account onset
+        # and dated at the earliest. The detector's own window bounds stay under
+        # `onset.from_windows`.
+        j = self._publish()
+        events = [e for e in j["events"] if e["scope"] == "weekly"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["date"], "2026-09-14")
+        self.assertEqual({k: events[0]["onset"][k] for k in ("earliest", "latest")},
+                         {"earliest": "2026-09-14", "latest": "2026-09-16"})
+        self.assertEqual(events[0]["onset"]["from_windows"],
+                         {"earliest": "2026-09-13", "latest": "2026-09-14"})
+        self.assertEqual(events[0]["attribution"], "observed_account_metric_change")
+
+    def test_a_pooled_date_later_than_an_accounts_own_onset_is_moved_back_and_says_so(self):
+        # a1 steps 6.0 -> 5.0 on 09-12; a2 carries twice as many windows, holds 6.0
+        # until its own reset on 09-16 and then falls to 3.6, so the pooled series
+        # splits at 09-16 and a1's earlier step is lost in the pool. The accounts'
+        # own onsets date the event, and `attribution` says the date did not come
+        # from the pooled windows.
+        a1 = flat(range(4, 12), 60.0) + flat(range(12, 18), 50.0)
+        a2 = (flat(range(4, 16), 60.0, hour=8) + flat(range(4, 16), 60.0, hour=14)
+              + flat(range(16, 20), 36.0, hour=8) + flat(range(16, 20), 36.0, hour=14))
+        passive = dict(PASSIVE, weekly_windows={"current": 6.0, "history": [], "by_window": a1})
+        j = build_public_json([], passive, EFFORT, PRICES, self.NOW, gs_passive=gs_weekly(jwork=a2))
+        by_account = j["weekly_windows"]["max20"]["by_account"]
+        self.assertEqual(by_account["a1"]["step"]["onset"], "2026-09-12")
+        self.assertEqual(by_account["a2"]["step"]["onset"], "2026-09-16")
+        self.assertEqual(by_account["a3"], {"n": 0, "current": None, "regimes": [], "step": None})
+        change = j["last_change"]
+        self.assertEqual((change["date"], change["onset"]["earliest"], change["onset"]["latest"]),
+                         ("2026-09-12", "2026-09-12", "2026-09-16"))
+        self.assertGreater(change["onset"]["from_windows"]["latest"], change["date"])
+        self.assertEqual(change["attribution"],
+                         "observed_account_metric_change_dated_from_per_account_onsets")
+
+    def test_pooled_calendar_weeks_are_published_for_the_chart(self):
+        # The same points bucketed into ISO weeks, pooled the way tracker/weekly.py
+        # pools its own history rows, with the open week flagged partial.
+        weekly = self._publish()["weekly_windows"]["max20"]["weekly"]
+        self.assertEqual([(w["week_ending"], w["windows"], w["n"], w["five_hour_pct"],
+                           w["seven_day_pct"], w["partial"]) for w in weekly],
+                         [("2026-09-13", 6.0, 16, 960.0, 160.0, False),
+                          ("2026-09-20", 4.5, 8, 360.0, 80.0, True)])
+        lo, hi = weekly[0]["rounding_interval"]
+        self.assertLess(lo, 6.0)
+        self.assertGreater(hi, 6.0)
+
+    def test_a_gs_point_with_no_reset_id_still_counts(self):
+        # jwork's meter log names the reset on only its newest few windows, so
+        # requiring one would drop that account altogether. The flag is published
+        # per point instead.
+        a2 = [dict(p, reset_verified=False) for p in self.A2]
+        passive = dict(PASSIVE, weekly_windows={"current": 6.0, "history": [],
+                                                "by_window": self.A1})
+        j = build_public_json([], passive, EFFORT, PRICES, self.NOW, gs_passive=gs_weekly(jwork=a2))
+        max20 = j["weekly_windows"]["max20"]
+        self.assertEqual(max20["by_account"]["a2"]["n"], 10)
+        self.assertEqual({p["reset_verified"] for p in max20["by_window"] if p["account"] == "a2"},
+                         {False})
+
+    def test_points_from_the_max5_era_stay_out_of_every_account(self):
+        # The era rule applies to all three accounts, not just masterrig's own log:
+        # a window that starts before PLAN_CHANGE_AT reads at the Max 5x ratio.
+        early = [window("2026-08-10T10:00:00+00:00", 110.0, 10.0)]
+        passive = dict(PASSIVE, weekly_windows={"current": 6.0, "history": [],
+                                                "by_window": early + self.A1})
+        j = build_public_json([], passive, EFFORT, PRICES, self.NOW,
+                              gs_passive=gs_weekly(jwork=early + self.A2))
+        by_account = j["weekly_windows"]["max20"]["by_account"]
+        self.assertEqual((by_account["a1"]["n"], by_account["a2"]["n"]), (10, 10))
+        self.assertTrue(all(p["window_ending"] > "2026-08-14"
+                            for p in j["weekly_windows"]["max20"]["by_window"]))
 
 
 # The weekly_windows block of the committed history/passive.json: masterrig's whole

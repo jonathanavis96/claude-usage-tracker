@@ -826,11 +826,20 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
 
 
 def _latest_change_with_scope(window_events: list, weekly_events: list) -> dict | None:
-    """The most recent change across both event series, as its full event record."""
+    """The most recent change across both event series, as its full event record.
+
+    Recency is judged on the evidence's own newest window, not on the published
+    date: a pooled weekly event re-dated from the accounts' own onsets
+    (_account_dated) carries a date earlier than the windows it was certified on,
+    and a staggered cut can certify more than one pooled split inside that span.
+    Without this the account-dated event lost `last_change` to an older split of
+    the same transition.
+    """
     candidates = [(e, "window") for e in window_events] + [(e, "weekly") for e in weekly_events]
     if not candidates:
         return None
-    e, scope = max(candidates, key=lambda c: c[0].date)
+    e, scope = max(candidates,
+                   key=lambda c: getattr(c[0], "window_onset_latest", None) or c[0].date)
     return _event_record(e, scope)
 
 
