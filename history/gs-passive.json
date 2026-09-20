@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-20T02:30:12.835770+00:00",
+ "generated_at": "2026-09-20T03:30:12.401201+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 723,
+    "reset_verified_samples": 734,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3822,
+    "samples": 3833,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-20T02:25:38+00:00"
+    "last": "2026-09-20T03:26:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -31,12 +31,12 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1713,
-    "turns": 50391,
+    "files": 1715,
+    "turns": 50551,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1713,
-     "dropped": 1034,
+     "kept": 1715,
+     "dropped": 1036,
      "subagent_files": 697
     }
    },
@@ -6649,6 +6649,18 @@
      ],
      "pieces": 1,
      "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-20T07:30:00.883214+00:00",
+     "windows": null,
+     "five_hour_pct": 3.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.9101,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": true
     }
    ]
   },
@@ -6660,18 +6672,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 495,
+    "reset_verified_samples": 506,
     "since": null,
-    "samples": 1050,
+    "samples": 1061,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-20T02:25:39+00:00"
+    "last": "2026-09-20T03:26:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 438,
-    "turns": 12142,
+    "files": 444,
+    "turns": 12565,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -7789,6 +7801,92 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-20T01:47:39+00:00",
+     "end": "2026-09-20T02:31:08+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 7.4342,
+     "usd_per_pct": 0.7434,
+     "bounds": [
+      0.6758,
+      0.826
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 714,
+       "output": 58178,
+       "cache_read": 61328832,
+       "cache_write": 855810,
+       "cache_write_1h": 291307
+      },
+      "claude-fable-5-1": {
+       "input": 582,
+       "output": 18573,
+       "cache_read": 5694679,
+       "cache_write": 40380,
+       "cache_write_1h": 40380
+      },
+      "claude-opus-5": {
+       "input": 118,
+       "output": 10597,
+       "cache_read": 4155740,
+       "cache_write": 326696,
+       "cache_write_1h": 60011
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 443,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "unaccounted",
+     "reference": 1.532,
+     "capture": 0.4853
+    },
+    {
+     "start": "2026-09-20T02:31:08+00:00",
+     "end": "2026-09-20T02:58:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 10.8751,
+     "usd_per_pct": 1.0875,
+     "bounds": [
+      0.9886,
+      1.2083
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 396,
+       "output": 41141,
+       "cache_read": 46161959,
+       "cache_write": 854279,
+       "cache_write_1h": 88870
+      },
+      "claude-opus-5": {
+       "input": 266,
+       "output": 136645,
+       "cache_read": 22224303,
+       "cache_write": 462288,
+       "cache_write_1h": 237801
+      },
+      "claude-fable-5-1": {
+       "input": 416,
+       "output": 9806,
+       "cache_read": 4967324,
+       "cache_write": 25045,
+       "cache_write_1h": 25045
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 351,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "unaccounted",
+     "reference": 1.532,
+     "capture": 0.7099
     }
    ],
    "runs": [
@@ -7805,10 +7903,10 @@
     },
     {
      "start": "2026-09-20T00:21:09+00:00",
-     "end": "2026-09-20T01:09:39+00:00",
+     "end": "2026-09-20T02:58:39+00:00",
      "kind": "unaccounted",
      "direction": "low",
-     "stretches": 1,
+     "stretches": 3,
      "step": -0.4583,
      "capture": 0.5417,
      "corroborated_by": [],
@@ -7846,44 +7944,44 @@
     },
     {
      "date": "2026-09-20",
-     "usd_per_pct": 1.056,
-     "delta_pct": 21.0,
-     "stretches": 2,
-     "rounding": 0.0476,
+     "usd_per_pct": 0.9875,
+     "delta_pct": 41.0,
+     "stretches": 4,
+     "rounding": 0.0488,
      "bounds": [
-      1.008,
-      1.1088
+      0.9415,
+      1.0381
      ],
-     "pieces": 1,
+     "pieces": 2,
      "reset_verified": true,
-     "capture_diagnosed": 1
+     "capture_diagnosed": 3
     }
    ],
    "split": {
     "input": 1.8e-05,
-    "output": 0.002507,
-    "cache_read": 0.982258,
-    "cache_write": 0.015217,
-    "cache_write_1h": 0.005484
+    "output": 0.002446,
+    "cache_read": 0.982111,
+    "cache_write": 0.015425,
+    "cache_write_1h": 0.005442
    },
-   "last_usable_at": "2026-09-20T01:09:39+00:00",
+   "last_usable_at": "2026-09-20T02:58:39+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 16,
-     "median": 1.532,
-     "half_range": 0.4443,
-     "mad": 0.1992,
-     "cv": 0.2055
+     "n": 18,
+     "median": 1.4733,
+     "half_range": 0.4914,
+     "mad": 0.2043,
+     "cv": 0.2445
     },
     "daily": {
      "n": 3,
      "median": 1.5477,
-     "half_range": 0.165,
+     "half_range": 0.1871,
      "mad": 0.0182,
-     "cv": 0.2083
+     "cv": 0.2407
     }
    },
    "weekly_by_window": [
@@ -7984,13 +8082,13 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-09-20T02:25:39+00:00",
-     "windows": 4.78,
-     "five_hour_pct": 43.0,
-     "seven_day_pct": 9.0,
+     "window_ending": "2026-09-20T03:26:09+00:00",
+     "windows": 5.0,
+     "five_hour_pct": 55.0,
+     "seven_day_pct": 11.0,
      "rounding_interval": [
-      3.9193,
-      5.9992
+      4.2504,
+      5.9994
      ],
      "pieces": 1,
      "reset_verified": false
