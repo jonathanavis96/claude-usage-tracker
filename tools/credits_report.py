@@ -544,7 +544,8 @@ def compare_published(published: dict, recomputed: dict,
     for key in sorted(set(left) | set(right)):
         a, b = left.get(key, "<absent>"), right.get(key, "<absent>")
         if isinstance(a, bool) or isinstance(b, bool):
-            ok, diff = a == b, None
+            # `True == 1` in Python, and a flag that became a count is a defect.
+            ok, diff = type(a) is type(b) and a == b, None
         elif isinstance(a, (int, float)) and isinstance(b, (int, float)):
             diff = abs(a - b) / abs(a) if a else abs(a - b)
             ok = diff <= tolerance
