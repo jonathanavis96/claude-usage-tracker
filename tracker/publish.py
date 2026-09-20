@@ -788,6 +788,12 @@ def _regime_current(points: list[tuple], now: datetime) -> dict | None:
     None when that fortnight holds less than MIN_POOL_D7 of seven-day movement.
     `stale` is judged against the publish time, not against the newest point, so
     a weekly log that has stopped arriving is visible as such (audit finding 16).
+
+    Since the series became three accounts wide the pool can hold points whose
+    meter log did not name the window's reset (_account_window_dicts): masterrig's
+    names every one, the gs accounts' name only the newest few. `quality` stays
+    "measured" and each point publishes its own `reset_verified` flag under
+    `max20.by_window`, so a consumer can see how much of the pool carries one.
     """
     regime = current_regime_points(points)
     if not regime:
