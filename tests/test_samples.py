@@ -7,6 +7,7 @@ from tracker.samples import (
     merge_samples,
     parse_ceiling_log,
     parse_gs_ceiling_log,
+    parse_log,
     parse_meter_log,
     parse_moonlighter,
 )
@@ -88,3 +89,39 @@ class MeterLogTests(unittest.TestCase):
                  meter_line("2026-09-15T21:05:00+00:00", 40.0, identity="bbbb")]
         with self.assertRaises(MixedAccountLog):
             parse_meter_log(lines)
+
+
+class ParseLogTests(unittest.TestCase):
+    """One dispatcher, so an account can name several logs of different formats (issue #52)."""
+
+    def test_each_format_name_reaches_its_own_parser(self):
+        cases = {
+            "moonlighter": ([meter_line("2026-09-15T21:00:00+00:00", 3.0)], "moonlighter"),
+            "meter": ([meter_line("2026-09-15T21:00:00+00:00", 3.0)], "meter"),
+            "ceiling": (["2026-09-15T21:00:00+00:00 5-hour 3% / 7-day 10%"], "ceiling"),
+            "gs-ceiling": (["2026-09-15T21:00:00+00:00 ok five_hour=3% seven_day=10%"], "gs-ceiling"),
+        }
+        for fmt, (lines, source) in cases.items():
+            with self.subTest(fmt=fmt):
+                s = parse_log(fmt, lines)
+                self.assertEqual([x.five_hour for x in s], [3.0])
+                self.assertEqual(s[0].source, source)
+
+    def test_since_drops_earlier_readings_in_every_format(self):
+        cut = datetime(2026, 9, 15, 21, 5, tzinfo=timezone.utc)
+        for fmt, lines in (
+            ("moonlighter", [meter_line("2026-09-15T21:00:00+00:00", 3.0),
+                             meter_line("2026-09-15T21:10:00+00:00", 4.0)]),
+            ("ceiling", ["2026-09-15T21:00:00+00:00 5-hour 3% / 7-day 10%",
+                         "2026-09-15T21:10:00+00:00 5-hour 4% / 7-day 10%"]),
+            ("gs-ceiling", ["2026-09-15T21:00:00+00:00 ok five_hour=3% seven_day=10%",
+                            "2026-09-15T21:10:00+00:00 ok five_hour=4% seven_day=10%"]),
+        ):
+            with self.subTest(fmt=fmt):
+                self.assertEqual([x.five_hour for x in parse_log(fmt, lines, cut)], [4.0])
+
+    def test_an_unknown_format_names_itself_and_the_known_ones(self):
+        with self.assertRaises(ValueError) as cm:
+            parse_log("csv", [])
+        self.assertIn("csv", str(cm.exception))
+        self.assertIn("moonlighter", str(cm.exception))

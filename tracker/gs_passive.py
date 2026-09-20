@@ -36,6 +36,17 @@ meter live. Assumptions it depends on, as of 2026-09-15:
 - Dave's meter is tracker.meter_log's own log, sampled from 2026-09-15; there
   is no Dave meter history before that.
 
+`masterrig_account` adds Jonathan's own account beside them (issue #52). It is
+deliberately not part of `gs_accounts`: it is not a clean instrument, because its
+meter counts the account everywhere and only this host's transcripts are read
+(MASTERRIG_METER_NOTE). It is joined here all the same because it is the
+tracker's longest meter record -- back to 2026-06-13 against gs's 2026-09-05 --
+and the per-stretch, per-model token detail was previously thrown away:
+tracker/passive.py keeps one tokens-per-percent number per day. Both paths run;
+neither replaces the other.
+
+    python3 -m tracker.gs_passive --masterrig --out history/masterrig-passive.json
+
 Units. A stretch is valued exactly as the publisher valued a probe row
 (tracker/join.py bundle_meter_usd), and `passive_dollar_readings` returns
 (time, meter dollars per full window) pairs, the element shape of
@@ -78,7 +89,7 @@ from statistics import mean, median, stdev
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
-from .samples import Sample, parse_gs_ceiling_log, parse_meter_log
+from .samples import Sample, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 
 JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
@@ -91,6 +102,18 @@ JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
 #: rate: the band selects observations toward the answer. So the gate stays off
 #: and the publisher labels every passive rate conditional on capture instead.
 CAPTURE_GATE = False
+#: A stretch whose transcripts hold no tokens at all: the meter moved and this host saw
+#: nothing of it. Recorded as its own status rather than left as the capture check's
+#: `accepted`, so nothing downstream reads `status == accepted` and then values $0 of
+#: work against real meter movement. See `publishable`.
+NO_TOKENS = "no-tokens"
+
+
+@dataclass(frozen=True)
+class MeterLog:
+    """One more log of the same account's meter, in any tracker/samples.py format."""
+    path: Path
+    format: str
 
 
 @dataclass(frozen=True)
@@ -98,12 +121,21 @@ class Account:
     name: str
     config_dir: Path
     meter_log: Path
-    meter_format: str  # "meter" (tracker.meter_log) or "gs-ceiling" (usage-ceiling.py)
+    #: A tracker/samples.py format name: "meter" (tracker.meter_log), "gs-ceiling"
+    #: (usage-ceiling.py), "moonlighter" or "ceiling" (masterrig's two).
+    meter_format: str
     meter_since: datetime | None = None
     #: A reset-less log this account was read from before `meter_log` existed. Its
     #: readings are used only up to the first reading of `meter_log`, and every
     #: stretch built on them is `reset_verified: false` (audit finding 10).
     legacy_meter_log: Path | None = None
+    #: Further logs of this same meter, merged with `meter_log` a minute at a time
+    #: (tracker/samples.py merge_samples, reset-bearing sources winning). masterrig's
+    #: meter is two logs: moonlighter's JSONL and its ceiling's systemd log.
+    extra_meter_logs: tuple[MeterLog, ...] = ()
+    #: What a reader of this account's stretches has to know about its meter. Recorded
+    #: in the report's `meter` meta, not used in any arithmetic.
+    meter_note: str | None = None
 
 
 def gs_accounts(home: Path | None = None) -> dict[str, Account]:
@@ -117,18 +149,62 @@ def gs_accounts(home: Path | None = None) -> dict[str, Account]:
     }
 
 
+#: Why masterrig's stretches are kept but never published as a rate. Its meter counts
+#: the account everywhere -- claude.ai in a browser, the phone app, any other machine --
+#: while only this host's ~/.claude/projects is read, so a stretch's percent includes
+#: movement its tokens cannot explain. That is the phantom the capture check measures
+#: (`capture`, `capture_status`), and it is why the same join on this account spreads
+#: fifteen-fold day to day where gs's spreads by a fifth. The stretches are written all
+#: the same: they are the longest per-model token record the tracker has, and a reader
+#: who wants only the clean ones has `capture` to filter on.
+MASTERRIG_METER_NOTE = (
+    "This meter counts the whole account -- web, phone and every other machine -- while "
+    "only this host's transcripts are read, so every stretch may carry usage the tokens "
+    "cannot see. Read `capture` and `capture_status` per stretch before using a rate; the "
+    "capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch "
+    "from this file."
+)
+
+
+def masterrig_account(home: Path | None = None) -> Account:
+    """Jonathan's own account on masterrig: two logs of one meter, and ~/.claude's transcripts.
+
+    The pair is what tracker/passive.py has always merged by hand -- moonlighter's
+    usage_log.jsonl (reset-bearing) and the ceiling's systemd log (not) -- and it is
+    the tracker's longest meter record, back to 2026-06-13. Unlike the gs accounts
+    this one is not a clean instrument; see MASTERRIG_METER_NOTE.
+    """
+    home = Path(home) if home is not None else Path.home()
+    ceiling = home / ".paperclip" / "ops" / "mis-usage-ceiling-systemd.log"
+    return Account("masterrig", home / ".claude", home / ".moonlighter" / "usage_log.jsonl", "moonlighter",
+                   extra_meter_logs=(MeterLog(ceiling, "ceiling"),), meter_note=MASTERRIG_METER_NOTE)
+
+
+def _read(path: Path, fmt: str, since: datetime | None) -> list[Sample]:
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8") as fh:
+        return parse_log(fmt, fh, since)
+
+
 def load_samples(account: Account, until: datetime | None = None) -> list[Sample]:
-    samples: list[Sample] = []
-    if account.meter_log.exists():
-        with open(account.meter_log, encoding="utf-8") as fh:
-            if account.meter_format == "gs-ceiling":
-                samples = parse_gs_ceiling_log(fh, since=account.meter_since)
-            else:
-                samples = [s for s in parse_meter_log(fh) if account.meter_since is None or s.ts >= account.meter_since]
+    """Every reading of this account's meter, in time order.
+
+    `meter_log` and each of `extra_meter_logs` read the same meter, so they are
+    merged a minute at a time rather than concatenated: two sources agreeing on
+    one minute would otherwise pair a reading with itself and add a spurious
+    zero-movement pair. `legacy_meter_log` is different -- a log the account was
+    read from *before* `meter_log` existed -- so it is only used up to
+    `meter_log`'s first reading.
+    """
+    samples = _read(account.meter_log, account.meter_format, account.meter_since)
+    if account.extra_meter_logs:
+        samples = merge_samples(samples, *(_read(m.path, m.format, account.meter_since)
+                                           for m in account.extra_meter_logs))
     if account.legacy_meter_log is not None and account.legacy_meter_log.exists():
         first = min((s.ts for s in samples), default=None)
-        with open(account.legacy_meter_log, encoding="utf-8") as fh:
-            legacy = [s for s in parse_gs_ceiling_log(fh, since=account.meter_since) if first is None or s.ts < first]
+        legacy = [s for s in _read(account.legacy_meter_log, "gs-ceiling", account.meter_since)
+                  if first is None or s.ts < first]
         samples = sorted(legacy + samples, key=lambda s: s.ts)
     return [s for s in samples if until is None or s.ts <= until]
 
@@ -217,6 +293,13 @@ def publishable(v: Verdict) -> bool:
     """
     if v.status == UNPRICED or v.stretch.unpriced_tokens > 0:
         return False
+    if not any(sum(by_class.values()) for by_class in v.stretch.tokens.values()):
+        # No tokens at all is the extreme of the collection gap above, and it slips
+        # past that rule whenever the stretch has no reference to divide by (capture
+        # None: unjudged, or an account whose own bootstrap median is zero). masterrig
+        # has 28 such stretches in 237; on gs they already read capture 0.0 and were
+        # withheld, so this changes nothing there.
+        return False
     if CAPTURE_GATE:
         return v.status == ACCEPTED
     return v.capture is None or v.capture >= COLLECTION_GAP
@@ -232,7 +315,18 @@ def _stretch_record(v: Verdict) -> dict:
     # Unpriced work is kept by raw model id beside the priced models, so the record
     # shows what the meter was charged for even when no price covers it.
     tokens = {**s.tokens, **s.unpriced}
-    status = ACCEPTED if publishable(v) else (UNPRICED if s.unpriced_tokens else v.status)
+    if publishable(v):
+        status = ACCEPTED
+    elif s.unpriced_tokens:
+        status = UNPRICED
+    elif v.status == ACCEPTED:
+        # The capture check accepted it and `publishable` did not: the one case is a
+        # stretch with no tokens at all, which has no reference to be judged against
+        # (see `publishable`). Naming it keeps `accepted` meaning publishable, without
+        # relabelling a stretch the check itself withheld.
+        status = NO_TOKENS
+    else:
+        status = v.status
     return {"start": s.start.isoformat(), "end": s.end.isoformat(), "delta_pct": s.delta_pct, "windows": s.windows,
             "usd": _r(s.usd), "usd_per_pct": _r(s.usd_per_pct), "bounds": [_r(lo), _r(hi)], "tokens": tokens,
             "unpriced_tokens": s.unpriced_tokens, "unpriced": s.unpriced, "turns": s.turns,
@@ -283,6 +377,10 @@ def spread(values: list[float]) -> dict:
     if not values:
         return {"n": 0}
     m = median(values)
+    if not m:
+        # Every relative measure below divides by the median. A zero median is a set of
+        # readings that spent nothing, which has a count and nothing else to say.
+        return {"n": len(values), "median": 0.0, "half_range": None, "mad": None, "cv": None}
     out = {"n": len(values), "median": _r(m), "half_range": _r((max(values) - min(values)) / 2 / m),
            "mad": _r(1.4826 * median(abs(v - m) for v in values) / m)}
     out["cv"] = _r(stdev(values) / mean(values)) if len(values) > 1 else None
@@ -345,6 +443,8 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         meta[name] = {
             "meter": {"log": str(account.meter_log), "format": account.meter_format,
                       "legacy_log": str(account.legacy_meter_log) if account.legacy_meter_log else None,
+                      "extra_logs": [{"log": str(m.path), "format": m.format} for m in account.extra_meter_logs],
+                      "note": account.meter_note,
                       "reset_verified_samples": sum(1 for s in samples if s.resets_at is not None),
                       "since": account.meter_since.isoformat() if account.meter_since else None,
                       "samples": len(samples), "first": since.isoformat() if since else None,
@@ -535,8 +635,12 @@ def _summary(name: str, a: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    ap = argparse.ArgumentParser(description="Passive join per gs account; the capture check is advisory (CAPTURE_GATE)")
+    ap = argparse.ArgumentParser(description="Passive join per account; the capture check is advisory (CAPTURE_GATE)")
     ap.add_argument("--home", type=Path, default=Path.home())
+    ap.add_argument("--masterrig", action="store_true",
+                    help="join masterrig's own account (moonlighter + ceiling logs against ~/.claude/projects) "
+                         "instead of the gs accounts; its meter also counts web, phone and other machines, so read "
+                         "each stretch's capture before using a rate")
     ap.add_argument("--account", action="append", help="limit to these accounts (default: every gs account)")
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
     ap.add_argument("--probes", type=Path, default=Path("history/probes.jsonl"))
@@ -553,7 +657,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.calibrate and (a.since is None or a.until is None):
         ap.error("--calibrate requires --since and --until")
-    accounts = gs_accounts(a.home)
+    accounts = {"masterrig": masterrig_account(a.home)} if a.masterrig else gs_accounts(a.home)
     if a.account:
         unknown = set(a.account) - set(accounts)
         if unknown:
