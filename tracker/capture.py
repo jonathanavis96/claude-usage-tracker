@@ -52,6 +52,11 @@ what it looks like:
   looks like, so it stays withheld until something independent agrees.
 - `unaccounted` / `surplus`: withheld stretches that do not agree with each
   other. Off-gs use comes and goes, so the deficit scatters.
+- `unknown`: not one of the run's stretches has a reference to divide by, so
+  neither its capture nor its step can be read. It happens where the account's
+  own bootstrap stretches spent nothing, which masterrig's meter produces (it
+  moves on work this host never sees) and gs's do not. Named rather than
+  guessed; it never corroborates a change.
 
 `check` then weighs each run against independent evidence. A limit change is
 on the plan, so the other gs account (both are Max 20x) shifts with it and a
@@ -87,6 +92,9 @@ SLACK = timedelta(days=1)
 
 ACCEPTED, UNACCOUNTED, SURPLUS, UNPRICED, UNJUDGED = "accepted", "unaccounted", "surplus", "unpriced", "unjudged"
 WITHHELD = (UNACCOUNTED, SURPLUS)
+#: A run whose stretches have no reference to divide by, so its capture and step are
+#: both unknown. It is never a level shift and never corroborates one.
+UNKNOWN = "unknown"
 
 
 @dataclass
@@ -187,13 +195,23 @@ class Run:
         return median(v.stretch.usd_per_pct for v in self.verdicts)
 
     @property
-    def step(self) -> float:
-        """The run's level relative to the reference it was judged against."""
-        return self.rate / median(v.reference for v in self.verdicts if v.reference is not None) - 1
+    def step(self) -> float | None:
+        """The run's level relative to the reference it was judged against, or None with no usable reference.
+
+        A reference of zero -- an account whose own bootstrap stretches spent
+        nothing, which masterrig's meter produces where gs's does not -- divides
+        into nothing, so the run has no step rather than raising.
+        """
+        refs = [v.reference for v in self.verdicts if v.reference]
+        if not refs:
+            return None
+        return self.rate / median(refs) - 1
 
     @property
-    def capture(self) -> float:
-        return median(v.capture for v in self.verdicts if v.capture is not None)
+    def capture(self) -> float | None:
+        """The run's median capture, or None when not one of its stretches has a reference to divide by."""
+        got = [v.capture for v in self.verdicts if v.capture is not None]
+        return median(got) if got else None
 
 
 def _consistent(verdicts: list[Verdict]) -> bool:
@@ -202,6 +220,10 @@ def _consistent(verdicts: list[Verdict]) -> bool:
 
 
 def _classify(run: Run) -> str:
+    if run.capture is None:
+        # Nothing to measure the run against, so nothing can be said about what it
+        # looks like. Named rather than guessed, and never corroborated below.
+        return UNKNOWN
     if run.capture < COLLECTION_GAP:
         return "collection_gap"
     if len(run.verdicts) >= MIN_SHIFT and _consistent(run.verdicts):
@@ -239,7 +261,14 @@ def _probe_step(readings: list[tuple[datetime, float]], run: Run) -> float | Non
     return median(after) / median(before) - 1
 
 
-def _agrees(step: float, run: Run) -> bool:
+def _agrees(step: float | None, run: Run) -> bool:
+    """Whether an independent step of `step` matches this run's own, in sign and size.
+
+    A missing step on either side agrees with nothing: `None` is "not measured",
+    not "no movement".
+    """
+    if step is None or run.step is None:
+        return False
     return (step < 0) == (run.step < 0) and abs(step) > TOLERANCE and abs(step - run.step) <= TOLERANCE
 
 
