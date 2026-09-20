@@ -67,10 +67,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tracker import credits as credit_model
+from tracker import publish as publisher
 
 #: Credits per token as (input, output), from the article's table. The key is matched as a
 #: substring of the model id, so every Opus version is priced as Opus.
@@ -463,6 +469,147 @@ def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse
     return "\n".join(out) + "\n"
 
 
+#: A recomputed figure may differ from the published one only by this much. It is a
+#: reproducibility tolerance, not a measurement tolerance: the two should be the same
+#: arithmetic over the same files, and the only honest slack is the publisher's own
+#: rounding of a figure before it writes it.
+PUBLISH_CHECK_TOLERANCE = 0.005
+PASSIVE = Path("history/passive.json")
+PRICES = Path("data/prices.json")
+
+
+def recompute_credits_block(published: dict, gs: Path, masterrig: Path, probes: Path,
+                            effort_matrix: Path, passive: Path, prices: Path) -> dict:
+    """The `credits` block rebuilt from the history files, at the publish's own instant.
+
+    Everything is read again from disk -- the stretches, the probe rows, the
+    effort-matrix runs, the weekly window points, the rates -- and put through the
+    publisher's own code. The one thing taken from the published JSON is
+    `generated_at`: the weekly block's current regime is bounded by the publish time,
+    so recomputing at "now" would compare two different questions.
+    """
+    def read(path: Path, default=None):
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+
+    now = datetime.fromisoformat(published["generated_at"])
+    probe_rows = [json.loads(line) for line in
+                  (probes.read_text(encoding="utf-8").splitlines() if probes.exists() else [])
+                  if line.strip()]
+    passive_body = read(passive, {}) or {}
+    prices_raw = read(prices, {}) or {}
+    priced_models = {k: v for k, v in prices_raw.items() if not k.startswith("_")}
+    matrix = read(effort_matrix, {}) or {}
+    mix = json.loads((Path("data/reference_mix.json")).read_text(encoding="utf-8"))
+    weekly, weekly_events = publisher._weekly_block(
+        passive_body.get("weekly_windows"),
+        publisher.probe_weekly_windows(probe_rows, now=now), now,
+        gs_passive=read(gs, {}))
+    split = passive_body.get("split") or mix["split"]
+    source = ("history/passive.json `split`, the watched accounts' own token-class shares"
+              if passive_body.get("split") else
+              f"data/reference_mix.json `split` ({mix['id']}): history/passive.json carried none")
+    block, _cut = publisher._credits_block(
+        read(gs, {}), read(masterrig, {}), probe_rows, matrix.get("_meta"),
+        credit_model.load_credits(prices_raw), priced_models, split, source,
+        passive_body.get("session_tokens", {}), weekly, weekly_events)
+    return block
+
+
+def _leaves(obj, path: str = "") -> dict[str, object]:
+    """Every scalar in a nested structure, keyed by its dotted path."""
+    out: dict[str, object] = {}
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            out.update(_leaves(value, f"{path}.{key}" if path else str(key)))
+    elif isinstance(obj, list):
+        for i, value in enumerate(obj):
+            out.update(_leaves(value, f"{path}[{i}]"))
+    else:
+        out[path] = obj
+    return out
+
+
+def compare_published(published: dict, recomputed: dict,
+                      tolerance: float = PUBLISH_CHECK_TOLERANCE) -> list[dict]:
+    """One row per leaf of the published credits block, beside its recomputed value.
+
+    `ok` is False when a number differs by more than `tolerance` of the published
+    value (an absolute difference when the published value is zero), when a path is
+    in one side and not the other, or when a non-numeric value changed. Strings are
+    compared too: a method sentence that no longer describes what was computed is as
+    much a defect as a wrong number.
+    """
+    left, right = _leaves(published), _leaves(recomputed)
+    rows = []
+    for key in sorted(set(left) | set(right)):
+        a, b = left.get(key, "<absent>"), right.get(key, "<absent>")
+        if isinstance(a, bool) or isinstance(b, bool):
+            ok, diff = a == b, None
+        elif isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            diff = abs(a - b) / abs(a) if a else abs(a - b)
+            ok = diff <= tolerance
+        else:
+            ok, diff = a == b, None
+        rows.append({"key": key, "published": a, "recomputed": b, "ok": ok, "diff": diff})
+    return rows
+
+
+def _show(value) -> str:
+    if isinstance(value, float):
+        return f"{value:,.4f}".rstrip("0").rstrip(".")
+    if isinstance(value, int):
+        return f"{value:,}"
+    if value is None:
+        return "null"
+    text = str(value)
+    return text if len(text) <= 46 else text[:43] + "..."
+
+
+def render_publish_check(rows: list[dict], path: Path, tolerance: float) -> str:
+    """The published-against-recomputed table, failures last and called out."""
+    out = [f"Publish check: every figure of the `credits` block in {path},",
+           "beside the same figure recomputed from the history files by the publisher's own code.",
+           f"A number may differ by at most {tolerance:.1%} of the published value.",
+           ""]
+    widths = (58, 24, 24, 3)
+    head = ("figure", "published", "recomputed", "")
+    out.append("  ".join(h.ljust(w) for h, w in zip(head, widths)).rstrip())
+    out.append("  ".join("-" * w for w in widths))
+    for r in rows:
+        mark = "ok" if r["ok"] else "**"
+        key = r["key"] if len(r["key"]) <= widths[0] else "..." + r["key"][-(widths[0] - 3):]
+        out.append("  ".join([key.ljust(widths[0]), _show(r["published"]).rjust(widths[1]),
+                              _show(r["recomputed"]).rjust(widths[2]), mark]).rstrip())
+    bad = [r for r in rows if not r["ok"]]
+    out.append("")
+    if bad:
+        out.append(f"{len(bad)} of {len(rows)} figures do not reproduce:")
+        for r in bad:
+            delta = f", off by {r['diff']:.2%}" if isinstance(r["diff"], float) else ""
+            out.append(f"  {r['key']}: published {_show(r['published'])}, "
+                       f"recomputed {_show(r['recomputed'])}{delta}")
+    else:
+        out.append(f"All {len(rows)} figures reproduce from the history files.")
+    return "\n".join(out) + "\n"
+
+
+def publish_check(a: argparse.Namespace) -> int:
+    """--publish-check: reproduce the published credits block, or say what did not."""
+    try:
+        published = json.loads(a.publish_check.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"publish check failed: {a.publish_check} unreadable: {e}")
+        return 1
+    if not isinstance(published.get("credits"), dict):
+        print(f"publish check failed: {a.publish_check} carries no `credits` block")
+        return 1
+    recomputed = recompute_credits_block(published, a.gs, a.masterrig, a.probes,
+                                         a.effort_matrix, a.passive, a.prices)
+    rows = compare_published(published["credits"], recomputed, a.tolerance)
+    print(render_publish_check(rows, a.publish_check, a.tolerance), end="")
+    return 1 if any(not r["ok"] for r in rows) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -484,7 +631,19 @@ def main(argv: list[str] | None = None) -> int:
                     help="keep only stretches whose own capture is at least this "
                          "(for masterrig, where the meter counts more than this host)")
     ap.add_argument("--json", type=Path, help="also dump the per-stretch rows here")
+    ap.add_argument("--publish-check", type=Path, dest="publish_check",
+                    help="a published claude-usage.json: print every figure of its `credits` block "
+                         "beside the same figure recomputed from the history files, and exit 1 if any "
+                         "differ by more than the tolerance")
+    ap.add_argument("--passive", type=Path, default=PASSIVE,
+                    help="history/passive.json, for --publish-check's weekly window points")
+    ap.add_argument("--prices", type=Path, default=PRICES,
+                    help="data/prices.json, for --publish-check's credit rates and list prices")
+    ap.add_argument("--tolerance", type=float, default=PUBLISH_CHECK_TOLERANCE,
+                    help="how far a recomputed figure may sit from the published one")
     a = ap.parse_args(argv)
+    if a.publish_check:
+        return publish_check(a)
     runs = [] if a.keep_harness_runs else harness_runs(a.probes, a.effort_matrix)
     rows, skipped, excluded = load_rows({"gs": a.gs, "masterrig": a.masterrig}, a.cache_read_weight,
                                         a.fable_input, a.fable_output_ratio, a.min_capture, runs)
