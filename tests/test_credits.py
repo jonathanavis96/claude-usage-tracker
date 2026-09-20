@@ -14,18 +14,20 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar
 
 from tools.credits_report import (
+    BLOCK_KIND,
     compare_published,
+    coverage,
     publish_check,
     recompute_credits_block,
 )
 from tracker import credits as C
-from tracker.publish import ACCOUNT_LABELS, build_public_json
+from tracker.publish import ACCOUNT_LABELS, build_public_json, rebuild_public_json
 
 NOW = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
 LABELS = dict(ACCOUNT_LABELS)
@@ -726,6 +728,19 @@ def _files(root: Path, gs: dict, masterrig: dict, passive: dict, matrix: dict,
             "model_rates": root / "history/model-rates.json"}
 
 
+def _publish(paths: dict, now: datetime = NOW) -> dict:
+    """A real publish over the files `_files` planted, through the publisher's own path.
+
+    The published document and the check's rebuild then come off the same six files, so a
+    test that plants a figure and expects the check to catch it is testing the check and
+    not a difference between two ways of assembling a fixture.
+    """
+    return rebuild_public_json(now, probes=paths["probes"], passive=paths["passive"],
+                               effort=paths["effort_matrix"], prices=paths["prices"],
+                               gs_passive=paths["gs"], masterrig_passive=paths["masterrig"],
+                               model_rates=paths["model_rates"])
+
+
 class PublishCheckTests(unittest.TestCase):
     """--publish-check: the published block against the same block rebuilt from the files."""
 
@@ -737,17 +752,22 @@ class PublishCheckTests(unittest.TestCase):
     def published(self) -> dict:
         return _published(gs=self.GS, passive=self.PASSIVE)
 
+    def run_check(self, paths: dict, root: Path, published: dict, tolerance: float = 0.005):
+        """--publish-check over `published`, against the files `paths` names."""
+        out = root / "claude-usage.json"
+        out.write_text(json.dumps(published))
+        args = argparse.Namespace(**paths, publish_check=out, tolerance=tolerance,
+                                  contributed=root / "data/contributed.json")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = publish_check(args)
+        return code, buf.getvalue()
+
     def check(self, published: dict, tolerance: float = 0.005, model_rates: dict | None = None):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             paths = _files(root, self.GS, {}, self.PASSIVE, {}, model_rates)
-            out = root / "claude-usage.json"
-            out.write_text(json.dumps(published))
-            args = argparse.Namespace(**paths, publish_check=out, tolerance=tolerance)
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                code = publish_check(args)
-            return code, buf.getvalue()
+            return self.run_check(paths, root, published, tolerance)
 
     def test_a_publish_reproduces_from_the_history_files(self):
         code, text = self.check(self.published())
@@ -819,22 +839,17 @@ class PublishCheckTests(unittest.TestCase):
     def test_the_effort_matrix_in_credits_reproduces_too(self):
         matrix = {"_meta": {"runs": {"claude-opus-5/low": [
             {"input": 1000, "output": 100, "cache_read": 50_000, "cache_write": 2000, "total": 53_100}]}}}
-        published = _published(gs=self.GS, passive=self.PASSIVE, effort_meta=matrix["_meta"])
-        cell = published["credits"]["effort_credits"]["claude-opus-5"]["low"]
-        # (1000 + 2000) input-side tokens at 10/15 plus 100 output at 50/15.
-        self.assertEqual(cell["median_credits"]["value"], round(3000 * OPUS_IN + 100 * OPUS_OUT))
-        self.assertEqual(cell["rate_source"], "reference")
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             paths = _files(root, self.GS, {}, self.PASSIVE, matrix)
-            out = root / "claude-usage.json"
-            out.write_text(json.dumps(published))
-            args = argparse.Namespace(**paths, publish_check=out, tolerance=0.005)
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                code = publish_check(args)
-        self.assertEqual(code, 0, buf.getvalue())
-        self.assertIn("effort_credits.claude-opus-5.low.median_credits.value", buf.getvalue())
+            published = _publish(paths)
+            cell = published["credits"]["effort_credits"]["claude-opus-5"]["low"]
+            # (1000 + 2000) input-side tokens at 10/15 plus 100 output at 50/15.
+            self.assertEqual(cell["median_credits"]["value"], round(3000 * OPUS_IN + 100 * OPUS_OUT))
+            self.assertEqual(cell["rate_source"], "reference")
+            code, text = self.run_check(paths, root, published)
+        self.assertEqual(code, 0, text)
+        self.assertIn("effort_credits.claude-opus-5.low.median_credits.value", text)
 
 
 class PriceTableRoundTripTests(unittest.TestCase):
@@ -860,6 +875,192 @@ class PriceTableRoundTripTests(unittest.TestCase):
         priced = {k: v for k, v in raw.items() if not k.startswith("_")}
         self.assertNotIn("_credits", priced)
         self.assertEqual(sorted(priced), ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"])
+
+
+class PublishCheckScopeTests(unittest.TestCase):
+    """--publish-check covers the whole published file, not the credits block alone (wf-58 item 1).
+
+    Until now the check rebuilt `credits` and printed "All N figures reproduce", while the
+    headline percent, the onset dates, the windows per week, the rates, the history, the
+    effort cells and both basis blocks -- all of them on the page -- were never compared to
+    anything. Every one of them is a publisher-derived figure, and every one is now rebuilt
+    through `tracker.publish.rebuild_public_json`, the same function the publisher runs.
+    """
+
+    GS: ClassVar[dict] = report("jwork", [opus_stretch("2026-09-05T00:00:00+00:00", 200_000),
+                                          opus_stretch("2026-09-06T00:00:00+00:00", 210_000)])
+    PASSIVE: ClassVar[dict] = {
+        "generated_at": "2026-09-19T00:00:00+00:00",
+        "split": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 1.0},
+        "session_tokens": {"claude-opus-5": 1_000_000},
+        "weekly_windows": {"current": 6.46, "history": [], "by_window": [
+            {"window_ending": f"2026-08-{d:02d}T22:00:00+00:00", "windows": 6.5,
+             "five_hour_pct": 65.0, "seven_day_pct": 10.0, "pieces": 1, "reset_verified": True}
+            for d in range(15, 27)]},
+    }
+
+    def _root(self, stack, matrix=None):
+        root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        paths = _files(root, self.GS, {}, self.PASSIVE, matrix or {})
+        return root, paths, _publish(paths)
+
+    def check(self, mutate=None, matrix=None, write=None):
+        with ExitStack() as stack:
+            root, paths, published = self._root(stack, matrix)
+            if write:
+                write(root)
+            if mutate:
+                mutate(published)
+            out = root / "claude-usage.json"
+            out.write_text(json.dumps(published))
+            args = argparse.Namespace(**paths, publish_check=out, tolerance=0.005,
+                                      contributed=root / "data/contributed.json")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = publish_check(args)
+            return code, buf.getvalue(), published
+
+    def test_a_whole_publish_reproduces_and_the_count_is_the_whole_files(self):
+        code, text, published = self.check()
+        self.assertEqual(code, 0, text)
+        from tools.credits_report import _leaves
+        self.assertIn(f"All {len(_leaves(published)):,}".replace(",", ""), text.replace(",", ""))
+
+    def test_every_top_level_block_of_the_publish_is_checked_and_classified(self):
+        code, text, published = self.check()
+        self.assertEqual(code, 0, text)
+        from tools.credits_report import _leaves
+        rows = [{"key": k, "ok": True} for k in _leaves(published)]
+        checked = {block for block, _kind, _n, _bad in coverage(rows)}
+        self.assertEqual(checked, set(published))
+        unclassified = [b for b in checked if b not in BLOCK_KIND]
+        self.assertEqual(unclassified, [], f"unclassified blocks: {unclassified}")
+
+    def test_a_figure_in_any_block_outside_credits_fails_the_check(self):
+        """One case per block the hostile review named as unchecked."""
+        cases = {
+            "weekly_windows.max20.current": lambda j: j["weekly_windows"]["max20"].update(current=99.0),
+            "last_change": lambda j: j.update(last_change={"date": "2026-01-01", "percent": 99}),
+            "events": lambda j: j.update(events=[{"date": "2026-01-01", "percent": 99}]),
+            "rates.claude-opus-5.tokens_per_window":
+                lambda j: j["rates"]["claude-opus-5"].update(tokens_per_window=1),
+            "history.claude-opus-5[0].meter_budget_per_window":
+                lambda j: j["history"]["claude-opus-5"][0].update(meter_budget_per_window=1.0),
+            "plan_ratios_basis.as_of": lambda j: j["plan_ratios_basis"].update(as_of="2026-07-07"),
+            "weekly_window_ratios.max5": lambda j: j["weekly_window_ratios"].update(max5=9.9),
+            "reference.shortfall.per_plan.max20.ratio":
+                lambda j: j["reference"]["shortfall"]["per_plan"]["max20"].update(ratio=0.5),
+            "effort_usd": lambda j: j.update(effort_usd={"claude-opus-5": {"low": 1.0}}),
+        }
+        for key, mutate in cases.items():
+            with self.subTest(key=key):
+                code, text, _ = self.check(mutate)
+                self.assertEqual(code, 1, f"{key} was not caught")
+                self.assertIn("do not reproduce", text)
+
+    def test_a_block_that_gained_its_first_entry_is_not_invisible(self):
+        """An empty list is a leaf of its own, so filling one is a difference, not a silence."""
+        code, text, _ = self.check(
+            lambda j: j["weekly_windows"]["pro"].update(regimes=[{"windows": 4.0}]))
+        self.assertEqual(code, 1)
+        self.assertIn("weekly_windows.pro.regimes", text)
+
+    def test_pass_through_data_is_compared_against_the_file_it_came_from(self):
+        for key, mutate in (("session_tokens", lambda j: j.update(session_tokens={"claude-opus-5": 7})),
+                            ("api_price_per_mtok",
+                             lambda j: j["api_price_per_mtok"]["claude-opus-5"].update(input=99))):
+            with self.subTest(key=key):
+                code, text, _ = self.check(mutate)
+                self.assertEqual(code, 1)
+                self.assertIn(key, text)
+
+    def test_the_contributed_block_is_read_only_when_the_publish_carries_one(self):
+        block = {"figures": {"tokens_per_window": 1234}}
+
+        def plant(root):
+            (root / "data/contributed.json").write_text(json.dumps(block))
+
+        # Planted on disk but absent from the publish: the check must not invent it.
+        self.assertEqual(self.check(write=plant)[0], 0)
+        # Carried by the publish and matching the file: it reproduces.
+        code, text, _ = self.check(lambda j: j.update(contributed=block), write=plant)
+        self.assertEqual(code, 0, text)
+        # Carried by the publish and not matching the file: it does not.
+        code, text, _ = self.check(lambda j: j.update(contributed={"figures": {"tokens_per_window": 9}}),
+                                   write=plant)
+        self.assertEqual(code, 1)
+        self.assertIn("contributed", text)
+
+    def test_the_summary_names_each_block_its_kind_and_its_figure_count(self):
+        text = self.check()[1]
+        for line in ("credits                       derived",
+                     "api_price_per_mtok            pass_through",
+                     "generated_at                  from_publish",
+                     "plan_ratios_basis             constant"):
+            self.assertIn(line, text)
+
+    def test_a_publish_with_no_generated_at_is_a_failure_not_a_pass(self):
+        code, text, _ = self.check(lambda j: j.pop("generated_at"))
+        self.assertEqual(code, 1)
+        self.assertIn("no `generated_at`", text)
+
+
+class CreditsAsOfTests(unittest.TestCase):
+    """`credits.as_of` and the per-model rows' own dates (wf-58 item 4).
+
+    The credit figures carried no date at all, so the page printed a neighbouring block's
+    under them. Two readings stand behind them and they are not the same date: the
+    pure-Opus cluster the window is the median of, and the stretches the per-model fits
+    ran over. Each row publishes the one its own figures rest on.
+    """
+
+    #: A pure-Opus stretch, and a later mixed one that is priceable but not pure. The
+    #: window can only see the first; the fits see both, so the two dates differ.
+    GS: ClassVar[dict] = report("jwork", [
+        opus_stretch("2026-09-05T00:00:00+00:00", 200_000),
+        stretch("2026-09-08T00:00:00+00:00",
+                {"claude-opus-5": tok(input=1_000_000), "claude-sonnet-5": tok(input=2_000_000)}),
+    ])
+
+    def setUp(self):
+        self.credits = _published(gs=self.GS)["credits"]
+
+    def test_the_block_dates_itself_from_the_newer_of_the_two_readings(self):
+        self.assertEqual(self.credits["as_of"], "2026-09-08T00:00:00+00:00")
+        self.assertEqual(self.credits["as_of_source"]["window_cluster"], "2026-09-05T00:00:00+00:00")
+        self.assertEqual(self.credits["as_of_source"]["measured_rate_fits"], "2026-09-08T00:00:00+00:00")
+
+    def test_the_anchor_row_dates_from_the_window_and_a_measured_row_from_the_fits(self):
+        per_model = self.credits["per_model"]
+        self.assertEqual(per_model["opus"]["rate_source"], "reference")
+        self.assertEqual(per_model["opus"]["as_of"], "2026-09-05T00:00:00+00:00")
+        for fam in ("sonnet", "fable"):
+            self.assertEqual(per_model[fam]["as_of"], "2026-09-08T00:00:00+00:00", fam)
+
+    def test_a_row_with_no_figure_publishes_no_date_either(self):
+        haiku = self.credits["per_model"]["haiku"]
+        self.assertIsNone(haiku["credits_per_token"]["input"])
+        self.assertIsNone(haiku["as_of"])
+        self.assertIn("not measurable", haiku["status"])
+
+    def test_no_stretch_at_all_leaves_every_date_null_rather_than_guessing(self):
+        credits = _published(gs=report("jwork", []))["credits"]
+        self.assertIsNone(credits["as_of"])
+        self.assertIsNone(credits["as_of_source"]["window_cluster"])
+        self.assertIsNone(credits["as_of_source"]["measured_rate_fits"])
+        self.assertIsNone(credits["per_model"]["opus"]["as_of"])
+
+    def test_the_newest_stretch_is_the_latest_instant_not_the_largest_string(self):
+        """One watched account writes +02:00, so a lexical maximum reads the wrong row."""
+        self.assertEqual(C.newest_end([{"end": "2026-09-20T02:16:35+02:00"},
+                                       {"end": "2026-09-20T01:00:00+00:00"}]),
+                         "2026-09-20T01:00:00+00:00")
+        self.assertIsNone(C.newest_end([{"delta_pct": 4.0}]))
+
+    def test_the_fits_date_names_no_account_anywhere_in_the_document(self):
+        text = json.dumps(_published(gs=self.GS))
+        for name, _label in ACCOUNT_LABELS:
+            self.assertNotIn(name, text)
 
 
 class CompareTests(unittest.TestCase):

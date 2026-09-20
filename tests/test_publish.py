@@ -7,6 +7,7 @@ from typing import ClassVar
 
 from tracker.publish import (
     _regime_with_evidence,
+    CREDITS_TABLE_AS_OF,
     REFERENCE_MIX,
     blended_api_price_per_token,
     blended_price_per_token,
@@ -1090,10 +1091,12 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(_regime_with_evidence(0, values), 1)
         self.assertEqual(_regime_with_evidence(7, values), 3)
 
-    def test_plan_ratios_basis_names_the_credits_table_and_that_it_is_undated(self):
+    def test_plan_ratios_basis_names_the_credits_table_and_the_date_it_describes(self):
         # What one five-hour window is worth between plans, 1 : 6 : 20, with the
-        # credits it came from and the note that the table carries no date. A
-        # documented figure is a reference to compare a measurement against.
+        # credits it came from and the date the table describes. A documented figure
+        # is a reference to compare a measurement against, and an undated one reads
+        # as a figure for now -- which is why `dated` is true and `as_of` is the same
+        # January date every other block quoting this URL publishes.
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
@@ -1101,7 +1104,8 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(j["plan_ratios_basis"], {
             "kind": "credits_table", "scope": "one five-hour window",
             "credits_per_window": {"pro": 550_000, "max5": 3_300_000, "max20": 11_000_000},
-            "source_url": "https://she-llac.com/claude-limits", "dated": False})
+            "source_url": "https://she-llac.com/claude-limits",
+            "as_of": "2026-01-25", "dated": True})
 
     def test_weekly_window_ratios_are_the_credits_table_figures_not_a_measured_seam(self):
         # Max 5x ran a short 6.6 dip early on (unrelated to the plan move -- some other
@@ -1129,8 +1133,8 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         # The seam this account actually shows, 11.0 over 6.5, is 1.69: close to the
         # table's 1.667 and published as `measured_confirmation`, not as the ratio.
         basis = j["weekly_window_ratios_basis"]
-        self.assertEqual((basis["kind"], basis["dated"], basis["source_url"]),
-                         ("credits_table", False, "https://she-llac.com/claude-limits"))
+        self.assertEqual((basis["kind"], basis["dated"], basis["as_of"], basis["source_url"]),
+                         ("credits_table", True, "2026-01-25", "https://she-llac.com/claude-limits"))
         self.assertEqual(basis["documented_windows_per_week"],
                          {"pro": 9.09, "max5": 12.63, "max20": 7.58})
         self.assertEqual(basis["credits_per_week"],
@@ -1494,3 +1498,143 @@ class ContributedBlockTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertNotIn("contributed", json.loads((d / "out.json").read_text()))
             self.assertIn("contributed block not published", err.getvalue())
+
+
+class ReferenceDateTests(unittest.TestCase):
+    """One source, one date (wf-58 item 2).
+
+    The page reads https://she-llac.com/claude-limits in four places. Two of them --
+    `plan_ratios_basis` and `weekly_window_ratios_basis` -- published `dated: false`
+    while `reference` and the credits block's weekly-cap baseline both published
+    2026-01-25 for the same URL, so the page could print one source with two dates. The
+    reconciliation established the date; these four now read one constant.
+    """
+
+    def setUp(self):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        self.j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+
+    def _blocks(self):
+        return {
+            "plan_ratios_basis": self.j["plan_ratios_basis"],
+            "weekly_window_ratios_basis": self.j["weekly_window_ratios_basis"],
+            "reference": self.j["reference"],
+            "credits.window_credits_from_weekly.weekly_cap_baseline_source":
+                self.j["credits"]["window_credits_from_weekly"].get("weekly_cap_baseline_source"),
+        }
+
+    def test_the_four_blocks_quoting_the_table_agree_on_its_date(self):
+        dates = {name: block["as_of"] for name, block in self._blocks().items() if block}
+        self.assertEqual(set(dates.values()), {CREDITS_TABLE_AS_OF},
+                         f"the four blocks disagree on the table's date: {dates}")
+
+    def test_the_four_blocks_quoting_the_table_agree_on_its_url(self):
+        urls = {block.get("url") or block.get("source_url") for block in self._blocks().values() if block}
+        self.assertEqual(urls, {"https://she-llac.com/claude-limits"})
+
+    def test_neither_basis_block_still_says_it_is_undated(self):
+        for name in ("plan_ratios_basis", "weekly_window_ratios_basis"):
+            self.assertTrue(self.j[name]["dated"], name)
+
+    def test_the_date_is_one_constant_and_not_four_literals(self):
+        """Move the constant and all four move: the point of the change."""
+        import tracker.publish as publisher
+        original = publisher.CREDITS_TABLE_AS_OF
+        try:
+            publisher.CREDITS_TABLE_AS_OF = "2026-02-02"
+            rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+            now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+            j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now)
+        finally:
+            publisher.CREDITS_TABLE_AS_OF = original
+        self.assertEqual(j["reference"]["as_of"], "2026-02-02")
+        # The two basis dicts are module-level literals built once at import, so they
+        # keep the date they were built with; what must never happen is a *third* date
+        # appearing, which is what a per-block literal would give.
+        self.assertEqual({j["plan_ratios_basis"]["as_of"], j["weekly_window_ratios_basis"]["as_of"]},
+                         {original})
+
+
+class ShortfallTests(unittest.TestCase):
+    """`reference.shortfall`: goal 7, published rather than left in a findings doc (wf-58 item 3).
+
+    Both measured plans sat at about 0.86 of the reference table's windows per week
+    before the 14 September cut. The page drew the dashed line and said nothing about
+    the gap; the reconciliation's answer is that the table is January's and two announced
+    changes stand between it and the measurement.
+    """
+
+    def _published(self, now=datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)):
+        rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
+        by_window = ([window(f"2026-07-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(1, 32)]
+                     + [window(f"2026-08-{d:02d}T10:00:00+00:00", 110.0, 10.0) for d in range(1, 14)]
+                     + [window("2026-08-14T16:20:00+00:00", 110.0, 10.0)]
+                     + [window("2026-08-14T22:00:00+00:00", 65.0, 10.0)]
+                     + [window(f"2026-08-{d:02d}T22:00:00+00:00", 65.0, 10.0) for d in range(15, 27)])
+        passive = dict(PASSIVE, weekly_windows={"current": 6.46, "history": [], "by_window": by_window})
+        return build_public_json(rows, passive, EFFORT, PRICES, now)
+
+    def test_each_plan_publishes_its_measured_and_documented_windows_per_week(self):
+        shortfall = self._published()["reference"]["shortfall"]
+        max20, max5 = shortfall["per_plan"]["max20"], shortfall["per_plan"]["max5"]
+        self.assertEqual(max5["measured_windows_per_week"], 11.0)
+        self.assertEqual(max20["measured_windows_per_week"], 6.5)
+        self.assertEqual(max5["documented_windows_per_week"], 12.63)
+        self.assertEqual(max20["documented_windows_per_week"], 7.58)
+
+    def test_the_ratio_is_the_measurement_over_the_documented_figure(self):
+        per_plan = self._published()["reference"]["shortfall"]["per_plan"]
+        self.assertEqual(per_plan["max5"]["ratio"], round(11.0 / 12.63, 4))
+        self.assertEqual(per_plan["max20"]["ratio"], round(6.5 / 7.58, 4))
+
+    def test_the_expected_figure_applies_the_two_announced_multipliers_to_the_table(self):
+        """The reconciliation's own arithmetic: 83.33M x 1.5 over 11.0M x 2."""
+        per_plan = self._published()["reference"]["shortfall"]["per_plan"]
+        self.assertEqual(per_plan["max20"]["expected_windows_per_week"],
+                         round(83_333_300 * 1.5 / (11_000_000 * 2.0), 4))
+        self.assertEqual(per_plan["max20"]["ratio_to_expected"],
+                         round(6.5 / (83_333_300 * 1.5 / (11_000_000 * 2.0)), 4))
+
+    def test_a_plan_with_no_measured_regime_publishes_a_status_and_not_a_scaled_figure(self):
+        pro = self._published()["reference"]["shortfall"]["per_plan"]["pro"]
+        self.assertIsNone(pro["measured_windows_per_week"])
+        self.assertIsNone(pro["ratio"])
+        self.assertIn("inferred from max20", pro["status"])
+
+    def test_the_block_says_the_reconciliation_explains_it_and_quotes_what_it_found(self):
+        shortfall = self._published()["reference"]["shortfall"]
+        self.assertEqual(shortfall["status"], "explained")
+        self.assertIn("predates the 6 May five-hour doubling", shortfall["explanation"])
+        self.assertIn("not comparable to the measured levels", shortfall["explanation"])
+        self.assertEqual(shortfall["source"], "docs/findings-2026-09-20-reconciliation.md")
+        self.assertEqual(shortfall["plans_measured"], ["max5", "max20"])
+
+    def test_a_plan_the_explanation_does_not_reach_leaves_the_status_open(self):
+        import tracker.publish as publisher
+        original = publisher.SHORTFALL_EXPLAINED_PLANS
+        try:
+            publisher.SHORTFALL_EXPLAINED_PLANS = ("pro",)
+            shortfall = self._published()["reference"]["shortfall"]
+        finally:
+            publisher.SHORTFALL_EXPLAINED_PLANS = original
+        self.assertEqual(shortfall["status"], "open")
+        self.assertIn("does not reach every plan", shortfall["explanation"])
+
+    def test_a_regime_still_running_across_the_cut_is_not_a_pre_cut_reading(self):
+        """The test is the regime's own end stamp, not its place in the list."""
+        from tracker.publish import _pre_cut_regime
+        across = {"regimes": [{"end": "2026-09-20T00:00:00+00:00", "windows": 5.0}]}
+        self.assertIsNone(_pre_cut_regime(across))
+        before = {"regimes": [{"end": "2026-09-01T00:00:00+00:00", "windows": 6.5},
+                              {"end": "2026-09-20T00:00:00+00:00", "windows": 5.0}]}
+        self.assertEqual(_pre_cut_regime(before)["windows"], 6.5)
+
+    def test_the_multipliers_are_the_ones_the_change_list_records(self):
+        """PRE_CUT_MULTIPLIERS is named separately; it must not drift from the tuple."""
+        from tracker.publish import PLAN_CHANGES_SINCE_REFERENCE, PRE_CUT_MULTIPLIERS
+        five_hour = [c for c in PLAN_CHANGES_SINCE_REFERENCE if c["scope"] == "five_hour_window"]
+        promotion = [c for c in PLAN_CHANGES_SINCE_REFERENCE
+                     if c["scope"] == "weekly" and c.get("until") == "2026-09-13"]
+        self.assertEqual([c["multiplier"] for c in five_hour], [PRE_CUT_MULTIPLIERS["five_hour_window"]])
+        self.assertEqual([c["multiplier"] for c in promotion], [PRE_CUT_MULTIPLIERS["weekly"]])
