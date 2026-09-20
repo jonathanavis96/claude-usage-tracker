@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-20T16:30:13.314056+00:00",
+ "generated_at": "2026-09-20T17:30:12.902614+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 873,
+    "reset_verified_samples": 884,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3976,
+    "samples": 3987,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-20T16:27:39+00:00"
+    "last": "2026-09-20T17:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -36,7 +36,7 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1730,
-     "dropped": 1047,
+     "dropped": 1049,
      "subagent_files": 697
     }
    },
@@ -6727,6 +6727,18 @@
      ],
      "pieces": 1,
      "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-20T17:27:39+00:00",
+     "windows": null,
+     "five_hour_pct": 1.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.0,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
     }
    ]
   },
@@ -6738,18 +6750,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 644,
+    "reset_verified_samples": 655,
     "since": null,
-    "samples": 1204,
+    "samples": 1215,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-20T16:27:39+00:00"
+    "last": "2026-09-20T17:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 553,
-    "turns": 18145,
+    "files": 561,
+    "turns": 18890,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -8539,12 +8551,12 @@
     },
     {
      "window_ending": "2026-09-20T19:40:00.115835+00:00",
-     "windows": 5.4,
-     "five_hour_pct": 27.0,
-     "seven_day_pct": 5.0,
+     "windows": 5.14,
+     "five_hour_pct": 36.0,
+     "seven_day_pct": 7.0,
      "rounding_interval": [
-      3.8702,
-      8.331
+      4.0172,
+      6.9198
      ],
      "pieces": 1,
      "reset_verified": true
