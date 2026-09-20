@@ -1240,6 +1240,20 @@ class ThreeAccountWeeklyTests(unittest.TestCase):
                          {"earliest": "2026-09-13", "latest": "2026-09-14"})
         self.assertEqual(events[0]["attribution"], "observed_account_metric_change")
 
+    def test_the_event_row_states_the_ratio_and_leaves_the_meter_unresolved(self):
+        # The published row is the measured quantity -- how many five-hour windows a
+        # week holds -- with its own percent and its own onset span. It never says
+        # the weekly cap fell by that much: a bigger five-hour window moves the same
+        # ratio, and the split is unresolved.
+        j = self._publish()
+        event = [e for e in j["events"] if e["scope"] == "weekly"][0]
+        self.assertEqual(event["label"],
+                         "Observed windows per week fell about 25% around 2026-09-14 to 2026-09-16")
+        self.assertEqual(event["meter_attribution"], "unresolved")
+        self.assertEqual(j["last_change"]["meter_attribution"], "unresolved")
+        for word in ("cap", "limit", "anthropic"):
+            self.assertNotIn(word, event["label"].lower())
+
     def test_a_pooled_date_later_than_an_accounts_own_onset_is_moved_back_and_says_so(self):
         # a1 steps 6.0 -> 5.0 on 09-12; a2 carries twice as many windows, holds 6.0
         # until its own reset on 09-16 and then falls to 3.6, so the pooled series
@@ -1325,8 +1339,13 @@ class RealLogTests(unittest.TestCase):
         # levels' intervals, and published as an observed change in this account's
         # weekly/window ratio. Max 20x current is the new regime's own level, 145/31.
         j = self._publish(HISTORY_CUTOFF, datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc))
+        # The row states the measured quantity and its own dates, and claims nothing
+        # about which meter moved: a fall in windows per week can come from a smaller
+        # weekly cap, a bigger five-hour window, or both.
         self.assertEqual([(e["date"], e["percent"], e["label"]) for e in j["events"]],
-                         [("2026-09-14", 28, "Observed weekly/window ratio changed -28%")])
+                         [("2026-09-14", 28,
+                           "Observed windows per week fell about 28% around 2026-09-14")])
+        self.assertEqual([e["meter_attribution"] for e in j["events"]], ["unresolved"])
         c = j["last_change"]
         self.assertEqual((c["scope"], c["direction"], c["metric"], c["attribution"], c["provisional"]),
                          ("weekly", "decreased", "weekly_to_five_hour_ratio", "observed_account_metric_change", False))

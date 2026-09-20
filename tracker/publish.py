@@ -858,6 +858,12 @@ def _event_record(e, scope: str) -> dict:
     both levels' rounding intervals (tracker/detect.py); window events have no
     uncertainty model behind them, so they are `provisional`, and bin/daily.sh
     announces neither a provisional nor a legacy-uncertain change.
+
+    `meter_attribution` on a weekly event is `unresolved`: the measured quantity
+    is the ratio of five-hour to seven-day movement, and a fall in it can come
+    from a smaller weekly cap, a bigger five-hour window, or both. It is not
+    resolved here and the record never claims which meter moved (see
+    _weekly_label for the evidence that both did).
     """
     provisional = scope == "window"
     # A pooled weekly event re-dated from the accounts' own onsets (_account_dated)
@@ -885,6 +891,7 @@ def _event_record(e, scope: str) -> dict:
         "rounding_interval_after": _rounded(e.after_interval),
         "evidence_quality": "provisional" if provisional else "certified",
         "provisional": provisional, "legacy_uncertain": False,
+        **({} if provisional else {"meter_attribution": "unresolved"}),
     }
 
 
@@ -892,12 +899,33 @@ def _rounded(interval: tuple | None) -> list | None:
     return [round(x, 4) if x is not None else None for x in interval] if interval else None
 
 
+def _weekly_label(e) -> str:
+    """One weekly event's row, stating the measured quantity and nothing else.
+
+    What is measured is how many five-hour windows a week's cap holds: five-hour
+    meter movement over seven-day meter movement. A fall in it does NOT say the
+    weekly cap fell by that much, and the row must not read as though it does --
+    a smaller five-hour window moves the same ratio. The split between the two is
+    unresolved here: jwork's accepted stretches read the five-hour window about 9%
+    larger in credits across the change, which puts the weekly cap's own fall
+    somewhere between 6% and 15% of a 22-24% fall in the ratio. `meter_attribution`
+    carries that as a field (_event_record).
+
+    The percent and the dates are the event's own measured ones, so the row can
+    never say something the rest of the record does not.
+    """
+    moved = "rose" if e.direction == "increased" else "fell"
+    earliest = (e.onset_earliest or e.date).isoformat()
+    latest = (e.onset_latest or e.date).isoformat()
+    span = earliest if earliest == latest else f"{earliest} to {latest}"
+    return f"Observed windows per week {moved} about {e.percent}% around {span}"
+
+
 def _build_events(window_events: list, weekly_events: list) -> list[dict]:
     events = [{**_event_record(e, "window"), "kind": "change",
                "label": f"Observed window budget changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
               for e in window_events]
-    events += [{**_event_record(e, "weekly"), "kind": "change",
-                "label": f"Observed weekly/window ratio changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
+    events += [{**_event_record(e, "weekly"), "kind": "change", "label": _weekly_label(e)}
                for e in weekly_events]
     return sorted(events, key=lambda ev: ev["date"])
 
