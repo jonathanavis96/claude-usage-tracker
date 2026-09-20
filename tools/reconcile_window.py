@@ -3,8 +3,11 @@
 Read-only analysis over history/gs-passive.json and a masterrig stretch file in the
 same record shape. Prints (1) the Fable-free window from pure-Opus stretches, (2) Fable's
 credit rate solved per Fable-heavy stretch against that window, (3) the five-hour window
-before and after 2026-09-14 on every account, and (4) jwork against Dave across a range
-of assumed Fable rates. Stretches that overlap a harness run on the same account are
+before and after 2026-09-14 on every account, (4) jwork against Dave across a range
+of assumed Fable rates, and (5) what that same window buys in tokens per class, the block
+`tracker/publish.py` publishes as `credits.window_tokens` -- built by the publisher's own
+code so this document and the page cannot state two different figures.
+Stretches that overlap a harness run on the same account are
 excluded, as history/harness-runs.jsonl records them -- the completed probes, the
 2026-09-09 effort-matrix run on jwork, and the probes that aborted or crashed without
 writing a probes.jsonl row; gs stretches must also be capture-accepted.
@@ -19,6 +22,7 @@ computed under; the publisher applies the gate to every account, which is tighte
 """
 from __future__ import annotations
 
+import argparse
 import json
 import statistics as st
 import sys
@@ -27,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tools import credits_report as R
 from tracker import credits as C
 
 CUT = C.CUT_AT
@@ -95,6 +100,15 @@ def main() -> int:
             med[a] = st.median(v)
         print(f"   fable={fr:5.3f} jwork={med['jwork']:9,.0f} dave={med['dave']:9,.0f} "
               f"ratio={med['jwork'] / med['dave']:.3f}")
+    print("\n5. The same window in TOKENS, as tracker/publish.py writes it to credits.window_tokens.")
+    print("   Built by the publisher's own code from these same files, so this document and the")
+    print("   page state one figure. Its selection exempts nobody from the capture gate, where")
+    print("   sections 1 to 4 above exempt masterrig: the nine phantom-inflated masterrig rows of")
+    print("   section 1 are gated out of it, leaving the eleven jwork and Dave stretches.")
+    args = argparse.Namespace(probes=R.PROBES, passive=R.PASSIVE, effort_matrix=R.EFFORT_MATRIX,
+                              prices=R.PRICES, gs=R.REPORTS["gs"], masterrig=Path(sys.argv[1]),
+                              model_rates=R.MODEL_RATES)
+    print("\n".join(R.window_tokens_lines(R.window_tokens_block(args))))
     return 0
 
 

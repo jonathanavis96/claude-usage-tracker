@@ -951,12 +951,59 @@ class PublishCheckScopeTests(unittest.TestCase):
             "reference.shortfall.per_plan.max20.ratio":
                 lambda j: j["reference"]["shortfall"]["per_plan"]["max20"].update(ratio=0.5),
             "effort_usd": lambda j: j.update(effort_usd={"claude-opus-5": {"low": 1.0}}),
+            "rates.claude-opus-5.deprecated":
+                lambda j: j["rates"]["claude-opus-5"].update(deprecated="never mind"),
         }
         for key, mutate in cases.items():
             with self.subTest(key=key):
                 code, text, _ = self.check(mutate)
                 self.assertEqual(code, 1, f"{key} was not caught")
                 self.assertIn("do not reproduce", text)
+
+    def test_every_window_tokens_figure_is_checked_and_reproduces(self):
+        """The new block is not exempt: every leaf of it is compared, and a wrong one fails."""
+        from tools.credits_report import _leaves
+        code, text, published = self.check()
+        self.assertEqual(code, 0, text)
+        leaves = _leaves(published["credits"]["window_tokens"])
+        self.assertGreater(len(leaves), 50)
+        for key in ("all.value", "per_class.cache_read.value", "accounts.a2.n",
+                    "per_family.sonnet.all.value", "per_week.all.value",
+                    "cache_read_share.value", "method", "selection", "as_of"):
+            self.assertIn(key, leaves, key)
+
+    def test_a_wrong_figure_anywhere_in_window_tokens_fails_the_check(self):
+        cases = {
+            "credits.window_tokens.all.value":
+                lambda j: j["credits"]["window_tokens"]["all"].update(value=1),
+            "credits.window_tokens.per_class.cache_read.value":
+                lambda j: j["credits"]["window_tokens"]["per_class"]["cache_read"].update(value=1),
+            "credits.window_tokens.accounts.a1.all.status":
+                lambda j: j["credits"]["window_tokens"]["accounts"]["a1"]["all"].update(
+                    status="contributed nothing"),
+            "credits.window_tokens.per_family.haiku.all.value":
+                lambda j: j["credits"]["window_tokens"]["per_family"]["haiku"]["all"].update(
+                    value=123_456),
+            "credits.window_tokens.per_week.all.value":
+                lambda j: j["credits"]["window_tokens"]["per_week"]["all"].update(value=1),
+            "credits.window_tokens.method":
+                lambda j: j["credits"]["window_tokens"].update(method="trust me"),
+        }
+        for key, mutate in cases.items():
+            with self.subTest(key=key):
+                code, text, _ = self.check(mutate)
+                self.assertEqual(code, 1, f"{key} was not caught")
+                self.assertIn("do not reproduce", text)
+
+    def test_the_week_is_published_because_this_fixture_measures_windows_per_week(self):
+        """The fixture carries a weekly series, so per_week is a product and not a status."""
+        published = self.check()[2]
+        per_week = published["credits"]["window_tokens"]["per_week"]
+        windows = published["weekly_windows"]["max20"]["current"]
+        self.assertEqual(per_week["windows_per_week"]["value"], windows)
+        self.assertEqual(per_week["all"]["value"],
+                         round(published["credits"]["window_tokens"]["all"]["value"] * windows))
+        self.assertIsNone(per_week["status"])
 
     def test_a_block_that_gained_its_first_entry_is_not_invisible(self):
         """An empty list is a leaf of its own, so filling one is a difference, not a silence."""
@@ -1110,6 +1157,256 @@ class RecomputeTests(unittest.TestCase):
                                             paths["probes"], paths["effort_matrix"],
                                             paths["passive"], paths["prices"])
         self.assertEqual(block["window_credits"]["value"], 20_000_000)
+
+
+def classed_stretch(start: str, input: int, cache_write: int, cache_read: int, output: int,
+                    delta_pct: float = 10.0, model: str = "claude-opus-5", **extra) -> dict:
+    """A pure-Opus stretch with all four token classes set, so a per-class median has a spread."""
+    return stretch(start, {model: tok(input=input, output=output, cache_read=cache_read,
+                                      cache_write=cache_write)}, delta_pct, **extra)
+
+
+class WindowTokensTests(unittest.TestCase):
+    """What a window buys in tokens, on a cluster whose medians are known by hand.
+
+    Every stretch below moved the meter 10%, so a full window is its own counts times ten.
+    jwork carries three stretches at 1x, 2x and 3x a base bundle; Dave carries one, richer
+    in cache reads, so the pooled median falls between jwork's middle and Dave's and the
+    per-account intervals do not nest.
+    """
+
+    #: jwork's three, then Dave's one. Per window (x10, since each moved 10%):
+    #: jwork all-four 116,000 / 232,000 / 348,000; Dave 564,000.
+    JWORK: ClassVar[list] = [
+        classed_stretch("2026-09-05T00:00:00+00:00", 100, 1_000, 10_000, 500),
+        classed_stretch("2026-09-06T00:00:00+00:00", 200, 2_000, 20_000, 1_000),
+        classed_stretch("2026-09-07T00:00:00+00:00", 300, 3_000, 30_000, 1_500),
+    ]
+    DAVE: ClassVar[list] = [classed_stretch("2026-09-08T00:00:00+00:00", 400, 4_000, 50_000, 2_000)]
+    #: A planted measured-rate block: Sonnet at exactly half the Opus input rate, so the
+    #: conversion is a doubling whatever the class mix; Fable an envelope whose dear edge is
+    #: the anchor itself; Haiku nothing at all.
+    RATES: ClassVar[dict] = {"per_family": {
+        "opus": {"input": OPUS_IN, "interval": None, "anchor": True, "rate_source": "reference",
+                 "output_multiplier": 5, "status": None},
+        "sonnet": {"input": OPUS_IN / 2, "interval": [OPUS_IN / 4, OPUS_IN],
+                   "output_multiplier": 5, "rate_source": "measured", "status": None},
+        "fable": {"input": None, "interval": [OPUS_IN / 2, OPUS_IN], "output_multiplier": 5,
+                  "rate_source": "measured", "status": "rate not yet identified"},
+        "haiku": {"input": None, "interval": None, "output_multiplier": 5,
+                  "rate_source": "measured",
+                  "status": "not measurable, no clean stretch is Haiku-heavy"},
+    }}
+
+    def clean(self, jwork=None, dave=None, runs=()):
+        return C.clean_stretches({"jwork": self.JWORK if jwork is None else jwork,
+                                  "dave": self.DAVE if dave is None else dave}, list(runs))
+
+    def block(self, *, rates=None, windows=None, interval=None, **kw):
+        return C.window_tokens(self.clean(**kw), CREDITS, LABELS, rates,
+                               windows_per_week=windows, windows_per_week_interval=interval)
+
+    # --- the measurement itself -------------------------------------------------------
+
+    def test_a_full_window_is_the_stretchs_own_counts_over_its_own_percent(self):
+        block = self.block()
+        self.assertEqual(block["n"], 4)
+        self.assertEqual(block["all"]["value"], 290_000)
+        self.assertIsNone(block["all"]["status"])
+
+    def test_the_interval_is_the_union_of_the_account_intervals(self):
+        """Not the pooled spread by another name: each account's own lowest and highest."""
+        block = self.block()
+        self.assertEqual(block["accounts"]["a2"]["all"]["interval"], [116_000, 348_000])
+        self.assertEqual(block["accounts"]["a3"]["all"]["interval"], [564_000, 564_000])
+        self.assertEqual(block["all"]["interval"], [116_000, 564_000])
+
+    def test_each_token_class_has_its_own_median_and_spread(self):
+        per_class = self.block()["per_class"]
+        self.assertEqual(per_class["input"], {"value": 2_500, "interval": [1_000, 4_000]})
+        self.assertEqual(per_class["cache_write"], {"value": 25_000, "interval": [10_000, 40_000]})
+        self.assertEqual(per_class["cache_read"], {"value": 250_000, "interval": [100_000, 500_000]})
+        self.assertEqual(per_class["output"], {"value": 12_500, "interval": [5_000, 20_000]})
+
+    def test_an_account_gets_its_own_per_class_medians_too(self):
+        a2 = self.block()["accounts"]["a2"]
+        self.assertEqual(a2["n"], 3)
+        self.assertEqual(a2["per_class"]["cache_read"], {"value": 200_000,
+                                                         "interval": [100_000, 300_000]})
+
+    def test_the_cache_read_share_is_the_same_fact_as_one_fraction(self):
+        share = self.block()["cache_read_share"]
+        self.assertEqual(share["value"], round(10_000 / 11_600, 4))
+        self.assertEqual(share["interval"], [round(10_000 / 11_600, 4), round(50_000 / 56_400, 4)])
+
+    def test_the_block_dates_itself_from_the_newest_stretch_in_the_cluster(self):
+        self.assertEqual(self.block()["as_of"], "2026-09-08T00:00:00+00:00")
+
+    def test_no_rate_and_no_class_weight_enters_the_measured_figure(self):
+        """The Opus row is the same number with the cache-read weight moved off zero."""
+        heavy = C.window_tokens(self.clean(), CREDITS, LABELS, self.RATES, weight=0.015)
+        self.assertEqual(heavy["all"]["value"], self.block(rates=self.RATES)["all"]["value"])
+        self.assertEqual(heavy["per_family"]["opus"]["all"]["value"], 290_000)
+
+    def test_the_method_says_what_was_done_and_what_the_interval_is(self):
+        method = self.block()["method"]
+        self.assertIn("per token class", method)
+        self.assertIn("union of the account intervals", method)
+        self.assertIn("No credit rate and no class weight", method)
+
+    # --- the selection ----------------------------------------------------------------
+
+    def test_it_reads_the_same_cluster_as_the_window_in_credits(self):
+        clean = self.clean()
+        self.assertEqual(C.window_tokens(clean, CREDITS, LABELS)["n"],
+                         C.window_credits(clean, CREDITS, LABELS)["n"])
+
+    def test_the_selection_sentence_is_the_one_the_window_in_credits_states(self):
+        self.assertIn(self.block()["selection"], C.window_credits(self.clean(), CREDITS,
+                                                                  LABELS)["method"])
+
+    def test_a_stretch_with_a_second_model_in_it_is_not_pure_opus(self):
+        mixed = stretch("2026-09-09T00:00:00+00:00",
+                        {"claude-opus-5": tok(input=1_000), "claude-sonnet-5": tok(input=10)})
+        self.assertEqual(self.block(jwork=[*self.JWORK, mixed])["n"], 4)
+
+    def test_a_stretch_that_barely_moved_the_meter_is_left_out(self):
+        rounding = classed_stretch("2026-09-09T00:00:00+00:00", 100, 1_000, 10_000, 500,
+                                   delta_pct=1.0)
+        self.assertEqual(self.block(jwork=[*self.JWORK, rounding])["n"], 4)
+
+    def test_an_unaccounted_capture_column_keeps_a_stretch_out(self):
+        unaccounted = classed_stretch("2026-09-09T00:00:00+00:00", 100, 1_000, 10_000, 500,
+                                      capture_status="unaccounted")
+        self.assertEqual(self.block(jwork=[*self.JWORK, unaccounted])["n"], 4)
+
+    def test_a_stretch_cut_by_one_of_the_trackers_own_runs_is_left_out(self):
+        run = C.HarnessRun("jwork", datetime(2026, 9, 4, 22, tzinfo=timezone.utc),
+                           datetime(2026, 9, 5, 1, tzinfo=timezone.utc), "probe")
+        self.assertEqual(self.block(runs=[run])["n"], 3)
+
+    # --- the null shapes --------------------------------------------------------------
+
+    def test_an_account_that_contributed_nothing_says_so_and_publishes_no_number(self):
+        a1 = self.block()["accounts"]["a1"]
+        self.assertEqual(a1, {"n": 0, "per_class": None,
+                              "all": {"value": None, "interval": None,
+                                      "status": "contributed no clean pure-opus stretch"}})
+
+    def test_no_pure_opus_stretch_anywhere_leaves_every_figure_null(self):
+        block = C.window_tokens(C.clean_stretches({}, []), CREDITS, LABELS, self.RATES)
+        self.assertEqual(block["n"], 0)
+        self.assertIsNone(block["all"]["value"])
+        self.assertIn("no capture-accepted pure-opus stretch", block["all"]["status"])
+        self.assertIsNone(block["as_of"])
+        for fam in ("opus", "sonnet", "fable", "haiku"):
+            self.assertIsNone(block["per_family"][fam]["all"]["value"], fam)
+
+    def test_a_family_whose_fits_did_not_separate_publishes_the_envelope_and_no_value(self):
+        fable = self.block(rates=self.RATES)["per_family"]["fable"]
+        self.assertEqual(fable["rate_source"], "envelope")
+        self.assertIsNone(fable["all"]["value"])
+        self.assertEqual(fable["all"]["status"], "rate not yet identified")
+        # The dear edge of the envelope is the anchor itself, so the low edge is the
+        # window's own; the cheap edge buys strictly more than the anchor does.
+        self.assertEqual(fable["all"]["interval"][0], 116_000)
+        self.assertGreater(fable["all"]["interval"][1], 564_000)
+        self.assertIn("envelope", fable["conversion"])
+
+    def test_a_family_with_nothing_to_measure_a_rate_from_publishes_a_sentence_only(self):
+        haiku = self.block(rates=self.RATES)["per_family"]["haiku"]
+        self.assertEqual(haiku["rate_source"], "none")
+        self.assertEqual(haiku["all"], {"value": None, "interval": None,
+                                        "status": "not measurable, no clean stretch is Haiku-heavy"})
+        self.assertIsNone(haiku["conversion"])
+
+    def test_with_no_measured_rate_source_only_the_anchor_survives(self):
+        block = self.block()
+        self.assertEqual(block["per_family"]["opus"]["all"]["value"], 290_000)
+        for fam in ("sonnet", "fable", "haiku"):
+            self.assertIsNone(block["per_family"][fam]["all"]["value"], fam)
+            self.assertEqual(block["per_family"][fam]["all"]["status"], C.NO_MEASURED_SOURCE)
+
+    # --- the conversions --------------------------------------------------------------
+
+    def test_the_anchor_family_is_the_measurement_itself_and_converts_nothing(self):
+        opus = self.block(rates=self.RATES)["per_family"]["opus"]
+        self.assertEqual(opus["rate_source"], "anchor")
+        self.assertIsNone(opus["conversion"])
+        self.assertEqual(opus["all"]["value"], 290_000)
+        self.assertEqual(opus["all"]["interval"], [116_000, 564_000])
+
+    def test_a_family_at_half_the_anchors_rate_buys_twice_the_tokens(self):
+        """Half the input rate and the same output multiple: the mix cancels exactly."""
+        sonnet = self.block(rates=self.RATES)["per_family"]["sonnet"]
+        self.assertEqual(sonnet["rate_source"], "measured")
+        self.assertEqual(sonnet["all"]["value"], 580_000)
+        # The cheapest rate buys the most tokens: the quarter-rate edge against the top of
+        # the window's range, the anchor-rate edge against the bottom.
+        self.assertEqual(sonnet["all"]["interval"], [116_000, 2_256_000])
+        self.assertIn("measured Sonnet input rate", sonnet["conversion"])
+
+    # --- the week ---------------------------------------------------------------------
+
+    def test_a_week_is_the_window_times_the_measured_windows_per_week(self):
+        per_week = self.block(rates=self.RATES, windows=4.0, interval=[3.5, 4.5])["per_week"]
+        self.assertEqual(per_week["windows_per_week"]["value"], 4.0)
+        self.assertEqual(per_week["all"]["value"], 1_160_000)
+        self.assertEqual(per_week["all"]["interval"], [406_000, 2_538_000])
+        self.assertEqual(per_week["per_family"]["sonnet"]["all"]["value"], 2_320_000)
+        self.assertEqual(per_week["per_family"]["sonnet"]["all"]["interval"], [406_000, 10_152_000])
+        self.assertIsNone(per_week["status"])
+
+    def test_a_family_with_an_envelope_keeps_that_shape_through_the_week(self):
+        per_week = self.block(rates=self.RATES, windows=4.0, interval=[3.5, 4.5])["per_week"]
+        fable = per_week["per_family"]["fable"]["all"]
+        self.assertIsNone(fable["value"])
+        self.assertEqual(fable["interval"][0], 116_000 * 3.5)
+        self.assertEqual(fable["status"], "rate not yet identified")
+        self.assertIsNone(per_week["per_family"]["haiku"]["all"]["interval"])
+
+    def test_with_no_measured_windows_per_week_the_week_is_a_status_and_nulls(self):
+        per_week = self.block(rates=self.RATES)["per_week"]
+        self.assertEqual(per_week["status"], "no measured windows per week to multiply by")
+        self.assertIsNone(per_week["all"]["value"])
+        self.assertIsNone(per_week["all"]["interval"])
+        self.assertIsNone(per_week["windows_per_week"]["value"])
+        for fam in ("opus", "sonnet", "fable", "haiku"):
+            self.assertIsNone(per_week["per_family"][fam]["all"]["value"], fam)
+
+
+class WindowTokensPublishedTests(unittest.TestCase):
+    """The block as the publisher writes it, and what it refuses to write."""
+
+    def setUp(self):
+        self.gs = report("jwork", WindowTokensTests.JWORK)
+        self.credits = _published(gs=self.gs)["credits"]
+        self.block = self.credits["window_tokens"]
+
+    def test_the_block_is_published_beside_the_window_it_is_measured_on(self):
+        self.assertEqual(self.block["derivation"], "credits")
+        self.assertEqual(self.block["n"], self.credits["window_credits"]["n"])
+        self.assertEqual(self.block["all"]["value"], 232_000)
+        self.assertEqual(self.block["all"]["interval"], [116_000, 348_000])
+
+    def test_the_watched_accounts_are_published_by_label_and_never_by_name(self):
+        self.assertEqual(sorted(self.block["accounts"]), ["a1", "a2", "a3"])
+        for name in ("jwork", "dave", "masterrig"):
+            self.assertNotIn(name, json.dumps(self.block))
+
+    def test_the_haiku_row_states_the_same_sentence_the_per_model_row_states(self):
+        self.assertEqual(self.block["per_family"]["haiku"]["all"]["status"],
+                         self.credits["per_model"]["haiku"]["status"])
+
+    def test_a_publish_with_no_weekly_measurement_publishes_no_week(self):
+        self.assertEqual(self.block["per_week"]["status"],
+                         "no measured windows per week to multiply by")
+
+    def test_the_legacy_dollar_route_is_marked_deprecated_and_still_published(self):
+        rates = _published(gs=self.gs)["rates"]["claude-opus-5"]
+        self.assertIn("tokens_per_window", rates)
+        self.assertEqual(rates["deprecated"],
+                         "read credits.window_tokens; removed after the page moves")
 
 
 if __name__ == "__main__":

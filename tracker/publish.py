@@ -451,6 +451,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         rates[model] = {
             "meter_budget_per_window": round(regime_current_value, 2) if regime_current_value is not None else None,
             "tokens_per_window": window_tokens,
+            # The list-price route to the same question, kept only until the page moves:
+            # it converts a dollar budget on the frozen reference mix, where
+            # `credits.window_tokens` reads the cluster's own token counts off the meter.
+            # A follow-up removes this key and `history[model][].tokens_per_window` with it.
+            "deprecated": "read credits.window_tokens; removed after the page moves",
             "api_value_per_window": round(window_tokens * api_per_token, 2) if window_tokens is not None else None,
             "api_list_value_per_window": round(window_tokens * api_per_token, 2) if window_tokens is not None else None,
             "source": "derived_reference_mix" if window_tokens is not None else "unavailable",
@@ -1128,6 +1133,17 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
                      "later; null where neither has a stretch to date"),
         },
         "window_credits": window,
+        # What that same window buys in tokens, read off the same cluster's own counts
+        # rather than divided out of it by a rate. `per_model[...].tokens_per_window` is
+        # the other question -- a window spent on nothing but one class of one model --
+        # and the page stated it as if it were this one
+        # (docs/findings-2026-09-20-window-tokens.md).
+        "window_tokens": credit_model.window_tokens(
+            clean, credits, labels, model_rates,
+            windows_per_week=windows_per_week,
+            windows_per_week_interval=(weekly["max20"].get("current_estimate")
+                                       or {}).get("rounding_interval"),
+            fam=window["pure_family"]),
         "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
         "per_model": _credits_per_model(window, credits, prices, model_rates, labels,
                                         window_as_of, fits_as_of),
