@@ -246,21 +246,25 @@ class PoolingTests(unittest.TestCase):
         self.assertEqual(row["interval"], [0.48, 0.56])
         self.assertEqual(sorted(row["per_fit"]), ["jwork/post", "jwork/pre"])
 
-    def test_fits_that_do_not_agree_publish_the_interval_and_no_value(self):
+    def test_fits_that_do_not_agree_still_publish_the_median_with_the_union_interval(self):
         row = adopt(self._s3(0.50, 0.90))["sonnet"]
         self.assertFalse(row["agree"])
-        self.assertIsNone(row["measured"])
+        self.assertAlmostEqual(row["measured"], 0.70)
         self.assertEqual(row["interval"], [0.48, 0.92])
 
-    def test_a_family_no_fit_carries_is_not_measurable_and_a_disagreeing_one_is_not_identified(self):
+    def test_a_family_no_fit_carries_is_not_measurable_and_a_disagreeing_one_still_publishes(self):
         s1 = {"jwork/pre": {"max_share": {"opus": 1.0, "sonnet": 0.7, "haiku": 0.0, "fable": 0.8}}}
         mr = measured_rates(s1, self._s3(0.50, 0.90))
         self.assertEqual(mr["per_family"]["haiku"]["status"],
                          "not measurable, no clean stretch is Haiku-heavy")
         self.assertIsNone(mr["per_family"]["haiku"]["interval"])
-        self.assertEqual(mr["per_family"]["sonnet"]["status"], "rate not yet identified")
-        self.assertIsNone(mr["per_family"]["sonnet"]["input"])
+        # Disagreeing fits are no longer a status sentence: a value is published (the median of
+        # the per-fit rates), the interval is the union, status is null and agree is False.
+        self.assertIsNone(mr["per_family"]["sonnet"]["status"])
+        self.assertFalse(mr["per_family"]["sonnet"]["agree"])
+        self.assertAlmostEqual(mr["per_family"]["sonnet"]["input"], 0.70)
         self.assertEqual(mr["per_family"]["sonnet"]["interval"], [0.48, 0.92])
+        self.assertIn("disagree", mr["per_family"]["sonnet"]["why"])
 
     def test_the_opus_row_is_the_anchor_and_says_it_came_from_the_reference(self):
         mr = measured_rates({}, self._s3(0.50, 0.54))

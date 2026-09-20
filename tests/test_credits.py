@@ -1,8 +1,10 @@
 """tracker/credits.py and the publisher's credits block (issue #53).
 
 Arithmetic, so the tests are arithmetic: a planted token bundle whose credits can be
-worked out by hand, a window the fixture makes exactly, and a Fable interval that has
-to come out the other end of every derivation as an interval with no value in it.
+worked out by hand, a window the fixture makes exactly, and a Fable rate whose three
+per-account fits disagree, which has to come out the other end of every derivation as
+a value (the median of the fits) with the union of their intervals, `status` null and
+`agree` false.
 
 The rule under test throughout is the one the reconciliation set: the measured
 quantity is the five-hour window in credits, read off pure-Opus stretches that carry
@@ -299,33 +301,37 @@ class SolvedFableCarryThroughTests(unittest.TestCase):
         self.assertEqual((fable["input_low"], fable["input_high"]), (1.0, 2.5))
         self.assertEqual(self.credits["rates"]["per_family"]["fable"]["interval"], fable)
 
-    def test_tokens_per_window_carries_the_measured_interval_with_no_value(self):
+    def test_tokens_per_window_carries_the_measured_value_and_interval(self):
         """The row's rate is the measured one; the publish-time solve is published beside it.
 
-        Fable's two sides of 14 September do not agree within their intervals, so the
-        measured source gives an interval and no value, and every figure derived from it
-        publishes the interval and the status sentence. The solve of the same rate from the
+        Fable's three per-account fits disagree, so the measured source is the median of them
+        with the union of their intervals as its interval, `status` null and `agree` false --
+        not a status sentence in place of a number. The solve of the same rate from the
         Fable-heavy stretches is still published, as `fable_interval` and in the rate table.
         """
         row = self.credits["per_model"]["fable"]
         rate = C.family_rate("fable", CREDITS, C.load_model_rates())
-        self.assertIsNone(row["credits_per_token"]["input"])
+        self.assertEqual(row["credits_per_token"]["input"], rate.input)
         self.assertEqual(row["rate_source"], "measured")
         self.assertEqual(row["credits_per_token_interval"]["input"], list(rate.input_interval))
         figure = row["tokens_per_window"]["input"]
-        self.assertIsNone(figure["value"])
-        self.assertEqual(figure["status"], "rate not yet identified")
+        self.assertEqual(figure["value"], round(20_000_000 / rate.input))
+        self.assertIsNone(figure["status"])
         # Cheapest rate against the top of the window's range, dearest against the bottom.
         self.assertEqual(figure["interval"], [round(20_000_000 / rate.input_interval[1]),
                                               round(20_000_000 / rate.input_interval[0])])
         self.assertEqual((self.credits["fable_interval"]["input_low"],
                           self.credits["fable_interval"]["input_high"]), (1.0, 2.5))
 
-    def test_the_api_value_and_the_session_count_are_intervals_too(self):
-        self.assertIsNone(self.credits["per_model"]["fable"]["api_value_per_window_usd"]["input"]["value"])
+    def test_the_api_value_and_the_session_count_are_values_too(self):
+        rate = C.family_rate("fable", CREDITS, C.load_model_rates())
+        tokens = round(20_000_000 / rate.input)
+        api = self.credits["per_model"]["fable"]["api_value_per_window_usd"]["input"]
+        self.assertIsNotNone(api["value"])
+        self.assertEqual(api["value"], round(tokens * PRICES["claude-fable-5-1"]["input"] / 1e6, 2))
         sessions = self.credits["sessions"].get("claude-fable-5-1")
         if sessions is not None:
-            self.assertIsNone(sessions["per_window"]["value"])
+            self.assertIsNotNone(sessions["per_window"]["value"])
 
 
 class AcrossCutTests(unittest.TestCase):
@@ -571,15 +577,21 @@ class PublishedBlockTests(unittest.TestCase):
 
         The solve and the fit are two instruments. The solve has nothing to work on here and
         says so; the row's rate comes from the committed fit, which is measured over other
-        stretches and does not depend on this fixture.
+        stretches and does not depend on this fixture. The committed fit's three per-account
+        fits disagree, so the row still carries a value (their median) and the union of their
+        intervals, with `status` null and `agree` false -- not a status sentence in place of a
+        number.
         """
         fable = self.credits["fable_interval"]
         self.assertIsNone(fable["input_low"])
         self.assertIsNone(fable["input_high"])
         self.assertEqual(fable["unresolved"], "no Fable-heavy stretch to solve a rate from")
         row = self.credits["per_model"]["fable"]
-        self.assertIsNone(row["tokens_per_window"]["input"]["value"])
-        self.assertEqual(row["status"], "rate not yet identified")
+        self.assertIsNotNone(row["tokens_per_window"]["input"]["value"])
+        self.assertIsNone(row["status"])
+        rate = C.family_rate("fable", CREDITS, C.load_model_rates())
+        self.assertFalse(rate.detail["agree"])
+        self.assertIn("disagree", rate.detail["why"])
 
     def test_the_fable_session_count_is_an_interval_too(self):
         sessions = self.credits["sessions"].get("claude-fable-5-1")
