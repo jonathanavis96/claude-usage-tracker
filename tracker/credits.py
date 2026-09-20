@@ -2,8 +2,30 @@
 
 The meter does not work in dollars. It works in an internal unit -- credits --
 charged per token at a small rational rate per model, and the five-hour window is a
-credit budget. `data/prices.json`'s `_credits` block holds the rates; nothing here
-carries a rate of its own, so a rate only ever changes in one place.
+credit budget. Nothing here carries a rate of its own, so a rate only ever changes in
+one place, and there are two such places, for two different jobs:
+
+- `history/model-rates.json` holds the rates **measured on the meter** by
+  `tools/model_rates.py`, with a bootstrap interval each. Every per-model figure the
+  page states divides by one of these (`family_rate`). A family the fit could not
+  measure gets a status sentence and no number.
+- `data/prices.json`'s `_credits` block is the January 2026 **reference** table
+  (`role: reference`). Two things in it are still used: Opus's row, which is the unit
+  anchor -- 10/15 credits per input token -- that every measured rate is expressed
+  against and that nothing in our data tests; and the cache-read weight, which is
+  measured elsewhere rather than taken from the article. The rest of it is drawn beside
+  the measurement and divided by nowhere.
+
+One exception, stated where it happens: the stretch-level instruments below
+(`window_credits`, `across_cut`, `fable_interval`) price a stretch's tokens with
+`price_tokens` at the reference table. `window_credits` is pure-Opus, so it touches
+only the anchor. The other two price mixed stretches, and they keep the reference
+table because the measured rates are outputs of a fit over these same stretches and
+because Haiku has no measured rate at all -- pricing a stretch with a missing rate
+would drop it from the selection rather than publish its absence. The comparison
+holds one table on both sides of the cut on purpose (see `across_cut`), and the level
+it prints is not a figure the page states. docs/findings-2026-09-20-measured-rates.md
+records this as the one place a reference rate is still in an arithmetic.
 
 Three callers import this module rather than each keeping their own copy of the
 selection rule: `tracker/publish.py` (the published `credits` block),
@@ -51,6 +73,13 @@ from pathlib import Path
 from statistics import median
 
 PRICES_PATH = Path(__file__).resolve().parent.parent / "data" / "prices.json"
+#: The meter's own per-model rates, fitted from the passive stretches by
+#: tools/model_rates.py and committed. `data/prices.json`'s `_credits` table is the January
+#: 2026 reference the fit is read against; this file is the measurement, and it is what every
+#: per-model figure the page states is divided by. Regenerate it with the command in its own
+#: `_meta` (`python3 -m tools.model_rates history/masterrig-passive.json --json
+#: history/model-rates.json`), which sends no traffic.
+MODEL_RATES_PATH = Path(__file__).resolve().parent.parent / "history" / "model-rates.json"
 #: Every run the tracker's own instruments made, one JSON object per line, written by
 #: tools/harness_runs.py. Anchored to the checkout, not the working directory, because the
 #: publisher runs from cron and the report tools run from anywhere.
@@ -140,6 +169,118 @@ def rates(fam: str, credits: dict) -> tuple[float, float] | None:
 
 def cache_read_weight(credits: dict) -> float:
     return float(credits.get("cache_read_weight", 0) or 0)
+
+
+def load_model_rates(path: Path | None = None, *, raw: dict | None = None) -> dict:
+    """The `measured_rates` block of `history/model-rates.json`, or `{}` when there is none.
+
+    An empty block is not an error. A fixture, or an archive from before the file existed,
+    has no measurement to publish, and the honest publish is then a status sentence on every
+    per-model row rather than the reference table quietly standing in for a measurement. Only
+    the Opus anchor survives a missing file, because the anchor is what a credit means here
+    rather than a figure about Opus (`family_rate`).
+    """
+    if raw is None:
+        p = Path(path) if path is not None else MODEL_RATES_PATH
+        if not p.exists():
+            return {}
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    block = (raw or {}).get("measured_rates")
+    if not isinstance(block, dict) or not isinstance(block.get("per_family"), dict):
+        return {}
+    return block
+
+
+#: What a row says when there is no measured-rate source at all to read a rate from.
+NO_MEASURED_SOURCE = ("no measured rate source: history/model-rates.json carries no "
+                      "measured_rates block")
+
+
+@dataclass(frozen=True)
+class FamilyRate:
+    """One family's credit rate as every published per-model figure divides by it.
+
+    Exactly one of three shapes, never two:
+
+    - a rate with a value (`input`/`output` set, `interval` beside it where the fit has one),
+    - an interval and no value, with `status` saying the rate is not yet identified,
+    - no value and no interval, with `status` saying it is not measurable at all.
+
+    `rate_source` is "measured" or "reference". Only Opus reads "reference": it is the unit
+    anchor -- 10/15 credits per input token, five times that per output token -- and every
+    other family's rate is measured relative to it, so nothing here tests Opus itself.
+    `reference_input`/`reference_output` carry the January table's figure for the family so a
+    page can draw it beside the measurement. Nothing divides by them.
+    """
+    family: str
+    input: float | None
+    output: float | None
+    input_interval: tuple[float, float] | None
+    output_interval: tuple[float, float] | None
+    status: str | None
+    rate_source: str
+    anchor: bool
+    reference_input: float | None
+    reference_output: float | None
+    detail: dict
+
+    @property
+    def input_edges(self) -> tuple[float | None, float | None]:
+        """(low, high) of the input rate: the value itself when the rate has no interval."""
+        if self.input_interval:
+            return tuple(self.input_interval)
+        return (self.input, self.input)
+
+    @property
+    def output_edges(self) -> tuple[float | None, float | None]:
+        if self.output_interval:
+            return tuple(self.output_interval)
+        return (self.output, self.output)
+
+
+def family_rate(fam: str, credits: dict, model_rates: dict | None) -> FamilyRate:
+    """The measured rate for one family, with the reference figure carried beside it.
+
+    The output rate is the family's output multiplier times its input rate -- 5 for every
+    family in the reference table, and the fit assumes the same 5 -- except where the table
+    carries unresolved candidates (`output_ratio_candidates`, Fable's 3 and 5), in which case
+    the output interval spans the cheapest candidate against the low edge and the dearest
+    against the high one, which is the shape the Fable row has published since PR #65.
+    """
+    row = (model_rates or {}).get("per_family", {}).get(fam) or {}
+    reference = rates(fam, credits)
+    ref_in, ref_out = reference if reference else (None, None)
+    candidates = credits["per_family"].get(fam, {}).get("output_ratio_candidates")
+    anchor = bool(row.get("anchor"))
+    if not row:
+        # No measurement at all. The anchor is definitional and stands; everything else says so.
+        anchor = fam == "opus"
+        value_in, value_out = (ref_in, ref_out) if anchor else (None, None)
+        return FamilyRate(fam, value_in, value_out, None, None,
+                          None if anchor else NO_MEASURED_SOURCE,
+                          "reference" if anchor else "measured", anchor, ref_in, ref_out,
+                          {"source_file": str(MODEL_RATES_PATH.name)})
+    mult = row.get("output_multiplier") or 5
+    value_in = row.get("input")
+    interval_in = tuple(row["interval"]) if row.get("interval") else None
+    # The anchor's output rate is the table's own 50/15 rather than 5 x 10/15, so the exact
+    # fifteenth the table stores is the one published.
+    value_out = (ref_out if anchor and ref_out is not None else
+                 value_in * mult if value_in is not None else None)
+    if interval_in and candidates:
+        interval_out = (interval_in[0] * min(candidates), interval_in[1] * max(candidates))
+    elif interval_in:
+        interval_out = (interval_in[0] * mult, interval_in[1] * mult)
+    else:
+        interval_out = None
+    detail = {k: row[k] for k in ("n_fits", "agree", "per_fit", "times_opus",
+                                  "times_opus_interval", "why", "max_share_of_a_clean_stretch")
+              if k in row}
+    detail["output_multiplier"] = mult
+    if candidates:
+        detail["output_ratio_candidates"] = list(candidates)
+    return FamilyRate(fam, value_in, value_out, interval_in, interval_out, row.get("status"),
+                      row.get("rate_source", "measured"), anchor, ref_in, ref_out, detail)
 
 
 def input_side(tok: dict, weight: float) -> float:

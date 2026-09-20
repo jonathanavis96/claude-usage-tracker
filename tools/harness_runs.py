@@ -19,8 +19,11 @@ nothing else, which is how an aborted probe reaches the publisher's selection at
 Accounts and times, in order of preference:
 
 1. A completed probe carries its own account and an exact interval (ts, ts + elapsed_s) in
-   probes.jsonl. A result line in the log is matched to that row by account, model and
-   tokens-per-1%, so the run is emitted once with the exact interval.
+   probes.jsonl. A result line in the log is matched to that row by account, model,
+   tokens-per-1% and proximity in time, so the run is emitted once with the exact interval.
+   Time is part of the key because the other three repeat: the probe runs the same model on
+   the same account night after night, and two runs reading the same rounded tokens per 1%
+   would otherwise collapse into one, losing the span of the later.
 2. An abort line names its account ("probe aborted on dave: tick too early").
 3. A crashed run names nothing. Its prompt lines carry the five-hour meter's resets_at, which
    identifies the account's window, so the run is jwork when jwork's own meter shows a reset
@@ -52,6 +55,11 @@ PROBE_LOG = OPS / "claude-usage-probe.log"
 OUTPUT_PROBE_LOG = OPS / "claude-usage-output-probe.log"
 OUT = HARNESS_RUNS_PATH
 WINDOW = timedelta(hours=5)
+#: How far apart a log run's bracket and a probes.jsonl row's span may sit and still be the
+#: same run (`same_run`). One five-hour window, because an undated run's bracket is at worst
+#: the whole window its prompts name, and nothing closer would hold; it is tight enough for
+#: its purpose, which is to stop a run being deduplicated against another day's.
+MATCH_TOLERANCE = WINDOW
 P = datetime.fromisoformat
 
 TIMED = re.compile(r"^(\d{2}):(\d{2}):(\d{2})Z\s+(.*)$")
@@ -196,20 +204,41 @@ def effort_matrix_row() -> dict:
             "precision": "recorded", "account_source": "effort_matrix", "source": "data/effort_matrix.json:_meta"}
 
 
+def same_run(row: dict, account: str, model: str | None, tokens_per_pct: float | None,
+             start: datetime, end: datetime) -> bool:
+    """Is this probes.jsonl row the same run as a completed run in the log?
+
+    Account, model and tokens per 1% to the nearest token, *and* the two spans within
+    `MATCH_TOLERANCE` of each other. The first three alone are not a key: the probe runs the
+    same model on the same account night after night, and two runs that happen to read the
+    same rounded tokens per 1% are then indistinguishable -- the log's run would be dropped as
+    a duplicate of a row from another day and its span would excuse no stretch. The log run's
+    span is a bracket rather than an instant (`bracket`), which can be a whole five-hour
+    window wide, so the test is proximity rather than containment: the two spans must overlap
+    once each is widened by one window.
+    """
+    if row["account"] != account or row["model"] != model:
+        return False
+    if row["tokens_per_pct"] is None or tokens_per_pct is None:
+        return False
+    if round(row["tokens_per_pct"]) != round(tokens_per_pct):
+        return False
+    return (start - MATCH_TOLERANCE) < row["end"] and row["start"] < (end + MATCH_TOLERANCE)
+
+
 def collect() -> list[dict]:
     series = meter_series()
     rows = probe_rows() + [effort_matrix_row()]
     for path, kind in ((PROBE_LOG, "probe"), (OUTPUT_PROBE_LOG, "output-probe")):
         for run in parse_log(path, kind):
             account, how = (run["account"], "log") if run["account"] else attribute(run, series)
+            start, end, precision = bracket(run, account, series)
             if run["outcome"] == "completed":
-                match = [r for r in rows if r["account"] == account and r["model"] == run["model"]
-                         and r["tokens_per_pct"] is not None
-                         and round(r["tokens_per_pct"]) == round(run["tokens_per_pct"])]
+                match = [r for r in rows
+                         if same_run(r, account, run["model"], run["tokens_per_pct"], start, end)]
                 if match:
                     match[0]["source"] += f" ({path.name}:{run['line']})"
                     continue
-            start, end, precision = bracket(run, account, series)
             rows.append({"account": account, "start": start, "end": end, "kind": kind,
                          "outcome": run["outcome"], "model": run["model"], "effort": run.get("effort"),
                          "tokens_per_pct": run.get("tokens_per_pct"), "precision": precision,

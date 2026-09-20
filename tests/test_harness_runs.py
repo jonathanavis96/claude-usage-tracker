@@ -3,8 +3,11 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
-from tools.harness_runs import _resolve, attribute, bracket, effort_matrix_row, parse_log, probe_rows, resets
+from tools import harness_runs as H
+from tools.harness_runs import (_resolve, attribute, bracket, collect, effort_matrix_row,
+                               parse_log, probe_rows, resets, same_run)
 from tracker import credits as C
 
 LOG = """\
@@ -114,6 +117,114 @@ class AttributionTests(unittest.TestCase):
         start, end, how = bracket(run, "jwork", {})
         self.assertEqual(how, "log-clock")
         self.assertEqual((start.hour, start.minute, end.hour, end.minute), (12, 3, 12, 58))
+
+
+#: One completed run the log timestamps throughout: 2026-09-15, 12:03:12Z to 12:58:20Z.
+COMPLETED_LOG = """\
+12:03:12Z prompt 1: five_hour=0.0 resets_at=2026-09-15T16:40:00.905880+00:00 spent=input=2 output=5
+12:58:20Z prompt 2: five_hour=2.0 resets_at=2026-09-15T16:40:00.310915+00:00 spent=input=2 output=5
+jwork claude-opus-5 low: 148419 tokens per 1% (57 prompts, ticks 2->5, skip 1, early tick)
+23:50:00Z prompt 1: five_hour=1.0 resets_at=2026-09-14T02:40:00.100000+00:00 spent=input=2 output=5
+probe aborted on dave: tick too early
+"""
+
+
+def _probe_row(ts: str, tokens_per_pct: float = 148419.0, account: str = "jwork",
+               model: str = "claude-opus-5", elapsed_s: int = 3600) -> dict:
+    """A history/probes.jsonl row in the shape probe_rows() hands back."""
+    start = datetime.fromisoformat(ts)
+    return {"account": account, "start": start, "end": start + timedelta(seconds=elapsed_s),
+            "kind": "probe", "outcome": "completed", "model": model, "effort": "low",
+            "tokens_per_pct": tokens_per_pct, "precision": "elapsed_s",
+            "account_source": "probes.jsonl", "source": "history/probes.jsonl:1"}
+
+
+class CollectTests(unittest.TestCase):
+    """collect(): the log's runs merged with the rows, and what counts as the same run.
+
+    The dedup key is account, model, rounded tokens per 1% *and* proximity in time. Without
+    the time condition a run is dropped as a duplicate of another day's row whenever the probe
+    happens to read the same rounded tokens per 1% twice, and the dropped run's span then
+    excuses no stretch at all -- which is the whole point of the file.
+    """
+
+    MATRIX = {"account": "jwork", "start": datetime(2026, 9, 9, 11, 28, 37, tzinfo=timezone.utc),
+              "end": datetime(2026, 9, 9, 14, 53, 22, tzinfo=timezone.utc),
+              "kind": "effort-matrix", "outcome": "completed", "model": None, "effort": None,
+              "tokens_per_pct": None, "precision": "recorded", "account_source": "effort_matrix",
+              "source": "data/effort_matrix.json:_meta"}
+
+    def collect(self, rows: list[dict], log: str = COMPLETED_LOG) -> list[dict]:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "probe.log"
+            path.write_text(log)
+            with mock.patch.object(H, "PROBE_LOG", path), \
+                 mock.patch.object(H, "OUTPUT_PROBE_LOG", Path(d) / "absent.log"), \
+                 mock.patch.object(H, "meter_series", lambda: {}), \
+                 mock.patch.object(H, "probe_rows", lambda: [dict(r) for r in rows]), \
+                 mock.patch.object(H, "effort_matrix_row", lambda: dict(self.MATRIX)):
+                return collect()
+
+    def test_a_row_of_the_same_window_is_the_same_run_and_is_not_emitted_twice(self):
+        rows = self.collect([_probe_row("2026-09-15T12:00:00+00:00")])
+        completed = [r for r in rows if r["outcome"] == "completed" and r["kind"] == "probe"]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0]["precision"], "elapsed_s")
+        self.assertIn("probe.log:3", completed[0]["source"])
+
+    def test_a_row_three_days_away_is_a_different_run_and_both_are_kept(self):
+        """Same account, same model, same rounded tokens per 1% -- and not the same run."""
+        rows = self.collect([_probe_row("2026-09-12T12:00:00+00:00")])
+        completed = [r for r in rows if r["outcome"] == "completed" and r["kind"] == "probe"]
+        self.assertEqual(len(completed), 2)
+        self.assertEqual({r["precision"] for r in completed}, {"elapsed_s", "log-clock"})
+        log_run = next(r for r in completed if r["precision"] == "log-clock")
+        self.assertEqual(log_run["start"], "2026-09-15T12:03:12+00:00")
+        self.assertEqual(log_run["end"], "2026-09-15T12:58:20+00:00")
+
+    def test_a_row_of_another_account_or_model_is_never_the_same_run(self):
+        for row in (_probe_row("2026-09-15T12:00:00+00:00", account="dave"),
+                    _probe_row("2026-09-15T12:00:00+00:00", model="claude-sonnet-5")):
+            rows = self.collect([row])
+            self.assertEqual(len([r for r in rows if r["kind"] == "probe"
+                                  and r["outcome"] == "completed"]), 2)
+
+    def test_a_row_reading_different_tokens_per_pct_is_never_the_same_run(self):
+        rows = self.collect([_probe_row("2026-09-15T12:00:00+00:00", tokens_per_pct=9_999.0)])
+        self.assertEqual(len([r for r in rows if r["kind"] == "probe"
+                              and r["outcome"] == "completed"]), 2)
+
+    def test_the_aborted_run_is_a_row_of_its_own_on_the_account_the_log_names(self):
+        rows = self.collect([_probe_row("2026-09-15T12:00:00+00:00")])
+        aborted = [r for r in rows if r["outcome"] == "aborted"]
+        self.assertEqual(len(aborted), 1)
+        self.assertEqual((aborted[0]["account"], aborted[0]["account_source"]), ("dave", "log"))
+        self.assertEqual(aborted[0]["detail"], "tick too early")
+
+    def test_every_row_comes_back_sorted_with_its_span_as_an_iso_string(self):
+        rows = self.collect([_probe_row("2026-09-12T12:00:00+00:00")])
+        starts = [r["start"] for r in rows]
+        self.assertEqual(starts, sorted(starts))
+        for r in rows:
+            self.assertIsInstance(r["start"], str)
+            self.assertLessEqual(r["start"], r["end"])
+        self.assertIn(self.MATRIX["source"], [r["source"] for r in rows])
+
+    def test_the_proximity_test_itself_is_one_window_wide_either_side(self):
+        """The row spans 12:00 to 13:00; a bracket is the same run within one window of it."""
+        row = _probe_row("2026-09-15T12:00:00+00:00")
+
+        def near(start: datetime) -> bool:
+            return same_run(row, "jwork", "claude-opus-5", 148419.0, start,
+                            start + timedelta(hours=1))
+
+        self.assertTrue(near(datetime(2026, 9, 15, 12, 3, 12, tzinfo=timezone.utc)))   # overlaps
+        # One window after the row's end, less a minute, is still the same run; a minute the
+        # other side of the window is not.
+        self.assertTrue(near(row["end"] + H.MATCH_TOLERANCE - timedelta(minutes=1)))
+        self.assertFalse(near(row["end"] + H.MATCH_TOLERANCE + timedelta(minutes=1)))
+        self.assertTrue(near(row["start"] - H.MATCH_TOLERANCE))
+        self.assertFalse(near(row["start"] - H.MATCH_TOLERANCE - timedelta(hours=2)))
 
 
 class RowShapeTests(unittest.TestCase):
