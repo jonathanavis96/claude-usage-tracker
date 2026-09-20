@@ -1,7 +1,19 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from tracker.capture import BOOTSTRAP, TOLERANCE, check, judge, published, runs
+from tracker.capture import (
+    BOOTSTRAP,
+    TOLERANCE,
+    UNACCOUNTED,
+    UNKNOWN,
+    Run,
+    Verdict,
+    _agrees,
+    check,
+    judge,
+    published,
+    runs,
+)
 from tracker.join import Stretch
 
 T0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -123,3 +135,41 @@ class CheckTests(unittest.TestCase):
         before = [(T0 - timedelta(days=d), 0.30) for d in (4, 3, 2, 1)]
         res = check({"jwork": series(*STEADY, *SHIFTED)}, probe_readings=before + [(T0 + timedelta(hours=8), 0.22)])
         self.assertEqual([c["corroborated_by"] for c in res.changes], [["probe"]])
+
+
+class NoReferenceTests(unittest.TestCase):
+    """A run whose stretches had nothing to be judged against (issue #52, masterrig data).
+
+    Where an account's own bootstrap stretches spent nothing -- masterrig's meter moves on
+    web, phone and other machines this host never sees -- the reference is zero, so no
+    stretch judged against it has a capture, and the run's median had no data:
+    `statistics.StatisticsError: no median for empty data`. The run is `unknown` now.
+    """
+
+    def _runs(self):
+        # Five stretches the transcripts leave empty, then five real ones. The median of
+        # the empty bootstrap is 0, and every later stretch reads as surplus against it.
+        empty = [st(i, 0.0) for i in range(BOOTSTRAP)]
+        for s in empty:
+            s.tokens = {}
+        return runs(judge(empty + [st(BOOTSTRAP + i, 1.0) for i in range(5)]), "masterrig")
+
+    def test_the_run_is_unknown_and_neither_capture_nor_step_is_invented(self):
+        rs = self._runs()
+        self.assertEqual([r.kind for r in rs], [UNKNOWN])
+        self.assertIsNone(rs[0].capture)
+        self.assertIsNone(rs[0].step)
+
+    def test_an_unknown_run_corroborates_nothing_and_a_missing_step_agrees_with_nothing(self):
+        run = self._runs()[0]
+        self.assertFalse(_agrees(None, run))     # nothing measured on the other side
+        self.assertFalse(_agrees(-0.30, run))    # this run has no step of its own to match
+        res = check({"masterrig": [st(i, 0.0) for i in range(BOOTSTRAP)] + [st(BOOTSTRAP + i, 1.0) for i in range(5)]})
+        self.assertEqual(res.changes, [])
+
+    def test_a_zero_reference_among_real_ones_still_gives_a_step(self):
+        # median() of the non-zero references, not of all of them: one zero reference in a
+        # run does not erase the level the rest were judged against.
+        run = Run([Verdict(st(0, 0.7), UNACCOUNTED, 1.0), Verdict(st(1, 0.7), UNACCOUNTED, 0.0),
+                   Verdict(st(2, 0.7), UNACCOUNTED, 1.0)], "x")
+        self.assertAlmostEqual(run.step, -0.3)

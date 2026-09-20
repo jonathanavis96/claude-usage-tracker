@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
@@ -10,6 +11,7 @@ from statistics import median
 from .capture import ACCEPTED
 from .detect import (
     MIN_POOL_D7,
+    ChangeEvent,
     current_regime_points,
     detect_smoothed_changes,
     detect_weighted_changes,
@@ -20,32 +22,44 @@ from .gs_passive import passive_dollar_readings
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
-from .weekly import probe_weekly_windows
+from .weekly import _iso_week_ending, probe_weekly_windows
 
-PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.25, "max20": 1.0}
-# The published 1:5:20 scaling of ONE five-hour window between plans (Max 5x and Max 20x
-# are five and twenty times Pro's per-session usage). It says nothing about how many
-# windows a week holds on each plan: that is measured per plan in `weekly_windows`.
-PLAN_RATIOS_SOURCE_URL = "https://support.claude.com/en/articles/11049741-what-is-the-max-plan"
+# The credits table (she-llac.com/claude-limits, undated) gives each plan's credits per
+# five-hour window and per week. One window is worth 1 : 6 : 20 between Pro, Max 5x and
+# Max 20x; that says nothing about how many windows a week holds on each plan, which is
+# WEEKLY_WINDOW_RATIOS below. A documented figure is a reference to compare a
+# measurement against, never a substitute for one.
+CREDITS_TABLE_URL = "https://she-llac.com/claude-limits"
+CREDITS_PER_WINDOW = {"pro": 550_000, "max5": 3_300_000, "max20": 11_000_000}
+CREDITS_PER_WEEK = {"pro": 5_000_000, "max5": 41_666_700, "max20": 83_333_300}
+PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.30, "max20": 1.0}
+PLAN_RATIOS_BASIS = {"kind": "credits_table", "scope": "one five-hour window",
+                     "credits_per_window": dict(CREDITS_PER_WINDOW),
+                     "source_url": CREDITS_TABLE_URL, "dated": False}
 # How many five-hour windows a week's cap holds, per plan, relative to max20. NOT
-# PLAN_RATIOS_BASE: that one is what a single window is worth in tokens (the published
-# 1:5:20), this one is how many windows a week contains, and the two pull in opposite
-# directions -- Max 5x holds more windows, Max 20x holds bigger ones.
-#
-# Frozen, and measured rather than published by Anthropic: it is one meter divided by
-# another over the same traffic, so whoever generated the usage cancels out. Three
-# independent routes over Jonathan's own 5x-to-20x move agree -- calendar weeks
-# 11.02/6.18 = 1.78, the weeks either side of PLAN_CHANGE 11.00/6.58 = 1.67, and the
-# per-window medians with the seven-day rounding guard applied 9.86/5.67 = 1.74 (80
-# windows against 20). 1.78 is the figure of record.
-#
-# Restored 2026-09-17 by Jonathan's decision (reverses part of audit finding 6): the
-# 2026-09-16 audit deleted this and left `weekly_windows.max5.current`/`.pro.current`
-# null, which made the live page's graphs and top figures look wrong against what
-# Jonathan had before. max5 is not coming back on this account (see _plan_for_week), so
-# the ratio can never be re-measured here; it stays frozen, published beside a live seam
-# ratio derived from the two plans' own regimes where both exist (_weekly_block).
-WEEKLY_WINDOW_RATIOS = {"pro": 1.78, "max5": 1.78, "max20": 1.0}
+# PLAN_RATIOS_BASE: that one is what a single window is worth (the 1 : 6 : 20 above),
+# this one is how many windows a week contains, and the two pull in opposite
+# directions -- Max 5x holds more windows, Max 20x holds bigger ones. From the credits
+# table: a week holds 9.09 / 12.63 / 7.58 windows on Pro / Max 5x / Max 20x, so relative
+# to Max 20x that is 1.20 and 1.667. The tracker's own measurement confirms the Max 5x
+# figure: 10.85 windows a week measured on Max 5x (Jun-Aug) over 6.54 on Max 20x (19 Aug
+# to 11 Sep) is 1.66. Max 5x and Pro are not measured any more on any watched account,
+# so their weekly `current` is the live Max 20x figure scaled by these, marked inferred.
+DOCUMENTED_WINDOWS_PER_WEEK = {"pro": 9.09, "max5": 12.63, "max20": 7.58}
+WEEKLY_WINDOW_RATIOS = {"pro": 1.20, "max5": 1.667, "max20": 1.0}
+WEEKLY_WINDOW_RATIOS_BASIS = {
+    "kind": "credits_table", "scope": "five-hour windows per week, relative to max20",
+    "credits_per_week": dict(CREDITS_PER_WEEK),
+    "documented_windows_per_week": dict(DOCUMENTED_WINDOWS_PER_WEEK),
+    "source_url": CREDITS_TABLE_URL, "dated": False,
+    "measured_confirmation": {"max5_over_max20": 1.66,
+                              "spans": "Max 5x Jun-Aug over Max 20x 19 Aug-11 Sep"},
+}
+# The watched Max 20x accounts, in the fixed order their published labels follow. Names
+# are never published: the JSON carries `a1`, `a2`, `a3` and counts. masterrig's points
+# are history/passive.json's `weekly_windows.by_window` (its own meter log); the others'
+# are history/gs-passive.json's `accounts.<name>.weekly_by_window`, the same point shape.
+ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"))
 MAX_SAMPLE_AGE_DAYS = 10
 WEEKLY_CURRENT_DAYS = 14
 FIVE_HOURS = timedelta(hours=5)
@@ -419,7 +433,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 d += timedelta(days=1)
         history[model] = hist
 
-    weekly_windows, weekly_events, weekly_window_ratios = _weekly_block(passive.get("weekly_windows"), probe_weekly, now)
+    weekly_windows, weekly_events = _weekly_block(passive.get("weekly_windows"), probe_weekly, now,
+                                                  gs_passive=gs_passive)
+    # Accounts behind the passive evidence: those with an accepted stretch (the rates)
+    # plus those with Max 20x window points (the weekly series), by name, never published.
+    weekly_accounts = {name for name, label in ACCOUNT_LABELS
+                       if weekly_windows["max20"]["by_account"][label]["n"]}
+    passive_accounts = {st["_account"] for st in stretches} | weekly_accounts
     return {
         "schema_version": 2,
         "generated_at": now.isoformat(),
@@ -432,11 +452,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                          "reason": {"measured": None, "conditional": "legacy_reset_metadata_missing",
                                     "unavailable": "no_eligible_passive_measurement"}[evidence_status]},
         "probe_account_count": len({r["account"] for r in probe_rows if r.get("account")}),
-        "passive_account_count": evidence["account_count"],
+        "passive_account_count": len(passive_accounts),
         "plan_ratios": dict(PLAN_RATIOS_BASE),
-        "plan_ratios_basis": {"kind": "published_plan_scaling", "scope": "one five-hour window",
-                              "source_url": PLAN_RATIOS_SOURCE_URL},
-        "weekly_window_ratios": weekly_window_ratios,
+        "plan_ratios_basis": json.loads(json.dumps(PLAN_RATIOS_BASIS)),
+        "weekly_window_ratios": dict(WEEKLY_WINDOW_RATIOS),
+        "weekly_window_ratios_basis": json.loads(json.dumps(WEEKLY_WINDOW_RATIOS_BASIS)),
         "rate_basis": "meter_budget",
         "model_plan_limits": _model_plan_limits(prices),
         "rates": rates,
@@ -484,48 +504,187 @@ def _repaired(row: dict) -> bool:
     return "pieces" in row
 
 
-def _weekly_current(history: list[dict], now: datetime) -> float | None:
-    """Median of the last two complete weeks' `windows` figure.
+def _regimes(points: list[tuple]) -> list[dict]:
+    """tracker/detect.py's regimes over a per-window series, tagged with their source."""
+    return [dict(r, source="passive_paired_deltas", assumed=False)
+            for r in weighted_regimes(points)]
 
-    Restored 2026-09-17 by Jonathan's decision (reverses part of audit finding 6):
-    `weekly_windows.max5.current` and `.pro.current` (max5's own figure, `assumed`)
-    carry this again, computed from each plan's own weekly rows rather than left
-    null. max20 does not fall back to this any more; it has its own certified
-    `_regime_current` from the per-window series.
+
+def _account_window_dicts(passive_points: list[dict],
+                          gs_passive: dict | None) -> dict[str, list[dict]]:
+    """Each watched Max 20x account's own per-window points, keyed by published label.
+
+    masterrig (`a1`) is history/passive.json's own `weekly_windows.by_window`;
+    jwork (`a2`) and dave (`a3`) are history/gs-passive.json's
+    `accounts.<name>.weekly_by_window`, the same point shape from the same pairing
+    code. Account names are never published: the labels are fixed by
+    ACCOUNT_LABELS and the JSON carries only those and counts.
+
+    Every account is restricted to the Max 20x era, windows that START at or after
+    PLAN_CHANGE_AT. masterrig ran Max 5x before that, and a window straddling or
+    preceding the plan change reads at the Max 5x ratio (about 11 against 6.5),
+    which as the first base of the max20 series would read Jonathan's own plan
+    move as a change. The split is on PLAN_CHANGE_AT, the precise seam within
+    PLAN_CHANGE day where the meter's ratio actually drops (the last Max 5x window
+    ends 16:20 UTC), not on the whole day; a window straddling that seam is
+    dropped from both plans, the mirror of _plan_for_week's rule for weeks. Only
+    points paired after the finding-3 repair (_repaired) count.
+
+    The gs accounts' points are NOT required to be reset-verified. masterrig's log
+    names every window's reset, but jwork's names only the newest few (56 of its 62
+    points carry no reset id), so requiring it would drop the second account
+    altogether. Each published point keeps its own `reset_verified` flag.
+
+    The probe runs' own per-window points (`weekly_windows.probe.by_window`) are
+    published for the record but deliberately NOT pooled in here, even though the
+    probe accounts are on the same plan: a 3-tick run moves the seven-day meter by
+    one whole point or none, so each of its points is almost pure rounding, and
+    they are another instrument.
     """
-    complete = [h for h in history if date.fromisoformat(h["week_ending"]) < now.date()]
-    return round(median(h["windows"] for h in complete[-2:]), 2) if complete else None
+    era = [p for p in passive_points
+           if _repaired(p) and p.get("reset_verified") is True
+           and (datetime.fromisoformat(p["window_ending"]) - FIVE_HOURS) >= PLAN_CHANGE_AT]
+    accounts = ((gs_passive or {}).get("accounts") or {})
+    out = {"a1": era}
+    for name, label in ACCOUNT_LABELS[1:]:
+        points = (accounts.get(name) or {}).get("weekly_by_window") or []
+        out[label] = [p for p in points
+                      if _repaired(p) and (datetime.fromisoformat(p["window_ending"])
+                                           - FIVE_HOURS) >= PLAN_CHANGE_AT]
+    return {label: sorted(pts, key=lambda p: p["window_ending"]) for label, pts in out.items()}
 
 
-def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime) -> tuple[dict, list, dict]:
-    """(`weekly_windows`, weekly change events, `weekly_window_ratios`): per plan, each
-    with its own evidence.
+def _point_tuples(points: list[dict], label: str) -> list[tuple]:
+    """Window-point dicts as the (window_ending, d5, d7, pieces, account) tuples
+    the detector takes."""
+    return [(datetime.fromisoformat(p["window_ending"]), p["five_hour_pct"], p["seven_day_pct"],
+             p.get("pieces", 1), label) for p in points]
 
-    `max20` is the live plan. Its `current` is the pooled ratio of the current
-    regime's trailing fortnight of reset-verified, repaired passive window points
-    (_regime_current), with its rounding interval, evidence and staleness in
-    `current_estimate`; its `regimes` and the weekly events come from
-    tracker/detect.py on the same points. `max5` is history only for regimes and
-    events -- its last regime begins before PLAN_CHANGE, a date taken from the
-    account owner's record rather than from independent metadata, so the plan move
-    itself cannot be told apart from a limit change there; `plan_change` says so.
-    Its `current` (restored 2026-09-17, reverses part of finding 6 by Jonathan's
-    decision) is `_weekly_current` on its own weekly rows -- the account is not
-    going back to Max 5x, so this can never be re-measured, but the page needs a
-    figure and the old median is what it showed. `pro` has no measurement of its
-    own; its `current` is max5's own figure, `assumed: true`, the same gap-fill
-    pre-2026-09-16 used. `weekly_window_ratios` is `WEEKLY_WINDOW_RATIOS` (frozen),
-    overridden with the live seam between max5's best-supported regime (most points) and max20's first
-    where both exist -- the ratio is windows-per-week, a different quantity from
-    `plan_ratios` (one window's worth), and the page must never confuse the two.
-    Probe runs' weekly rows are published as their own series and never replace
-    passive weeks (finding 13).
+
+def _account_block(points: list[tuple], now: datetime) -> dict:
+    """One account's own count, current, regimes and step, from its own points alone.
+
+    The step is dated per account because the weekly cut lands on each account at
+    its own seven-day reset, and pooling the accounts into one series dates the
+    event at whichever of them stepped first. `percent` is signed (negative for a
+    cut), `before`/`after` are the pooled levels of the regimes the step separates.
+    """
+    estimate = _regime_current(points, now) if points else None
+    regimes = _regimes(points)
+    events = detect_weighted_changes(points)
+    step = None
+    if events:
+        e = events[-1]
+        after = next((i for i, r in enumerate(regimes)
+                      if r["start"][:10] == e.date.isoformat()), None)
+        step = {"onset": e.date.isoformat(),
+                "before": regimes[after - 1]["windows"] if after else None,
+                "after": regimes[after]["windows"] if after is not None else None,
+                "percent": -e.percent if e.direction == "decreased" else e.percent}
+    return {"n": len(points), "current": estimate["value"] if estimate else None,
+            "regimes": regimes, "step": step}
+
+
+def _pooled_weeks(points: list[tuple], now: datetime) -> list[dict]:
+    """The pooled per-window points bucketed into calendar weeks, oldest first.
+
+    The same pooling tracker/weekly.py uses for its own `history` -- total
+    five-hour movement over total seven-day movement, with the rounding interval
+    of that pool -- over every watched account's points rather than one account's.
+    A probe row's week key is its ISO week (weekly.py's `_iso_week_ending`) and so
+    is this one: the three accounts do not share a seven-day reset, so no single
+    meter boundary can bucket them. `n` is how many window points the week pools
+    and `partial` marks the newest week while it is still open.
+    """
+    weeks: dict[str, list[tuple]] = {}
+    for p in points:
+        weeks.setdefault(_iso_week_ending(p[0].isoformat()), []).append(p)
+    rows = []
+    for week_ending in sorted(weeks):
+        pool = weeks[week_ending]
+        d5, d7 = sum(p[1] for p in pool), sum(p[2] for p in pool)
+        lo, hi = pooled_interval(pool)
+        rows.append({"week_ending": week_ending, "windows": round(d5 / d7, 2) if d7 > 0 else None,
+                     "rounding_interval": [round(x, 4) if x is not None else None
+                                           for x in (lo, hi)],
+                     "n": len(pool), "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1),
+                     "partial": date.fromisoformat(week_ending) >= now.date(),
+                     "source": "passive_paired_deltas", "assumed": False})
+    return rows
+
+
+@dataclass(frozen=True)
+class _AccountDatedEvent(ChangeEvent):
+    """A pooled weekly event whose date and onset bounds come from the accounts' own steps.
+
+    The detector's own bounds -- the last pooled window at the old level and the
+    first at the new one -- are kept in `window_onset_*` and published under
+    `onset.from_windows`, so re-dating never loses them.
+    """
+    window_onset_earliest: date | None = None
+    window_onset_latest: date | None = None
+    account_dated: bool = False
+
+
+def _account_dated(events: list, by_account: dict) -> list:
+    """The pooled weekly events with the newest one re-dated from the per-account onsets.
+
+    Anthropic's cut reaches each account at that account's own seven-day reset, so
+    the honest bounds on the pooled event are the earliest and the latest onset the
+    watched accounts saw, and its date is the earliest of them. Only the newest
+    pooled event is re-dated: an older one predates the accounts being watched
+    together. With no per-account step at all the events are returned unchanged.
+    """
+    onsets = sorted(date.fromisoformat(a["step"]["onset"]) for a in by_account.values()
+                    if a["step"] and a["step"]["onset"])
+    if not events or not onsets:
+        return events
+    e = events[-1]
+    dated = _AccountDatedEvent(
+        date=onsets[0], direction=e.direction, percent=e.percent, model=e.model,
+        onset_earliest=onsets[0], onset_latest=onsets[-1], confirmed_at=e.confirmed_at,
+        evidence_points=e.evidence_points, denominator_pct=e.denominator_pct,
+        before_interval=e.before_interval, after_interval=e.after_interval,
+        window_onset_earliest=e.onset_earliest, window_onset_latest=e.onset_latest,
+        account_dated=onsets[0] != e.date)
+    return sorted([*events[:-1], dated], key=lambda ev: ev.date)
+
+
+def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime,
+                  gs_passive: dict | None = None) -> tuple[dict, list]:
+    """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
+
+    `max20` is the live plan, and since 2026-09-20 it is measured over every
+    watched Max 20x account rather than masterrig alone (_account_window_dicts):
+    `by_window` is the three accounts' per-window points, each tagged `a1`/`a2`/
+    `a3`, `weekly` pools them into calendar weeks for the chart, and `current`
+    (_regime_current), `regimes` and the weekly events are computed over the
+    pooled points. `by_account` carries each account's own count, current,
+    regimes and step, because the weekly cut reaches each account at its own
+    seven-day reset and the pooled series dates it at whichever stepped first;
+    the pooled event is re-dated from those onsets (_account_dated).
+
+    `max5` is measured history: its weekly rows and regimes are the account's own
+    Jun-Aug Max 5x era, and its last regime begins before PLAN_CHANGE, a date
+    taken from the account owner's record rather than from independent metadata,
+    so the plan move itself cannot be told apart from a limit change there;
+    `plan_change` says so. Neither max5 nor `pro` has a contemporaneous
+    measurement any more, so each one's `current` is the live max20 figure scaled
+    by WEEKLY_WINDOW_RATIOS, marked `assumed`, `inferred_from: max20`, and
+    `availability.status: inferred`. Probe runs' weekly rows are published as
+    their own series and never replace passive weeks (finding 13).
     """
     passive_weekly = dict(passive_weekly or {"current": None, "history": [], "by_window": []})
     # passive.json may lag: it can predate the flag, or carry a `partial` from when its
     # newest week was still open. Recompute it against this publish's own time.
     passive_weekly["history"] = [dict(h, partial=date.fromisoformat(h["week_ending"]) >= now.date())
                                  for h in passive_weekly.get("history", [])]
+    # The median of the last two complete weeks is not a measurement of anything the
+    # page states (audit finding 6), and it was the one figure here still published as
+    # one. The raw series itself stays: `by_window` is what bin/daily.sh reads to tell
+    # new weekly evidence from an hourly re-read of the same windows.
+    passive_weekly["current"] = None
+    passive_weekly["reason"] = "median_of_two_complete_weeks_is_not_a_measurement"
     rows = [dict(h) for h in passive_weekly["history"]]
     for h in rows:
         h.update({"source": "passive_paired_deltas", "assumed": False}
@@ -533,13 +692,18 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                     else {"quality": "legacy_uncertain", "reasons": ["paired_before_denominator_repair"]}))
     points = passive_weekly.get("by_window", [])
     legacy_only = bool(points) and not any(_repaired(p) for p in points)
-    max20_points = _max20_window_points(points)
+    account_dicts = _account_window_dicts(points, gs_passive)
+    by_account = {label: _account_block(_point_tuples(account_dicts[label], label), now)
+                  for _name, label in ACCOUNT_LABELS}
+    max20_points = sorted((p for label in by_account
+                           for p in _point_tuples(account_dicts[label], label)),
+                          key=lambda p: p[0])
+    max20_by_window = sorted((dict(p, account=label)
+                              for label, pts in account_dicts.items() for p in pts),
+                             key=lambda p: p["window_ending"])
     max5_points = _max5_window_points(points)
-    events = detect_weighted_changes(max20_points)
+    events = _account_dated(detect_weighted_changes(max20_points), by_account)
     estimate = _regime_current(max20_points, now)
-
-    def regimes(pts: list) -> list[dict]:
-        return [dict(r, source="passive_paired_deltas", assumed=False) for r in weighted_regimes(pts)]
 
     if estimate is not None:
         max20_availability = {"status": "measured", "reason": "evidence_stale" if estimate["stale"] else None}
@@ -552,32 +716,35 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     probe = dict(probe_weekly, history=[dict(h, source="probe_paired_deltas", assumed=False)
                                         for h in probe_weekly["history"]])
     max5_history = [h for h in rows if _plan_for_week(h["week_ending"]) == "max5"]
-    max20_regimes, max5_regimes = regimes(max20_points), regimes(max5_points)
-    max5_current = _weekly_current(max5_history, now)
-    ratios = dict(WEEKLY_WINDOW_RATIOS)
-    if max5_regimes and max20_regimes and max20_regimes[0]["windows"]:
-        # Max 5x's level is its best-supported regime, not whichever comes last: the
-        # detector splits a four-day 6.6 tail off the plan move (14-18 Aug, the
-        # PLAN_CHANGE date question), and a seam taken from that tail reads 1.02
-        # where the account's Max 5x era ran 10.9 against Max 20x's 6.5.
-        max5_level = max(max5_regimes, key=lambda r: r.get("points", 0))["windows"]
-        seam = max5_level / max20_regimes[0]["windows"]
-        ratios["max5"] = ratios["pro"] = round(seam, 3)
+    max20_current = estimate["value"] if estimate else None
+
+    def inferred(plan: str) -> dict:
+        """One plan's `current` scaled off the live max20 figure by its weekly-window ratio."""
+        ratio = WEEKLY_WINDOW_RATIOS[plan]
+        value = round(max20_current * ratio, 2) if max20_current is not None else None
+        if value is None:
+            status = {"status": "unavailable", "reason": "no_max20_current_to_scale_from"}
+        else:
+            status = {"status": "inferred", "reason": "scaled_from_max20_by_weekly_window_ratio"}
+        return {"current": value, "current_estimate": None, "assumed": True,
+                "inferred_from": "max20", "weekly_window_ratio": ratio,
+                "availability": status}
+
     block = {
-        "max20": {"current": estimate["value"] if estimate else None, "current_estimate": estimate,
+        "max20": {"current": max20_current, "current_estimate": estimate,
                   "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max20"],
-                  "regimes": max20_regimes, "assumed": False, "availability": max20_availability},
-        "max5": {"current": max5_current, "current_estimate": None,
-                 "history": max5_history, "regimes": max5_regimes, "assumed": False,
-                 "availability": {"status": "historical_only", "reason": "no_current_max5_measurement"},
+                  "weekly": _pooled_weeks(max20_points, now), "by_window": max20_by_window,
+                  "by_account": by_account,
+                  "regimes": _regimes(max20_points), "assumed": False,
+                  "availability": max20_availability},
+        "max5": {**inferred("max5"), "history": max5_history, "regimes": _regimes(max5_points),
                  "plan_change": {"date": PLAN_CHANGE.isoformat(), "source": "the meter's own step",
                                  "independently_verified": False}},
-        "pro": {"current": max5_current, "current_estimate": None, "history": [], "regimes": [], "assumed": True,
-                "availability": {"status": "unavailable", "reason": "no_pro_measurement"}},
+        "pro": {**inferred("pro"), "history": [], "regimes": []},
         "passive": passive_weekly,
         "probe": probe,
     }
-    return block, events, ratios
+    return block, events
 
 
 def _window_points(passive_points: list[dict], keep) -> list[tuple[datetime, float, float, int]]:
@@ -585,31 +752,6 @@ def _window_points(passive_points: list[dict], keep) -> list[tuple[datetime, flo
               for p in passive_points
               if _repaired(p) and p.get("reset_verified") is True and keep(datetime.fromisoformat(p["window_ending"]))]
     return sorted(points, key=lambda p: p[0])
-
-
-def _max20_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:
-    """The live plan's per-window series as (window_ending, d5, d7, pieces), oldest first.
-
-    Passive windows are Jonathan's own account, so only those that START at or
-    after PLAN_CHANGE_AT are max20: a window straddling or preceding the plan
-    change would read at the Max 5x ratio (about 11 against 6.5) and, as the
-    first base of the max20 series, would read Jonathan's own plan move as a
-    change. The split is on PLAN_CHANGE_AT, the precise seam within PLAN_CHANGE
-    day where the meter's ratio actually drops (the last Max 5x window ends
-    16:20 UTC), not on the whole day: a window whose own 5-hour start lands at
-    or after PLAN_CHANGE_AT is max20 even if it ends on PLAN_CHANGE day itself.
-    A window straddling PLAN_CHANGE_AT -- starting before it, ending after it --
-    is dropped from both series by the two functions together, the mirror of
-    _plan_for_week's rule for weeks. Only points paired after the finding-3
-    repair (_repaired) with recorded reset ids count.
-
-    The probe runs' own per-window points (`weekly_windows.probe.by_window`)
-    are published for the record but deliberately NOT pooled in here, even
-    though the probe accounts are on the same plan: a 3-tick run moves the
-    seven-day meter by one whole point or none, so each of its points is
-    almost pure rounding, and they are another instrument.
-    """
-    return _window_points(passive_points, lambda ending: (ending - FIVE_HOURS) >= PLAN_CHANGE_AT)
 
 
 def _regime_with_evidence(idx: int, regime_values: dict) -> int:
@@ -628,10 +770,10 @@ def _regime_with_evidence(idx: int, regime_values: dict) -> int:
 
 
 def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:
-    """The frozen plan's per-window series, the mirror of _max20_window_points.
+    """The frozen plan's per-window series, the mirror of the max20 era rule.
 
     Only windows that END at or before PLAN_CHANGE_AT, the precise seam within
-    PLAN_CHANGE day (see _max20_window_points): a window straddling the change
+    PLAN_CHANGE day (see _account_window_dicts): a window straddling the change
     mixes both plans' ratios and belongs to neither, the same rule
     _plan_for_week applies to weeks.
     """
@@ -646,6 +788,12 @@ def _regime_current(points: list[tuple], now: datetime) -> dict | None:
     None when that fortnight holds less than MIN_POOL_D7 of seven-day movement.
     `stale` is judged against the publish time, not against the newest point, so
     a weekly log that has stopped arriving is visible as such (audit finding 16).
+
+    Since the series became three accounts wide the pool can hold points whose
+    meter log did not name the window's reset (_account_window_dicts): masterrig's
+    names every one, the gs accounts' name only the newest few. `quality` stays
+    "measured" and each point publishes its own `reset_verified` flag under
+    `max20.by_window`, so a consumer can see how much of the pool carries one.
     """
     regime = current_regime_points(points)
     if not regime:
@@ -684,11 +832,20 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
 
 
 def _latest_change_with_scope(window_events: list, weekly_events: list) -> dict | None:
-    """The most recent change across both event series, as its full event record."""
+    """The most recent change across both event series, as its full event record.
+
+    Recency is judged on the evidence's own newest window, not on the published
+    date: a pooled weekly event re-dated from the accounts' own onsets
+    (_account_dated) carries a date earlier than the windows it was certified on,
+    and a staggered cut can certify more than one pooled split inside that span.
+    Without this the account-dated event lost `last_change` to an older split of
+    the same transition.
+    """
     candidates = [(e, "window") for e in window_events] + [(e, "weekly") for e in weekly_events]
     if not candidates:
         return None
-    e, scope = max(candidates, key=lambda c: c[0].date)
+    e, scope = max(candidates,
+                   key=lambda c: getattr(c[0], "window_onset_latest", None) or c[0].date)
     return _event_record(e, scope)
 
 
@@ -701,20 +858,40 @@ def _event_record(e, scope: str) -> dict:
     both levels' rounding intervals (tracker/detect.py); window events have no
     uncertainty model behind them, so they are `provisional`, and bin/daily.sh
     announces neither a provisional nor a legacy-uncertain change.
+
+    `meter_attribution` on a weekly event is `unresolved`: the measured quantity
+    is the ratio of five-hour to seven-day movement, and a fall in it can come
+    from a smaller weekly cap, a bigger five-hour window, or both. It is not
+    resolved here and the record never claims which meter moved (see
+    _weekly_label for the evidence that both did).
     """
     provisional = scope == "window"
+    # A pooled weekly event re-dated from the accounts' own onsets (_account_dated)
+    # says so in `attribution`, and keeps the detector's own window bounds under
+    # `onset.from_windows` so the re-dating never loses them.
+    window_onset = (getattr(e, "window_onset_earliest", None),
+                    getattr(e, "window_onset_latest", None))
+    onset = {"earliest": e.onset_earliest.isoformat() if e.onset_earliest else None,
+             "latest": (e.onset_latest or e.date).isoformat()}
+    if any(window_onset):
+        onset["from_windows"] = {
+            "earliest": window_onset[0].isoformat() if window_onset[0] else None,
+            "latest": window_onset[1].isoformat() if window_onset[1] else None}
     return {
         "date": e.date.isoformat(), "direction": e.direction, "percent": e.percent, "model": e.model,
         "scope": scope, "metric": "meter_budget_per_window" if scope == "window" else "weekly_to_five_hour_ratio",
-        "observation_scope": "account", "attribution": "observed_account_metric_change",
-        "onset": {"earliest": e.onset_earliest.isoformat() if e.onset_earliest else None,
-                  "latest": (e.onset_latest or e.date).isoformat()},
+        "observation_scope": "account",
+        "attribution": ("observed_account_metric_change_dated_from_per_account_onsets"
+                        if getattr(e, "account_dated", False)
+                        else "observed_account_metric_change"),
+        "onset": onset,
         "confirmation": {"at": e.confirmed_at.isoformat() if e.confirmed_at else None,
                          "evidence_points": e.evidence_points, "seven_day_pct": e.denominator_pct},
         "rounding_interval_before": _rounded(e.before_interval),
         "rounding_interval_after": _rounded(e.after_interval),
         "evidence_quality": "provisional" if provisional else "certified",
         "provisional": provisional, "legacy_uncertain": False,
+        **({} if provisional else {"meter_attribution": "unresolved"}),
     }
 
 
@@ -722,12 +899,33 @@ def _rounded(interval: tuple | None) -> list | None:
     return [round(x, 4) if x is not None else None for x in interval] if interval else None
 
 
+def _weekly_label(e) -> str:
+    """One weekly event's row, stating the measured quantity and nothing else.
+
+    What is measured is how many five-hour windows a week's cap holds: five-hour
+    meter movement over seven-day meter movement. A fall in it does NOT say the
+    weekly cap fell by that much, and the row must not read as though it does --
+    a smaller five-hour window moves the same ratio. The split between the two is
+    unresolved here: jwork's accepted stretches read the five-hour window about 9%
+    larger in credits across the change, which puts the weekly cap's own fall
+    somewhere between 6% and 15% of a 22-24% fall in the ratio. `meter_attribution`
+    carries that as a field (_event_record).
+
+    The percent and the dates are the event's own measured ones, so the row can
+    never say something the rest of the record does not.
+    """
+    moved = "rose" if e.direction == "increased" else "fell"
+    earliest = (e.onset_earliest or e.date).isoformat()
+    latest = (e.onset_latest or e.date).isoformat()
+    span = earliest if earliest == latest else f"{earliest} to {latest}"
+    return f"Observed windows per week {moved} about {e.percent}% around {span}"
+
+
 def _build_events(window_events: list, weekly_events: list) -> list[dict]:
     events = [{**_event_record(e, "window"), "kind": "change",
                "label": f"Observed window budget changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
               for e in window_events]
-    events += [{**_event_record(e, "weekly"), "kind": "change",
-                "label": f"Observed weekly/window ratio changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
+    events += [{**_event_record(e, "weekly"), "kind": "change", "label": _weekly_label(e)}
                for e in weekly_events]
     return sorted(events, key=lambda ev: ev["date"])
 

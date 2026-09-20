@@ -118,3 +118,26 @@ def merge_samples(*lists: list[Sample]) -> list[Sample]:
         if cur is None or _PRIORITY[s.source] < _PRIORITY[cur.source]:
             by_minute[key] = s
     return [by_minute[k] for k in sorted(by_minute)]
+
+
+#: Log format name -> parser. The name is what an account's `meter_format` holds
+#: (tracker/gs_passive.py), so one account can name several logs of different
+#: formats: masterrig's meter is moonlighter's JSONL plus its ceiling's systemd
+#: log, the pair tracker/passive.py has always merged by hand.
+PARSERS = {"moonlighter": parse_moonlighter, "meter": parse_meter_log,
+           "gs-ceiling": parse_gs_ceiling_log, "ceiling": parse_ceiling_log}
+
+
+def parse_log(fmt: str, lines: Iterable[str], since: datetime | None = None) -> list[Sample]:
+    """Parse one log in the named format, dropping readings before `since`.
+
+    Only `gs-ceiling` takes `since` in its own signature (its log has not always
+    read the account it reads now); for the others it is applied afterwards, so
+    a caller can hand the same cutoff to any format.
+    """
+    parser = PARSERS.get(fmt)
+    if parser is None:
+        raise ValueError(f"unknown meter log format: {fmt!r} (known: {', '.join(sorted(PARSERS))})")
+    if fmt == "gs-ceiling":
+        return parser(lines, since=since)
+    return [s for s in parser(lines) if since is None or s.ts >= since]
