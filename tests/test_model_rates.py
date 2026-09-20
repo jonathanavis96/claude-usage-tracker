@@ -56,7 +56,7 @@ class RatioTests(unittest.TestCase):
         # Sonnet buys 500k tokens per 1% where Opus buys 300k, so the meter charges Opus
         # 500/300 = 1.667 times what it charges Sonnet: Shellac's ratio exactly.
         recs = self._clusters(300_000, 500_000)
-        out = section2({"jwork": recs}, random.Random(1), 200)["jwork/pre/opus:sonnet"]["out5x"]
+        out = section2({"jwork": recs}, 1, 200)["jwork/pre/opus:sonnet"]["out5x"]
         self.assertTrue(out["measurable"])
         self.assertAlmostEqual(out["ratio"], 5 / 3, places=3)
         self.assertAlmostEqual(out["prior"], SHELLAC["opus"] / SHELLAC["sonnet"], places=6)
@@ -67,7 +67,7 @@ class RatioTests(unittest.TestCase):
         # Sonnet buying only 360k per 1% means a ratio of 1.2, 28% below Shellac's 1.667,
         # and the Sonnet tokens-per-window row shrinks by the same 28%.
         recs = self._clusters(300_000, 360_000)
-        out = section2({"jwork": recs}, random.Random(1), 200)["jwork/pre/opus:sonnet"]["out5x"]
+        out = section2({"jwork": recs}, 1, 200)["jwork/pre/opus:sonnet"]["out5x"]
         self.assertAlmostEqual(out["ratio"], 1.2, places=3)
         self.assertEqual(out["verdict"], "disagrees")
         self.assertAlmostEqual(out["row_move"], 1.2 / (5 / 3) - 1, places=3)
@@ -85,7 +85,7 @@ class RefusalTests(unittest.TestCase):
     def test_two_stretches_a_side_are_not_measurable_and_carry_no_number(self):
         rows = [_kept(PRE, 10.0, _tokens(opus=(3_000_000 + i, 0))) for i in range(4)]
         rows += [_kept(PRE, 10.0, _tokens(sonnet=(5_000_000 + i, 0))) for i in range(MIN_N - 1)]
-        out = section2({"jwork": _recs(rows)}, random.Random(1), 200)["jwork/pre/opus:sonnet"]["out5x"]
+        out = section2({"jwork": _recs(rows)}, 1, 200)["jwork/pre/opus:sonnet"]["out5x"]
         self.assertFalse(out["measurable"])
         self.assertNotIn("ratio", out)
         self.assertEqual((out["n_num"], out["n_den"]), (4, MIN_N - 1))

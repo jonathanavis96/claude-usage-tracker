@@ -294,7 +294,7 @@ def section1(data: dict[str, list[dict]]) -> dict:
     return out
 
 
-def section2(data: dict[str, list[dict]], rng: random.Random, resamples: int) -> dict:
+def section2(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
     """The meter's ratios between models, from the single-model stretches of section 1."""
     out = {}
     for a, recs in data.items():
@@ -314,23 +314,24 @@ def section2(data: dict[str, list[dict]], rng: random.Random, resamples: int) ->
                         continue
                     # tokens per 1% is the window over the rate, so the rate ratio num:den is
                     # the token ratio the other way up.
-                    r = ratio_bootstrap(vb, va, rng, resamples)
+                    r = ratio_bootstrap(vb, va, random.Random(f"{seed}/ratio/{key}/{m}"), resamples)
                     per_mult[f"out{m}x"] = {"measurable": True, "n_num": len(va), "n_den": len(vb),
                                             **verdict(num, den, free, r["ratio"], r["interval"])}
                 out[key] = per_mult
     return out
 
 
-def section3(data: dict[str, list[dict]], rng: random.Random, resamples: int) -> dict:
+def section3(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
     """The same rates fitted across every clean stretch, not only the single-model ones."""
     out = {}
     for a, recs in data.items():
         for era in ("pre", "post"):
             sub = [r for r in recs if r["era"] == era]
             for m in OUT_MULTS:
-                f = fit_bootstrap(sub, m, rng, resamples)
+                key = f"{a}/{era}/out{m}x"
+                f = fit_bootstrap(sub, m, random.Random(f"{seed}/fit/{key}"), resamples)
                 if f:
-                    out[f"{a}/{era}/out{m}x"] = {
+                    out[key] = {
                         "n": f["n"], "rates": f["rates"], "interval": f["interval"],
                         "window_credits_per_pct": f["window_credits_per_pct"],
                         "window_interval": f["window_interval"],
@@ -352,7 +353,7 @@ def tables(section3_out: dict) -> dict[str, dict[str, float]]:
     return out
 
 
-def section4(data: dict[str, list[dict]], s3: dict, rng: random.Random, resamples: int) -> dict:
+def section4(data: dict[str, list[dict]], s3: dict, seed: int, resamples: int) -> dict:
     """Does model mix, reset_verified or stretch length explain the jwork/Dave gap?"""
     post = {a: [r for r in data[a] if r["era"] == "post" and r["ok"]] for a in ("jwork", "dave")}
     out = {"n": {a: len(v) for a, v in post.items()}, "mix": {}, "shares": {}, "reset_verified": {},
@@ -363,7 +364,7 @@ def section4(data: dict[str, list[dict]], s3: dict, rng: random.Random, resample
         per = {a: [price(r, rates, 5) / r["delta"] for r in recs] for a, recs in post.items()}
         if not all(per.values()):
             continue
-        r = ratio_bootstrap(per["jwork"], per["dave"], rng, resamples)
+        r = ratio_bootstrap(per["jwork"], per["dave"], random.Random(f"{seed}/mix/{label}"), resamples)
         out["mix"][label] = {"jwork": st.median(per["jwork"]), "dave": st.median(per["dave"]),
                              "ratio": r["ratio"], "interval": r["interval"],
                              "verdict": "explains" if r["interval"][0] <= 1.0 <= r["interval"][1]
@@ -386,20 +387,23 @@ def section4(data: dict[str, list[dict]], s3: dict, rng: random.Random, resample
                 groups[r["reset_verified"]].append(price(r, shellac, 5) / r["delta"])
             entry = {str(k): quantiles(v) if v else None for k, v in groups.items()}
             if all(len(v) >= MIN_N for v in groups.values()):
-                entry["ratio"] = ratio_bootstrap(groups[True], groups[False], rng, resamples)  # verified / not
+                entry["ratio"] = ratio_bootstrap(groups[True], groups[False],
+                                                 random.Random(f"{seed}/verified/{key}"), resamples)
             out["reset_verified"][key] = entry
             cut = st.median([r["delta"] for r in sub])
             halves = {"short": [price(r, shellac, 5) / r["delta"] for r in sub if r["delta"] <= cut],
                       "long": [price(r, shellac, 5) / r["delta"] for r in sub if r["delta"] > cut]}
             entry = {"cut_delta_pct": cut, **{k: quantiles(v) if v else None for k, v in halves.items()}}
             if all(len(v) >= MIN_N for v in halves.values()):
-                entry["ratio"] = ratio_bootstrap(halves["long"], halves["short"], rng, resamples)
+                entry["ratio"] = ratio_bootstrap(halves["long"], halves["short"],
+                                                 random.Random(f"{seed}/length/{key}"), resamples)
             out["length"][key] = entry
     for label, keep in (("reset_verified only", lambda r: r["reset_verified"]),
                         ("delta_pct above 10", lambda r: r["delta"] > 10)):
         per = {a: [price(r, shellac, 5) / r["delta"] for r in recs if keep(r)] for a, recs in post.items()}
         if all(len(v) >= MIN_N for v in per.values()):
-            r = ratio_bootstrap(per["jwork"], per["dave"], rng, resamples)
+            r = ratio_bootstrap(per["jwork"], per["dave"],
+                                random.Random(f"{seed}/restricted/{label}"), resamples)
             out["restricted"][label] = {"n": {a: len(v) for a, v in per.items()},
                                         "jwork": st.median(per["jwork"]), "dave": st.median(per["dave"]),
                                         "ratio": r["ratio"], "interval": r["interval"],
@@ -444,8 +448,9 @@ def pct(x: float) -> str:
     return f"{x * 100:+.0f}%"
 
 
-def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict, lists: dict) -> None:
-    print("0. Exclusion list")
+def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict, lists: dict,
+         chosen: str = "harness-runs") -> None:
+    print(f"0. Exclusion list ({chosen} is the one sections 1 to 5 use)")
     kinds = {}
     for a, h0, h1 in lists["harness-runs"]:
         kinds[a] = kinds.get(a, 0) + 1
@@ -565,6 +570,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("masterrig", type=Path, help="a masterrig stretch file, as tools/reconcile_window.py takes")
     ap.add_argument("--json", type=Path, help="write the same figures as JSON")
+    ap.add_argument("--exclusions", choices=("harness-runs", "probes-only"), default="harness-runs",
+                    help="which list of the tracker's own runs to exclude stretches by")
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
     a = ap.parse_args(argv)
@@ -573,19 +580,20 @@ def main(argv: list[str] | None = None) -> int:
     lists["harness-runs"] = load_runs() if HARNESS_RUNS.exists() else lists["probes-only"]
     excl = exclusion_report(S, lists)
     win = window_check(S, lists)
-    data = {acct: prepare(acct, clean(S[acct], acct, lists["harness-runs"])) for acct in S}
-    # A resampler per section, so a figure quoted from one section does not move when another
-    # section is edited.
+    data = {acct: prepare(acct, clean(S[acct], acct, lists[a.exclusions])) for acct in S}
+    # Every group draws from its own seeded resampler, keyed by its name, so a figure quoted
+    # from one row does not move when a different row gains or loses a stretch.
     s1 = section1(data)
-    s2 = section2(data, random.Random(a.seed + 2), a.resamples)
-    s3 = section3(data, random.Random(a.seed + 3), a.resamples)
-    s4 = section4(data, s3, random.Random(a.seed + 4), a.resamples)
+    s2 = section2(data, a.seed, a.resamples)
+    s3 = section3(data, a.seed, a.resamples)
+    s4 = section4(data, s3, a.seed, a.resamples)
     s5 = section5(win, s3)
-    show(excl, win, s1, s2, s3, s4, s5, lists)
+    show(excl, win, s1, s2, s3, s4, s5, lists, a.exclusions)
     if a.json:
         a.json.write_text(json.dumps({
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "seed": a.seed, "resamples": a.resamples, "dominance": DOMINANCE, "min_n": MIN_N,
+            "seed": a.seed, "resamples": a.resamples, "exclusions": a.exclusions,
+            "dominance": DOMINANCE, "min_n": MIN_N,
             "interval_percentiles": INTERVAL, "shellac_rates": SHELLAC, "fable_point": FABLE_POINT,
             "fable_interval": FABLE_INTERVAL, "exclusion": excl, "window_check": win,
             "section1": s1, "section2": s2, "section3": s3, "section4": s4, "section5": s5,
