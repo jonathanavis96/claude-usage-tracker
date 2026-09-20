@@ -59,7 +59,15 @@ def clean(stretches: list[dict], account: str, runs) -> list[tuple[dict, float, 
 
 
 def split(tokens: dict):
-    """(priced ok, credits of models with a published rate, fable input, fable output, raw tokens); cache reads at 0."""
+    """(priced ok, credits of models with a published rate, fable input, fable output, raw tokens).
+
+    Cache writes are priced at the input rate and cache reads at zero on purpose. These are
+    the meter's credit rates (docs/reference-2026-09-20-shellac-credits-model.md: a
+    subscription charges a cache write as ordinary input and a cache read as nothing), not
+    the API list prices in data/prices.json, where a cache write carries the 1.25x premium.
+    Pricing writes at 1.25x here would understate nothing in the meter; it is what loaded
+    the retracted 0.155 cache-read weight onto reads in the dollar model.
+    """
     known = fi = fo = raw = 0
     ok = True
     for m, tok in tokens.items():

@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from tools.reconcile_window import clean
+from tools.reconcile_window import RATES, clean, split
 
 
 def _stretch(start: datetime, minutes: int = 60, **fields) -> dict:
@@ -46,6 +46,16 @@ class CleanTests(unittest.TestCase):
     def test_small_or_tokenless_stretches_are_dropped(self):
         kept = clean([_stretch(self.T0, delta_pct=2.9), _stretch(self.T0 + timedelta(hours=2), tokens={})], "jwork", [])
         self.assertEqual(kept, [])
+
+
+class SplitTests(unittest.TestCase):
+    def test_cache_writes_are_priced_as_input_and_cache_reads_as_nothing(self):
+        # The meter's credit rates, not the API list prices: a subscription charges a
+        # cache write as ordinary input and a cache read as nothing.
+        ok, known, fi, fo, raw = split({"claude-opus-5": {"input": 100, "cache_write": 300, "cache_read": 10_000, "output": 10}})
+        self.assertTrue(ok)
+        self.assertAlmostEqual(known, 400 * RATES["claude-opus-5"][0] + 10 * RATES["claude-opus-5"][1])
+        self.assertEqual((fi, fo, raw), (0, 0, 410))
 
 
 if __name__ == "__main__":
