@@ -114,7 +114,7 @@ def era(end: datetime) -> str:
 
 
 def short(model: str) -> str:
-    return model[len("claude-"):] if model.startswith("claude-") else model
+    return model.removeprefix("claude-")
 
 
 def load_rows(paths: dict[str, Path], cache_read_weight: float, fable_input: float,
@@ -290,8 +290,8 @@ def render(rows: list[dict], skipped: dict, args: argparse.Namespace) -> str:
     out.append("Credits per 1% of the five-hour meter, from history/*-passive.json.")
     out.append("Rates: docs/reference-2026-09-20-shellac-credits-model.md (branch step-vs-trend-finding),")
     out.append("from https://she-llac.com/claude-limits -- a reference, not a source of truth.")
-    out.append(f"Haiku 2/15 in 10/15 out, Sonnet 6/15 30/15, Opus (any version) 10/15 50/15. "
-               f"Cache writes at the input rate, cache reads at {args.cache_read_weight} of it.")
+    out.append("Haiku 2/15 in 10/15 out, Sonnet 6/15 30/15, Opus (any version) 10/15 50/15.")
+    out.append(f"Cache writes at the input rate, cache reads at {args.cache_read_weight:g} of it.")
     out.append(f"PROVISIONAL, ours not the article's: Fable input {args.fable_input:.6g} credits/token "
                f"({args.fable_input / OPUS_INPUT:.2f}x Opus), output ratio {args.fable_output_ratio:g}.")
     out.append(f"{len(rows)} stretches priced; left out: "
@@ -309,12 +309,19 @@ def render(rows: list[dict], skipped: dict, args: argparse.Namespace) -> str:
     out.append(_table(header, widths, lines))
 
     out.append("\nPure clusters: every credit of the stretch from one model family")
-    lines = []
+    pure_header = ("account", "cluster", "n", "median cpp", "p25", "p75")
+    pure_widths = (9, 12, 4, 11, 11, 11)
+    lines, empty = [], []
     clusters = {fam: pure_clusters(rows, fam) for fam in ("opus", "sonnet")}
     for fam, by_account in clusters.items():
+        if not by_account:
+            empty.append(f"pure-{fam}")
         for account, s in by_account.items():
-            lines.append((account, f"pure-{fam}", "", str(s["n"]), _fmt(s["median"]), _fmt(s["p25"]), _fmt(s["p75"])))
-    out.append(_table(header, widths, lines) if lines else "  (none)")
+            lines.append((account, f"pure-{fam}", str(s["n"]), _fmt(s["median"]), _fmt(s["p25"]), _fmt(s["p75"])))
+    out.append(_table(pure_header, pure_widths, lines) if lines else "  (none)")
+    if empty:
+        out.append(f"  nothing is {' or '.join(empty)} in any account: every stretch mixes a second")
+        out.append("  model in, so that family has no single-model level to read.")
 
     out.append(f"\nFable input rate solved per Fable-heavy stretch (Fable over {FABLE_HEAVY:.0%} of raw tokens),")
     out.append("from the account's pure-Opus median as the credits a percent buys. PROVISIONAL.")
@@ -325,9 +332,9 @@ def render(rows: list[dict], skipped: dict, args: argparse.Namespace) -> str:
         by_account: dict[str, list[float]] = {}
         for s in solved:
             by_account.setdefault(s["account"], []).append(s["solved_fable_input"])
-        out.append(_table(("account", "", "", "n", "median rate", "p25", "p75"), (9, 7, 13, 4, 11, 11, 11),
-                          [(a, "", "", str(len(v)), f"{quartiles(v)[1]:>11.4f}", f"{quartiles(v)[0]:>11.4f}",
-                            f"{quartiles(v)[2]:>11.4f}") for a, v in sorted(by_account.items())]))
+        out.append(_table(("account", "credits/token", "n", "median rate", "p25", "p75"), (9, 12, 4, 11, 11, 11),
+                          [(a, "", str(len(v)), f"{quartiles(v)[1]:.4f}", f"{quartiles(v)[0]:.4f}",
+                            f"{quartiles(v)[2]:.4f}") for a, v in sorted(by_account.items())]))
         out.append("  as a multiple of Opus input (10/15): "
                    + ", ".join(f"{a} {quartiles(v)[1] / OPUS_INPUT:.2f}x"
                                for a, v in sorted(by_account.items())))
