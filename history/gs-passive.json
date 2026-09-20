@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-20T12:30:12.714161+00:00",
+ "generated_at": "2026-09-20T13:30:13.302819+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 831,
+    "reset_verified_samples": 840,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3932,
+    "samples": 3943,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-20T12:28:09+00:00"
+    "last": "2026-09-20T13:28:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -31,12 +31,12 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1729,
-    "turns": 51137,
+    "files": 1730,
+    "turns": 51139,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1729,
-     "dropped": 1043,
+     "kept": 1730,
+     "dropped": 1045,
      "subagent_files": 697
     }
    },
@@ -6738,18 +6738,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 600,
+    "reset_verified_samples": 611,
     "since": null,
-    "samples": 1160,
+    "samples": 1171,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-20T12:28:09+00:00"
+    "last": "2026-09-20T13:28:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 479,
-    "turns": 13658,
+    "files": 501,
+    "turns": 14558,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -8009,6 +8009,54 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-20T11:33:39+00:00",
+     "end": "2026-09-20T12:44:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 8.8707,
+     "usd_per_pct": 0.8871,
+     "bounds": [
+      0.8064,
+      0.9856
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 1922,
+       "output": 55693,
+       "cache_read": 21250836,
+       "cache_write": 119933,
+       "cache_write_1h": 119933
+      },
+      "claude-sonnet-5": {
+       "input": 970,
+       "output": 49003,
+       "cache_read": 55699988,
+       "cache_write": 1270467
+      },
+      "claude-haiku-4-5": {
+       "input": 294,
+       "output": 53,
+       "cache_read": 922545,
+       "cache_write": 152916
+      }
+     },
+     "unpriced_tokens": 1075808,
+     "unpriced": {
+      "claude-haiku-4-5": {
+       "input": 294,
+       "output": 53,
+       "cache_read": 922545,
+       "cache_write": 152916
+      }
+     },
+     "turns": 599,
+     "reset_verified": true,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
     }
    ],
    "runs": [
@@ -8217,12 +8265,12 @@
     },
     {
      "window_ending": "2026-09-20T14:39:59.863254+00:00",
-     "windows": 4.5,
-     "five_hour_pct": 18.0,
-     "seven_day_pct": 4.0,
+     "windows": 4.67,
+     "five_hour_pct": 28.0,
+     "seven_day_pct": 6.0,
      "rounding_interval": [
-      2.9493,
-      8.0556
+      3.4911,
+      6.6759
      ],
      "pieces": 1,
      "reset_verified": true
