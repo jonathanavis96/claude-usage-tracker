@@ -121,7 +121,12 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
                     "reads": reads, "total_reads": sum(reads.values()),
                     "share": {f: (raw[f] / total if total else 0.0) for f in FAMILIES},
                     "dominant": max(FAMILIES, key=lambda f: raw[f]) if total else None,
-                    "windows": s.get("windows", 1)})
+                    # No default: a stretch file that omits `windows` (tracker/join.py's
+                    # Stretch field, always written by this repository's own producer) is
+                    # missing data this tool's quantisation floor depends on, and silently
+                    # treating it as one window would understate the floor for any stretch
+                    # actually pooled from more than one. Let it raise.
+                    "windows": s["windows"]})
     return out
 
 

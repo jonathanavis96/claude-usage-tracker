@@ -1059,13 +1059,22 @@ def windows_per_week_ratio_note(weekly: dict) -> dict | None:
         return None
     by_window = weekly["max20"]["by_window"]
 
-    def sums(regime: dict) -> tuple[int, float, float] | None:
+    def sums(regime: dict, exclude_lo: bool = False) -> tuple[int, float, float] | None:
+        # `by_window` is pooled across accounts, and each account keeps its own window
+        # cadence, so two different accounts' rows can share a `window_ending` instant that
+        # happens to sit exactly on a regime boundary. Both bounds are inclusive so a row is
+        # never dropped, but that means a boundary instant would double-count if both regimes
+        # took it; `exclude_lo` (passed for every regime after the first) drops that shared
+        # instant here so it lands in the earlier regime only.
         lo, hi = datetime.fromisoformat(regime["start"]), datetime.fromisoformat(regime["end"])
-        rows = [r for r in by_window if lo <= datetime.fromisoformat(r["window_ending"]) <= hi]
+        rows = [r for r in by_window
+                if (lo < datetime.fromisoformat(r["window_ending"]) if exclude_lo
+                    else lo <= datetime.fromisoformat(r["window_ending"]))
+                and datetime.fromisoformat(r["window_ending"]) <= hi]
         d7 = sum(r["seven_day_pct"] for r in rows)
         return (len(rows), sum(r["five_hour_pct"] for r in rows), d7) if d7 else None
 
-    before, after = sums(regimes[-2]), sums(regimes[-1])
+    before, after = sums(regimes[-2]), sums(regimes[-1], exclude_lo=True)
     if not before or not after:
         return None
     n_before, d5_before, d7_before = before

@@ -120,8 +120,10 @@ carries. `five_hour_window_credits.per_account` is kept, as data, with no spread
 
 The one fact these stretches do establish is the pooled ratio itself:
 `windows_per_week_ratio` reports it fell 23.65% (before: 144 windows, sum five-hour-percent
-3,365, sum seven-day-percent 519; after: 57 windows, sum five-hour-percent 1,094, sum
-seven-day-percent 221), which is one equation in two unknowns. It is equally consistent
+3,365, sum seven-day-percent 519; after: 57 windows, sum five-hour-percent 1,089, sum
+seven-day-percent 220), which is one equation in two unknowns. A window at a regime
+boundary that two different accounts' rows can share is counted once, in the earlier
+regime, so a boundary instant never inflates both sides. It is equally consistent
 with the weekly cap falling 23.65% and the five-hour window unchanged, the five-hour window
 rising about 31% and the weekly cap unchanged, or any split between -- including the
 announced 17% weekly cut paired with an implied 8.7% five-hour rise. `meter_attribution`
