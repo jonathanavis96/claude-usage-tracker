@@ -555,8 +555,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "weekly_windows": weekly_windows,
         "credits": credits_block,
         "reference": _reference_block(weekly_windows),
-        "last_change": _latest_change_with_scope(events, weekly_events, across_cut),
-        "events": _build_events(events, weekly_events, across_cut),
+        "last_change": _latest_change_with_scope(events, weekly_events, across_cut, weekly_windows),
+        "events": _build_events(events, weekly_events, across_cut, weekly_windows),
         # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the median
         # session token total per model, from passive.py's own transcript-derived
         # daily_rates (tracker/turns.py session_tokens_by_model), unrelated to the
@@ -1534,7 +1534,8 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
 
 
 def _latest_change_with_scope(window_events: list, weekly_events: list,
-                              across_cut: dict | None = None) -> dict | None:
+                              across_cut: dict | None = None,
+                              weekly_windows: dict | None = None) -> dict | None:
     """The most recent change across both event series, as its full event record.
 
     Recency is judged on the evidence's own newest window, not on the published
@@ -1549,10 +1550,11 @@ def _latest_change_with_scope(window_events: list, weekly_events: list,
         return None
     e, scope = max(candidates,
                    key=lambda c: getattr(c[0], "window_onset_latest", None) or c[0].date)
-    return _event_record(e, scope, across_cut)
+    return _event_record(e, scope, across_cut, weekly_windows)
 
 
-def _event_record(e, scope: str, across_cut: dict | None = None) -> dict:
+def _event_record(e, scope: str, across_cut: dict | None = None,
+                  weekly_windows: dict | None = None) -> dict:
     """One published change: an observed change in this account's metric, not a dated policy change.
 
     `onset` bounds when it happened (the last reading at the old level and the
@@ -1566,18 +1568,23 @@ def _event_record(e, scope: str, across_cut: dict | None = None) -> dict:
     is the ratio of five-hour to seven-day movement, and a fall in it can come
     from a smaller weekly cap, a bigger five-hour window, or both. It is not
     resolved here and the record never claims which meter moved (see
-    _weekly_label for the evidence that both did).
+    _weekly_label for the evidence that both did). `windows_per_week_ratio` carries
+    that measured fall plus example splits that reproduce it exactly
+    (`credit_model.windows_per_week_ratio_note`); none of the splits is a claim.
 
-    A weekly event also carries the two facts the 2026-09-20 reconciliation
-    established beside it, each labelled as what it is. `announced` is Anthropic's
-    own figure for 14 September, quoted -- policy, not a measurement, and not
-    derived from anything here. `five_hour_window_credits` is this tracker's own
-    reading of the five-hour window in credits either side of that date, per account,
-    and it does NOT resolve the attribution: the accounts differ from each other after
-    the change by more than any of them moved across it, so the record carries
-    `resolved: false` and the sentence saying why. `meter_attribution` stays
-    "unresolved" for the same reason. Neither fact is folded into `percent`, which
-    stays the measured quantity alone.
+    A weekly event also carries a fact the 2026-09-20 reconciliation established
+    beside it. `announced` is Anthropic's own figure for 14 September, quoted --
+    policy, not a measurement, and not derived from anything here.
+    `five_hour_window_credits` is this tracker's own reading of the five-hour window
+    in credits either side of that date, per account, kept as data; it carries
+    `resolved: false` for an algebraic reason stated in its own `unresolved` field
+    (`credit_model.ACROSS_CUT_UNRESOLVED`), not a cross-account comparison -- an
+    earlier version compared the accounts' post-change levels to each other and
+    that comparison was retracted (Codex review of commit 447b926, 2026-09-20: a
+    stable account-specific scale cancels out of a within-account ratio regardless
+    of the cross-account spread, so the spread was never evidence). `meter_attribution`
+    stays "unresolved" for the same reason. Neither fact is folded into `percent`,
+    which stays the measured quantity alone.
     """
     provisional = scope == "window"
     # A pooled weekly event re-dated from the accounts' own onsets (_account_dated)
@@ -1607,7 +1614,10 @@ def _event_record(e, scope: str, across_cut: dict | None = None) -> dict:
         "provisional": provisional, "legacy_uncertain": False,
         **({} if provisional else {"meter_attribution": "unresolved",
                                    "announced": dict(credit_model.ANNOUNCEMENT),
-                                   "five_hour_window_credits": across_cut}),
+                                   "five_hour_window_credits": across_cut,
+                                   "windows_per_week_ratio": (
+                                       credit_model.windows_per_week_ratio_note(weekly_windows)
+                                       if weekly_windows else None)}),
     }
 
 
@@ -1621,11 +1631,14 @@ def _weekly_label(e) -> str:
     What is measured is how many five-hour windows a week's cap holds: five-hour
     meter movement over seven-day meter movement. A fall in it does NOT say the
     weekly cap fell by that much, and the row must not read as though it does --
-    a smaller five-hour window moves the same ratio. The split between the two is
-    unresolved here: jwork's accepted stretches read the five-hour window about 9%
-    larger in credits across the change, which puts the weekly cap's own fall
-    somewhere between 6% and 15% of a 22-24% fall in the ratio. `meter_attribution`
-    carries that as a field (_event_record).
+    a smaller five-hour window moves the same ratio, and any split between the two
+    reproduces the same fall. `meter_attribution` carries that as a field
+    (_event_record), and `windows_per_week_ratio` carries the exact fall plus three
+    of the splits that are consistent with it, none of them a claim. An earlier
+    version of this note tried to bound the split from one account's own before/after
+    change in five-hour credits; the Codex review of commit 447b926 (2026-09-20)
+    retracted that (see `credit_model.ACROSS_CUT_UNRESOLVED`), so this row no longer
+    implies a range.
 
     The percent and the dates are the event's own measured ones, so the row can
     never say something the rest of the record does not.
@@ -1638,11 +1651,13 @@ def _weekly_label(e) -> str:
 
 
 def _build_events(window_events: list, weekly_events: list,
-                  across_cut: dict | None = None) -> list[dict]:
+                  across_cut: dict | None = None,
+                  weekly_windows: dict | None = None) -> list[dict]:
     events = [{**_event_record(e, "window"), "kind": "change",
                "label": f"Observed window budget changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
               for e in window_events]
-    events += [{**_event_record(e, "weekly", across_cut), "kind": "change", "label": _weekly_label(e)}
+    events += [{**_event_record(e, "weekly", across_cut, weekly_windows), "kind": "change",
+               "label": _weekly_label(e)}
                for e in weekly_events]
     return sorted(events, key=lambda ev: ev["date"])
 

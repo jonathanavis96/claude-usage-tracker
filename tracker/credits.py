@@ -951,6 +951,19 @@ def fable_interval(clean: dict[str, list[dict]], credits: dict, window_per_pct: 
     }
 
 
+#: Why `across_cut` never resolves the attribution. Not a comparison across accounts -- an
+#: earlier version compared the accounts' post-change levels to each other and called that
+#: comparison the reason; the Codex review of commit 447b926 (2026-09-20) retracted it, because
+#: a stable account-specific scale cancels out of a within-account before/after ratio regardless
+#: of how far apart two different accounts sit, so the spread was never evidence either way.
+ACROSS_CUT_UNRESOLVED = (
+    "a stable account-specific scale cancels out of any within-account before/after ratio, so "
+    "these five-hour credit readings cannot separate a change in the five-hour window from a "
+    "change in the weekly cap on their own -- that needs an independent debit or allowance "
+    "observation, which no committed stretch carries. See the windows-per-week ratio note on "
+    "the event for what these same accounts' meters do identify.")
+
+
 def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
                weight: float | None = None) -> dict:
     """Each account's five-hour window in credits before and after the announced change.
@@ -963,13 +976,22 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
     ratio much. The level itself is not a claim; `window_credits` is the claim.
 
     **This does not resolve whether the five-hour window moved, and the block says so.**
-    One account reads about 9% higher after the change, but two accounts on the same
-    plan differ from each other by more than that after it, so the account-to-account
-    spread is larger than the pre/post move and neither direction can be read from it.
-    `spread_after_pct` publishes that comparison beside the per-account rows, and
-    `resolved` is false. An earlier draft of the reconciliation called the window flat
-    within 4%; that came from gating on `status` instead of `capture_status`, which let
-    42 unaccounted stretches into the comparison, and the gate on PR #64 caught it.
+    An earlier version of this block compared the accounts' post-change levels to each
+    other and called the attribution unresolved because they differed by more than any
+    one of them moved (46.8% apart against a largest own-move of 12.8%). The Codex
+    review of commit 447b926 (2026-09-20) retracted that argument: a stable
+    account-specific scale cancels out of a within-account before/after ratio no matter
+    how far apart two different accounts sit, so the cross-account spread was never
+    evidence either way, and it is not published here any more. What actually blocks the
+    attribution is algebraic, not a spread: with complete capture, these readings
+    identify `rate / budget` for the five-hour meter, and multiplying every rate and
+    both budgets by the same positive number leaves every reading unchanged. Separating
+    a five-hour-window change from a weekly-cap change needs an independent debit or
+    allowance observation in a stable unit; nothing committed here is that. `resolved`
+    is always false for that reason, not a comparison across accounts. An earlier draft
+    of the reconciliation called the window flat within 4%; that came from gating on
+    `status` instead of `capture_status`, which let 42 unaccounted stretches into the
+    comparison, and the gate on PR #64 caught it.
     """
     weight = cache_read_weight(credits) if weight is None else weight
     held = credits.get("across_cut_fable_rate") or {}
@@ -1000,23 +1022,10 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
             # other machine included -- by only what this host's transcripts saw.
             "n_with_capture": sum(1 for st in clean.get(name, []) if st.get("capture") is not None),
         }
-    afters = [row["after"] for row in out.values() if row["after"]]
-    moves = [abs(row["change_pct"]) for row in out.values() if row["change_pct"] is not None]
-    spread = round((max(afters) - min(afters)) / min(afters) * 100, 1) if len(afters) > 1 else None
-    if spread is None or not moves:
-        unresolved = "not enough accounts with readings on both sides to compare"
-    elif spread >= max(moves):
-        unresolved = (f"the accounts differ from each other by {spread:g}% after the change, more "
-                      f"than the largest per-account move across it ({max(moves):g}%), so the "
-                      f"five-hour and weekly meters cannot be separated from these stretches")
-    else:
-        unresolved = None
     return {
         "per_account": out,
-        "resolved": unresolved is None,
-        "unresolved": unresolved,
-        "spread_after_pct": spread,
-        "largest_move_pct": max(moves) if moves else None,
+        "resolved": False,
+        "unresolved": ACROSS_CUT_UNRESOLVED,
         "unit": "credits per 1% of the five-hour meter",
         "cut_at": CUT_AT.isoformat(),
         "fable_rate_held": {"input": fable_in, "output": fable_out,
@@ -1027,4 +1036,69 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
                    "has no usable capture column, so its meter movement includes work this host "
                    "never saw and its level reads low; the comparison of its own two sides is "
                    "still its own."),
+    }
+
+
+def windows_per_week_ratio_note(weekly: dict) -> dict | None:
+    """What the pooled windows-per-week ratio (five-hour movement over seven-day movement)
+    actually identifies across the certified change, and nothing more.
+
+    A fall in this ratio is one equation in two unknowns: the weekly cap and the
+    five-hour window could each have moved, in any combination that reproduces the
+    observed fall. This reports the fall itself, from the exact rows behind the last
+    two certified regimes (`weekly['max20']['regimes']`), plus three of the many splits
+    that reproduce it -- the weekly cap absorbing all of it, the five-hour window
+    absorbing all of it, and the announced 17% weekly cut absorbing the rest as an
+    implied five-hour rise. None of the three is claimed; they are worked examples of
+    the same one-equation-two-unknowns fact, ported from the Codex review of commit
+    447b926 (2026-09-20), which also retracted the cross-account-spread argument this
+    replaces (see `ACROSS_CUT_UNRESOLVED`).
+    """
+    regimes = weekly["max20"]["regimes"]
+    if len(regimes) < 2:
+        return None
+    by_window = weekly["max20"]["by_window"]
+
+    def sums(regime: dict) -> tuple[int, float, float] | None:
+        lo, hi = datetime.fromisoformat(regime["start"]), datetime.fromisoformat(regime["end"])
+        rows = [r for r in by_window if lo <= datetime.fromisoformat(r["window_ending"]) <= hi]
+        d7 = sum(r["seven_day_pct"] for r in rows)
+        return (len(rows), sum(r["five_hour_pct"] for r in rows), d7) if d7 else None
+
+    before, after = sums(regimes[-2]), sums(regimes[-1])
+    if not before or not after:
+        return None
+    n_before, d5_before, d7_before = before
+    n_after, d5_after, d7_after = after
+    ratio_before, ratio_after = d5_before / d7_before, d5_after / d7_after
+    rho = ratio_after / ratio_before  # (weekly_after/weekly_before) / (five_hour_after/five_hour_before)
+    fall_pct = round((1 - rho) * 100, 2)
+    five_hour_only_pct = round((1 / rho - 1) * 100, 2)
+    announced_weekly_pct = 17.0
+    announced_five_hour_pct = round(((1 - announced_weekly_pct / 100) / rho - 1) * 100, 2)
+    return {
+        "before": {"n_windows": n_before, "sum_five_hour_pct": round(d5_before, 1),
+                  "sum_seven_day_pct": round(d7_before, 1), "ratio": round(ratio_before, 4),
+                  "start": regimes[-2]["start"], "end": regimes[-2]["end"]},
+        "after": {"n_windows": n_after, "sum_five_hour_pct": round(d5_after, 1),
+                 "sum_seven_day_pct": round(d7_after, 1), "ratio": round(ratio_after, 4),
+                 "start": regimes[-1]["start"], "end": regimes[-1]["end"]},
+        "ratio_fell_pct": fall_pct,
+        "consistent_with": [
+            {"description": "the weekly cap falls by the whole measured amount, the five-hour "
+                            "window unchanged",
+             "weekly_cap_change_pct": -fall_pct, "five_hour_window_change_pct": 0.0},
+            {"description": "the five-hour window rises, the weekly cap unchanged",
+             "weekly_cap_change_pct": 0.0, "five_hour_window_change_pct": five_hour_only_pct},
+            {"description": "the announced 17% weekly cut, with the rest of the measured fall "
+                            "an implied five-hour rise",
+             "weekly_cap_change_pct": -announced_weekly_pct,
+             "five_hour_window_change_pct": announced_five_hour_pct},
+        ],
+        "unit": "percent",
+        "method": ("the pooled ratio of five-hour to seven-day meter movement over every window in "
+                   "each of the last two certified regimes (tracker/detect.py weighted_regimes), "
+                   "before divided by after. The fall is one equation in the ratio of the two "
+                   "meters' own budget changes; `consistent_with` lists example splits that "
+                   "reproduce it exactly, not measurements of which one moved."),
     }

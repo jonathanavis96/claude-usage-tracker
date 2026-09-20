@@ -353,8 +353,16 @@ class AcrossCutTests(unittest.TestCase):
         self.assertEqual(held["output"], 5.0)
         self.assertIn("not a claim about Fable's rate", held["why"])
 
-    def test_the_attribution_is_unresolved_when_the_accounts_spread_wider_than_they_moved(self):
-        """Two accounts on the same plan 25% apart after a change one moved 10% across."""
+    def test_the_attribution_is_unresolved_regardless_of_the_cross_account_spread(self):
+        """Two accounts on the same plan 25% apart after a change one moved 10% across.
+
+        An earlier version called this spread itself the reason the attribution was
+        unresolved. The Codex review of commit 447b926 (2026-09-20) retracted that: a
+        stable account-specific scale cancels out of a within-account ratio no matter
+        how far apart two accounts sit, so the spread was never evidence. `resolved`
+        stays false and `unresolved` states the algebraic reason instead, and neither
+        field is published any more (`spread_after_pct`, `largest_move_pct`).
+        """
         rows = {
             "jwork": [stretch("2026-09-10T00:00:00+00:00", {"claude-opus-5": tok(input=3_000_000)}),
                       stretch("2026-09-16T00:00:00+00:00", {"claude-opus-5": tok(input=3_300_000)})],
@@ -362,19 +370,20 @@ class AcrossCutTests(unittest.TestCase):
         }
         out = C.across_cut(rows, CREDITS, LABELS)
         self.assertFalse(out["resolved"])
-        self.assertEqual(out["largest_move_pct"], 10.0)
-        self.assertEqual(out["spread_after_pct"], 25.0)
-        self.assertIn("cannot be separated from these stretches", out["unresolved"])
+        self.assertNotIn("spread_after_pct", out)
+        self.assertNotIn("largest_move_pct", out)
+        self.assertEqual(out["unresolved"], C.ACROSS_CUT_UNRESOLVED)
+        self.assertNotIn("differ from each other", out["unresolved"])
 
     def test_it_never_says_the_window_did_not_move(self):
         text = json.dumps(self.block())
         for claim in ("did not move", "flat", "unchanged"):
             self.assertNotIn(claim, text)
 
-    def test_one_account_alone_cannot_resolve_it_either(self):
+    def test_one_account_alone_is_unresolved_for_the_same_algebraic_reason(self):
         out = self.block()
         self.assertFalse(out["resolved"])
-        self.assertIn("not enough accounts", out["unresolved"])
+        self.assertEqual(out["unresolved"], C.ACROSS_CUT_UNRESOLVED)
 
     def test_an_account_with_no_usable_capture_column_says_so_in_its_own_row(self):
         blind = [dict(stretch("2026-09-10T00:00:00+00:00", {"claude-opus-5": tok(input=3_000_000)}),
