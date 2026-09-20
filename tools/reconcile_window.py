@@ -52,7 +52,7 @@ def clean(stretches: list[dict], account: str, runs) -> list[tuple[dict, float, 
         s0, s1 = P(s["start"]), P(s["end"])
         if any(a == account and not (s1 < h0 or s0 > h1) for a, h0, h1 in runs):
             continue
-        if account != "masterrig" and s.get("status") != "accepted":
+        if account != "masterrig" and s.get("capture_status") != "accepted":
             continue
         keep.append((s, d, t))
     return keep
