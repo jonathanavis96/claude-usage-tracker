@@ -1,8 +1,8 @@
 import unittest
 
 from tracker import credits as C
-from tools.masterrig_fable import (accepted_since_cut, capture_status_counts, envelope,
-                                   fable_rows, feasibility_reads_free, joint_fit, joint_fit_b5,
+from tools.masterrig_fable import (capture_status_counts, drop_surplus, envelope, fable_rows,
+                                   feasibility_reads_free, gated_rows, joint_fit, joint_fit_b5,
                                    since_cut)
 
 POST = "2026-09-10T00:00:00+00:00"
@@ -39,7 +39,23 @@ class SinceCutAndStatusTests(unittest.TestCase):
             _stretch(POST, 10.0, _tokens(**{"claude-opus-5": _opus(1)}), capture_status="unpriced"),
         ]
         self.assertEqual(capture_status_counts(rows), {"accepted": 1, "unpriced": 2})
-        self.assertEqual(len(accepted_since_cut(rows)), 1)
+
+    def test_gated_rows_drops_small_delta_and_keeps_every_status(self):
+        rows = [
+            _stretch(POST, 9.9, _tokens(**{"claude-opus-5": _opus(1)}), capture_status="unpriced"),
+            _stretch(POST, 10.0, _tokens(**{"claude-opus-5": _opus(1)}), capture_status="surplus"),
+        ]
+        kept = gated_rows(rows)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["capture_status"], "surplus")
+
+    def test_drop_surplus_removes_only_that_status(self):
+        rows = [
+            _stretch(POST, 10.0, _tokens(**{"claude-opus-5": _opus(1)}), capture_status="unpriced"),
+            _stretch(POST, 10.0, _tokens(**{"claude-opus-5": _opus(1)}), capture_status="surplus"),
+        ]
+        kept = drop_surplus(rows)
+        self.assertEqual([r["capture_status"] for r in kept], ["unpriced"])
 
 
 class JointFitTests(unittest.TestCase):
@@ -57,11 +73,21 @@ class JointFitTests(unittest.TestCase):
     def test_an_exact_opus_only_design_recovers_the_known_rate(self):
         fit = joint_fit(self.rows, self.credits, resamples=20)
         self.assertEqual(fit["n"], 2)
+        self.assertAlmostEqual(fit["coef"]["opus47"], 0.0, places=8)
         self.assertAlmostEqual(fit["coef"]["opus"], 1e-4, places=8)
         self.assertAlmostEqual(fit["coef"]["sonnet"], 0.0, places=8)
         self.assertAlmostEqual(fit["coef"]["fable"], 0.0, places=8)
         self.assertAlmostEqual(fit["coef_reads"], 0.0, places=8)
         self.assertEqual(fit["fable_opus_ratio"], 0.0)
+
+    def test_claude_opus_4_7_gets_its_own_column_not_the_priced_opus_one(self):
+        rows = [
+            _stretch(POST, 10.0, _tokens(**{"claude-opus-4-7": _opus(100_000)})),
+            _stretch(POST, 20.0, _tokens(**{"claude-opus-4-7": _opus(200_000)})),
+        ]
+        fit = joint_fit(rows, self.credits, resamples=20)
+        self.assertAlmostEqual(fit["coef"]["opus47"], 1e-4, places=8)
+        self.assertAlmostEqual(fit["coef"]["opus"], 0.0, places=8)
 
     def test_b5_from_the_fit_is_the_reciprocal_of_the_opus_coefficient(self):
         fit = joint_fit(self.rows, self.credits, resamples=20)
