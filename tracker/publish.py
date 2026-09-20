@@ -558,25 +558,29 @@ def _figure(window: dict, rate_lo: float | None, rate_hi: float | None,
             "status": None if known else status}
 
 
-def _family_rates(fam: str, credits: dict) -> tuple[tuple[float, float], tuple[float, float], str | None]:
+def _family_rates(fam: str, credits: dict,
+                  fable: dict | None = None) -> tuple[tuple, tuple, str | None]:
     """((input low, input high), (output low, output high), status) for one family.
 
-    A family with a published rate has low == high on both sides. Fable does not:
-    its row carries an `interval` instead, and its status is the words the
-    reconciliation put on it.
+    A family with a published rate has low == high on both sides. Fable does not: its
+    rate is solved from the stretches at publish time (tracker/credits.py
+    fable_interval), never stored, and its status is the words the reconciliation put
+    on it. With no Fable-heavy stretch to solve from, both edges are None and every
+    figure derived from them publishes null with that status.
     """
     pair = credit_model.rates(fam, credits)
     if pair is not None:
         return (pair[0], pair[0]), (pair[1], pair[1]), None
-    interval = credits["per_family"][fam].get("interval") or {}
+    interval = fable or {}
     lo, hi = interval.get("input_low"), interval.get("input_high")
-    ratio_lo, ratio_hi = interval.get("output_ratio", [None, None])
+    ratios = interval.get("output_ratio") or [None, None]
+    ratio_lo, ratio_hi = min(ratios) if ratios[0] else None, max(ratios) if ratios[0] else None
     return ((lo, hi), (lo * ratio_lo if lo and ratio_lo else None,
                        hi * ratio_hi if hi and ratio_hi else None),
-            "rate not yet identified")
+            interval.get("unresolved") or "rate not yet identified")
 
 
-def _credits_per_model(window: dict, credits: dict, prices: dict) -> dict:
+def _credits_per_model(window: dict, credits: dict, prices: dict, fable: dict) -> dict:
     """Tokens per window per model, and the API list value of exactly those tokens.
 
     The measured quantity is the window in credits; a model's token figure is that
@@ -588,7 +592,7 @@ def _credits_per_model(window: dict, credits: dict, prices: dict) -> dict:
     """
     out = {}
     for fam, row in credits["per_family"].items():
-        (in_lo, in_hi), (out_lo, out_hi), status = _family_rates(fam, credits)
+        (in_lo, in_hi), (out_lo, out_hi), status = _family_rates(fam, credits, fable)
         model = (credits.get("list_price_model") or {}).get(fam)
         price = prices.get(model) if model else None
         tokens = {"input": _figure(window, in_lo, in_hi, status=status),
@@ -607,6 +611,7 @@ def _credits_per_model(window: dict, credits: dict, prices: dict) -> dict:
             "credits_per_token_interval": ({"input": [in_lo, in_hi], "output": [out_lo, out_hi]}
                                            if status is not None else None),
             "interval_source": row.get("interval_source"),
+            "interval_rule": row.get("interval_rule"),
             "tokens_per_window": tokens,
             "api_value_per_window_usd": api,
             "status": status,
@@ -628,7 +633,7 @@ def _split_credits_per_token(split: dict, rate_in: float | None, rate_out: float
     return at_input * rate_in + split.get("output", 0) * rate_out
 
 
-def _credits_sessions(window: dict, credits: dict, split: dict, split_source: str,
+def _credits_sessions(window: dict, credits: dict, fable: dict, split: dict, split_source: str,
                       session_tokens: dict, windows_per_week: float | None) -> dict:
     """Sessions a window and a week hold, per model, at a stated cache mix.
 
@@ -656,7 +661,7 @@ def _credits_sessions(window: dict, credits: dict, split: dict, split_source: st
                                        "status": "no credit rate for this model"},
                           "cache_normalised": True, "split": dict(split), "derivation": "credits"}
             continue
-        (in_lo, in_hi), (out_lo, out_hi), status = _family_rates(fam, credits)
+        (in_lo, in_hi), (out_lo, out_hi), status = _family_rates(fam, credits, fable)
         lo = _split_credits_per_token(split, in_lo, out_lo, weight)
         hi = _split_credits_per_token(split, in_hi, out_hi, weight)
         tokens = _figure(window, lo, hi, status=status)
@@ -793,30 +798,36 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     labels = dict(ACCOUNT_LABELS)
     runs = credit_model.harness_runs(probe_rows, effort_meta)
     by_account = credit_model.stretches_by_account(gs_passive, masterrig_passive)
-    # Two selections, for two different questions. The window's level must be a
-    # reading of this host's own work, so it takes only capture-accepted stretches --
-    # which is what leaves masterrig's phantom-inflated pure-Opus cluster (1,917 to
-    # 24,546 credits per 1% against jwork's 175,934 to 208,197) out of a median that
-    # claims to be a measurement. The before-and-after comparison asks a different
-    # question -- did this account's own window move -- so it takes every priceable
-    # stretch of the account, which is the selection the reconciliation's own
-    # tools/reconcile_window.py section 3 made, and carries n_with_capture so a
-    # reader can see which accounts have a usable capture column.
+    # Two selections, for two different questions. Both gate on capture_status, never
+    # on status: 42 stretches read status "accepted" with capture_status "unaccounted",
+    # and letting those price the window is the error PR #64's gate caught. The
+    # window's level must be a reading of this host's own work, so it exempts nobody --
+    # which is what leaves the phantom-inflated pure-Opus cluster (1,917 to 24,546
+    # credits per 1% against 175,934 to 208,197 on the account with a usable capture
+    # column) out of a median that claims to be a measurement. The before-and-after
+    # comparison and the Fable solve ask about each account's own meter, and the
+    # inflated account's p25 is the usable edge of the Fable interval rather than
+    # something to drop, so they exempt masterrig exactly as
+    # tools/reconcile_window.py does, and carry n_with_capture so a reader can see
+    # which accounts have a usable capture column.
     clean = credit_model.clean_stretches(by_account, runs, require="capture_status")
-    priceable = credit_model.clean_stretches(by_account, runs, require="status",
+    priceable = credit_model.clean_stretches(by_account, runs, require="capture_status",
                                              exempt=("masterrig",))
     window = credit_model.window_credits(clean, credits, labels)
     cut = credit_model.across_cut(priceable, credits, labels)
+    fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels)
     windows_per_week = weekly["max20"]["current"]
     return {
         "window_credits": window,
         "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
-        "per_model": _credits_per_model(window, credits, prices),
-        "sessions": _credits_sessions(window, credits, split, split_source, session_tokens,
+        "per_model": _credits_per_model(window, credits, prices, fable),
+        "sessions": _credits_sessions(window, credits, fable, split, split_source, session_tokens,
                                       windows_per_week),
         "effort_cache_mix": _effort_cache_mix(effort_meta),
         "five_hour_window_across_cut": cut,
-        "rates": {"per_family": credits["per_family"],
+        "fable_interval": fable,
+        "rates": {"per_family": {fam: (dict(row, interval=fable) if fam == "fable" else row)
+                                 for fam, row in credits["per_family"].items()},
                   "cache_write": credits.get("cache_write"),
                   "cache_read_weight": credits.get("cache_read_weight"),
                   "cache_read_weight_range": credits.get("cache_read_weight_range"),
@@ -1227,9 +1238,12 @@ def _event_record(e, scope: str, across_cut: dict | None = None) -> dict:
     established beside it, each labelled as what it is. `announced` is Anthropic's
     own figure for 14 September, quoted -- policy, not a measurement, and not
     derived from anything here. `five_hour_window_credits` is this tracker's own
-    reading of the five-hour window in credits either side of that date, which did
-    not move; with the window flat, a fall in the ratio is a fall in the weekly cap.
-    Neither is folded into `percent`, which stays the measured quantity alone.
+    reading of the five-hour window in credits either side of that date, per account,
+    and it does NOT resolve the attribution: the accounts differ from each other after
+    the change by more than any of them moved across it, so the record carries
+    `resolved: false` and the sentence saying why. `meter_attribution` stays
+    "unresolved" for the same reason. Neither fact is folded into `percent`, which
+    stays the measured quantity alone.
     """
     provisional = scope == "window"
     # A pooled weekly event re-dated from the accounts' own onsets (_account_dated)

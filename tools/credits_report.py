@@ -6,8 +6,8 @@ no search here: every rate is either given on the command line or taken from the
 below, and every number printed is a count or an order statistic of
 `credits / delta_pct`.
 
-Where the rates come from. docs/reference-2026-09-20-shellac-credits-model.md (branch
-`step-vs-trend-finding`) records them from
+Where the rates come from. docs/reference-2026-09-20-shellac-credits-model.md records
+them from
 https://she-llac.com/claude-limits: the meter does not work in dollars but in an internal
 unit, `ceil(input_tokens x input_rate + output_tokens x output_rate)`, with small integer
 rates per model -- Haiku 2/15 and 10/15, Sonnet 6/15 and 30/15, Opus 10/15 and 50/15,
@@ -413,7 +413,7 @@ def _excluded_table(excluded: list[dict]) -> list[str]:
 def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse.Namespace) -> str:
     out: list[str] = []
     out.append("Credits per 1% of the five-hour meter, from history/*-passive.json.")
-    out.append("Rates: docs/reference-2026-09-20-shellac-credits-model.md (branch step-vs-trend-finding),")
+    out.append("Rates: docs/reference-2026-09-20-shellac-credits-model.md,")
     out.append("from https://she-llac.com/claude-limits -- a reference, not a source of truth.")
     out.append("Haiku 2/15 in 10/15 out, Sonnet 6/15 30/15, Opus (any version) 10/15 50/15.")
     out.append(f"Cache writes at the input rate, cache reads at {args.cache_read_weight:g} of it.")
@@ -663,7 +663,7 @@ def main(argv: list[str] | None = None) -> int:
                       "cache_read_weight": a.cache_read_weight,
                       "provisional": ["fable_input", "fable_output_ratio", "cache_read_weight"],
                       "source": "docs/reference-2026-09-20-shellac-credits-model.md "
-                                "(branch step-vs-trend-finding); a reference, not a source of truth"},
+                                "-- a reference, not a source of truth"},
             "eras": {"5x": f"end < {ERA_20X_AT.isoformat()}",
                      "20x": f"{ERA_20X_AT.isoformat()} <= end < {ERA_CUT_AT.isoformat()}",
                      "20x-cut": f"end >= {ERA_CUT_AT.isoformat()}"},

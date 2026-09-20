@@ -10,9 +10,9 @@ data/effort_matrix.json _meta) are excluded; gs stretches must also be capture-a
 
 The rates, the exclusion rule and the stretch selection live in tracker/credits.py, which
 the publisher imports too: the figures this prints and the figures the public JSON carries
-come from one implementation, not from two that agree today. This file keeps the `status`
-acceptance column and masterrig's exemption from it, which is the selection its published
-findings were computed under; the publisher asks for `capture_status`, which is tighter.
+come from one implementation, not from two that agree today. This file keeps masterrig's
+exemption from the capture gate, which is the selection its published findings were
+computed under; the publisher applies the gate to every account, which is tighter.
 
     python3 tools/reconcile_window.py history/masterrig-passive.json
 """
@@ -47,7 +47,8 @@ def main() -> int:
     runs = C.harness_runs(
         [json.loads(line) for line in Path("history/probes.jsonl").read_text().splitlines() if line.strip()],
         json.loads(Path("data/effort_matrix.json").read_text())["_meta"])
-    Cl = C.clean_stretches(load(Path(sys.argv[1])), runs, require="status", exempt=("masterrig",))
+    Cl = C.clean_stretches(load(Path(sys.argv[1])), runs, require="capture_status",
+                           exempt=("masterrig",))
     print("1. Pure-Opus stretches (no Fable, no fitted rate), credits per 1%, cache reads 0")
     W = None
     pure = C.pure_family_rows(Cl, credits, "opus", weight)

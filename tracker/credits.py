@@ -25,16 +25,18 @@ The selection rule, once, here. A stretch is evidence about ordinary use when:
   probe, and a date rule would have taken the rest of that day with it.
 - and it passes whichever acceptance column the caller asks for (`require`).
 
-`require` is the one place the callers differ, deliberately.
-`tools/reconcile_window.py` asks for `status` and exempts masterrig, which is the
-rule its published findings were computed under. The publisher asks for
-`capture_status`, which is strictly tighter: masterrig's meter counts web, phone and
-every other machine while only that host's transcripts are read, so its stretches
-divide real meter movement by part of what moved it, and its capture column is not
-yet usable (docs/findings-2026-09-20-masterrig-stretches.md). Its pure-Opus set reads
-1,917 to 24,546 credits per 1% against jwork's 175,934 to 208,197; the reconciliation
-says in as many words that a median of that is not a measurement. Requiring
-`capture_status == "accepted"` drops exactly those and nothing else.
+Both callers gate on `capture_status`, not on `status`: 42 jwork stretches read
+`status` "accepted" with `capture_status` "unaccounted", and letting those price the
+window is the error the gate on PR #64 caught. `exempt` is the one place the callers
+differ, deliberately. `tools/reconcile_window.py` exempts masterrig, which is the rule
+its published findings were computed under. The publisher exempts nobody, which is
+strictly tighter: masterrig's meter counts web, phone and every other machine while
+only that host's transcripts are read, so its stretches divide real meter movement by
+part of what moved it, and its capture column is not yet usable
+(docs/findings-2026-09-20-masterrig-stretches.md). Its pure-Opus set reads 1,917 to
+24,546 credits per 1% against jwork's 175,934 to 208,197; the reconciliation says in as
+many words that a median of that is not a measurement. Gating masterrig too drops
+exactly those and nothing else.
 """
 from __future__ import annotations
 
@@ -118,9 +120,9 @@ def family(model: str, credits: dict) -> str | None:
 def rates(fam: str, credits: dict) -> tuple[float, float] | None:
     """(input, output) credits per token for a family, or None when it has no single rate.
 
-    Fable has none: its rate is published as an interval (`interval` on its row),
-    because the data separate its input rate only to within 2.0 to 2.9 credits per
-    token and do not separate its output ratio at all.
+    Fable has none. Its rate is solved from the stretches at publish time
+    (`fable_interval`) and published as an interval, because the data bound its input
+    rate only loosely and do not separate its output ratio at all.
     """
     row = credits["per_family"][fam]
     rate_in, rate_out = _rate(row.get("input")), _rate(row.get("output"))
@@ -173,6 +175,15 @@ class Priced:
 
 
 def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Priced:
+    """One stretch's tokens priced in credits.
+
+    Cache writes are priced at the input rate and cache reads at zero on purpose. These
+    are the meter's credit rates (docs/reference-2026-09-20-shellac-credits-model.md: a
+    subscription charges a cache write as ordinary input and a cache read as nothing),
+    not the API list prices in data/prices.json, where a cache write carries the 1.25x
+    premium. Pricing writes at 1.25x here would understate nothing in the meter; it is
+    what loaded the retracted 0.155 cache-read weight onto reads in the dollar model.
+    """
     weight = cache_read_weight(credits) if weight is None else weight
     known = fable_in = fable_out = charged = 0.0
     raw = 0
@@ -365,6 +376,110 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
     }
 
 
+#: A stretch is Fable-heavy, and so worth solving a Fable rate from, when Fable holds
+#: more than this share of the tokens the meter charges for. Below it the divisor is
+#: small and the residual of everything else lands on the solved rate.
+FABLE_HEAVY = 0.5
+#: The two candidate output ratios. Every model in the reference table uses 5; the
+#: credits-model note fits 3 for Fable, with a bootstrap interval of [3, 3]. The data
+#: here do not separate them, so both are carried and neither is chosen.
+OUTPUT_RATIO_CANDIDATES = (3, 5)
+
+
+def solved_fable_input(clean: dict[str, list[dict]], credits: dict, window_per_pct: float,
+                       ratio: float, weight: float | None = None) -> dict[str, list[float]]:
+    """Per account, the Fable input rate each Fable-heavy stretch implies, sorted.
+
+    The account moved `delta_pct` of its meter, so it spent `delta_pct x W` credits.
+    Subtract the credits of every model a published rate covers and what is left is
+    Fable's, so
+
+        fable_input = (delta_pct x W - known) / (fable_in + ratio x fable_out)
+
+    This is arithmetic on one stretch, not a fit. It inherits W's own accuracy, the
+    published rates, the cache-read weight, and -- on an account whose meter counts
+    machines the transcripts never see -- phantom movement, which inflates `delta_pct`
+    and so inflates the rate solved from it.
+    """
+    weight = cache_read_weight(credits) if weight is None else weight
+    out: dict[str, list[float]] = {}
+    for account, stretches in clean.items():
+        values = []
+        for st in stretches:
+            priced = price_tokens(st["tokens"], credits, weight)
+            if not priced.priced or not priced.charged:
+                continue
+            if (priced.fable_input + priced.fable_output) / priced.charged < FABLE_HEAVY:
+                continue
+            divisor = priced.fable_input + ratio * priced.fable_output
+            if divisor <= 0:
+                continue
+            values.append((st["delta_pct"] * window_per_pct - priced.known) / divisor)
+        out[account] = sorted(values)
+    return out
+
+
+def _p25(values: list[float]) -> float | None:
+    """The tool's own p25: the value at index n // 4 of the sorted sample.
+
+    With three values that is the lowest one, which is what the reconciliation means
+    when it says the tool's p25 and p75 are its lowest and highest values there.
+    """
+    return values[len(values) // 4] if values else None
+
+
+def fable_interval(clean: dict[str, list[dict]], credits: dict, window_per_pct: float | None,
+                   labels: dict[str, str], weight: float | None = None) -> dict:
+    """Fable's input rate as an interval, solved from the stretches, never typed in.
+
+    Both edges are a p25 rather than a median, because the solve is inflated on any
+    account carrying phantom meter movement and its p25 is the usable edge; on an
+    account with three surviving stretches the p25 is simply its lowest value. The
+    interval runs from the lowest p25 any account gives at the cheaper output ratio to
+    the highest p25 any account gives at the dearer one, so it spans both the
+    account-to-account spread and the unseparated output ratio at once.
+
+    The rule names no account. The reconciliation's own edges happen to come from the
+    account with the usable capture column at 5x and from the phantom-carrying one at
+    3x, but nothing here depends on which account lands where.
+    """
+    low_ratio, high_ratio = max(OUTPUT_RATIO_CANDIDATES), min(OUTPUT_RATIO_CANDIDATES)
+    per_account: dict[str, dict] = {label: {} for label in labels.values()}
+    edges: dict[int, list[float]] = {}
+    if window_per_pct:
+        for ratio in OUTPUT_RATIO_CANDIDATES:
+            solved = solved_fable_input(clean, credits, window_per_pct, ratio, weight)
+            for account, label in labels.items():
+                values = solved.get(account, [])
+                p25 = _p25(values)
+                per_account[label][f"output_{ratio}x"] = {
+                    "n": len(values), "p25": round(p25, 4) if p25 is not None else None,
+                    "median": round(median(values), 4) if values else None}
+                if p25 is not None:
+                    edges.setdefault(ratio, []).append(p25)
+    low = min(edges[low_ratio]) if edges.get(low_ratio) else None
+    high = max(edges[high_ratio]) if edges.get(high_ratio) else None
+    opus = rates("opus", credits)
+    return {
+        "input_low": round(low, 4) if low is not None else None,
+        "input_high": round(high, 4) if high is not None else None,
+        "output_ratio": list(OUTPUT_RATIO_CANDIDATES),
+        "status": "interval, not yet separable",
+        "times_opus": ([round(low / opus[0], 2), round(high / opus[0], 2)]
+                       if low is not None and high is not None and opus else None),
+        "per_account": per_account,
+        "window_credits_per_pct": window_per_pct,
+        "fable_heavy_share": FABLE_HEAVY,
+        "method": (f"solved per Fable-heavy stretch (Fable over {FABLE_HEAVY:.0%} of the tokens the "
+                   f"meter charges for) against the measured window; the interval runs from the "
+                   f"lowest per-account p25 at output {low_ratio}x input to the highest per-account "
+                   f"p25 at output {high_ratio}x. Both edges are a p25 because the solve is inflated "
+                   f"wherever the meter counts machines the transcripts never saw."),
+        "unresolved": None if low is not None and high is not None else
+                      "no Fable-heavy stretch to solve a rate from",
+    }
+
+
 def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
                weight: float | None = None) -> dict:
     """Each account's five-hour window in credits before and after the announced change.
@@ -375,6 +490,15 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
     (`across_cut_fable_rate` in data/prices.json): the comparison is of the two sides
     against each other, and a rate that is the same in both medians cannot move their
     ratio much. The level itself is not a claim; `window_credits` is the claim.
+
+    **This does not resolve whether the five-hour window moved, and the block says so.**
+    One account reads about 9% higher after the change, but two accounts on the same
+    plan differ from each other by more than that after it, so the account-to-account
+    spread is larger than the pre/post move and neither direction can be read from it.
+    `spread_after_pct` publishes that comparison beside the per-account rows, and
+    `resolved` is false. An earlier draft of the reconciliation called the window flat
+    within 4%; that came from gating on `status` instead of `capture_status`, which let
+    42 unaccounted stretches into the comparison, and the gate on PR #64 caught it.
     """
     weight = cache_read_weight(credits) if weight is None else weight
     held = credits.get("across_cut_fable_rate") or {}
@@ -405,8 +529,23 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
             # other machine included -- by only what this host's transcripts saw.
             "n_with_capture": sum(1 for st in clean.get(name, []) if st.get("capture") is not None),
         }
+    afters = [row["after"] for row in out.values() if row["after"]]
+    moves = [abs(row["change_pct"]) for row in out.values() if row["change_pct"] is not None]
+    spread = round((max(afters) - min(afters)) / min(afters) * 100, 1) if len(afters) > 1 else None
+    if spread is None or not moves:
+        unresolved = "not enough accounts with readings on both sides to compare"
+    elif spread >= max(moves):
+        unresolved = (f"the accounts differ from each other by {spread:g}% after the change, more "
+                      f"than the largest per-account move across it ({max(moves):g}%), so the "
+                      f"five-hour and weekly meters cannot be separated from these stretches")
+    else:
+        unresolved = None
     return {
         "per_account": out,
+        "resolved": unresolved is None,
+        "unresolved": unresolved,
+        "spread_after_pct": spread,
+        "largest_move_pct": max(moves) if moves else None,
         "unit": "credits per 1% of the five-hour meter",
         "cut_at": CUT_AT.isoformat(),
         "fable_rate_held": {"input": fable_in, "output": fable_out,

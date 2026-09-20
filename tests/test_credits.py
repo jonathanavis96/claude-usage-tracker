@@ -73,12 +73,21 @@ class RateTableTests(unittest.TestCase):
         self.assertEqual(C.rates("sonnet", CREDITS), (6 / 15, 30 / 15))
         self.assertEqual(C.rates("opus", CREDITS), (10 / 15, 50 / 15))
 
-    def test_fable_has_no_single_rate_only_an_interval(self):
+    def test_fable_has_no_stored_rate_and_no_stored_interval(self):
+        """The endpoints are solved from the stretches at publish time, never typed here."""
         self.assertIsNone(C.rates("fable", CREDITS))
-        interval = CREDITS["per_family"]["fable"]["interval"]
-        self.assertEqual((interval["input_low"], interval["input_high"]), (2.0, 2.9))
-        self.assertEqual(interval["output_ratio"], [3, 5])
-        self.assertEqual(interval["status"], "interval, not yet separable")
+        row = CREDITS["per_family"]["fable"]
+        self.assertIsNone(row["input"])
+        self.assertIsNone(row["output"])
+        self.assertNotIn("interval", row)
+        self.assertEqual(row["output_ratio_candidates"], [3, 5])
+        self.assertIn("computed at publish time", row["interval_rule"])
+
+    def test_no_credit_figure_in_the_price_table_is_a_measurement(self):
+        """Only reference rates and citations live in the file; measurements are computed."""
+        text = json.dumps(CREDITS)
+        for typed in ("2.0", "2.9", "1.2", "2.7", "19543887", "196989"):
+            self.assertNotIn(f": {typed}", text)
 
     def test_cache_reads_are_free_with_the_fitted_range_kept_beside_the_zero(self):
         self.assertEqual(C.cache_read_weight(CREDITS), 0)
@@ -144,6 +153,28 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(len(self.clean([unpriced], account="masterrig", require="status",
                                         exempt=("masterrig",))), 1)
 
+    def test_an_accepted_status_with_an_unaccounted_capture_does_not_price_the_window(self):
+        """The defect PR #64's gate caught: 42 stretches read exactly this way.
+
+        Gating on `status` let them into the comparison and made the five-hour window
+        look flat across 14 September. Gating on `capture_status` is what this module
+        does everywhere, and `status` is never the default.
+        """
+        rows = [opus_stretch("2026-09-01T00:00:00+00:00", 200_000),
+                opus_stretch("2026-09-02T00:00:00+00:00", 9_000, capture_status="unaccounted"),
+                opus_stretch("2026-09-03T00:00:00+00:00", 9_000, status="unpriced",
+                             capture_status="unpriced")]
+        kept = self.clean(rows)
+        self.assertEqual([r["start"] for r in kept], ["2026-09-01T00:00:00+00:00"])
+
+    def test_a_stretch_the_host_saw_nothing_of_is_left_out(self):
+        self.assertEqual(self.clean([stretch("2026-09-01T00:00:00+00:00", {})]), [])
+
+    def test_masterrig_is_exempt_in_the_tools_selection_but_not_in_the_publishers(self):
+        blind = opus_stretch("2026-09-01T00:00:00+00:00", 9_000, capture_status="unaccounted")
+        self.assertEqual(len(self.clean([blind], account="masterrig", exempt=("masterrig",))), 1)
+        self.assertEqual(self.clean([blind], account="masterrig"), [])
+
 
 class WindowTests(unittest.TestCase):
     """The window computation on a fixture whose median and range are known by hand."""
@@ -188,6 +219,102 @@ class WindowTests(unittest.TestCase):
             self.assertNotIn(name, json.dumps(self.cluster()))
 
 
+def fable_stretch(start: str, input_tokens: int, output_tokens: int = 0,
+                  delta_pct: float = 10.0, **extra) -> dict:
+    """A pure-Fable stretch: the solve's divisor is exactly its own tokens."""
+    return stretch(start, {"claude-fable-5-1": tok(input=input_tokens, output=output_tokens)},
+                   delta_pct, **extra)
+
+
+class FableIntervalTests(unittest.TestCase):
+    """The interval is solved from the stretches; nothing about it is stored."""
+
+    #: A window of 200,000 credits per 1%, so a stretch that moved 10% spent 2,000,000.
+    W = 200_000
+
+    def solve(self, **accounts):
+        clean = C.clean_stretches(accounts, [], exempt=("masterrig",))
+        return C.fable_interval(clean, CREDITS, self.W, LABELS)
+
+    def test_a_pure_fable_stretch_solves_to_its_own_arithmetic(self):
+        # 2,000,000 credits spent over 2,000,000 input tokens is 1.0 credits per token,
+        # and with no output tokens the ratio cannot change it.
+        out = self.solve(jwork=[fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)])
+        self.assertEqual(out["per_account"]["a2"]["output_3x"]["p25"], 1.0)
+        self.assertEqual(out["per_account"]["a2"]["output_5x"]["p25"], 1.0)
+
+    def test_the_interval_runs_from_the_lowest_p25_at_5x_to_the_highest_at_3x(self):
+        out = self.solve(jwork=[fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)],
+                         masterrig=[fable_stretch("2026-09-10T00:00:00+00:00", 800_000)])
+        self.assertEqual((out["input_low"], out["input_high"]), (1.0, 2.5))
+        self.assertEqual(out["output_ratio"], [3, 5])
+        self.assertEqual(out["status"], "interval, not yet separable")
+        self.assertIsNone(out["unresolved"])
+
+    def test_the_output_ratio_moves_the_solve_when_there_are_output_tokens(self):
+        # divisor is fable_in + ratio x fable_out: 2,000,000 at 3x, 3,000,000 at 5x.
+        out = self.solve(jwork=[fable_stretch("2026-09-10T00:00:00+00:00", 500_000, 500_000)])
+        self.assertEqual(out["per_account"]["a2"]["output_3x"]["p25"], 1.0)
+        self.assertEqual(out["per_account"]["a2"]["output_5x"]["p25"], 0.6667)
+
+    def test_a_stretch_that_is_not_fable_heavy_is_not_solved_from(self):
+        mostly_opus = stretch("2026-09-10T00:00:00+00:00",
+                              {"claude-opus-5": tok(input=1_000_000),
+                               "claude-fable-5-1": tok(input=10)})
+        out = self.solve(jwork=[mostly_opus])
+        self.assertEqual(out["per_account"]["a2"]["output_3x"]["n"], 0)
+        self.assertEqual(out["unresolved"], "no Fable-heavy stretch to solve a rate from")
+
+    def test_the_rule_names_no_account_and_publishes_none(self):
+        out = self.solve(jwork=[fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)],
+                         masterrig=[fable_stretch("2026-09-10T00:00:00+00:00", 800_000)])
+        self.assertEqual(sorted(out["per_account"]), ["a1", "a2", "a3"])
+        for name in ("jwork", "dave", "masterrig"):
+            self.assertNotIn(name, json.dumps(out))
+
+    def test_with_no_measured_window_there_is_nothing_to_solve_against(self):
+        clean = C.clean_stretches({"jwork": [fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)]}, [])
+        out = C.fable_interval(clean, CREDITS, None, LABELS)
+        self.assertIsNone(out["input_low"])
+        self.assertEqual(out["unresolved"], "no Fable-heavy stretch to solve a rate from")
+
+
+class SolvedFableCarryThroughTests(unittest.TestCase):
+    """A publish whose fixture has both a pure-Opus cluster and Fable-heavy stretches."""
+
+    def setUp(self):
+        gs = report("jwork", [opus_stretch("2026-09-05T00:00:00+00:00", 200_000),
+                              fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)])
+        masterrig = report("masterrig", [fable_stretch("2026-09-10T00:00:00+00:00", 800_000)])
+        self.credits = _published(gs=gs, masterrig=masterrig)["credits"]
+
+    def test_the_window_is_the_pure_opus_cluster_alone(self):
+        self.assertEqual(self.credits["window_credits"]["value"], 20_000_000)
+        self.assertEqual(self.credits["window_credits"]["n"], 1)
+
+    def test_the_solved_interval_reaches_the_published_block(self):
+        fable = self.credits["fable_interval"]
+        self.assertEqual((fable["input_low"], fable["input_high"]), (1.0, 2.5))
+        self.assertEqual(self.credits["rates"]["per_family"]["fable"]["interval"], fable)
+
+    def test_tokens_per_window_carries_the_solved_interval_with_no_value(self):
+        row = self.credits["per_model"]["fable"]
+        self.assertIsNone(row["credits_per_token"]["input"])
+        self.assertEqual(row["credits_per_token_interval"]["input"], [1.0, 2.5])
+        self.assertEqual(row["credits_per_token_interval"]["output"], [3.0, 12.5])
+        figure = row["tokens_per_window"]["input"]
+        self.assertIsNone(figure["value"])
+        self.assertEqual(figure["status"], "rate not yet identified")
+        # Cheapest rate against the top of the window's range, dearest against the bottom.
+        self.assertEqual(figure["interval"], [round(20_000_000 / 2.5), round(20_000_000 / 1.0)])
+
+    def test_the_api_value_and_the_session_count_are_intervals_too(self):
+        self.assertIsNone(self.credits["per_model"]["fable"]["api_value_per_window_usd"]["input"]["value"])
+        sessions = self.credits["sessions"].get("claude-fable-5-1")
+        if sessions is not None:
+            self.assertIsNone(sessions["per_window"]["value"])
+
+
 class AcrossCutTests(unittest.TestCase):
     def block(self):
         before = [stretch("2026-09-10T00:00:00+00:00", {"claude-opus-5": tok(input=3_000_000)})]
@@ -212,6 +339,29 @@ class AcrossCutTests(unittest.TestCase):
         self.assertEqual(held["input"], 1.667)
         self.assertEqual(held["output"], 5.0)
         self.assertIn("not a claim about Fable's rate", held["why"])
+
+    def test_the_attribution_is_unresolved_when_the_accounts_spread_wider_than_they_moved(self):
+        """Two accounts on the same plan 25% apart after a change one moved 10% across."""
+        rows = {
+            "jwork": [stretch("2026-09-10T00:00:00+00:00", {"claude-opus-5": tok(input=3_000_000)}),
+                      stretch("2026-09-16T00:00:00+00:00", {"claude-opus-5": tok(input=3_300_000)})],
+            "dave": [stretch("2026-09-16T00:00:00+00:00", {"claude-opus-5": tok(input=2_640_000)})],
+        }
+        out = C.across_cut(rows, CREDITS, LABELS)
+        self.assertFalse(out["resolved"])
+        self.assertEqual(out["largest_move_pct"], 10.0)
+        self.assertEqual(out["spread_after_pct"], 25.0)
+        self.assertIn("cannot be separated from these stretches", out["unresolved"])
+
+    def test_it_never_says_the_window_did_not_move(self):
+        text = json.dumps(self.block())
+        for claim in ("did not move", "flat", "unchanged"):
+            self.assertNotIn(claim, text)
+
+    def test_one_account_alone_cannot_resolve_it_either(self):
+        out = self.block()
+        self.assertFalse(out["resolved"])
+        self.assertIn("not enough accounts", out["unresolved"])
 
     def test_an_account_with_no_usable_capture_column_says_so_in_its_own_row(self):
         blind = [dict(stretch("2026-09-10T00:00:00+00:00", {"claude-opus-5": tok(input=3_000_000)}),
@@ -263,23 +413,16 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertIsNone(haiku["api_value_per_window_usd"]["input"]["value"])
         self.assertIn("no row in the dollar table", haiku["api_value_per_window_usd"]["input"]["status"])
 
-    def test_the_fable_interval_carries_through_every_derivation_with_no_value(self):
-        fable = self.credits["per_model"]["fable"]
-        self.assertEqual(fable["status"], "rate not yet identified")
-        self.assertIsNone(fable["credits_per_token"]["input"])
-        self.assertEqual(fable["credits_per_token_interval"]["input"], [2.0, 2.9])
-        self.assertEqual(fable["credits_per_token_interval"]["output"], [6.0, 14.5])
-        for figure in (fable["tokens_per_window"]["input"], fable["tokens_per_window"]["output"],
-                       fable["api_value_per_window_usd"]["input"],
-                       fable["api_value_per_window_usd"]["output"]):
-            self.assertIsNone(figure["value"])
-            self.assertEqual(figure["status"], "rate not yet identified")
-            self.assertLess(figure["interval"][0], figure["interval"][1])
-
-    def test_the_fable_interval_widens_at_both_ends_at_once(self):
-        """Cheapest rate against the top of the window, dearest against the bottom."""
-        fable = self.credits["per_model"]["fable"]["tokens_per_window"]["input"]
-        self.assertEqual(fable["interval"], [round(19_000_000 / 2.9), round(21_000_000 / 2.0)])
+    def test_with_no_fable_heavy_stretch_the_interval_is_null_and_says_why(self):
+        """The fixture is pure Opus, so there is nothing to solve a Fable rate from."""
+        fable = self.credits["fable_interval"]
+        self.assertIsNone(fable["input_low"])
+        self.assertIsNone(fable["input_high"])
+        self.assertEqual(fable["unresolved"], "no Fable-heavy stretch to solve a rate from")
+        row = self.credits["per_model"]["fable"]
+        self.assertIsNone(row["tokens_per_window"]["input"]["value"])
+        self.assertIsNone(row["tokens_per_window"]["input"]["interval"])
+        self.assertEqual(row["status"], "no Fable-heavy stretch to solve a rate from")
 
     def test_the_fable_session_count_is_an_interval_too(self):
         sessions = self.credits["sessions"].get("claude-fable-5-1")
@@ -396,6 +539,21 @@ class EventAndReferenceTests(unittest.TestCase):
         announced = C.ANNOUNCEMENT
         self.assertEqual(announced["announced_change_pct"], -17)
         self.assertIn("17% reduction in weekly limits", announced["quote"])
+
+    def test_the_weekly_event_row_states_only_the_measured_quantity(self):
+        """PR #62's wording, computed from the event's own percent and dates."""
+        weekly = [e for e in self.j["events"] if e["scope"] == "weekly"]
+        for event in weekly:
+            self.assertTrue(event["label"].startswith("Observed windows per week"))
+            self.assertNotIn("weekly cap", event["label"])
+            self.assertNotIn("17", event["label"])
+
+    def test_a_weekly_event_carries_the_announcement_beside_it_never_inside_percent(self):
+        for event in (e for e in self.j["events"] if e["scope"] == "weekly"):
+            self.assertEqual(event["announced"]["announced_change_pct"], -17)
+            self.assertNotEqual(event["percent"], 17)
+            self.assertEqual(event["meter_attribution"], "unresolved")
+            self.assertFalse(event["five_hour_window_credits"]["resolved"])
 
 
 def _files(root: Path, gs: dict, masterrig: dict, passive: dict, matrix: dict) -> dict:
