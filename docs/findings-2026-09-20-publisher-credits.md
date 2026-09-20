@@ -103,13 +103,34 @@ either side of that date, per account: 187,168 before and 204,632 after on the a
 with a usable capture column (n=41 and 14), a second account 158,809 after (n=14), the
 third 123,599 and 139,377 (n=166 and 24, phantom usage included).
 
-**It does not resolve the attribution, and the record says so.** The accounts differ from
-each other by 46.8% after the change -- more than the largest move any one of them made
-across it (12.8%) -- so the account-to-account spread is larger than the pre/post move and
-neither direction can be read from it. `resolved` is false, `unresolved` carries that
-sentence, `meter_attribution` stays "unresolved", and nothing published anywhere says the
-five-hour window did not move. A fall in the ratio is consistent with a smaller weekly
-cap, a bigger five-hour window, or both, and these stretches cannot separate them.
+**It does not resolve the attribution, and the record says so -- but not for the reason
+this document first gave.** An earlier version of this paragraph said the accounts differ
+from each other by 46.8% after the change, more than the largest move any one of them made
+across it (12.8%), and called that spread the reason `resolved` is false. The Codex review
+of commit 447b926 (2026-09-20) retracted that argument: a stable account-specific scale
+cancels out of any within-account before/after ratio no matter how far two different
+accounts sit from each other, so the cross-account spread was never evidence either way --
+and the 46.8% figure also mixed in masterrig's capture column, which is not usable at all.
+`resolved` is still false, and `unresolved` (`credit_model.ACROSS_CUT_UNRESOLVED`) now
+states the actual reason: with complete capture these five-hour readings identify
+`rate / budget`, and multiplying every rate and both budgets by the same positive number
+leaves every reading unchanged, so separating a five-hour-window change from a weekly-cap
+change needs an independent debit or allowance observation that no committed stretch
+carries. `five_hour_window_credits.per_account` is kept, as data, with no spread field.
+
+The one fact these stretches do establish is the pooled ratio itself:
+`windows_per_week_ratio` reports it fell 23.72% (before: 144 windows, sum five-hour-percent
+3,365, sum seven-day-percent 519; after: 58 windows, sum five-hour-percent 1,098, sum
+seven-day-percent 222), which is one equation in two unknowns. A window at a regime
+boundary that two different accounts' rows can share is counted once, in the earlier
+regime, by membership on the shared instant itself, not on either regime's whole
+boundary side -- excluding a whole side would also drop the later regime's own first
+window whenever its own timestamp happened to equal its own `start`. It is equally
+consistent with the weekly cap falling 23.72% and the five-hour window unchanged, the
+five-hour window rising about 31% and the weekly cap unchanged, or any split between --
+including the announced 17% weekly cut paired with an implied 8.8% five-hour rise.
+`meter_attribution` stays "unresolved", and nothing published anywhere says the
+five-hour window did not move.
 
 **`reference`** -- Shellac's table with its January 2026 date, and the three announced
 changes since it, each with the sentence it was read from: the 6 May five-hour doubling,

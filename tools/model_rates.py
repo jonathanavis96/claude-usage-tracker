@@ -120,7 +120,13 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
                     # without moving a single figure the zero-weight fit produces.
                     "reads": reads, "total_reads": sum(reads.values()),
                     "share": {f: (raw[f] / total if total else 0.0) for f in FAMILIES},
-                    "dominant": max(FAMILIES, key=lambda f: raw[f]) if total else None})
+                    "dominant": max(FAMILIES, key=lambda f: raw[f]) if total else None,
+                    # No default: a stretch file that omits `windows` (tracker/join.py's
+                    # Stretch field, always written by this repository's own producer) is
+                    # missing data this tool's quantisation floor depends on, and silently
+                    # treating it as one window would understate the floor for any stretch
+                    # actually pooled from more than one. Let it raise.
+                    "windows": s["windows"]})
     return out
 
 
@@ -496,10 +502,12 @@ def section4(data: dict[str, list[dict]], s3: dict, seed: int, resamples: int) -
             if len(sub) < MIN_N:
                 continue
             key = f"{a}/{era}"
-            # A whole-percent meter puts +-0.5 on every delta_pct, so this is the floor on any
+            # A stretch pooled from `windows` separate window pieces carries two whole-percent
+            # endpoints per piece, so the bound is +-windows on delta_pct, not +-0.5
+            # (tracker/join.py:Stretch.bounds does the same division). This is the floor on any
             # per-stretch figure, and roughly that over the root of n on a median of them.
             out["quantisation"][key] = {"n": len(sub),
-                                        "per_stretch": st.median([0.5 / r["delta"] for r in sub]),
+                                        "per_stretch": st.median([r["windows"] / r["delta"] for r in sub]),
                                         "deltas": sorted({r["delta"] for r in sub})}
             groups = {True: [], False: []}
             for r in sub:

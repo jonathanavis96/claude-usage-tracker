@@ -353,8 +353,16 @@ class AcrossCutTests(unittest.TestCase):
         self.assertEqual(held["output"], 5.0)
         self.assertIn("not a claim about Fable's rate", held["why"])
 
-    def test_the_attribution_is_unresolved_when_the_accounts_spread_wider_than_they_moved(self):
-        """Two accounts on the same plan 25% apart after a change one moved 10% across."""
+    def test_the_attribution_is_unresolved_regardless_of_the_cross_account_spread(self):
+        """Two accounts on the same plan 25% apart after a change one moved 10% across.
+
+        An earlier version called this spread itself the reason the attribution was
+        unresolved. The Codex review of commit 447b926 (2026-09-20) retracted that: a
+        stable account-specific scale cancels out of a within-account ratio no matter
+        how far apart two accounts sit, so the spread was never evidence. `resolved`
+        stays false and `unresolved` states the algebraic reason instead, and neither
+        field is published any more (`spread_after_pct`, `largest_move_pct`).
+        """
         rows = {
             "jwork": [stretch("2026-09-10T00:00:00+00:00", {"claude-opus-5": tok(input=3_000_000)}),
                       stretch("2026-09-16T00:00:00+00:00", {"claude-opus-5": tok(input=3_300_000)})],
@@ -362,19 +370,20 @@ class AcrossCutTests(unittest.TestCase):
         }
         out = C.across_cut(rows, CREDITS, LABELS)
         self.assertFalse(out["resolved"])
-        self.assertEqual(out["largest_move_pct"], 10.0)
-        self.assertEqual(out["spread_after_pct"], 25.0)
-        self.assertIn("cannot be separated from these stretches", out["unresolved"])
+        self.assertNotIn("spread_after_pct", out)
+        self.assertNotIn("largest_move_pct", out)
+        self.assertEqual(out["unresolved"], C.ACROSS_CUT_UNRESOLVED)
+        self.assertNotIn("differ from each other", out["unresolved"])
 
     def test_it_never_says_the_window_did_not_move(self):
         text = json.dumps(self.block())
         for claim in ("did not move", "flat", "unchanged"):
             self.assertNotIn(claim, text)
 
-    def test_one_account_alone_cannot_resolve_it_either(self):
+    def test_one_account_alone_is_unresolved_for_the_same_algebraic_reason(self):
         out = self.block()
         self.assertFalse(out["resolved"])
-        self.assertIn("not enough accounts", out["unresolved"])
+        self.assertEqual(out["unresolved"], C.ACROSS_CUT_UNRESOLVED)
 
     def test_an_account_with_no_usable_capture_column_says_so_in_its_own_row(self):
         blind = [dict(stretch("2026-09-10T00:00:00+00:00", {"claude-opus-5": tok(input=3_000_000)}),
@@ -1407,6 +1416,162 @@ class WindowTokensPublishedTests(unittest.TestCase):
         self.assertIn("tokens_per_window", rates)
         self.assertEqual(rates["deprecated"],
                          "read credits.window_tokens; removed after the page moves")
+
+
+class WindowsPerWeekRatioNoteTests(unittest.TestCase):
+    """C.windows_per_week_ratio_note: the retracted 47%-spread argument's replacement.
+
+    The measured fact is the pooled ratio of five-hour to seven-day meter movement over
+    the rows behind the last two certified regimes; everything else here is a worked
+    example of the one-equation-two-unknowns algebra, not a claim about which meter moved.
+    """
+
+    def _row(self, ending: str, d5: float, d7: float, account: str = "a1") -> dict:
+        return {"window_ending": ending, "five_hour_pct": d5, "seven_day_pct": d7, "account": account}
+
+    def _weekly(self, regimes: list[dict], by_window: list[dict]) -> dict:
+        return {"max20": {"regimes": regimes, "by_window": by_window}}
+
+    def _regime(self, start: str, end: str) -> dict:
+        return {"start": start, "end": end}
+
+    def test_fewer_than_two_regimes_is_not_measurable(self):
+        self.assertIsNone(C.windows_per_week_ratio_note(
+            self._weekly([self._regime("2026-09-01T00:00:00+00:00", "2026-09-01T00:00:00+00:00")], [])))
+        self.assertIsNone(C.windows_per_week_ratio_note(self._weekly([], [])))
+
+    def test_a_regime_whose_rows_sum_to_zero_seven_day_movement_is_not_measurable(self):
+        regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
+                  self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
+        by_window = [self._row("2026-09-03T00:00:00+00:00", 5.0, 0.0),
+                    self._row("2026-09-08T00:00:00+00:00", 3.0, 10.0)]
+        self.assertIsNone(C.windows_per_week_ratio_note(self._weekly(regimes, by_window)))
+
+    def test_the_rows_pooled_are_exactly_those_inside_each_regimes_own_span(self):
+        regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
+                  self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
+        by_window = [
+            self._row("2026-08-31T00:00:00+00:00", 99.0, 99.0),  # before the first regime: excluded
+            self._row("2026-09-02T00:00:00+00:00", 10.0, 20.0),
+            self._row("2026-09-04T00:00:00+00:00", 5.0, 10.0),
+            self._row("2026-09-07T00:00:00+00:00", 4.0, 10.0),
+            self._row("2026-09-09T00:00:00+00:00", 6.0, 10.0),
+            self._row("2026-09-11T00:00:00+00:00", 1.0, 1.0),  # after the last regime: excluded
+        ]
+        out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
+        self.assertEqual(out["before"]["n_windows"], 2)
+        self.assertEqual(out["before"]["sum_five_hour_pct"], 15.0)
+        self.assertEqual(out["before"]["sum_seven_day_pct"], 30.0)
+        self.assertEqual(out["after"]["n_windows"], 2)
+        self.assertEqual(out["after"]["sum_five_hour_pct"], 10.0)
+        self.assertEqual(out["after"]["sum_seven_day_pct"], 20.0)
+
+    def test_a_window_at_a_shared_boundary_instant_lands_in_the_earlier_regime_only(self):
+        # Two accounts' windows can share a window_ending instant that sits exactly on a
+        # regime boundary. The earlier regime's own `end` and the later regime's own
+        # `start` are both that instant here; the boundary row must be counted once.
+        boundary = "2026-09-05T12:00:00+00:00"
+        regimes = [self._regime("2026-09-01T00:00:00+00:00", boundary),
+                  self._regime(boundary, "2026-09-10T00:00:00+00:00")]
+        by_window = [
+            self._row("2026-09-02T00:00:00+00:00", 10.0, 20.0, account="a1"),
+            self._row(boundary, 5.0, 10.0, account="a1"),
+            self._row("2026-09-08T00:00:00+00:00", 4.0, 10.0, account="a2"),
+        ]
+        out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
+        self.assertEqual(out["before"]["n_windows"], 2)
+        self.assertEqual(out["before"]["sum_seven_day_pct"], 30.0)
+        self.assertEqual(out["after"]["n_windows"], 1)
+        self.assertEqual(out["after"]["sum_seven_day_pct"], 10.0)
+        # Total seven-day movement pooled is unchanged; the boundary row was not dropped
+        # or duplicated, only assigned once.
+        self.assertEqual(out["before"]["sum_seven_day_pct"] + out["after"]["sum_seven_day_pct"], 40.0)
+
+    def test_a_row_at_the_after_regimes_own_start_is_not_the_boundary_tie_and_is_kept(self):
+        # The after regime's own first window sits at its own `start`, which is not the
+        # shared instant unless it also equals the before regime's `end`. Excluding every
+        # row at the after regime's `start` -- rather than only the one shared instant --
+        # would drop this window from both sums, counting it nowhere.
+        regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-04T00:00:00+00:00"),
+                  self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
+        by_window = [
+            self._row("2026-09-02T00:00:00+00:00", 10.0, 20.0, account="a1"),
+            self._row("2026-09-06T00:00:00+00:00", 4.0, 10.0, account="a2"),  # after's own start
+            self._row("2026-09-08T00:00:00+00:00", 6.0, 10.0, account="a2"),
+        ]
+        out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
+        self.assertEqual(out["before"]["n_windows"], 1)
+        self.assertEqual(out["before"]["sum_seven_day_pct"], 20.0)
+        self.assertEqual(out["after"]["n_windows"], 2)
+        self.assertEqual(out["after"]["sum_seven_day_pct"], 20.0)
+        self.assertEqual(out["after"]["sum_five_hour_pct"], 10.0)
+        # Every row is accounted for exactly once.
+        self.assertEqual(out["before"]["sum_seven_day_pct"] + out["after"]["sum_seven_day_pct"], 40.0)
+
+    def test_rho_fall_pct_and_five_hour_only_pct(self):
+        regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
+                  self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
+        # before: ratio d5/d7 = 20/10 = 2.0; after: ratio = 10/10 = 1.0; rho = 1.0/2.0 = 0.5
+        by_window = [self._row("2026-09-02T00:00:00+00:00", 20.0, 10.0),
+                    self._row("2026-09-07T00:00:00+00:00", 10.0, 10.0)]
+        out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
+        self.assertAlmostEqual(out["before"]["ratio"], 2.0)
+        self.assertAlmostEqual(out["after"]["ratio"], 1.0)
+        self.assertAlmostEqual(out["ratio_fell_pct"], 50.0)
+        # five_hour_only_pct = (1/rho - 1) * 100 = (2.0 - 1) * 100 = 100.0
+        five_hour_only = next(s for s in out["consistent_with"]
+                              if s["weekly_cap_change_pct"] == 0.0)
+        self.assertAlmostEqual(five_hour_only["five_hour_window_change_pct"], 100.0)
+        weekly_only = next(s for s in out["consistent_with"]
+                           if s["five_hour_window_change_pct"] == 0.0)
+        self.assertAlmostEqual(weekly_only["weekly_cap_change_pct"], -50.0)
+
+    def test_the_announced_17_percent_split_is_the_third_worked_example(self):
+        regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
+                  self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
+        by_window = [self._row("2026-09-02T00:00:00+00:00", 20.0, 10.0),
+                    self._row("2026-09-07T00:00:00+00:00", 10.0, 10.0)]
+        out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
+        announced = next(s for s in out["consistent_with"]
+                         if s["weekly_cap_change_pct"] == -17.0)
+        rho = 0.5
+        expected_five_hour = round(((1 - 0.17) / rho - 1) * 100, 2)
+        self.assertAlmostEqual(announced["five_hour_window_change_pct"], expected_five_hour)
+
+
+class EventRecordWeeklyRatioWiringTests(unittest.TestCase):
+    """_event_record passes weekly_windows through to windows_per_week_ratio_note, or None."""
+
+    def _event(self):
+        from datetime import date
+        from tracker.detect import ChangeEvent
+        return ChangeEvent(date=date(2026, 9, 15), direction="down", percent=10, model="all",
+                          confirmed_at=date(2026, 9, 16), evidence_points=5, denominator_pct=50.0,
+                          before_interval=(1.0, 2.0), after_interval=(3.0, 4.0))
+
+    def test_a_falsy_weekly_windows_argument_publishes_none_without_calling_the_note(self):
+        from tracker.publish import _event_record
+        for empty in (None, {}):
+            out = _event_record(self._event(), "weekly", across_cut=None, weekly_windows=empty)
+            self.assertIsNone(out["windows_per_week_ratio"])
+
+    def test_a_populated_weekly_windows_argument_publishes_the_note(self):
+        from tracker.publish import _event_record
+        regimes = [{"start": "2026-09-01T00:00:00+00:00", "end": "2026-09-05T00:00:00+00:00"},
+                  {"start": "2026-09-06T00:00:00+00:00", "end": "2026-09-10T00:00:00+00:00"}]
+        by_window = [{"window_ending": "2026-09-02T00:00:00+00:00", "five_hour_pct": 20.0,
+                     "seven_day_pct": 10.0},
+                    {"window_ending": "2026-09-07T00:00:00+00:00", "five_hour_pct": 10.0,
+                     "seven_day_pct": 10.0}]
+        weekly_windows = {"max20": {"regimes": regimes, "by_window": by_window}}
+        out = _event_record(self._event(), "weekly", across_cut=None, weekly_windows=weekly_windows)
+        self.assertIsNotNone(out["windows_per_week_ratio"])
+        self.assertAlmostEqual(out["windows_per_week_ratio"]["ratio_fell_pct"], 50.0)
+
+    def test_window_scope_events_carry_no_weekly_ratio_key_at_all(self):
+        from tracker.publish import _event_record
+        out = _event_record(self._event(), "window", across_cut=None, weekly_windows=None)
+        self.assertNotIn("windows_per_week_ratio", out)
 
 
 if __name__ == "__main__":

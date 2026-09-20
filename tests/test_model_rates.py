@@ -3,7 +3,7 @@ import unittest
 
 from tools.model_rates import (DOMINANCE, MIN_N, SHELLAC, adopt, agree, fit, fit_bootstrap,
                                measured_rates, prepare, ratio_bootstrap, section1, section2,
-                               section3, single_model)
+                               section3, section4, single_model)
 
 PRE, POST = "2026-09-10T00:00:00+00:00", "2026-09-16T00:00:00+00:00"
 
@@ -19,7 +19,7 @@ def _tokens(reads: int = 10_000, **families) -> dict:
 def _kept(day: str, delta: float, tokens: dict, **fields) -> dict:
     """One stretch in the shape tracker.credits.clean_stretches hands back."""
     s = {"start": day, "end": day, "delta_pct": delta, "tokens": tokens, "reset_verified": True,
-         "capture_status": "accepted"}
+         "capture_status": "accepted", "windows": 1}
     s.update(fields)
     return s
 
@@ -132,6 +132,25 @@ class MixedFitTests(unittest.TestCase):
 
     def test_too_few_stretches_refuse_the_fit(self):
         self.assertIsNone(fit(self._rows()[:4], 5))
+
+
+class QuantisationFloorTests(unittest.TestCase):
+    """section4's whole-percent floor: `windows` pieces per stretch, not a flat 0.5."""
+
+    def test_a_stretch_of_five_windows_and_delta_20_gives_a_quarter_point_floor(self):
+        rows = [_kept(POST, 20.0, _tokens(opus=(1_000_000, 0)), windows=5) for _ in range(MIN_N)]
+        dave_rows = [_kept(POST, 10.0, _tokens(opus=(1_000_000, 0)), windows=1)]
+        s4 = section4({"jwork": _recs(rows), "dave": _recs(dave_rows, account="dave")}, {}, 1, 10)
+        self.assertAlmostEqual(s4["quantisation"]["jwork/post"]["per_stretch"], 0.25, places=9)
+
+    def test_a_stretch_missing_the_windows_field_is_not_silently_treated_as_one(self):
+        # prepare() requires the field rather than defaulting it: a stretch file that omits
+        # `windows` is missing data the floor depends on, and defaulting to 1 would understate
+        # the floor for any stretch actually pooled from more than one window.
+        s = _kept(PRE, 20.0, _tokens(opus=(1_000_000, 0)))
+        del s["windows"]
+        with self.assertRaises(KeyError):
+            prepare("jwork", [s])
 
 
 class JointCacheReadFitTests(unittest.TestCase):
