@@ -11,17 +11,28 @@ same shape, history/harness-runs.jsonl, history/probes.jsonl and data/effort_mat
     python3 -m tools.model_rates history/masterrig-passive.json --json out.json
 
 Sections: (1) tokens per 1% per model from stretches one model dominates, (2) the meter's
-model ratios from those, (3) the same rates fitted across every clean stretch, (4) whether
-model mix, reset_verified or stretch length explains the jwork/Dave gap, (5) the window in
-tokens per model. Ratios from fewer than three stretches on a side are reported as not
-measurable rather than as a number.
+model ratios from those, (3) the same rates fitted across every clean stretch, twice -- once
+with cache reads held at zero and once with the cache-read weight fitted jointly with the
+rates -- (4) whether model mix, reset_verified or stretch length explains the jwork/Dave gap,
+(5) the window in tokens per model, and (6) the rates the publisher adopts, pooled across the
+fits that agree within their intervals. Ratios from fewer than three stretches on a side are
+reported as not measurable rather than as a number.
 
 Token counts are grouped into model families (every claude-opus-* into Opus, and so on),
 because Shellac's rows are unversioned; a stretch carrying tokens from a family this tool does
 not know is dropped from that account's fits. Input-equivalent tokens are
 input + cache_write + OUT x output, with OUT = 5 (Shellac's output ratio for every model in
 its table) and OUT = 3 (the ratio fitted for Fable in the credits-model note) reported beside
-it. Cache reads count nothing, as in tools.reconcile_window.split.
+it.
+
+Cache reads are carried two ways. Held at zero, as in tools.reconcile_window.split and as the
+reference table reads literally; and as a column of their own in the same fit, so the weight
+the meter puts on a cache-read token is estimated jointly with the per-model rates rather than
+assumed. The second exists because a Sonnet-heavy stretch on these accounts is also a
+cache-read-heavy one -- sub-agent traffic -- so a Sonnet rate fitted with cache reads held at
+zero can absorb the cache-read charge, and the hostile review of 2026-09-20 put that weight at
+0.005 to 0.015 rather than at nothing. Section 6 and the --json `measured_rates` block report
+the joint fit, which is what the publisher adopts.
 """
 from __future__ import annotations
 
@@ -88,12 +99,14 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
         d, t = s["delta_pct"], s["tokens"]
         ie = {m: {f: 0.0 for f in FAMILIES + ("other",)} for m in OUT_MULTS}
         raw = {f: 0.0 for f in FAMILIES + ("other",)}
+        reads = {f: 0.0 for f in FAMILIES + ("other",)}
         for model, tok in t.items():
             if not isinstance(tok, dict):
                 continue
             f = family(model)
             i, o = C.input_side(tok, CACHE_READ_WEIGHT), tok.get("output", 0)
             raw[f] += i + o
+            reads[f] += tok.get("cache_read", 0)
             for m in OUT_MULTS:
                 ie[m][f] += i + m * o
         total = sum(raw.values())
@@ -101,6 +114,11 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
                     "era": "pre" if P(s["start"]) < CUT else "post",
                     "reset_verified": bool(s.get("reset_verified")),
                     "ie": ie, "raw": raw, "total_raw": total, "ok": raw["other"] == 0,
+                    # Cache reads are kept out of `ie` and out of `raw` (both read the
+                    # reference literally, at a weight of zero) and carried here on their
+                    # own, so the joint fit can put a column of them in the design matrix
+                    # without moving a single figure the zero-weight fit produces.
+                    "reads": reads, "total_reads": sum(reads.values()),
                     "share": {f: (raw[f] / total if total else 0.0) for f in FAMILIES},
                     "dominant": max(FAMILIES, key=lambda f: raw[f]) if total else None})
     return out
@@ -133,7 +151,19 @@ def single_model(recs: list[dict], out_mult: int) -> dict[str, list[float]]:
 
 
 def nnls(X: np.ndarray, y: np.ndarray, iters: int = 400) -> np.ndarray:
-    """Non-negative least squares by coordinate descent. Deterministic, no scipy."""
+    """Non-negative least squares. Deterministic, no scipy.
+
+    The plain least-squares solution first: where every coefficient of it is already
+    non-negative it *is* the constrained solution, exactly, and no descent can improve on it.
+    That is the ordinary case here, and it matters because coordinate descent converges on the
+    iterations it is given rather than on a tolerance it is promised to reach -- on the joint
+    fit, whose cache-read column is correlated with the Sonnet one by construction, 400
+    iterations land 40% away from the optimum where this returns it. Where a coefficient comes
+    out negative the constraint binds and the descent below does the work, clipping at zero.
+    """
+    plain = np.linalg.lstsq(X, y, rcond=None)[0]
+    if np.all(plain >= 0):
+        return plain
     G, c = X.T @ X, X.T @ y
     b = np.zeros(X.shape[1])
     for _ in range(iters):
@@ -147,17 +177,58 @@ def nnls(X: np.ndarray, y: np.ndarray, iters: int = 400) -> np.ndarray:
     return b
 
 
-def design(recs: list[dict], out_mult: int, families: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
-    X = np.array([[r["ie"][out_mult][f] / 1e6 for f in families] for r in recs if r["ok"]])
-    y = np.array([r["delta"] for r in recs if r["ok"]])
-    return X, y
+#: The design matrix's last column when the cache-read weight is fitted rather than assumed.
+#: One column for every family's cache reads together, so the fit estimates one weight for the
+#: meter rather than one per model: cache reads are 97% of a typical stretch's tokens and the
+#: families' shares of them move together, and a column per family would be four collinear
+#: columns of the same traffic.
+#:
+#: Family columns count millions of tokens and this one counts hundreds of millions, because
+#: cache reads outnumber everything else by about two orders of magnitude and the coordinate
+#: descent below converges on the number of iterations it is given, not on a tolerance it is
+#: guaranteed to reach. On the unscaled column the same fit lands at 0.006 where the exact
+#: least-squares solution is 0.010; scaled, it agrees to seven figures in 400 iterations.
+#: `CACHE_READ_PER_MILLION` converts the fitted coefficient back to a per-token one.
+CACHE_READ_UNIT = 1e8
+CACHE_READ_PER_MILLION = 1e6 / CACHE_READ_UNIT
 
 
-def fit(recs: list[dict], out_mult: int) -> dict | None:
+def design(recs: list[dict], out_mult: int, families: tuple[str, ...],
+           joint: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    """The fit's matrix: one column per family, plus the cache-read column when `joint`."""
+    usable = [r for r in recs if r["ok"]]
+    rows = []
+    for r in usable:
+        row = [r["ie"][out_mult][f] / 1e6 for f in families]
+        if joint:
+            row.append(r["total_reads"] / CACHE_READ_UNIT)
+        rows.append(row)
+    return np.array(rows), np.array([r["delta"] for r in usable])
+
+
+def fitted_weight(b: np.ndarray, families: tuple[str, ...]) -> float:
+    """The cache-read weight a fit implies: its cache-read rate over its Opus input rate.
+
+    A ratio of two coefficients, so the rescaling that puts the fit in credits cancels; the
+    only conversion left is the two columns' different units (`CACHE_READ_PER_MILLION`).
+    """
+    return float(b[len(families)] * CACHE_READ_PER_MILLION / b[0])
+
+
+def fit(recs: list[dict], out_mult: int, joint: bool = False) -> dict | None:
     """Fit delta_pct = sum over families of (input-equivalent tokens x rate), Opus fixed at 10/15.
 
     The fit is unconstrained apart from non-negativity; fixing Opus is a rescaling afterwards,
     which is what sets the credits-per-1% the other rates are read against.
+
+    With `joint`, the stretch's cache-read tokens are a column of their own and the meter's
+    cache-read charge is fitted with the rates instead of held at zero. The fitted weight is
+    reported two ways: `cache_read_rate`, credits per cache-read token, and
+    `cache_read_weight`, that rate over the Opus input rate -- which is the number
+    data/prices.json's `cache_read_weight` holds, and the ratio of two fitted coefficients, so
+    the Opus rescaling cancels out of it. The weight is one number for every family, where
+    tracker.credits.input_side scales a cache read by the family's own input rate; a family
+    whose cache reads are dearer or cheaper than Opus's loads that difference onto this column.
     """
     usable = [r for r in recs if r["ok"]]
     if len(usable) < MIN_FIT_N:
@@ -166,27 +237,33 @@ def fit(recs: list[dict], out_mult: int) -> dict | None:
                      if sum(1 for r in usable if r["raw"][f] > 0) >= MIN_NONZERO)
     if "opus" not in families:
         return None
-    X, y = design(usable, out_mult, families)
+    if joint and not any(r["total_reads"] > 0 for r in usable):
+        return None
+    X, y = design(usable, out_mult, families, joint)
     b = nnls(X, y)
     if b[0] <= 0:
         return None
     scale = SHELLAC["opus"] / b[0]
     pred = X @ b
-    return {"n": len(y), "families": families,
+    return {"n": len(y), "families": families, "joint": joint,
             "rates": {f: v * scale for f, v in zip(families, b)},
+            "cache_read_rate": fitted_weight(b, families) * SHELLAC["opus"] if joint else 0.0,
+            "cache_read_weight": fitted_weight(b, families) if joint else 0.0,
             "window_credits_per_pct": SHELLAC["opus"] / (b[0] / 1e6),
             "residual_median_abs_rel": float(np.median(np.abs(pred - y) / y)),
             "residual_p90_abs_rel": float(np.percentile(np.abs(pred - y) / y, 90))}
 
 
-def fit_bootstrap(recs: list[dict], out_mult: int, rng: random.Random, resamples: int) -> dict | None:
-    base = fit(recs, out_mult)
+def fit_bootstrap(recs: list[dict], out_mult: int, rng: random.Random, resamples: int,
+                  joint: bool = False) -> dict | None:
+    base = fit(recs, out_mult, joint)
     if not base:
         return None
     usable = [r for r in recs if r["ok"]]
     families = base["families"]
-    X, y = design(usable, out_mult, families)
+    X, y = design(usable, out_mult, families, joint)
     draws: dict[str, list[float]] = {f: [] for f in families}
+    weight_draws: list[float] = []
     pairs = [(num, den, free) for num, den, free in PAIRS if num in families and den in families]
     ratio_draws: dict[str, list[float]] = {f"{num}:{den}": [] for num, den, _ in pairs}
     windows = []
@@ -199,12 +276,15 @@ def fit_bootstrap(recs: list[dict], out_mult: int, rng: random.Random, resamples
             continue
         for f, v in zip(families, b):
             draws[f].append(v / b[0] * SHELLAC["opus"])
+        if joint:
+            weight_draws.append(fitted_weight(b, families))
         for num, den, _ in pairs:
             if b[at[den]] > 0:
                 ratio_draws[f"{num}:{den}"].append(b[at[num]] / b[at[den]])
         windows.append(SHELLAC["opus"] / (b[0] / 1e6))
     base["interval"] = {f: interval(v) for f, v in draws.items() if v}
     base["window_interval"] = interval(windows) if windows else None
+    base["cache_read_weight_interval"] = list(interval(weight_draws)) if weight_draws else None
     base["ratios"] = {}
     for num, den, free in pairs:
         key = f"{num}:{den}"
@@ -344,8 +424,26 @@ def section2(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
     return out
 
 
+def _fit_row(f: dict) -> dict:
+    """One fit's published figures."""
+    return {"n": f["n"], "rates": f["rates"], "interval": f["interval"],
+            "cache_read_weight": f["cache_read_weight"],
+            "cache_read_weight_interval": f["cache_read_weight_interval"],
+            "window_credits_per_pct": f["window_credits_per_pct"],
+            "window_interval": f["window_interval"],
+            "residual_median_abs_rel": f["residual_median_abs_rel"],
+            "residual_p90_abs_rel": f["residual_p90_abs_rel"],
+            "ratios": f["ratios"]}
+
+
 def section3(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
-    """The same rates fitted across every clean stretch, not only the single-model ones."""
+    """The same rates fitted across every clean stretch, not only the single-model ones.
+
+    Each group is fitted twice. The flat fields are the fit with cache reads held at zero,
+    which is what this tool published before and what the reference table reads literally;
+    `joint` is the same stretches with the cache-read weight fitted alongside the rates. The
+    two use their own seeded resamplers, so adding the joint fit moved no figure of the other.
+    """
     out = {}
     for a, recs in data.items():
         for era in ("pre", "post"):
@@ -353,14 +451,12 @@ def section3(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
             for m in OUT_MULTS:
                 key = f"{a}/{era}/out{m}x"
                 f = fit_bootstrap(sub, m, random.Random(f"{seed}/fit/{key}"), resamples)
-                if f:
-                    out[key] = {
-                        "n": f["n"], "rates": f["rates"], "interval": f["interval"],
-                        "window_credits_per_pct": f["window_credits_per_pct"],
-                        "window_interval": f["window_interval"],
-                        "residual_median_abs_rel": f["residual_median_abs_rel"],
-                        "residual_p90_abs_rel": f["residual_p90_abs_rel"],
-                        "ratios": f["ratios"]}
+                if not f:
+                    continue
+                out[key] = _fit_row(f)
+                j = fit_bootstrap(sub, m, random.Random(f"{seed}/fit-joint/{key}"), resamples,
+                                  joint=True)
+                out[key]["joint"] = _fit_row(j) if j else None
     return out
 
 
@@ -437,32 +533,197 @@ def section4(data: dict[str, list[dict]], s3: dict, seed: int, resamples: int) -
     return out
 
 
-def adopt(s3: dict) -> dict:
-    """Pool the gs fits into one rate per family: the median point estimate and the union of intervals."""
-    fits = {k: v for k, v in s3.items() if k.split("/")[0] in ("jwork", "dave") and k.endswith("out5x")}
+#: The accounts whose fits are poolable. masterrig's residual |rel| median is 0.455 against
+#: 0.055 to 0.065 on these two -- the phantom meter movement showing up as fit error -- so its
+#: fit is reported for completeness and never adopted.
+FIT_ACCOUNTS = ("jwork", "dave")
+#: A family's rate is one rate only if every fit's interval for it holds a value every other
+#: fit's interval holds too. Fable's two jwork regimes fail this, and that failure is the
+#: finding, not a reason to average them.
+def agree(intervals: list[list[float]]) -> bool:
+    # bool() rather than the numpy comparison's own type: this flag is published, and the
+    # publish check treats a flag that became a number as a defect (and rightly).
+    return bool(intervals) and bool(max(i[0] for i in intervals) <= min(i[1] for i in intervals))
+
+
+def _variant(row: dict | None, variant: str) -> dict | None:
+    """One group's fit under the named variant: the flat fields, or the nested joint ones."""
+    if row is None:
+        return None
+    return row if variant == "zero" else row.get("joint")
+
+
+def group_fits(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict[str, dict]:
+    """The poolable fits, keyed by account and side of the cut: `jwork/pre`, `dave/post`."""
     out = {}
-    for f in FAMILIES:
-        pts = [v["rates"][f] for v in fits.values() if v["rates"].get(f, 0) > 0]
-        ivs = [v["interval"][f] for v in fits.values() if v["interval"].get(f) and v["rates"].get(f, 0) > 0]
-        if len(pts) >= MIN_N - 1 and ivs:
-            out[f] = {"measured": st.median(pts), "interval": [min(i[0] for i in ivs), max(i[1] for i in ivs)],
-                      "n_fits": len(pts), "points": sorted(pts), "shellac": SHELLAC.get(f)}
-        else:
-            out[f] = {"measured": None, "n_fits": len(pts), "points": sorted(pts), "shellac": SHELLAC.get(f)}
+    for key, row in s3.items():
+        account, era, m = key.split("/")
+        if account not in FIT_ACCOUNTS or m != mult:
+            continue
+        fit_row = _variant(row, variant)
+        if fit_row:
+            out[f"{account}/{era}"] = fit_row
     return out
 
 
-def section5(window: dict, s3: dict) -> dict:
-    """The five-hour window in input-equivalent tokens per model, Shellac's rate beside the measured one."""
+def adopt(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
+    """Pool the gs fits into one rate per family, where the fits agree within their intervals.
+
+    A family's point estimate is the median of the fits' point estimates and its interval is
+    the union of theirs, as before -- but only when every fit's interval for that family
+    overlaps every other's (`agree`). Where they do not, the family keeps the union interval
+    and no point value at all: Fable fits 1.754 [1.619, 1.927] times Opus on jwork before
+    14 September and 3.798 [3.324, 4.324] after, and a median of two figures whose intervals
+    do not meet would publish a rate no fit measured.
+    """
+    fits = group_fits(s3, variant, mult)
+    out = {}
+    for f in FAMILIES:
+        pts, ivs, per_fit = [], [], {}
+        for label, v in sorted(fits.items()):
+            rate = v["rates"].get(f, 0)
+            iv = v["interval"].get(f)
+            if rate > 0 and iv:
+                pts.append(rate)
+                ivs.append(list(iv))
+                per_fit[label] = {"rate": rate, "interval": list(iv), "n": v["n"]}
+        row = {"measured": None, "interval": None, "n_fits": len(pts), "points": sorted(pts),
+               "per_fit": per_fit, "agree": None, "shellac": SHELLAC.get(f), "variant": variant}
+        if len(pts) >= MIN_N - 1 and ivs:
+            row["agree"] = agree(ivs)
+            row["interval"] = [min(i[0] for i in ivs), max(i[1] for i in ivs)]
+            row["measured"] = st.median(pts) if row["agree"] else None
+        out[f] = row
+    return out
+
+
+def weight_pool(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
+    """The fitted cache-read weight, pooled the same way the rates are."""
+    fits = group_fits(s3, variant, mult)
+    pts, ivs, per_fit = [], [], {}
+    for label, v in sorted(fits.items()):
+        iv = v.get("cache_read_weight_interval")
+        if iv is None:
+            continue
+        pts.append(v["cache_read_weight"])
+        ivs.append(list(iv))
+        per_fit[label] = {"weight": v["cache_read_weight"], "interval": list(iv), "n": v["n"]}
+    row = {"value": None, "interval": None, "n_fits": len(pts), "points": sorted(pts),
+           "per_fit": per_fit, "agree": None, "reference": C.cache_read_weight(CREDITS),
+           "reference_range": CREDITS.get("cache_read_weight_range")}
+    if pts and ivs:
+        row["agree"] = agree(ivs)
+        row["interval"] = [min(i[0] for i in ivs), max(i[1] for i in ivs)]
+        row["value"] = st.median(pts) if row["agree"] else None
+    return row
+
+
+#: Why a family has no single measured rate, in the words the published row carries. The
+#: publisher prints these instead of a number, and the page shows the reference figure beside
+#: them: neither is used in any arithmetic.
+NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
+NOT_IDENTIFIED = "rate not yet identified"
+
+
+def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
+    """The rates the publisher adopts, per family, with Opus as the unit anchor.
+
+    This is the block `tracker/credits.py` reads out of history/model-rates.json. Every family
+    carries one of three things and never two: a value with an interval, an interval with the
+    sentence saying the rate is not yet identified, or the sentence saying it is not measurable
+    at all. `reference_input` is the January table's figure, carried so the page can draw it
+    beside the measurement; nothing here divides by it.
+    """
+    pooled = adopt(s3, variant, mult)
+    out_mult = int(mult.removeprefix("out").removesuffix("x"))
+    opus_in = SHELLAC["opus"]
+    max_share = {f: max((row["max_share"][f] for key, row in s1.items()
+                         if key.split("/")[0] in FIT_ACCOUNTS), default=0.0) for f in FAMILIES}
+    per_family = {}
+    for f in FAMILIES:
+        row = pooled[f]
+        anchor = f == "opus"
+        value = opus_in if anchor else row["measured"]
+        status = None
+        if not anchor and value is None:
+            status = (NOT_IDENTIFIED if row["n_fits"] >= MIN_N - 1
+                      else NOT_MEASURABLE.format(family=f.capitalize()))
+        per_family[f] = {
+            "input": value,
+            "interval": None if anchor else row["interval"],
+            "output_multiplier": out_mult,
+            "status": status,
+            # The anchor is the reference table's own Opus row: this work measures every other
+            # family against it and cannot test it, so the row says `reference` rather than
+            # claiming a measurement of the one rate nothing here measures.
+            "rate_source": "reference" if anchor else "measured",
+            "anchor": anchor,
+            "reference_input": SHELLAC.get(f),
+            "times_opus": (value / opus_in if value else None),
+            "times_opus_interval": ([row["interval"][0] / opus_in, row["interval"][1] / opus_in]
+                                    if row["interval"] else None),
+            "n_fits": row["n_fits"], "points": row["points"], "per_fit": row["per_fit"],
+            "agree": row["agree"],
+            "max_share_of_a_clean_stretch": max_share[f],
+        }
+    per_family["opus"]["why"] = (
+        f"the unit anchor: {opus_in:.4f} credits per input token ({out_mult}x that per output "
+        "token), which is what a credit means in this repository. The fit rescales its Opus "
+        "coefficient to this figure, so every rate beside it is measured relative to it and "
+        "none of them tests it. If this row is wrong every credit figure scales with it and "
+        "nothing in our stretches would show it.")
+    if per_family["fable"]["status"] == NOT_IDENTIFIED:
+        sides = ", ".join(f"{label} {v['rate'] / opus_in:.3f}x Opus "
+                          f"[{v['interval'][0] / opus_in:.3f}, {v['interval'][1] / opus_in:.3f}]"
+                          for label, v in per_family["fable"]["per_fit"].items())
+        per_family["fable"]["why"] = (
+            f"the fits do not agree within their intervals ({sides}), so the interval is the "
+            "claim and there is no single rate. The data cannot say whether Fable's rate moved "
+            "or the five-hour window did: the window fitted on the same stretches moves the "
+            "same way.")
+    if per_family["haiku"]["status"] and per_family["haiku"]["status"] != NOT_IDENTIFIED:
+        per_family["haiku"]["why"] = (
+            f"the highest Haiku share of any clean stretch on a fitted account is "
+            f"{max_share['haiku']:.3f}, and no fit includes Haiku at all, so there is nothing "
+            "to measure a Haiku rate from. The reference figure stands beside this row, "
+            "untested by our data and used in no arithmetic.")
+    return {
+        "unit": "credits per input token; the output rate is output_multiplier times it",
+        "variant": variant, "output_multiplier": out_mult,
+        "fits_pooled": sorted(group_fits(s3, variant, mult)),
+        "anchor": {"family": "opus", "input": opus_in, "output": opus_in * out_mult},
+        "per_family": per_family,
+        "cache_read_weight": weight_pool(s3, variant, mult),
+        "method": (
+            f"delta_pct = sum over families of (input + cache_write + {out_mult}x output) x rate, "
+            "plus a cache-read column, by non-negative least squares over every clean stretch of "
+            "the account and side of 2026-09-14, with the Opus coefficient rescaled afterwards to "
+            f"{opus_in:.4f} credits per token so the fit reads in credits. Intervals are 80% "
+            "bootstrap intervals over resampled stretches. A family's rate is the median of the "
+            "per-fit point estimates and the union of their intervals, and only where every fit's "
+            "interval for it overlaps every other's; where they do not it keeps the interval and "
+            "no value."),
+    }
+
+
+def section5(window: dict, mr: dict) -> dict:
+    """The five-hour window in input-equivalent tokens per model, Shellac's rate beside the measured one.
+
+    The rows are the publisher's own rule: a token figure only where the rate has a value, and
+    the rate's status sentence with the inverted interval where it does not (cheapest rate
+    against the top of the window, dearest against the bottom).
+    """
     per_pct = window["harness-runs"]["median"]
     credits = per_pct * 100
     rows = {}
-    for f, a in adopt(s3).items():
-        row = {"shellac_rate": a["shellac"], "measured_rate": a["measured"], "rate_interval": a.get("interval"),
-               "shellac_tokens": credits / a["shellac"] if a["shellac"] else None,
-               "measured_tokens": credits / a["measured"] if a["measured"] else None}
-        if a.get("interval"):
-            row["measured_tokens_interval"] = [credits / a["interval"][1], credits / a["interval"][0]]
+    for f, a in mr["per_family"].items():
+        row = {"shellac_rate": a["reference_input"], "measured_rate": a["input"],
+               "rate_interval": a["interval"], "status": a["status"],
+               "rate_source": a["rate_source"],
+               "shellac_tokens": credits / a["reference_input"] if a["reference_input"] else None,
+               "measured_tokens": credits / a["input"] if a["input"] else None,
+               "measured_tokens_interval": ([credits / a["interval"][1], credits / a["interval"][0]]
+                                            if a["interval"] else None)}
         rows[f] = row
     return {"window_credits_per_pct": per_pct, "window_credits": credits, "rows": rows}
 
@@ -471,8 +732,8 @@ def pct(x: float) -> str:
     return f"{x * 100:+.0f}%"
 
 
-def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict, lists: dict,
-         chosen: str = "harness-runs") -> None:
+def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict, mr: dict,
+         lists: dict, chosen: str = "harness-runs") -> None:
     print(f"0. Exclusion list ({chosen} is the one sections 1 to 5 use)")
     kinds = {}
     for run in lists["harness-runs"]:
@@ -521,27 +782,38 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
 
     print("\n3. Rates fitted across every clean stretch, Opus fixed at 10/15")
     for key, f in s3.items():
-        print(f"   {key:22} n={f['n']:3} window={f['window_credits_per_pct']:,.0f} credits per 1% "
-              f"[{f['window_interval'][0]:,.0f}, {f['window_interval'][1]:,.0f}]  "
-              f"residual |rel| median={f['residual_median_abs_rel']:.3f} p90={f['residual_p90_abs_rel']:.3f}")
-        for fam, v in f["rates"].items():
-            lo, hi = f["interval"][fam]
-            if fam == "opus":
-                against = "Shellac 0.667, fixed to set the scale"
-            elif SHELLAC.get(fam) is None:
-                against = "no Shellac rate: Fable is not in the table"
-            else:
-                against = (f"Shellac {SHELLAC[fam]:.3f} "
-                           f"{'inside' if lo <= SHELLAC[fam] <= hi else 'OUTSIDE'} the interval")
-            print(f"      {fam:7} rate={v:.3f} [{lo:.3f}, {hi:.3f}]  {against}")
-        for pair, r in f["ratios"].items():
-            if not r["measurable"]:
-                print(f"      {pair:13} NOT MEASURABLE (the fit put one of the two rates at zero)")
+        for label, v in (("cache reads at 0", f), ("cache-read weight fitted", f.get("joint"))):
+            if not v:
+                print(f"   {key:22} {label}: NO FIT (no stretch of the group carries cache reads)")
                 continue
-            wide = f"  interval spans x{r['interval_width']:.1f}" if r["interval_width"] > 3 else ""
-            print(f"      {pair:13} {r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}] "
-                  f"prior={r['prior']:.3f} {r['verdict'].upper()}; {r['free']} row moves "
-                  f"{pct(r['row_move'])}{wide}")
+            weight = ""
+            if v.get("cache_read_weight_interval"):
+                lo, hi = v["cache_read_weight_interval"]
+                weight = (f" cache_read_weight={v['cache_read_weight']:.4f} [{lo:.4f}, {hi:.4f}]"
+                          f" of the Opus input rate")
+            print(f"   {key:22} {label:24} n={v['n']:3} "
+                  f"window={v['window_credits_per_pct']:,.0f} credits per 1% "
+                  f"[{v['window_interval'][0]:,.0f}, {v['window_interval'][1]:,.0f}]  "
+                  f"residual |rel| median={v['residual_median_abs_rel']:.3f} "
+                  f"p90={v['residual_p90_abs_rel']:.3f}{weight}")
+            for fam, rate in v["rates"].items():
+                lo, hi = v["interval"][fam]
+                if fam == "opus":
+                    against = "Shellac 0.667, fixed to set the scale"
+                elif SHELLAC.get(fam) is None:
+                    against = "no Shellac rate: Fable is not in the table"
+                else:
+                    against = (f"Shellac {SHELLAC[fam]:.3f} "
+                               f"{'inside' if lo <= SHELLAC[fam] <= hi else 'OUTSIDE'} the interval")
+                print(f"      {fam:7} rate={rate:.3f} [{lo:.3f}, {hi:.3f}]  {against}")
+            for pair, r in v["ratios"].items():
+                if not r["measurable"]:
+                    print(f"      {pair:13} NOT MEASURABLE (the fit put one of the two rates at zero)")
+                    continue
+                wide = f"  interval spans x{r['interval_width']:.1f}" if r["interval_width"] > 3 else ""
+                print(f"      {pair:13} {r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}] "
+                      f"prior={r['prior']:.3f} {r['verdict'].upper()}; {r['free']} row moves "
+                      f"{pct(r['row_move'])}{wide}")
 
     print("\n4. The jwork/Dave gap after 14 September")
     print(f"   n: jwork {s4['n']['jwork']}, dave {s4['n']['dave']}   median raw-token shares:")
@@ -581,14 +853,51 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
     for f, row in s5["rows"].items():
         shellac = (f"Shellac rate={row['shellac_rate']:.3f} tokens={row['shellac_tokens']:,.0f}"
                    if row["shellac_rate"] else "Shellac rate=absent (Fable is not in the table)")
-        if row["measured_rate"]:
+        if row["measured_rate"] and row["rate_interval"]:
             iv = row["measured_tokens_interval"]
             measured = (f"measured rate={row['measured_rate']:.3f} "
                         f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}] "
                         f"tokens={row['measured_tokens']:,.0f} [{iv[0]:,.0f}, {iv[1]:,.0f}]")
+        elif row["measured_rate"]:
+            measured = (f"{row['rate_source']} rate={row['measured_rate']:.3f} (the anchor) "
+                        f"tokens={row['measured_tokens']:,.0f}")
+        elif row["rate_interval"]:
+            iv = row["measured_tokens_interval"]
+            measured = (f"{row['status']}: rate interval "
+                        f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}] "
+                        f"tokens [{iv[0]:,.0f}, {iv[1]:,.0f}], no value")
         else:
-            measured = "measured rate=NOT MEASURABLE"
+            measured = row["status"] or "measured rate=NOT MEASURABLE"
         print(f"   {f:7} {shellac:52} {measured}")
+
+    print(f"\n6. The rates the publisher adopts ({mr['variant']} fit at output "
+          f"{mr['output_multiplier']}x, pooled over {', '.join(mr['fits_pooled'])})")
+    for f, row in mr["per_family"].items():
+        ref = f"reference={row['reference_input']:.3f}" if row["reference_input"] else "reference=absent"
+        if row["input"] is not None:
+            iv = (f" [{row['interval'][0]:.3f}, {row['interval'][1]:.3f}]" if row["interval"] else "")
+            what = f"input={row['input']:.4f}{iv} ({row['times_opus']:.3f}x Opus)"
+        elif row["interval"]:
+            what = (f"no value, interval [{row['interval'][0]:.3f}, {row['interval'][1]:.3f}]"
+                    f" ({row['times_opus_interval'][0]:.2f}x to "
+                    f"{row['times_opus_interval'][1]:.2f}x Opus): {row['status']}")
+        else:
+            what = row["status"] or "no rate"
+        print(f"   {f:7} {row['rate_source']:9} n_fits={row['n_fits']} agree={row['agree']!s:5} "
+              f"{ref:18} {what}")
+    w = mr["cache_read_weight"]
+    if w["interval"]:
+        value = f"{w['value']:.4f}" if w["value"] is not None else "no value (the fits disagree)"
+        print(f"   cache-read weight {value} [{w['interval'][0]:.4f}, {w['interval'][1]:.4f}] of the "
+              f"Opus input rate, n_fits={w['n_fits']} agree={w['agree']}; "
+              f"data/prices.json holds {w['reference']:g} with the range {w['reference_range']}")
+    for label, v in group_fits(s3, mr["variant"], f"out{mr['output_multiplier']}x").items():
+        r = v["ratios"].get("opus:sonnet")
+        if r and r.get("measurable"):
+            print(f"   opus:sonnet {label:11} {r['ratio']:.3f} "
+                  f"[{r['interval'][0]:.3f}, {r['interval'][1]:.3f}] against the table's "
+                  f"{r['prior']:.3f}: {'EXCLUDED' if r['verdict'] == 'disagrees' else 'inside'} "
+                  f"the interval")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -597,6 +906,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", type=Path, help="write the same figures as JSON")
     ap.add_argument("--exclusions", choices=("harness-runs", "probes-only"), default="harness-runs",
                     help="which list of the tracker's own runs to exclude stretches by")
+    ap.add_argument("--variant", choices=("joint", "zero"), default="joint",
+                    help="the fit the adopted rates come from: `joint` fits the cache-read weight "
+                         "with the rates, `zero` holds it at 0 as the reference table reads")
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
     a = ap.parse_args(argv)
@@ -613,17 +925,38 @@ def main(argv: list[str] | None = None) -> int:
     s2 = section2(data, a.seed, a.resamples)
     s3 = section3(data, a.seed, a.resamples)
     s4 = section4(data, s3, a.seed, a.resamples)
-    s5 = section5(win, s3)
-    show(excl, win, s1, s2, s3, s4, s5, lists, a.exclusions)
+    mr = measured_rates(s1, s3, a.variant)
+    s5 = section5(win, mr)
+    show(excl, win, s1, s2, s3, s4, s5, mr, lists, a.exclusions)
     if a.json:
+        command = (f"python3 -m tools.model_rates {a.masterrig} --json {a.json}"
+                   + ("" if a.variant == "joint" else f" --variant {a.variant}")
+                   + ("" if a.exclusions == "harness-runs" else f" --exclusions {a.exclusions}")
+                   + ("" if a.seed == SEED else f" --seed {a.seed}")
+                   + ("" if a.resamples == RESAMPLES else f" --resamples {a.resamples}"))
         a.json.write_text(json.dumps({
+            "_meta": {
+                "what": "the meter's own per-model credit rates, fitted from the passive stretches "
+                        "already in the repository. `measured_rates` is the block tracker/credits.py "
+                        "reads; everything else is the working the fits show.",
+                "command": command,
+                "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "inputs": ["history/gs-passive.json", str(a.masterrig), "history/harness-runs.jsonl",
+                           "history/probes.jsonl", "data/effort_matrix.json", "data/prices.json"],
+                "findings": "docs/findings-2026-09-20-measured-rates.md",
+                "no_traffic": "read-only arithmetic over committed files; no account was driven",
+            },
+            "measured_rates": mr,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "seed": a.seed, "resamples": a.resamples, "exclusions": a.exclusions,
+            "variant": a.variant,
             "dominance": DOMINANCE, "min_n": MIN_N,
             "interval_percentiles": INTERVAL, "shellac_rates": SHELLAC, "fable_point": FABLE_POINT,
             "fable_interval": FABLE_INTERVAL, "exclusion": excl, "window_check": win,
             "section1": s1, "section2": s2, "section3": s3, "section4": s4, "section5": s5,
-            "adopt": adopt(s3)}, indent=1, default=float) + "\n")
+            "adopt": adopt(s3, a.variant),
+            "adopt_cache_read_zero": adopt(s3, "zero"),
+            "adopt_output_3x": adopt(s3, a.variant, "out3x")}, indent=1, default=float) + "\n")
         print(f"\nJSON -> {a.json}")
     return 0
 

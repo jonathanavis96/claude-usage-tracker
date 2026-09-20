@@ -297,16 +297,27 @@ class SolvedFableCarryThroughTests(unittest.TestCase):
         self.assertEqual((fable["input_low"], fable["input_high"]), (1.0, 2.5))
         self.assertEqual(self.credits["rates"]["per_family"]["fable"]["interval"], fable)
 
-    def test_tokens_per_window_carries_the_solved_interval_with_no_value(self):
+    def test_tokens_per_window_carries_the_measured_interval_with_no_value(self):
+        """The row's rate is the measured one; the publish-time solve is published beside it.
+
+        Fable's two sides of 14 September do not agree within their intervals, so the
+        measured source gives an interval and no value, and every figure derived from it
+        publishes the interval and the status sentence. The solve of the same rate from the
+        Fable-heavy stretches is still published, as `fable_interval` and in the rate table.
+        """
         row = self.credits["per_model"]["fable"]
+        rate = C.family_rate("fable", CREDITS, C.load_model_rates())
         self.assertIsNone(row["credits_per_token"]["input"])
-        self.assertEqual(row["credits_per_token_interval"]["input"], [1.0, 2.5])
-        self.assertEqual(row["credits_per_token_interval"]["output"], [3.0, 12.5])
+        self.assertEqual(row["rate_source"], "measured")
+        self.assertEqual(row["credits_per_token_interval"]["input"], list(rate.input_interval))
         figure = row["tokens_per_window"]["input"]
         self.assertIsNone(figure["value"])
         self.assertEqual(figure["status"], "rate not yet identified")
         # Cheapest rate against the top of the window's range, dearest against the bottom.
-        self.assertEqual(figure["interval"], [round(20_000_000 / 2.5), round(20_000_000 / 1.0)])
+        self.assertEqual(figure["interval"], [round(20_000_000 / rate.input_interval[1]),
+                                              round(20_000_000 / rate.input_interval[0])])
+        self.assertEqual((self.credits["fable_interval"]["input_low"],
+                          self.credits["fable_interval"]["input_high"]), (1.0, 2.5))
 
     def test_the_api_value_and_the_session_count_are_intervals_too(self):
         self.assertIsNone(self.credits["per_model"]["fable"]["api_value_per_window_usd"]["input"]["value"])
@@ -472,22 +483,92 @@ class PublishedBlockTests(unittest.TestCase):
         api = self.credits["per_model"]["opus"]["api_value_per_window_usd"]["input"]
         self.assertEqual(api["value"], round(20_000_000 / OPUS_IN * 5 / 1e6, 2))
 
-    def test_a_family_with_credits_but_no_dollar_row_publishes_null_with_a_status(self):
+    def test_a_family_with_no_dollar_row_publishes_null_with_a_status(self):
         haiku = self.credits["per_model"]["haiku"]
-        self.assertIsNotNone(haiku["tokens_per_window"]["input"]["value"])
         self.assertIsNone(haiku["api_value_per_window_usd"]["input"]["value"])
         self.assertIn("no row in the dollar table", haiku["api_value_per_window_usd"]["input"]["status"])
 
-    def test_with_no_fable_heavy_stretch_the_interval_is_null_and_says_why(self):
-        """The fixture is pure Opus, so there is nothing to solve a Fable rate from."""
+    def test_a_family_with_no_measurable_rate_publishes_a_status_sentence_and_no_number(self):
+        """Haiku: no clean stretch anywhere carries enough Haiku to fit a rate.
+
+        The reference table has a Haiku row and the page draws it, but nothing divides by it,
+        so the row publishes the sentence saying so and no token figure at all.
+        """
+        haiku = self.credits["per_model"]["haiku"]
+        self.assertEqual(haiku["status"], "not measurable, no clean stretch is Haiku-heavy")
+        self.assertEqual(haiku["rate_source"], "measured")
+        self.assertIsNone(haiku["credits_per_token"]["input"])
+        self.assertIsNone(haiku["credits_per_token_interval"])
+        for side in ("input", "output"):
+            figure = haiku["tokens_per_window"][side]
+            self.assertIsNone(figure["value"])
+            self.assertIsNone(figure["interval"])
+            self.assertEqual(figure["status"], "not measurable, no clean stretch is Haiku-heavy")
+        # The reference figure is still carried, for the page to draw beside the sentence.
+        self.assertEqual(haiku["reference_rate"]["input"], 2 / 15)
+
+    def test_every_per_model_row_says_where_its_rate_came_from(self):
+        for fam, row in self.credits["per_model"].items():
+            self.assertIn(row["rate_source"], ("measured", "reference"), fam)
+            self.assertIn("reference_rate", row, fam)
+        # Opus alone reads `reference`: it is the unit anchor, and nothing here tests it.
+        sources = {fam: row["rate_source"] for fam, row in self.credits["per_model"].items()}
+        self.assertEqual(sources["opus"], "reference")
+        self.assertTrue(self.credits["per_model"]["opus"]["anchor"])
+        self.assertEqual({fam for fam, v in sources.items() if v == "measured"},
+                         {"sonnet", "haiku", "fable"})
+
+    def test_the_sonnet_row_divides_by_the_measured_rate_not_the_tables(self):
+        rate = C.family_rate("sonnet", CREDITS, C.load_model_rates())
+        row = self.credits["per_model"]["sonnet"]
+        self.assertEqual(row["credits_per_token"]["input"], rate.input)
+        self.assertEqual(row["reference_rate"]["input"], 6 / 15)
+        self.assertNotEqual(row["credits_per_token"]["input"], row["reference_rate"]["input"])
+        self.assertEqual(row["tokens_per_window"]["input"]["value"],
+                         round(20_000_000 / rate.input))
+        self.assertEqual(row["tokens_per_window"]["input"]["interval"],
+                         [round(19_000_000 / rate.input_interval[1]),
+                          round(21_000_000 / rate.input_interval[0])])
+
+    def test_the_sessions_block_uses_the_same_measured_rates(self):
+        passive = {"split": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 1.0},
+                   "session_tokens": {"claude-sonnet-5": 1_000_000}}
+        sessions = _published(gs=self.gs, passive=passive)["credits"]["sessions"]["claude-sonnet-5"]
+        rate = C.family_rate("sonnet", CREDITS, C.load_model_rates())
+        self.assertEqual(sessions["rate_source"], "measured")
+        # All cache writes, so a token costs the input rate and the division is exact.
+        self.assertEqual(sessions["per_window"]["value"], round(20_000_000 / rate.input / 1e6, 1))
+        self.assertEqual(sessions["credits_per_token_at_split_interval"],
+                         [round(rate.input_interval[0], 8), round(rate.input_interval[1], 8)])
+
+    def test_a_publish_with_no_measured_rate_source_states_no_rate_but_the_anchor(self):
+        """An archive or a fixture without history/model-rates.json publishes no rate it cannot
+        measure, and the anchor -- which is what a credit means -- still stands."""
+        credits = build_public_json([], {"split": {"cache_write": 1.0}, "session_tokens": {}}, {},
+                                    PRICES, NOW, gs_passive=self.gs, credits=CREDITS,
+                                    model_rates={})["credits"]
+        opus = credits["per_model"]["opus"]
+        self.assertEqual(opus["rate_source"], "reference")
+        self.assertEqual(opus["tokens_per_window"]["input"]["value"], round(20_000_000 / OPUS_IN))
+        sonnet = credits["per_model"]["sonnet"]
+        self.assertIsNone(sonnet["tokens_per_window"]["input"]["value"])
+        self.assertIn("no measured rate source", sonnet["status"])
+        self.assertIn("no measured rate source", credits["measured_rates"]["status"])
+
+    def test_with_no_fable_heavy_stretch_the_solve_is_null_and_says_why(self):
+        """The fixture is pure Opus, so there is nothing to solve a Fable rate from.
+
+        The solve and the fit are two instruments. The solve has nothing to work on here and
+        says so; the row's rate comes from the committed fit, which is measured over other
+        stretches and does not depend on this fixture.
+        """
         fable = self.credits["fable_interval"]
         self.assertIsNone(fable["input_low"])
         self.assertIsNone(fable["input_high"])
         self.assertEqual(fable["unresolved"], "no Fable-heavy stretch to solve a rate from")
         row = self.credits["per_model"]["fable"]
         self.assertIsNone(row["tokens_per_window"]["input"]["value"])
-        self.assertIsNone(row["tokens_per_window"]["input"]["interval"])
-        self.assertEqual(row["status"], "no Fable-heavy stretch to solve a rate from")
+        self.assertEqual(row["status"], "rate not yet identified")
 
     def test_the_fable_session_count_is_an_interval_too(self):
         sessions = self.credits["sessions"].get("claude-fable-5-1")
@@ -621,7 +702,8 @@ class EventAndReferenceTests(unittest.TestCase):
             self.assertFalse(event["five_hour_window_credits"]["resolved"])
 
 
-def _files(root: Path, gs: dict, masterrig: dict, passive: dict, matrix: dict) -> dict:
+def _files(root: Path, gs: dict, masterrig: dict, passive: dict, matrix: dict,
+           model_rates: dict | None = None) -> dict:
     (root / "history").mkdir(parents=True, exist_ok=True)
     (root / "data").mkdir(parents=True, exist_ok=True)
     (root / "history/gs-passive.json").write_text(json.dumps(gs))
@@ -630,12 +712,18 @@ def _files(root: Path, gs: dict, masterrig: dict, passive: dict, matrix: dict) -
     (root / "history/probes.jsonl").write_text("")
     (root / "data/effort_matrix.json").write_text(json.dumps(matrix))
     (root / "data/prices.json").write_text(json.dumps({**PRICES, "_credits": CREDITS}))
+    # The measured rates the publisher divides by, copied so the check reads a file of its
+    # own rather than the checkout's -- which is what lets a test move a rate and see the
+    # check notice.
+    rates = json.loads(C.MODEL_RATES_PATH.read_text()) if model_rates is None else model_rates
+    (root / "history/model-rates.json").write_text(json.dumps(rates))
     return {"gs": root / "history/gs-passive.json",
             "masterrig": root / "history/masterrig-passive.json",
             "probes": root / "history/probes.jsonl",
             "effort_matrix": root / "data/effort_matrix.json",
             "passive": root / "history/passive.json",
-            "prices": root / "data/prices.json"}
+            "prices": root / "data/prices.json",
+            "model_rates": root / "history/model-rates.json"}
 
 
 class PublishCheckTests(unittest.TestCase):
@@ -649,10 +737,10 @@ class PublishCheckTests(unittest.TestCase):
     def published(self) -> dict:
         return _published(gs=self.GS, passive=self.PASSIVE)
 
-    def check(self, published: dict, tolerance: float = 0.005):
+    def check(self, published: dict, tolerance: float = 0.005, model_rates: dict | None = None):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            paths = _files(root, self.GS, {}, self.PASSIVE, {})
+            paths = _files(root, self.GS, {}, self.PASSIVE, {}, model_rates)
             out = root / "claude-usage.json"
             out.write_text(json.dumps(published))
             args = argparse.Namespace(**paths, publish_check=out, tolerance=tolerance)
@@ -699,6 +787,54 @@ class PublishCheckTests(unittest.TestCase):
 
     def test_a_json_with_no_credits_block_is_a_failure_not_a_pass(self):
         self.assertEqual(self.check({"generated_at": NOW.isoformat()})[0], 1)
+
+    def test_the_check_covers_the_measured_rate_fields_as_well_as_the_window(self):
+        text = self.check(self.published())[1]
+        for key in ("per_model.sonnet.rate_source", "per_model.sonnet.credits_per_token.input",
+                    "per_model.sonnet.reference_rate.input", "per_model.haiku.status",
+                    "measured_rates.per_family.sonnet.input",
+                    "measured_rates.cache_read_weight.interval[0]",
+                    "sessions.claude-opus-5.rate_source"):
+            self.assertIn(key, text.replace("...", ""), key)
+
+    def test_a_row_published_at_the_reference_rate_instead_of_the_measured_one_fails(self):
+        """The defect this check exists for: a per-model figure divided by the January table."""
+        j = self.published()
+        row = j["credits"]["per_model"]["sonnet"]
+        row["credits_per_token"]["input"] = 6 / 15
+        row["tokens_per_window"]["input"]["value"] = round(20_000_000 / (6 / 15))
+        code, text = self.check(j)
+        self.assertEqual(code, 1)
+        self.assertIn("per_model.sonnet.tokens_per_window.input.value", text)
+
+    def test_a_measured_rate_the_committed_fit_does_not_hold_fails(self):
+        """The rate is read from history/model-rates.json, never from the published JSON."""
+        moved = json.loads(C.MODEL_RATES_PATH.read_text())
+        row = moved["measured_rates"]["per_family"]["sonnet"]
+        row["input"] = row["input"] * 1.5
+        code, text = self.check(self.published(), model_rates=moved)
+        self.assertEqual(code, 1)
+        self.assertIn("per_model.sonnet.credits_per_token.input", text)
+
+    def test_the_effort_matrix_in_credits_reproduces_too(self):
+        matrix = {"_meta": {"runs": {"claude-opus-5/low": [
+            {"input": 1000, "output": 100, "cache_read": 50_000, "cache_write": 2000, "total": 53_100}]}}}
+        published = _published(gs=self.GS, passive=self.PASSIVE, effort_meta=matrix["_meta"])
+        cell = published["credits"]["effort_credits"]["claude-opus-5"]["low"]
+        # (1000 + 2000) input-side tokens at 10/15 plus 100 output at 50/15.
+        self.assertEqual(cell["median_credits"]["value"], round(3000 * OPUS_IN + 100 * OPUS_OUT))
+        self.assertEqual(cell["rate_source"], "reference")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            paths = _files(root, self.GS, {}, self.PASSIVE, matrix)
+            out = root / "claude-usage.json"
+            out.write_text(json.dumps(published))
+            args = argparse.Namespace(**paths, publish_check=out, tolerance=0.005)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = publish_check(args)
+        self.assertEqual(code, 0, buf.getvalue())
+        self.assertIn("effort_credits.claude-opus-5.low.median_credits.value", buf.getvalue())
 
 
 class PriceTableRoundTripTests(unittest.TestCase):

@@ -222,7 +222,8 @@ def _reference_tokens(budget: float | None, meter_usd_per_token: float) -> int |
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
                       effort_usd: dict | None = None, gs_passive: dict | None = None,
                       reference_mix: dict | None = None, *, masterrig_passive: dict | None = None,
-                      effort_meta: dict | None = None, credits: dict | None = None) -> dict:
+                      effort_meta: dict | None = None, credits: dict | None = None,
+                      model_rates: dict | None = None) -> dict:
     """The public JSON, schema_version 2 (the 2026-09-16 audit's implementation contract).
 
     Rates. The measured quantity is the meter budget: the meter dollars (list
@@ -483,10 +484,14 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                             if passive.get("split") else
                             f"data/reference_mix.json `split` ({reference_mix['id']}): "
                             "history/passive.json carried none")
+    # The measured per-model rates. `None` means "read the checkout's own
+    # history/model-rates.json"; an empty dict means there is no measurement to publish, and
+    # every per-model row then carries a status sentence instead of a number.
     credits_block, across_cut = _credits_block(
         gs_passive, masterrig_passive, all_probe_rows, effort_meta, credits, prices,
         session_split, session_split_source, passive.get("session_tokens", {}),
-        weekly_windows, weekly_events)
+        weekly_windows, weekly_events,
+        credit_model.load_model_rates() if model_rates is None else model_rates)
     # Accounts behind the passive evidence: those with an accepted stretch (the rates)
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
@@ -531,14 +536,20 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
 
 
 def _figure(window: dict, rate_lo: float | None, rate_hi: float | None,
-            per_unit: float = 1.0, status: str | None = None, ndigits: int = 0) -> dict:
+            per_unit: float = 1.0, status: str | None = None, ndigits: int = 0,
+            point: float | None = None) -> dict:
     """One quantity a window's credits buy, with the window's own interval carried through.
 
-    `rate_lo`/`rate_hi` are credits per unit. When they are the same number the rate
-    is known and the figure has a `value`; when they differ the rate is itself an
-    interval (Fable), so there is no single value to publish and `value` is None with
-    a `status` saying why -- the interval then widens on both sides at once, cheapest
-    rate against the top of the window's range and dearest against the bottom.
+    `rate_lo`/`rate_hi` are credits per unit and `point` is the rate's own value where it
+    has one. A measured rate usually has both: a value and an interval around it, so the
+    figure publishes `window / point` beside the inverted interval. A rate with no value --
+    Haiku, whose rate is not measurable, and Fable, whose two sides of 14 September do not
+    agree -- publishes `value` None with the `status` saying why, and the interval alone.
+    `point` defaults to the rate itself when the two edges are the same number, which is the
+    Opus anchor's case and the one figure on the page with no interval of its own.
+
+    The inversion is the same either way: the interval widens on both sides at once,
+    cheapest rate against the top of the window's range and dearest against the bottom.
 
     `per_unit` converts the unit afterwards (dollars per token, for the API value).
     The window's interval is the spread of the readings it was taken from, not a
@@ -548,68 +559,98 @@ def _figure(window: dict, rate_lo: float | None, rate_hi: float | None,
         return {"value": None, "interval": None,
                 "status": status or window.get("status") or "no measured window"}
     lo, hi = window["interval"]
-    known = rate_lo == rate_hi
+    if point is None and rate_lo == rate_hi:
+        point = rate_lo
 
     def r(x: float):
         return round(x) if ndigits == 0 else round(x, ndigits)
 
-    return {"value": r(window["value"] / rate_lo * per_unit) if known else None,
+    return {"value": r(window["value"] / point * per_unit) if point else None,
             "interval": [r(lo / rate_hi * per_unit), r(hi / rate_lo * per_unit)],
-            "status": None if known else status}
+            "status": None if point else status}
 
 
-def _family_rates(fam: str, credits: dict,
-                  fable: dict | None = None) -> tuple[tuple, tuple, str | None]:
-    """((input low, input high), (output low, output high), status) for one family.
+def _family_rates(fam: str, credits: dict, model_rates: dict | None = None):
+    """The family's measured rate, from history/model-rates.json (tracker/credits.py).
 
-    A family with a published rate has low == high on both sides. Fable does not: its
-    rate is solved from the stretches at publish time (tracker/credits.py
-    fable_interval), never stored, and its status is the words the reconciliation put
-    on it. With no Fable-heavy stretch to solve from, both edges are None and every
-    figure derived from them publishes null with that status.
+    Every per-model figure the page states divides by one of these. The reference table in
+    data/prices.json is not consulted for a value here: it supplies the Opus anchor, which is
+    what a credit means in this repository, and the `reference_input` a row carries beside its
+    measurement for the page to draw. A family the fit could not measure carries a status
+    sentence and no number, which is the rule the Fable row has followed since PR #65.
     """
-    pair = credit_model.rates(fam, credits)
-    if pair is not None:
-        return (pair[0], pair[0]), (pair[1], pair[1]), None
-    interval = fable or {}
-    lo, hi = interval.get("input_low"), interval.get("input_high")
-    ratios = interval.get("output_ratio") or [None, None]
-    ratio_lo, ratio_hi = min(ratios) if ratios[0] else None, max(ratios) if ratios[0] else None
-    return ((lo, hi), (lo * ratio_lo if lo and ratio_lo else None,
-                       hi * ratio_hi if hi and ratio_hi else None),
-            interval.get("unresolved") or "rate not yet identified")
+    return credit_model.family_rate(fam, credits, model_rates)
 
 
-def _credits_per_model(window: dict, credits: dict, prices: dict, fable: dict) -> dict:
+def _relabel(value, labels: dict[str, str]):
+    """The same structure with every watched account's name replaced by its published label.
+
+    The measured-rate file is a working record in the repository and names the accounts it
+    fitted, in its keys (`jwork/pre`) and in its sentences. No published document names an
+    account (`ACCOUNT_LABELS`), and the test suite asserts it of the whole JSON, so the
+    provenance is relabelled on the way out rather than left out.
+    """
+    if isinstance(value, dict):
+        return {_relabel(k, labels): _relabel(v, labels) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_relabel(v, labels) for v in value]
+    if isinstance(value, str):
+        for name, label in labels.items():
+            value = value.replace(name, label)
+        return value
+    return value
+
+
+def _credits_per_model(window: dict, credits: dict, prices: dict,
+                       model_rates: dict | None, labels: dict[str, str]) -> dict:
     """Tokens per window per model, and the API list value of exactly those tokens.
 
     The measured quantity is the window in credits; a model's token figure is that
-    divided by the model's own credits per token, which is a conversion and not a
+    divided by the model's own measured credits per token, which is a conversion and not a
     measurement of the model's own cap. The API value is the same tokens valued at
     the dollar table's list price -- so it answers "what would this window have cost
     on the API", not "what does the meter charge". A family with credits but no row
     in the dollar table (Haiku) publishes null with a status rather than a guess.
+
+    Every row says where its rate came from. `rate_source` is "measured" on every family
+    whose rate the meter fit produced and "reference" on Opus alone, the unit anchor.
+    `reference_rate` is the January table's figure for the family, carried so the page can
+    draw it beside the measurement and never divided by. Where the fit produced no value --
+    Haiku, not measurable at all; Fable, whose two sides of 14 September disagree by more
+    than their intervals -- the row carries the interval and the status sentence, and every
+    figure derived from it publishes null rather than a plausible number.
     """
     out = {}
     for fam, row in credits["per_family"].items():
-        (in_lo, in_hi), (out_lo, out_hi), status = _family_rates(fam, credits, fable)
+        rate = _family_rates(fam, credits, model_rates)
+        in_lo, in_hi = rate.input_edges
+        out_lo, out_hi = rate.output_edges
+        status = rate.status
         model = (credits.get("list_price_model") or {}).get(fam)
         price = prices.get(model) if model else None
-        tokens = {"input": _figure(window, in_lo, in_hi, status=status),
-                  "output": _figure(window, out_lo, out_hi, status=status)}
+        tokens = {"input": _figure(window, in_lo, in_hi, status=status, point=rate.input),
+                  "output": _figure(window, out_lo, out_hi, status=status, point=rate.output)}
         if price is None:
             api = {cls: {"value": None, "interval": None,
                          "status": "no row in the dollar table, so no list price to value the tokens at"}
                    for cls in ("input", "output")}
         else:
-            api = {cls: _figure(window, lo, hi, per_unit=price[cls] / 1e6, status=status, ndigits=2)
-                   for cls, (lo, hi) in (("input", (in_lo, in_hi)), ("output", (out_lo, out_hi)))}
+            api = {cls: _figure(window, lo, hi, per_unit=price[cls] / 1e6, status=status,
+                                ndigits=2, point=pt)
+                   for cls, (lo, hi, pt) in (("input", (in_lo, in_hi, rate.input)),
+                                             ("output", (out_lo, out_hi, rate.output)))}
         out[fam] = {
             "list_price_model": model,
-            "credits_per_token": ({"input": in_lo, "output": out_lo} if status is None
-                                  else {"input": None, "output": None}),
-            "credits_per_token_interval": ({"input": [in_lo, in_hi], "output": [out_lo, out_hi]}
-                                           if status is not None else None),
+            "credits_per_token": {"input": rate.input, "output": rate.output},
+            "credits_per_token_interval": ({"input": list(rate.input_interval),
+                                            "output": list(rate.output_interval)}
+                                           if rate.input_interval else None),
+            "rate_source": rate.rate_source,
+            "anchor": rate.anchor,
+            "reference_rate": {"input": rate.reference_input, "output": rate.reference_output},
+            "reference_rate_note": ("the January 2026 table's figure for this family, drawn beside "
+                                    "the measurement and used in no arithmetic"),
+            "measured_rate": _relabel(rate.detail, labels),
             "interval_source": row.get("interval_source"),
             "interval_rule": row.get("interval_rule"),
             "tokens_per_window": tokens,
@@ -633,8 +674,9 @@ def _split_credits_per_token(split: dict, rate_in: float | None, rate_out: float
     return at_input * rate_in + split.get("output", 0) * rate_out
 
 
-def _credits_sessions(window: dict, credits: dict, fable: dict, split: dict, split_source: str,
-                      session_tokens: dict, windows_per_week: float | None) -> dict:
+def _credits_sessions(window: dict, credits: dict, split: dict, split_source: str,
+                      session_tokens: dict, windows_per_week: float | None,
+                      model_rates: dict | None = None) -> dict:
     """Sessions a window and a week hold, per model, at a stated cache mix.
 
     A session figure is only as meaningful as the cache mix behind it: at the
@@ -661,20 +703,27 @@ def _credits_sessions(window: dict, credits: dict, fable: dict, split: dict, spl
                                        "status": "no credit rate for this model"},
                           "cache_normalised": True, "split": dict(split), "derivation": "credits"}
             continue
-        (in_lo, in_hi), (out_lo, out_hi), status = _family_rates(fam, credits, fable)
+        rate = _family_rates(fam, credits, model_rates)
+        in_lo, in_hi = rate.input_edges
+        out_lo, out_hi = rate.output_edges
+        status = rate.status
         lo = _split_credits_per_token(split, in_lo, out_lo, weight)
         hi = _split_credits_per_token(split, in_hi, out_hi, weight)
-        tokens = _figure(window, lo, hi, status=status)
-        per_window = _figure(window, lo, hi, per_unit=1 / median_tokens, status=status, ndigits=1)
+        point = _split_credits_per_token(split, rate.input, rate.output, weight)
+        tokens = _figure(window, lo, hi, status=status, point=point)
+        per_window = _figure(window, lo, hi, per_unit=1 / median_tokens, status=status,
+                             ndigits=1, point=point)
         if windows_per_week is None:
             per_week = {"value": None, "interval": None,
                         "status": "no measured windows per week to multiply by"}
         else:
             per_week = _figure(window, lo, hi, per_unit=windows_per_week / median_tokens,
-                               status=status, ndigits=1)
+                               status=status, ndigits=1, point=point)
         out[model] = {
-            "credits_per_token_at_split": round(lo, 8) if status is None else None,
-            "credits_per_token_at_split_interval": None if status is None else [round(lo, 8), round(hi, 8)],
+            "credits_per_token_at_split": round(point, 8) if point else None,
+            "credits_per_token_at_split_interval": (None if lo is None or lo == hi
+                                                    else [round(lo, 8), round(hi, 8)]),
+            "rate_source": rate.rate_source,
             "tokens_per_window_at_split": tokens,
             "median_session_tokens": median_tokens,
             "per_window": per_window,
@@ -715,6 +764,119 @@ def _effort_cache_mix(effort_meta: dict | None) -> dict:
                     "a cold run writes cache where a warm one reads it",
         }
     return out
+
+
+def _median_run_credits(runs: list[dict], rate_in: float | None, rate_out: float | None,
+                        weight: float) -> float | None:
+    """The median credits a run of one effort cell costs, at one pair of rates."""
+    if rate_in is None or rate_out is None or not runs:
+        return None
+    return median([credit_model.input_side(r, weight) * rate_in + r.get("output", 0) * rate_out
+                   for r in runs])
+
+
+def _effort_credits(effort_meta: dict | None, credits: dict, window: dict,
+                    model_rates: dict | None) -> dict:
+    """Each effort cell in credits, at the same measured rates every other figure uses.
+
+    The matrix's own cells are tokens per run (`data/effort_matrix.json`, median total tokens)
+    and `effort_usd` prices them in list dollars. This prices the same runs in the unit the
+    meter actually charges: every run's own token bundle at the family's measured rate, cache
+    writes on the input side and cache reads at the published weight, and the median over the
+    cell's runs. `percent_of_window` is that median over the measured five-hour window, which
+    is directly comparable with the matrix's own recorded `usage_deltas`.
+
+    A cell whose family has no measured rate publishes null with the rate's status, exactly as
+    the per-model rows do: at output 3x or 5x a Fable run's credits differ by more than the
+    figure is worth, and a number would hide that.
+    """
+    weight = credit_model.cache_read_weight(credits)
+    out: dict[str, dict] = {}
+    for cell, runs in ((effort_meta or {}).get("runs") or {}).items():
+        model, _, level = cell.rpartition("/")
+        if not model or not runs:
+            continue
+        fam = credit_model.family(model, credits)
+        rate = _family_rates(fam, credits, model_rates) if fam else None
+        if rate is None:
+            out.setdefault(model, {})[level] = {
+                "median_credits": {"value": None, "interval": None,
+                                   "status": "no credit family for this model"},
+                "percent_of_window": {"value": None, "interval": None,
+                                      "status": "no credit family for this model"},
+                "runs": len(runs), "rate_source": None, "derivation": "credits"}
+            continue
+        # One number per run at each edge of the rate, then the median of each -- so the
+        # interval is the cell's own median under the cheapest and the dearest rate, not a
+        # median of intervals.
+        in_lo, in_hi = rate.input_edges
+        out_lo, out_hi = rate.output_edges
+        lo = _median_run_credits(runs, in_lo, out_lo, weight)
+        hi = _median_run_credits(runs, in_hi, out_hi, weight)
+        point = _median_run_credits(runs, rate.input, rate.output, weight)
+        window_value, window_interval = window["value"], window["interval"]
+        percent = {"value": None, "interval": None,
+                   "status": rate.status or window.get("status") or "no measured window"}
+        if window_value and lo is not None and hi is not None:
+            percent = {"value": round(point / window_value * 100, 2) if point else None,
+                       # A dearer rate spends more of the window, so the cheap edge of the
+                       # rate goes with the wide edge of the window and the other way about.
+                       "interval": [round(lo / window_interval[1] * 100, 2),
+                                    round(hi / window_interval[0] * 100, 2)],
+                       "status": None if point else rate.status}
+        out.setdefault(model, {})[level] = {
+            "median_credits": {"value": round(point) if point else None,
+                               "interval": None if lo is None else [round(lo), round(hi)],
+                               "status": None if point else rate.status},
+            "percent_of_window": percent,
+            "runs": len(runs),
+            "rate_source": rate.rate_source,
+            "note": "the cell's own runs priced at the family's measured credit rate, cache "
+                    "writes at the input rate and cache reads at the published weight; "
+                    "percent_of_window is that median over the measured five-hour window",
+            "derivation": "credits",
+        }
+    return out
+
+
+def _measured_rates_block(model_rates: dict | None, labels: dict[str, str]) -> dict:
+    """The measured-rate source as the page sees it: the rates, the fits behind them, no names.
+
+    `history/model-rates.json` is the record in the repository, written by
+    `tools/model_rates.py` with the command that regenerates it in its own `_meta`. This is
+    that block with every watched account's name replaced by its published label. It carries
+    the fitted cache-read weight too, which the publisher does *not* price stretches with: the
+    weight in `data/prices.json` is still 0, so the weight here sits beside it as a
+    measurement, with `used_in_pricing` false saying which is which.
+    """
+    if not model_rates:
+        return {"status": credit_model.NO_MEASURED_SOURCE, "per_family": {}, "derivation": "credits"}
+    block = _relabel({k: v for k, v in model_rates.items() if k != "per_family"}, labels)
+    block["per_family"] = {
+        fam: _relabel({k: v for k, v in row.items()
+                       if k in ("input", "interval", "status", "rate_source", "anchor",
+                                "reference_input", "times_opus", "times_opus_interval",
+                                "n_fits", "agree", "per_fit", "why", "output_multiplier",
+                                "max_share_of_a_clean_stretch")}, labels)
+        for fam, row in model_rates["per_family"].items()}
+    weight = dict(block.get("cache_read_weight") or {})
+    if weight:
+        weight["used_in_pricing"] = False
+        weight["used_in_pricing_note"] = (
+            "the stretches are still priced with cache reads at data/prices.json's "
+            "cache_read_weight, which is 0; this is the weight the same fit puts on them, "
+            "published beside it rather than folded into the window")
+        block["cache_read_weight"] = weight
+    block["status"] = None
+    block["source_file"] = credit_model.MODEL_RATES_PATH.name
+    block["source"] = ("history/model-rates.json, written by tools/model_rates.py --json from the "
+                       "passive stretches already in the repository; the command that regenerates "
+                       "it is in that file's own `_meta.command`, and it sends no traffic. "
+                       "docs/findings-2026-09-20-measured-rates.md records every rate and every "
+                       "published figure that moved when the page stopped dividing by the "
+                       "reference table.")
+    block["derivation"] = "credits"
+    return block
 
 
 def _window_credits_from_weekly(weekly: dict, weekly_events: list) -> dict:
@@ -787,7 +949,7 @@ def _reference_block() -> dict:
 def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, probe_rows: list[dict],
                    effort_meta: dict | None, credits: dict, prices: dict, split: dict,
                    split_source: str, session_tokens: dict, weekly: dict,
-                   weekly_events: list) -> tuple[dict, dict]:
+                   weekly_events: list, model_rates: dict | None = None) -> tuple[dict, dict]:
     """(the published `credits` block, the across-the-cut figures the event row carries).
 
     Everything here is computed from the history files at publish time. Nothing is
@@ -825,23 +987,31 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     return {
         "window_credits": window,
         "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
-        "per_model": _credits_per_model(window, credits, prices, fable),
-        "sessions": _credits_sessions(window, credits, fable, split, split_source, session_tokens,
-                                      windows_per_week),
+        "per_model": _credits_per_model(window, credits, prices, model_rates, labels),
+        "sessions": _credits_sessions(window, credits, split, split_source, session_tokens,
+                                      windows_per_week, model_rates),
+        "measured_rates": _measured_rates_block(model_rates, labels),
         "effort_cache_mix": _effort_cache_mix(effort_meta),
+        "effort_credits": _effort_credits(effort_meta, credits, window, model_rates),
         "five_hour_window_across_cut": cut,
         "fable_interval": fable,
         "rates": {"per_family": {fam: (dict(row, interval=fable) if fam == "fable" else row)
                                  for fam, row in credits["per_family"].items()},
+                  "role": credits.get("role"),
                   "cache_write": credits.get("cache_write"),
                   "cache_read_weight": credits.get("cache_read_weight"),
                   "cache_read_weight_range": credits.get("cache_read_weight_range"),
                   # `_credits._source` in data/prices.json is the long internal note, and it
                   # names the watched accounts. Published strings never do (ACCOUNT_LABELS),
                   # so the pointer goes out and the note stays in the repository.
-                  "source": ("data/prices.json `_credits`; rates from "
+                  "source": ("data/prices.json `_credits`, the reference table: rates from "
                              f"{CREDITS_TABLE_URL}, a January 2026 reference, measured against in "
-                             "docs/findings-2026-09-20-reconciliation.md")},
+                             "docs/findings-2026-09-20-reconciliation.md. The rates the page's "
+                             "per-model figures divide by are the measured ones in "
+                             "`measured_rates`, not these."),
+                  "used_in_pricing": ("the Opus anchor, and the cache-read weight; every other "
+                                      "per-model figure the page states divides by a measured "
+                                      "rate (docs/findings-2026-09-20-measured-rates.md)")},
         "harness_runs_excluded": [{"account_label": labels.get(r.account, "unwatched"),
                                    "start": r.start.isoformat(), "end": r.end.isoformat(),
                                    "reason": r.reason} for r in runs],

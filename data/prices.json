@@ -1,7 +1,9 @@
 {
   "_source": "https://docs.anthropic.com/en/docs/about-claude/pricing fetched 2026-09-06; USD per million tokens; cache_write is the 5-minute rate. meter_weight is meter percent per list dollar relative to Sonnet 5; Fable's 1.0 is measured: the 2026-09-06 5-tick Fable probe cost $1.08 of list value per 1% against $0.98 for Sonnet on the same cache-write-heavy payload (ratio 0.91, within probe error). class_weight is meter percent per list dollar for each token class relative to cache_write, the class the Sonnet probe is made of. class_weight.output is maintained by the publisher (tracker/weight.py): the weekly Sunday Fable output run (bin/output-probe.sh, payload output) supplies a row, and the next daily publish solves the weight at which that row and the latest Fable prose row read the same meter dollars per 1%, writes it to every model here, and records the pair under _output_weight; a value more than 30% from the current one is refused, recorded with applied false, and alerts Jonathan instead. The 1.8 hand-entered on 2026-09-06 was the crude ratio of the two rows' list values; the first automatic recompute from the same pair gave 1.95 because the output row's own cache traffic (12% of its list value) sits on the unweighted side. input and cache_read are unmeasured and assumed 1.0; the same class weights are assumed for every model. Opus 5's 1.0 is measured too: a paired run on the Jono Work account on 2026-09-08, same 5-hour window, cost $0.918 of list value per 1% for Opus (ticks 7 to 10) against $0.963 for Sonnet (ticks 2 to 5), ratio 0.954, within probe error, so Opus keeps meter_weight 1.0. The first Opus row (2026-09-07 on Dave, $0.682 per 1%, early tick) is flagged outlier by hand under the rotation's own decide rule: the later same-model reading agreed with the all-model median, not with it. cache_read is 0.0 since 2026-09-16, measured on masterrig: over 111 idle-bounded windows (tools/idle_burst.py, 18 Aug to 15 Sep, $4,759 of list value against 2,214 meter points) the list value per 1% climbs with the cache_read share of the window (median $1.67 at a 25-45% share, $2.69 at 45-60%, $3.28 at 60-75%, $6.13 above 75%) while the non-cache_read value per 1% holds at $1.11, $1.15, $1.25, $1.43 across the same bins ($0.94 aggregate), and a non-negative least squares fit gives cache_read a weight of 0.000 in every configuration tried. The probe never saw this because its payload is 98% cache_write by list value. output is 1.0 since 2026-09-16, measured on gs: a least-squares fit of meter movement on list dollars of (input + cache_write) and of output over the 60 jwork stretches the capture check accepted 2026-09-05..15 (tracker.gs_passive --fit-output-weight, cache_read pinned at 0.0) gives output 1.018 relative to cache_write, residual 1.7 points of meter on 10% stretches, with output 42% of the list value fitted. The 1.8 from the single 2026-09-06 output probe run is superseded; the Sunday output probe is retired with the rest of the probes.",
   "_credits": {
-    "_source": "Credits per token for the five-hour meter. The meter does not work in dollars: it charges ceil(input_tokens x input_rate + output_tokens x output_rate) of an internal unit, at a small rational rate per model. The per-family rates are the Shellac reconstruction (https://she-llac.com/claude-limits, crossposted 2026-01-25), recorded with their derivation in docs/reference-2026-09-20-shellac-credits-model.md. That table is a January 2026 reference, never an input to arithmetic: the five-hour window, the cache-read weight and Fable's interval are all measured against it in docs/findings-2026-09-20-reconciliation.md; Fable's interval is not stored here at all, it is solved from the stretches at publish time (reproduce with tools/reconcile_window.py over the watched accounts' stretch files). The dollar table above is untouched and still feeds the contributor path and the legacy token figures.",
+    "_source": "Credits per token for the five-hour meter, as a REFERENCE TABLE only. The meter does not work in dollars: it charges ceil(input_tokens x input_rate + output_tokens x output_rate) of an internal unit, at a small rational rate per model. The per-family rates here are the Shellac reconstruction (https://she-llac.com/claude-limits, crossposted 2026-01-25), recorded with their derivation in docs/reference-2026-09-20-shellac-credits-model.md. That table is a January 2026 reference and never an input to arithmetic: the rates the page's per-model figures divide by are measured on the meter and live in history/model-rates.json (tools/model_rates.py, docs/findings-2026-09-20-measured-rates.md), which is where Sonnet's measured rate, Haiku's 'not measurable' and Fable's two disagreeing sides of 14 September come from. Two things here are still used: Opus's row, which is the unit anchor every measured rate is expressed against, and the cache-read weight, which is measured elsewhere (cache_read_weight_source) rather than taken from the article. The five-hour window and Fable's solved interval are measured in docs/findings-2026-09-20-reconciliation.md; Fable's interval is not stored here at all, it is solved from the stretches at publish time (reproduce with tools/reconcile_window.py over the watched accounts' stretch files). The dollar table above is untouched and still feeds the contributor path and the legacy token figures.",
+    "role": "reference",
+    "role_note": "reference: shown beside a measurement, never used to state a per-model figure. The one exception is Opus's row, marked anchor below, which defines the unit -- and which nothing in our data tests, so if it is wrong every credit figure scales with it.",
     "unit": "credits per token. input and output are [numerator, denominator] so the exact fifteenths survive a JSON round trip; a consumer divides.",
     "cache_write": "charged at the model's plain input rate, not the API's 1.25x write premium",
     "cache_read_weight": 0,
@@ -20,7 +22,9 @@
         "output": [
           10,
           15
-        ]
+        ],
+        "role": "reference",
+        "measured": "not measurable from our stretches: see history/model-rates.json measured_rates.per_family.haiku. The highest Haiku share of any clean stretch on a fitted account is zero, so this row stands untested and the page publishes a status sentence rather than a number."
       },
       "sonnet": {
         "matches": "sonnet",
@@ -31,7 +35,9 @@
         "output": [
           30,
           15
-        ]
+        ],
+        "role": "reference",
+        "measured": "measured relative to Opus in history/model-rates.json measured_rates.per_family.sonnet, above this row's 6/15 in every fit. The page divides by the measured rate and draws this one beside it."
       },
       "opus": {
         "matches": "opus",
@@ -43,7 +49,10 @@
           50,
           15
         ],
-        "note": "every Opus version prices as Opus, which is why this table is keyed by family"
+        "note": "every Opus version prices as Opus, which is why this table is keyed by family",
+        "role": "anchor",
+        "anchor": true,
+        "anchor_note": "the unit anchor: what a credit means in this repository. Every other family's rate is measured relative to this row, and the fit rescales its Opus coefficient to it, so nothing in our data tests this row itself."
       },
       "fable": {
         "matches": "fable",
@@ -55,7 +64,9 @@
         ],
         "interval_rule": "computed at publish time by tracker/credits.py fable_interval, never stored here: the rate is solved per Fable-heavy stretch against the measured window, and the interval runs from the lowest per-account p25 at output 5x input to the highest per-account p25 at output 3x. Storing the endpoints would freeze a measurement into a table of reference rates, and it narrows as clean Fable-heavy stretches accrue from ordinary use.",
         "output_ratio_source": "docs/reference-2026-09-20-shellac-credits-model.md: every model in the article's table uses output = 5x input; the same note fits 3 for Fable with a bootstrap interval of [3, 3]. docs/findings-2026-09-20-reconciliation.md: the output ratio (3x or 5x) is not separable from our stretches, so both candidates are carried and neither is chosen.",
-        "interval_source": "docs/findings-2026-09-20-reconciliation.md, \"Fable's rate\". Only three stretches on the account with a usable capture column survive the capture gate, and the solve is inflated wherever the meter counts machines the transcripts never saw, so both edges are a p25."
+        "interval_source": "docs/findings-2026-09-20-reconciliation.md, \"Fable's rate\". Only three stretches on the account with a usable capture column survive the capture gate, and the solve is inflated wherever the meter counts machines the transcripts never saw, so both edges are a p25.",
+        "role": "reference",
+        "measured": "fitted on both sides of 2026-09-14 in history/model-rates.json measured_rates.per_family.fable, and the two sides do not agree within their intervals, so the page publishes the interval and the words 'rate not yet identified' rather than a rate."
       }
     },
     "list_price_model": {

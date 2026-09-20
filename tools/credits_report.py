@@ -476,17 +476,24 @@ def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse
 PUBLISH_CHECK_TOLERANCE = 0.005
 PASSIVE = Path("history/passive.json")
 PRICES = Path("data/prices.json")
+#: The measured per-model rates the publisher divides by, written by tools/model_rates.py.
+MODEL_RATES = Path("history/model-rates.json")
 
 
 def recompute_credits_block(published: dict, gs: Path, masterrig: Path, probes: Path,
-                            effort_matrix: Path, passive: Path, prices: Path) -> dict:
+                            effort_matrix: Path, passive: Path, prices: Path,
+                            model_rates: Path = MODEL_RATES) -> dict:
     """The `credits` block rebuilt from the history files, at the publish's own instant.
 
     Everything is read again from disk -- the stretches, the probe rows, the
-    effort-matrix runs, the weekly window points, the rates -- and put through the
-    publisher's own code. The one thing taken from the published JSON is
-    `generated_at`: the weekly block's current regime is bounded by the publish time,
-    so recomputing at "now" would compare two different questions.
+    effort-matrix runs, the weekly window points, the rates, the measured per-model
+    rates -- and put through the publisher's own code. The one thing taken from the
+    published JSON is `generated_at`: the weekly block's current regime is bounded by the
+    publish time, so recomputing at "now" would compare two different questions.
+
+    A figure nothing on disk can produce is what this is for. The measured rates are read
+    from `history/model-rates.json` here, never from the published JSON, so a per-model row
+    published at a rate the committed fit does not hold fails the check.
     """
     def read(path: Path, default=None):
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
@@ -511,7 +518,8 @@ def recompute_credits_block(published: dict, gs: Path, masterrig: Path, probes: 
     block, _cut = publisher._credits_block(
         read(gs, {}), read(masterrig, {}), probe_rows, matrix.get("_meta"),
         credit_model.load_credits(prices_raw), priced_models, split, source,
-        passive_body.get("session_tokens", {}), weekly, weekly_events)
+        passive_body.get("session_tokens", {}), weekly, weekly_events,
+        credit_model.load_model_rates(model_rates))
     return block
 
 
@@ -607,7 +615,8 @@ def publish_check(a: argparse.Namespace) -> int:
         print(f"publish check failed: {a.publish_check} carries no `credits` block")
         return 1
     recomputed = recompute_credits_block(published, a.gs, a.masterrig, a.probes,
-                                         a.effort_matrix, a.passive, a.prices)
+                                         a.effort_matrix, a.passive, a.prices,
+                                         getattr(a, "model_rates", MODEL_RATES))
     rows = compare_published(published["credits"], recomputed, a.tolerance)
     print(render_publish_check(rows, a.publish_check, a.tolerance), end="")
     return 1 if any(not r["ok"] for r in rows) else 0
@@ -646,6 +655,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="history/passive.json, for --publish-check's weekly window points")
     ap.add_argument("--prices", type=Path, default=PRICES,
                     help="data/prices.json, for --publish-check's credit rates and list prices")
+    ap.add_argument("--model-rates", type=Path, default=MODEL_RATES, dest="model_rates",
+                    help=f"the measured per-model rates the publisher divides by "
+                         f"(default {MODEL_RATES}), written by tools/model_rates.py --json")
     ap.add_argument("--tolerance", type=float, default=PUBLISH_CHECK_TOLERANCE,
                     help="how far a recomputed figure may sit from the published one")
     a = ap.parse_args(argv)
