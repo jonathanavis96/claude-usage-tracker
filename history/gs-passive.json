@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-20T14:30:12.858657+00:00",
+ "generated_at": "2026-09-20T15:30:12.461156+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 851,
+    "reset_verified_samples": 862,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3954,
+    "samples": 3965,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-20T14:27:57+00:00"
+    "last": "2026-09-20T15:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -6738,18 +6738,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 622,
+    "reset_verified_samples": 633,
     "since": null,
-    "samples": 1182,
+    "samples": 1193,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-20T14:27:57+00:00"
+    "last": "2026-09-20T15:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 525,
-    "turns": 16069,
+    "files": 533,
+    "turns": 17052,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -8165,6 +8165,60 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-20T14:22:39+00:00",
+     "end": "2026-09-20T15:05:50+00:00",
+     "delta_pct": 11.0,
+     "windows": 2,
+     "usd": 14.6254,
+     "usd_per_pct": 1.3296,
+     "bounds": [
+      1.125,
+      1.625
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 976,
+       "output": 34777,
+       "cache_read": 86125102,
+       "cache_write": 2262686
+      },
+      "claude-fable-5-1": {
+       "input": 886,
+       "output": 22972,
+       "cache_read": 11742379,
+       "cache_write": 160118,
+       "cache_write_1h": 160118
+      },
+      "claude-opus-5": {
+       "input": 228,
+       "output": 12953,
+       "cache_read": 16989521,
+       "cache_write": 629470
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 643,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.532,
+     "capture": 0.8679
     }
    ],
    "runs": [
@@ -8222,44 +8276,44 @@
     },
     {
      "date": "2026-09-20",
-     "usd_per_pct": 0.9875,
-     "delta_pct": 41.0,
-     "stretches": 4,
-     "rounding": 0.0488,
+     "usd_per_pct": 1.0598,
+     "delta_pct": 52.0,
+     "stretches": 5,
+     "rounding": 0.0769,
      "bounds": [
-      0.9415,
-      1.0381
+      0.9841,
+      1.1482
      ],
-     "pieces": 2,
+     "pieces": 4,
      "reset_verified": true,
      "capture_diagnosed": 3
     }
    ],
    "split": {
     "input": 1.8e-05,
-    "output": 0.002446,
-    "cache_read": 0.982111,
-    "cache_write": 0.015425,
-    "cache_write_1h": 0.005442
+    "output": 0.002315,
+    "cache_read": 0.981502,
+    "cache_write": 0.016165,
+    "cache_write_1h": 0.005153
    },
-   "last_usable_at": "2026-09-20T02:58:39+00:00",
+   "last_usable_at": "2026-09-20T15:05:50+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 18,
-     "median": 1.4733,
-     "half_range": 0.4914,
-     "mad": 0.2043,
-     "cv": 0.2445
+     "n": 19,
+     "median": 1.4202,
+     "half_range": 0.5098,
+     "mad": 0.2161,
+     "cv": 0.2392
     },
     "daily": {
      "n": 3,
      "median": 1.5477,
-     "half_range": 0.1871,
+     "half_range": 0.1638,
      "mad": 0.0182,
-     "cv": 0.2407
+     "cv": 0.2065
     }
    },
    "weekly_by_window": [
@@ -8373,12 +8427,24 @@
     },
     {
      "window_ending": "2026-09-20T14:39:59.863254+00:00",
-     "windows": 4.4,
-     "five_hour_pct": 44.0,
+     "windows": 4.7,
+     "five_hour_pct": 47.0,
      "seven_day_pct": 10.0,
      "rounding_interval": [
-      3.667,
-      5.4061
+      3.9263,
+      5.762
+     ],
+     "pieces": 1,
+     "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-20T19:40:00.115835+00:00",
+     "windows": 7.0,
+     "five_hour_pct": 14.0,
+     "seven_day_pct": 2.0,
+     "rounding_interval": [
+      3.4811,
+      36.258
      ],
      "pieces": 1,
      "reset_verified": true
