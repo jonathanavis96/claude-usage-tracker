@@ -32,6 +32,22 @@ are printed:
   artefact of whole-percent quantisation or of tokens the transcripts never captured.
   `--cache-read-weight 0` reads the article literally.
 
+What is left out, and why it is not a date rule. A stretch is excluded when it overlaps one
+of the tracker's own runs on the same account: a probe row in history/probes.jsonl, spanning
+[ts, ts + elapsed_s], or the effort-matrix run recorded in data/effort_matrix.json's `_meta`
+(2026-09-09T11:28:37Z to 14:53:22Z, on jwork). There the tracker was driving the account, so
+the meter moved on the instrument's own work and the stretch's percent is not a reading of a
+session's tokens.
+
+The six jwork stretches from 12:20 to 14:58 on 2026-09-09 that read 0.28 to 0.53 capture,
+against about 1.0 either side, were first put down to a probe. They were not: probes.jsonl
+holds two rows that day and both are Dave's, both finished before 00:30Z. The effort matrix
+brackets them. Keying on the runs rather than on the date catches that, also catches three
+long jwork stretches a probe cut through on 6-8 and 14-15 September, and leaves the rest of
+9 September where it belongs -- in the series. `--keep-harness-runs` turns the exclusion off
+so its effect can be seen; the excluded stretches are always printed with the run that
+caused them.
+
 Eras are the plan's, by the stretch's end in UTC: `5x` before 2026-08-14T12:00Z, `20x` to
 2026-09-14T12:00Z, `20x-cut` after. (tracker/passive.py puts the August seam at 17:00Z,
 where the meter's own weekly-to-window ratio moved; the difference covers one afternoon
@@ -51,7 +67,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
@@ -75,6 +92,69 @@ FABLE_HEAVY = 0.50
 CLASSES = ("input", "output", "cache_read", "cache_write")
 
 REPORTS = {"gs": Path("history/gs-passive.json"), "masterrig": Path("history/masterrig-passive.json")}
+PROBES = Path("history/probes.jsonl")
+EFFORT_MATRIX = Path("data/effort_matrix.json")
+#: data/effort_matrix.json's `_meta` records `started` and `finished` but not which account
+#: the matrix ran on. It ran on jwork (2026-09-20 review), so the account is named here
+#: rather than read. If a later matrix runs elsewhere, this is the line to change.
+EFFORT_MATRIX_ACCOUNT = "jwork"
+
+
+@dataclass(frozen=True)
+class HarnessRun:
+    """A span in which the tracker was driving the account itself, not observing it."""
+    account: str
+    start: datetime
+    end: datetime
+    reason: str
+
+
+def harness_runs(probes: Path = PROBES, effort_matrix: Path = EFFORT_MATRIX) -> list[HarnessRun]:
+    """Every span the tracker's own instruments occupied, per account.
+
+    A probe row's `ts` is the run's start (tracker/probe.py returns ProbeResult(start, ...))
+    and `elapsed_s` its duration, so the row occupies [ts, ts + elapsed_s] on its own
+    `account`. The effort matrix records its own `started` and `finished`.
+
+    Why this and not a date rule. The six jwork stretches of 2026-09-09 that read 0.28 to
+    0.53 capture against about 1.0 either side were first blamed on a probe; there is no
+    jwork probe row that day (history/probes.jsonl has two, both Dave's, both before
+    00:30Z). The effort-matrix run brackets them: 11:28:37Z to 14:53:22Z. Keying on the runs
+    themselves catches that, catches the probe-overlapping stretches a date rule would miss,
+    and leaves the rest of 9 September in the series -- which a blanket date rule would not.
+    """
+    out: list[HarnessRun] = []
+    if probes.exists():
+        for line in probes.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not row.get("account") or not row.get("ts"):
+                continue
+            start = datetime.fromisoformat(row["ts"])
+            out.append(HarnessRun(row["account"], start,
+                                  start + timedelta(seconds=row.get("elapsed_s") or 0),
+                                  f"probe {row.get('model', '?')}/{row.get('effort', '?')} "
+                                  f"from {row['ts'][:19]}Z"))
+    if effort_matrix.exists():
+        meta = json.loads(effort_matrix.read_text(encoding="utf-8")).get("_meta") or {}
+        if meta.get("started") and meta.get("finished"):
+            out.append(HarnessRun(EFFORT_MATRIX_ACCOUNT, datetime.fromisoformat(meta["started"]),
+                                  datetime.fromisoformat(meta["finished"]),
+                                  f"effort matrix {meta['started'][:19]}Z to {meta['finished'][:19]}Z"))
+    return sorted(out, key=lambda r: (r.account, r.start))
+
+
+def overlapping_run(runs: list[HarnessRun], account: str, start: datetime,
+                    end: datetime) -> HarnessRun | None:
+    """The first run of this account whose span overlaps [start, end], or None.
+
+    Half-open on both sides, so a stretch that only meets a run at an instant is kept.
+    """
+    for run in runs:
+        if run.account == account and start < run.end and run.start < end:
+            return run
+    return None
 
 
 def family(model: str) -> str | None:
@@ -118,16 +198,26 @@ def short(model: str) -> str:
 
 
 def load_rows(paths: dict[str, Path], cache_read_weight: float, fable_input: float,
-              fable_ratio: float, min_capture: float | None = None) -> tuple[list[dict], dict]:
-    """One row per priceable stretch, and a count of what was left out and why.
+              fable_ratio: float, min_capture: float | None = None,
+              runs: list[HarnessRun] | None = None) -> tuple[list[dict], dict, list[dict]]:
+    """One row per priceable stretch, a count of what was left out and why, and the harness rows.
 
-    A stretch is left out when it has no tokens at all (the meter moved and the host saw
-    nothing of it), when it has not moved, when the rates value its tokens at nothing, when
-    a model carrying tokens has no rate, or when `min_capture` is given and the stretch's
-    own capture is below it or absent.
+    A stretch is left out when it overlaps one of `runs` on its own account (the tracker was
+    driving the account, so its percent is not a measurement of a session's tokens), when it
+    has no tokens at all (the meter moved and the host saw nothing of it), when it has not
+    moved, when the rates value its tokens at nothing, when a model carrying tokens has no
+    rate, or when `min_capture` is given and the stretch's own capture is below it or absent.
+
+    The harness-run test comes first and is reported stretch by stretch, because it is a
+    statement about where the data came from rather than about whether it can be priced: a
+    stretch cut by a probe or by the effort matrix is not evidence about ordinary use however
+    cleanly it prices.
     """
     rows: list[dict] = []
-    skipped = {"no_tokens": 0, "no_movement": 0, "no_credits": 0, "unknown_model": 0, "below_min_capture": 0}
+    excluded: list[dict] = []
+    runs = list(runs or [])
+    skipped = {"harness_run": 0, "no_tokens": 0, "no_movement": 0, "no_credits": 0,
+               "unknown_model": 0, "below_min_capture": 0}
     unknown: set[str] = set()
     for path in paths.values():
         if not path.exists():
@@ -135,6 +225,14 @@ def load_rows(paths: dict[str, Path], cache_read_weight: float, fable_input: flo
         data = json.loads(path.read_text(encoding="utf-8"))
         for name, body in data.get("accounts", {}).items():
             for st in body.get("stretches", []):
+                run = overlapping_run(runs, name, datetime.fromisoformat(st["start"]),
+                                      datetime.fromisoformat(st["end"]))
+                if run is not None:
+                    skipped["harness_run"] += 1
+                    excluded.append({"account": name, "start": st["start"], "end": st["end"],
+                                     "delta_pct": st.get("delta_pct"), "capture": st.get("capture"),
+                                     "status": st.get("status"), "reason": run.reason})
+                    continue
                 tokens = {m: t for m, t in st.get("tokens", {}).items() if raw_tokens(t)}
                 if not tokens:
                     skipped["no_tokens"] += 1
@@ -184,8 +282,9 @@ def load_rows(paths: dict[str, Path], cache_read_weight: float, fable_input: flo
                     "tokens": tokens,
                 })
     rows.sort(key=lambda r: (r["account"], r["end"]))
+    excluded.sort(key=lambda r: (r["account"], r["end"]))
     skipped["unknown_models"] = sorted(unknown)
-    return rows, skipped
+    return rows, skipped, excluded
 
 
 def quartiles(values: list[float]) -> tuple[float, float, float]:
@@ -285,7 +384,27 @@ def _table(header: tuple[str, ...], widths: tuple[int, ...], lines: list[tuple[s
     return "\n".join(out)
 
 
-def render(rows: list[dict], skipped: dict, args: argparse.Namespace) -> str:
+def _excluded_table(excluded: list[dict]) -> list[str]:
+    """The harness-run exclusions, one line each, with the run that caused them."""
+    out = ["\nExcluded: the stretch overlaps one of the tracker's own runs on that account --",
+           "a probe row in history/probes.jsonl, or the effort-matrix run in data/effort_matrix.json.",
+           "The instrument was driving the account there, so the percent is not a reading of a session."]
+    if not excluded:
+        return [*out, "  (none)"]
+    head = ("account", "stretch start", "end", "delta", "capture", "caused by")
+    widths = (9, 19, 19, 5, 7, 52)
+    out.append("  ".join(h.ljust(w) for h, w in zip(head, widths)).rstrip())
+    out.append("  ".join("-" * w for w in widths))
+    for e in excluded:
+        cap = "-" if e["capture"] is None else f"{e['capture']:.3f}"
+        delta = "-" if e["delta_pct"] is None else f"{e['delta_pct']:g}"
+        out.append("  ".join([e["account"].ljust(widths[0]), e["start"][:19].ljust(widths[1]),
+                              e["end"][:19].ljust(widths[2]), delta.rjust(widths[3]),
+                              cap.rjust(widths[4]), e["reason"]]).rstrip())
+    return out
+
+
+def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse.Namespace) -> str:
     out: list[str] = []
     out.append("Credits per 1% of the five-hour meter, from history/*-passive.json.")
     out.append("Rates: docs/reference-2026-09-20-shellac-credits-model.md (branch step-vs-trend-finding),")
@@ -300,6 +419,7 @@ def render(rows: list[dict], skipped: dict, args: argparse.Namespace) -> str:
     if any(r["account"] == "masterrig" for r in rows):
         out.append("masterrig's meter also counts web, phone and other machines, so its rows divide real")
         out.append("meter movement by only the tokens this host saw and read low. See each stretch's capture.")
+    out.extend(_excluded_table(excluded))
 
     out.append("\nBy account, era and dominant model (over 90% of the stretch's credits, else mixed)")
     header = ("account", "era", "dominant>90%", "n", "median cpp", "p25", "p75")
@@ -354,17 +474,24 @@ def main(argv: list[str] | None = None) -> int:
                     help="provisional Fable input rate in credits per token")
     ap.add_argument("--fable-output-ratio", type=float, default=FABLE_OUTPUT_RATIO,
                     help="provisional Fable output rate as a multiple of its input rate")
+    ap.add_argument("--probes", type=Path, default=PROBES,
+                    help="probe rows whose spans are excluded from their own account")
+    ap.add_argument("--effort-matrix", type=Path, default=EFFORT_MATRIX,
+                    help=f"effort-matrix run whose span is excluded from {EFFORT_MATRIX_ACCOUNT}")
+    ap.add_argument("--keep-harness-runs", action="store_true",
+                    help="do not exclude stretches overlapping a probe or the effort-matrix run")
     ap.add_argument("--min-capture", type=float,
                     help="keep only stretches whose own capture is at least this "
                          "(for masterrig, where the meter counts more than this host)")
     ap.add_argument("--json", type=Path, help="also dump the per-stretch rows here")
     a = ap.parse_args(argv)
-    rows, skipped = load_rows({"gs": a.gs, "masterrig": a.masterrig}, a.cache_read_weight,
-                              a.fable_input, a.fable_output_ratio, a.min_capture)
+    runs = [] if a.keep_harness_runs else harness_runs(a.probes, a.effort_matrix)
+    rows, skipped, excluded = load_rows({"gs": a.gs, "masterrig": a.masterrig}, a.cache_read_weight,
+                                        a.fable_input, a.fable_output_ratio, a.min_capture, runs)
     if not rows:
         print(f"no priceable stretches in {a.gs} or {a.masterrig}")
         return 1
-    print(render(rows, skipped, a), end="")
+    print(render(rows, skipped, excluded, a), end="")
     if a.json:
         a.json.parent.mkdir(parents=True, exist_ok=True)
         a.json.write_text(json.dumps({
@@ -378,7 +505,9 @@ def main(argv: list[str] | None = None) -> int:
             "eras": {"5x": f"end < {ERA_20X_AT.isoformat()}",
                      "20x": f"{ERA_20X_AT.isoformat()} <= end < {ERA_CUT_AT.isoformat()}",
                      "20x-cut": f"end >= {ERA_CUT_AT.isoformat()}"},
-            "skipped": skipped, "rows": rows,
+            "harness_runs": [{"account": r.account, "start": r.start.isoformat(),
+                              "end": r.end.isoformat(), "reason": r.reason} for r in runs],
+            "skipped": skipped, "excluded": excluded, "rows": rows,
         }, indent=1) + "\n", encoding="utf-8")
         print(f"wrote {a.json} ({len(rows)} rows)")
     return 0

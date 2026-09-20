@@ -68,6 +68,47 @@ article, at 25/15 with an output ratio of 3 against the 5 every published model 
 the cache-read weight of 0.015, the residual the reference doc measured where the article
 says zero.
 
+### What is excluded, and why it is not a date rule
+
+A stretch is left out when it overlaps one of the tracker's own runs on the same account: a
+probe row in `history/probes.jsonl`, spanning `[ts, ts + elapsed_s]` (`tracker/probe.py`
+returns `ProbeResult(start, ...)`, so `ts` is the run's start), or the effort-matrix run
+recorded in `data/effort_matrix.json`'s `_meta`. There the tracker was driving the account,
+so the meter moved on the instrument's own work and the stretch's percent is not a reading of
+a session's tokens.
+
+**The 9 September jwork contamination was not a probe.** `history/probes.jsonl` holds two
+rows that day and both are Dave's, both finished before 00:30Z; there is no jwork probe row
+on 9 September at all. The cause is the effort-matrix run, `_meta.started`
+2026-09-09T11:28:37Z to `_meta.finished` 14:53:22Z, which brackets the six low stretches from
+12:20:15 to 14:58:44 — captures 0.53, 0.49, 0.47, 0.34, 0.28, 0.38 against about 1.0 either
+side of the window. `data/effort_matrix.json` does not record which account it ran on, so
+`EFFORT_MATRIX_ACCOUNT = "jwork"` names it in one place in the tool.
+
+Keying on the runs rather than on the date excludes 11 jwork stretches and nothing of Dave's
+or masterrig's, and the tool prints every one with the run that caused it:
+
+| account | stretch | delta | capture | caused by |
+|---|---|---|---|---|
+| jwork | 2026-09-06T16:49:35 → 2026-09-08T13:12:45 | 11 | – | probe sonnet-5/low from 11:36:02Z |
+| jwork | 2026-09-09T10:47:14 → 11:58:14 | 10 | 0.626 | effort matrix |
+| jwork | 2026-09-09T11:58:14 → 12:20:15 | 10 | 0.689 | effort matrix |
+| jwork | 2026-09-09T12:20:15 → 12:52:14 | 11 | 0.534 | effort matrix |
+| jwork | 2026-09-09T12:52:14 → 13:30:44 | 13 | 0.490 | effort matrix |
+| jwork | 2026-09-09T13:30:44 → 13:47:14 | 11 | 0.472 | effort matrix |
+| jwork | 2026-09-09T13:47:14 → 14:09:14 | 14 | 0.339 | effort matrix |
+| jwork | 2026-09-09T14:09:14 → 14:36:44 | 12 | 0.281 | effort matrix |
+| jwork | 2026-09-09T14:36:44 → 14:58:44 | 10 | 0.377 | effort matrix |
+| jwork | 2026-09-14T00:51:45 → 2026-09-15T07:35:39 | 10 | – | probe sonnet-5/low from 12:02:07Z |
+| jwork | 2026-09-15T07:35:39 → 16:11:39 | 10 | – | probe opus-5/low from 12:02:08Z |
+
+Overlap is the rule, so it takes eight stretches from the effort-matrix window rather than
+the six the review named: 10:47–11:58 and 14:36–14:58 straddle its ends, and both read 0.63
+and 0.38. It also takes three long jwork stretches a probe cut through on 6–8 and 14–15
+September, which a 9 September date rule would have missed entirely, and it leaves the rest of
+9 September — 09:00, 16:00 onward — in the series, which a date rule would not.
+`--keep-harness-runs` turns the exclusion off so its effect can be measured.
+
 At `--cache-read-weight 0`, which reads the article literally:
 
 ```
@@ -76,10 +117,10 @@ dave       20x-cut     haiku-4-5     1       26,510       26,510       26,510
 dave       20x-cut         mixed    19      150,757      127,562      161,937
 dave       20x-cut        opus-5     3      171,794      166,503      172,147
 jwork      20x         fable-5-1     5      160,166      132,837      161,744
-jwork      20x             mixed    61      156,377      128,266      178,648
-jwork      20x            opus-5    23      180,818      106,612      196,989
+jwork      20x             mixed    58      157,087      134,269      179,704
+jwork      20x            opus-5    17      193,868      177,711      199,133
 jwork      20x-cut     fable-5-1     3      124,514      117,893      137,141
-jwork      20x-cut         mixed    34      166,234      136,327      205,008
+jwork      20x-cut         mixed    32      172,690      136,589      205,626
 jwork      20x-cut        opus-5     1      281,576      281,576      281,576
 masterrig  20x         fable-5-1    20       24,018        6,945      139,818
 masterrig  20x             mixed   145      129,149       68,985      162,302
@@ -93,21 +134,36 @@ There are no `5x` rows in any account: the plan moved on 2026-08-14 and no trans
 than that survives on any of the three hosts. On masterrig that is `cleanupPeriodDays`,
 being fixed separately.
 
-### What agrees and what does not
+### What the exclusion buys
 
-The gs numbers reproduce the 2026-09-20 scratch run exactly where the data has not moved
-since: jwork 20x opus-5 n=23 at 180,818, dave 20x-cut opus-5 n=3 at 171,794, dave 20x-cut
-median 150,757. The two rows whose counts grew (dave 20x-cut mixed 19 against 17, jwork
-20x-cut mixed 34 against 33) grew because `history/gs-passive.json` is regenerated through
-the day.
+jwork's pure-Opus cluster was the thing the contamination wrecked, and it is the cluster the
+Fable solve rests on. Before and after, at `--cache-read-weight 0`:
 
-masterrig's opus-5 row does not reproduce: 11 stretches at 24,546 here against 20 at 108,689
-in the scratch run. Grouping on the dominant share of **raw tokens** instead of credits gives
-17 at 111,178, close to the scratch figure, which suggests the scratch script grouped on
-tokens. This tool groups on credits, as the issue asks. The two bases differ on masterrig
-and barely differ on gs because masterrig's stretches are the ones where nearly all the
-tokens are free cache reads: a stretch can be 95% Opus by token count and mostly Sonnet by
-credits.
+| | n | p25 | median | p75 |
+|---|---|---|---|---|
+| jwork pure-opus, harness runs kept | 15 | 91,047 | 193,868 | 198,836 |
+| jwork pure-opus, harness runs excluded | 10 | 193,910 | 196,989 | 201,186 |
+
+The interquartile range falls from 107,789 to 7,276 — a factor of 15 — while the median moves
+1.6%. The low tail was the instrument, not the account. jwork 20x opus-5 tightens the same
+way: p25 106,612 → 177,711 against a median that moves from 180,818 to 193,868.
+
+### What agrees with the scratch run and what does not
+
+The gs figures reproduce the 2026-09-20 scratch run at `--cache-read-weight 0` where the data
+has not moved since and where the scratch run had not excluded the harness windows: dave
+20x-cut opus-5 n=3 at 171,794 and dave 20x-cut mixed at 150,757 match exactly. jwork 20x
+opus-5 matched exactly at n=23 and 180,818 **before** this exclusion; with it the row is n=17
+at 193,868, and the difference is the eight effort-matrix stretches plus the probe-cut ones.
+That is the correction working, not a regression.
+
+masterrig's opus-5 row does not reproduce either way: 11 stretches at 24,546 here against 20
+at 108,689 in the scratch run. Grouping on the dominant share of **raw tokens** instead of
+credits gives 17 at 111,178, close to the scratch figure, which suggests the scratch script
+grouped on tokens. This tool groups on credits, as the issue asks. The two bases differ on
+masterrig and barely differ on gs because masterrig's stretches are the ones where nearly all
+the tokens are free cache reads: a stretch can be 95% Opus by token count and mostly Sonnet
+by credits.
 
 ### The gap between masterrig and gs is the phantom, and it is large
 
@@ -146,7 +202,7 @@ At the default cache-read weight of 0.015:
 | account | n | median rate | as a multiple of Opus input |
 |---|---|---|---|
 | dave | 2 | 1.5634 | 2.35x |
-| jwork | 26 | 1.8185 | 2.73x |
+| jwork | 26 | 1.8669 | 2.80x |
 | masterrig | 82 | -0.0599 | -0.09x |
 
 dave and jwork bracket the reference doc's fitted 2.5x from either side, on 28 stretches of
@@ -155,6 +211,6 @@ phantom usage produces: the known non-Fable credits already exceed `delta_pct x 
 remainder is below zero. It is printed rather than suppressed, because a negative rate is
 the clearest statement available that masterrig cannot anchor this calculation.
 
-At `--cache-read-weight 0` the same solve gives dave 3.17x and jwork 4.13x, so the answer is
+At `--cache-read-weight 0` the same solve gives dave 3.17x and jwork 4.21x, so the answer is
 sensitive to a rate the article says is zero and our own data says is about 0.015. Neither
 value is settled, and nothing in the tracker's published output depends on either.

@@ -8,18 +8,23 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from tools.credits_report import (
     CLASSES,
+    EFFORT_MATRIX_ACCOUNT,
     ERA_20X_AT,
     ERA_CUT_AT,
     PUBLISHED_RATES,
+    HarnessRun,
     chargeable,
     era,
     family,
+    harness_runs,
     load_rows,
     main,
+    overlapping_run,
     pure_clusters,
     quartiles,
     rates,
@@ -45,11 +50,21 @@ def report_file(root: Path, name: str, stretches: list[dict], account: str = "ac
     return path
 
 
-def rows_for(stretches: list[dict], account: str = "acct", **kw):
+def all_for(stretches: list[dict], account: str = "acct", **kw):
+    """(rows, skipped, excluded) for a one-file report built from `stretches`."""
     with tempfile.TemporaryDirectory() as d:
         path = report_file(Path(d), "r", stretches, account)
         return load_rows({"one": path}, kw.pop("cache_read_weight", 0.0),
                          kw.pop("fable_input", 25 / 15), kw.pop("fable_output_ratio", 3), **kw)
+
+
+def rows_for(stretches: list[dict], account: str = "acct", **kw):
+    rows, skipped, _ = all_for(stretches, account, **kw)
+    return rows, skipped
+
+
+def run(account: str, start: str, end: str, reason: str = "probe x/low") -> HarnessRun:
+    return HarnessRun(account, datetime.fromisoformat(start), datetime.fromisoformat(end), reason)
 
 
 class RateTests(unittest.TestCase):
@@ -326,7 +341,7 @@ class CliTests(unittest.TestCase):
         gs, mr = root / "history" / "gs-passive.json", root / "history" / "masterrig-passive.json"
         if not (gs.exists() and mr.exists()):
             self.skipTest("no committed history/*-passive.json")
-        rows, skipped = load_rows({"gs": gs, "masterrig": mr}, 0.015, 25 / 15, 3)
+        rows, skipped, _ = load_rows({"gs": gs, "masterrig": mr}, 0.015, 25 / 15, 3)
         self.assertEqual(skipped["unknown_models"], [])
         self.assertEqual({r["account"] for r in rows}, {"jwork", "dave", "masterrig"})
         self.assertTrue(all(r["credits_per_pct"] > 0 for r in rows))
@@ -335,3 +350,180 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarnessRunTests(unittest.TestCase):
+    """A stretch cut by the tracker's own instrument is not a reading of ordinary use.
+
+    The 2026-09-20 review corrected the cause of the 9 September jwork contamination: it was
+    not a probe (history/probes.jsonl holds no jwork row that day) but the effort-matrix run
+    in data/effort_matrix.json. So the exclusion is keyed to the runs themselves, never to a
+    date.
+    """
+
+    def test_a_probe_row_spans_ts_to_ts_plus_elapsed_on_its_own_account(self):
+        with tempfile.TemporaryDirectory() as d:
+            probes = Path(d) / "probes.jsonl"
+            probes.write_text("\n".join([
+                json.dumps({"ts": "2026-09-08T11:36:02+00:00", "elapsed_s": 600, "account": "jwork",
+                            "model": "claude-sonnet-5", "effort": "low"}),
+                "",  # a blank line is not a row
+                json.dumps({"ts": "2026-09-09T00:02:08+00:00", "elapsed_s": 60, "account": "dave",
+                            "model": "claude-fable-5-1", "effort": "low"}),
+                json.dumps({"ts": "2026-09-09T05:00:00+00:00", "elapsed_s": 60}),  # no account: skipped
+            ]) + "\n")
+            runs = harness_runs(probes, Path(d) / "no-matrix.json")
+        self.assertEqual([(r.account, r.start.isoformat(), r.end.isoformat()) for r in runs],
+                         [("dave", "2026-09-09T00:02:08+00:00", "2026-09-09T00:03:08+00:00"),
+                          ("jwork", "2026-09-08T11:36:02+00:00", "2026-09-08T11:46:02+00:00")])
+        self.assertIn("claude-sonnet-5/low", runs[1].reason)
+
+    def test_the_effort_matrix_window_is_read_from_its_meta_and_is_jworks(self):
+        with tempfile.TemporaryDirectory() as d:
+            matrix = Path(d) / "effort_matrix.json"
+            matrix.write_text(json.dumps({"_meta": {"started": "2026-09-09T11:28:37.136014+00:00",
+                                                    "finished": "2026-09-09T14:53:22.399540+00:00"}}))
+            runs = harness_runs(Path(d) / "no-probes.jsonl", matrix)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].account, EFFORT_MATRIX_ACCOUNT)
+        self.assertEqual((runs[0].start.isoformat(), runs[0].end.isoformat()),
+                         ("2026-09-09T11:28:37.136014+00:00", "2026-09-09T14:53:22.399540+00:00"))
+        self.assertIn("effort matrix", runs[0].reason)
+
+    def test_missing_or_incomplete_sources_give_no_runs_rather_than_raising(self):
+        with tempfile.TemporaryDirectory() as d:
+            matrix = Path(d) / "m.json"
+            matrix.write_text(json.dumps({"_meta": {"started": "2026-09-09T11:28:37+00:00"}}))  # no finish
+            self.assertEqual(harness_runs(Path(d) / "none.jsonl", Path(d) / "none.json"), [])
+            self.assertEqual(harness_runs(Path(d) / "none.jsonl", matrix), [])
+
+    def test_overlap_is_half_open_so_touching_a_boundary_is_not_overlapping(self):
+        r = [run("jwork", "2026-09-09T11:28:37+00:00", "2026-09-09T14:53:22+00:00")]
+        inside = ("2026-09-09T12:20:15+00:00", "2026-09-09T12:52:14+00:00")
+        self.assertIsNotNone(overlapping_run(r, "jwork", *map(datetime.fromisoformat, inside)))
+        # Straddling either end still overlaps.
+        for span in (("2026-09-09T10:47:14+00:00", "2026-09-09T11:58:14+00:00"),
+                     ("2026-09-09T14:36:44+00:00", "2026-09-09T14:58:44+00:00"),
+                     ("2026-09-09T09:00:00+00:00", "2026-09-09T20:00:00+00:00")):
+            with self.subTest(span=span):
+                self.assertIsNotNone(overlapping_run(r, "jwork", *map(datetime.fromisoformat, span)))
+        # Meeting at an instant, and lying wholly outside, do not.
+        for span in (("2026-09-09T10:00:00+00:00", "2026-09-09T11:28:37+00:00"),
+                     ("2026-09-09T14:53:22+00:00", "2026-09-09T16:00:00+00:00"),
+                     ("2026-09-08T10:00:00+00:00", "2026-09-08T11:00:00+00:00")):
+            with self.subTest(span=span):
+                self.assertIsNone(overlapping_run(r, "jwork", *map(datetime.fromisoformat, span)))
+
+    def test_a_run_only_excludes_its_own_account(self):
+        r = [run("jwork", "2026-09-09T11:28:37+00:00", "2026-09-09T14:53:22+00:00")]
+        span = tuple(map(datetime.fromisoformat, ("2026-09-09T12:00:00+00:00", "2026-09-09T13:00:00+00:00")))
+        self.assertIsNotNone(overlapping_run(r, "jwork", *span))
+        self.assertIsNone(overlapping_run(r, "dave", *span))
+        self.assertIsNone(overlapping_run(r, "masterrig", *span))
+
+    def _three(self):
+        return [
+            {"start": "2026-09-09T09:00:00+00:00", "end": "2026-09-09T10:00:00+00:00", "delta_pct": 10.0,
+             "tokens": {"claude-opus-5": tok(output=50_000)}, "status": "accepted", "capture": 1.0},
+            {"start": "2026-09-09T12:20:15+00:00", "end": "2026-09-09T12:52:14+00:00", "delta_pct": 11.0,
+             "tokens": {"claude-opus-5": tok(output=5_000)}, "status": "accepted", "capture": 0.53},
+            {"start": "2026-09-09T16:00:00+00:00", "end": "2026-09-09T17:00:00+00:00", "delta_pct": 10.0,
+             "tokens": {"claude-opus-5": tok(output=50_000)}, "status": "accepted", "capture": 1.0},
+        ]
+
+    def test_the_contaminated_stretch_is_excluded_and_its_neighbours_kept(self):
+        runs = [run("acct", "2026-09-09T11:28:37+00:00", "2026-09-09T14:53:22+00:00", "effort matrix")]
+        rows, skipped, excluded = all_for(self._three(), runs=runs)
+        self.assertEqual([r["start"][11:19] for r in rows], ["09:00:00", "16:00:00"])
+        self.assertEqual(skipped["harness_run"], 1)
+        self.assertEqual([(e["start"][11:19], e["capture"], e["reason"]) for e in excluded],
+                         [("12:20:15", 0.53, "effort matrix")])
+
+    def test_the_rest_of_the_day_survives_because_the_rule_is_not_a_date(self):
+        # The exclusion must not reach 09:00 or 16:00 on the same date.
+        runs = [run("acct", "2026-09-09T11:28:37+00:00", "2026-09-09T14:53:22+00:00")]
+        rows, _, _ = all_for(self._three(), runs=runs)
+        self.assertTrue(all(r["end"][:10] == "2026-09-09" for r in rows))
+        self.assertEqual(len(rows), 2)
+
+    def test_with_no_runs_nothing_is_excluded(self):
+        rows, skipped, excluded = all_for(self._three())
+        self.assertEqual((len(rows), skipped["harness_run"], excluded), (3, 0, []))
+
+    def test_a_stretch_in_a_run_is_excluded_even_when_it_could_not_be_priced(self):
+        # Provenance first: it is reported as a harness run, not as an unknown model.
+        runs = [run("acct", "2026-09-09T11:00:00+00:00", "2026-09-09T15:00:00+00:00")]
+        made = [{"start": "2026-09-09T12:00:00+00:00", "end": "2026-09-09T13:00:00+00:00",
+                 "delta_pct": 10.0, "tokens": {"mystery-9": tok(output=1000)}, "capture": None,
+                 "status": "accepted"}]
+        rows, skipped, excluded = all_for(made, runs=runs)
+        self.assertEqual((rows, skipped["harness_run"], skipped["unknown_model"]), ([], 1, 0))
+        self.assertEqual(len(excluded), 1)
+
+    def test_the_cli_prints_every_exclusion_with_its_reason_and_keep_turns_it_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            report_file(root, "gs", self._three(), account="jwork")
+            probes = root / "probes.jsonl"
+            probes.write_text(json.dumps({"ts": "2026-09-09T00:02:08+00:00", "elapsed_s": 60,
+                                          "account": "dave", "model": "claude-fable-5-1",
+                                          "effort": "low"}) + "\n")
+            matrix = root / "effort_matrix.json"
+            matrix.write_text(json.dumps({"_meta": {"started": "2026-09-09T11:28:37+00:00",
+                                                    "finished": "2026-09-09T14:53:22+00:00"}}))
+            argv = ["--gs", str(root / "gs.json"), "--masterrig", str(root / "none.json"),
+                    "--probes", str(probes), "--effort-matrix", str(matrix), "--cache-read-weight", "0"]
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(main(argv), 0)
+            excluded_run = buf.getvalue()
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(main([*argv, "--keep-harness-runs"]), 0)
+            kept_run = buf.getvalue()
+        self.assertIn("harness_run 1", excluded_run)
+        self.assertIn("2026-09-09T12:20:15", excluded_run)
+        self.assertIn("effort matrix 2026-09-09T11:28:37Z to 2026-09-09T14:53:22Z", excluded_run)
+        # The Dave probe is not jwork's, so it excludes nothing here.
+        self.assertNotIn("claude-fable-5-1/low", excluded_run)
+        self.assertIn("(none)", kept_run)
+        self.assertNotIn("harness_run", kept_run.split("Excluded:")[0])
+
+    def test_the_json_dump_carries_the_runs_and_the_exclusions(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            report_file(root, "gs", self._three(), account="jwork")
+            matrix = root / "effort_matrix.json"
+            matrix.write_text(json.dumps({"_meta": {"started": "2026-09-09T11:28:37+00:00",
+                                                    "finished": "2026-09-09T14:53:22+00:00"}}))
+            out = root / "rows.json"
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(["--gs", str(root / "gs.json"), "--masterrig", str(root / "none.json"),
+                      "--probes", str(root / "none.jsonl"), "--effort-matrix", str(matrix),
+                      "--json", str(out)])
+            written = json.loads(out.read_text())
+        self.assertEqual([r["account"] for r in written["harness_runs"]], [EFFORT_MATRIX_ACCOUNT])
+        self.assertEqual(len(written["excluded"]), 1)
+        self.assertEqual(written["skipped"]["harness_run"], 1)
+
+    def test_the_real_data_excludes_the_nine_september_jwork_window_and_nothing_of_daves(self):
+        """Against the committed history/ and data/: the review's finding, reproduced."""
+        root = Path(__file__).resolve().parent.parent
+        gs = root / "history" / "gs-passive.json"
+        if not gs.exists():
+            self.skipTest("no committed history/gs-passive.json")
+        runs = harness_runs(root / "history" / "probes.jsonl", root / "data" / "effort_matrix.json")
+        # No jwork probe ran on 9 September; the two rows that day are Dave's.
+        self.assertEqual([r.account for r in runs if r.start.date().isoformat() == "2026-09-09"
+                          and "probe" in r.reason], ["dave", "dave"])
+        _, skipped, excluded = load_rows({"gs": gs}, 0.0, 25 / 15, 3, runs=runs)
+        self.assertEqual(skipped["harness_run"], len(excluded))
+        matrix = [e for e in excluded if "effort matrix" in e["reason"]]
+        self.assertEqual([e["account"] for e in matrix], ["jwork"] * len(matrix))
+        # The six stretches the review named, plus the two that straddle the window's ends.
+        self.assertEqual([e["start"][11:19] for e in matrix],
+                         ["10:47:14", "11:58:14", "12:20:15", "12:52:14",
+                          "13:30:44", "13:47:14", "14:09:14", "14:36:44"])
+        # Every one of them reads well under the ~1.0 capture either side.
+        self.assertTrue(all(e["capture"] < 0.7 for e in matrix))
+        self.assertEqual([e["account"] for e in excluded if e["account"] == "dave"], [])
