@@ -1,51 +1,15 @@
 {
- "generated_at": "2026-09-19T01:15:23.422517+00:00",
- "plan_ratio_5x_to_20x": 0.2492,
+ "generated_at": "2026-09-20T01:15:20.415846+00:00",
+ "plan_ratio_5x_to_20x": null,
  "split": {
   "input": 0.0001,
-  "output": 0.0042,
+  "output": 0.0047,
   "cache_read": 0.9702,
-  "cache_write": 0.0254
+  "cache_write": 0.0248
  },
  "history": {
-  "2026-08-11": {
-   "tokens_per_pct": 1400498,
-   "interpolated": false
-  },
-  "2026-08-12": {
-   "tokens_per_pct": 1400498,
-   "interpolated": true
-  },
-  "2026-08-13": {
-   "tokens_per_pct": 1400498,
-   "interpolated": true
-  },
-  "2026-08-14": {
-   "tokens_per_pct": 1400498,
-   "interpolated": true
-  },
-  "2026-08-15": {
-   "tokens_per_pct": 1400498,
-   "interpolated": true
-  },
-  "2026-08-16": {
-   "tokens_per_pct": 3534078,
-   "interpolated": false
-  },
-  "2026-08-17": {
-   "tokens_per_pct": 2803168,
-   "interpolated": false
-  },
-  "2026-08-18": {
-   "tokens_per_pct": 414518,
-   "interpolated": false
-  },
-  "2026-08-19": {
-   "tokens_per_pct": 5966459,
-   "interpolated": false
-  },
   "2026-08-20": {
-   "tokens_per_pct": 5546485,
+   "tokens_per_pct": 2510063,
    "interpolated": false
   },
   "2026-08-21": {
@@ -163,12 +127,20 @@
   "2026-09-18": {
    "tokens_per_pct": 3847328,
    "interpolated": false
+  },
+  "2026-09-19": {
+   "tokens_per_pct": 2686490,
+   "interpolated": false
+  },
+  "2026-09-20": {
+   "tokens_per_pct": 6725841,
+   "interpolated": false
   }
  },
  "session_tokens": {
-  "claude-sonnet-5": 578088,
-  "claude-opus-5": 1781778,
-  "claude-fable-5-1": 6852277
+  "claude-sonnet-5": 580760,
+  "claude-opus-5": 1846818,
+  "claude-fable-5-1": 6741351
  },
  "weekly_windows": {
   "current": 5.65,
@@ -371,14 +343,14 @@
    },
    {
     "week_ending": "2026-09-25",
-    "windows": 5.05,
-    "five_hour_pct": 101.0,
-    "seven_day_pct": 20.0,
+    "windows": 5.19,
+    "five_hour_pct": 161.0,
+    "seven_day_pct": 31.0,
     "rounding_interval": [
-     4.1463,
-     6.3386
+     4.3764,
+     6.3036
     ],
-    "pieces": 5,
+    "pieces": 9,
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": true
@@ -4377,6 +4349,54 @@
     "rounding_interval": [
      0.0,
      null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-19T11:30:00.398186+00:00",
+    "windows": 6.0,
+    "five_hour_pct": 6.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     1.7231,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-19T16:29:59.913892+00:00",
+    "windows": null,
+    "five_hour_pct": 4.0,
+    "seven_day_pct": 0.0,
+    "rounding_interval": [
+     1.5469,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-19T21:29:59.696303+00:00",
+    "windows": 5.25,
+    "five_hour_pct": 21.0,
+    "seven_day_pct": 4.0,
+    "rounding_interval": [
+     3.4879,
+     9.2904
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-20T02:30:00.708695+00:00",
+    "windows": 4.83,
+    "five_hour_pct": 29.0,
+    "seven_day_pct": 6.0,
+    "rounding_interval": [
+     3.6232,
+     6.9017
     ],
     "pieces": 1,
     "reset_verified": true
