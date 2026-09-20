@@ -43,7 +43,7 @@ Solved per Fable-heavy stretch (Fable over half the raw tokens) against W = 197k
 | jwork (n=3) | 1.70 credits per input token, p25 1.42, p75 2.65 | 1.31, p25 1.20, p75 1.92 |
 | masterrig (n=75) | 3.88, p25 2.67 | 3.10, p25 1.99 |
 
-Only three jwork stretches survive the capture gate, and masterrig's solve is inflated by phantom meter movement, so its p25 is the usable edge. **Fable input is somewhere between 1.2 and 2.9 credits per token, 1.8 to 4.3 times Opus; the output ratio (3x or 5x) is not separable.** The credits-model note's 25/15 (2.5x Opus) sits inside the interval. Fable's rate goes on the page as an interval with its status, not a number; it narrows as clean Fable-heavy stretches accrue from ordinary use.
+Only three jwork stretches survive the capture gate, and masterrig's solve is inflated by phantom meter movement, so its p25 is the usable edge. **Fable input is somewhere between 1.2 and 2.7 credits per token (jwork p25 at output 5x to masterrig p25 at output 3x), 1.8 to 4.0 times Opus; the output ratio (3x or 5x) is not separable.** The credits-model note's 25/15 (2.5x Opus) sits inside the interval. Fable's rate goes on the page as an interval with its status, not a number; it narrows as clean Fable-heavy stretches accrue from ordinary use.
 
 ## Cache reads
 
