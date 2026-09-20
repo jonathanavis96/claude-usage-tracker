@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .calibrate import recompute
 from .contributed import aggregate, load_history
+from .credits import load_credits
 from .publish import build_public_json, load_probes, write_json
 
 
@@ -49,6 +50,12 @@ def rebuild(root: Path, now: datetime) -> dict:
         load_probes(probes) if probes.exists() else [],
         read("history/passive.json", {}), effort, prices, now,
         effort_usd=effort_usd, gs_passive=read("history/gs-passive.json", {}), reference_mix=mix,
+        # The credits block is computed from archived evidence like everything else:
+        # the archive's own third account, its own effort-matrix runs, and its own
+        # credit rates, so a rebuild never reaches into the running checkout for them.
+        masterrig_passive=read("history/masterrig-passive.json", {}),
+        effort_meta=matrix.get("_meta"),
+        credits=load_credits(raw_prices, default=None) if raw_prices.get("_credits") else None,
     )
     result["contributed"] = aggregate(load_history(root / "history/contributed.jsonl"), now, prices)
     result["rebuild"] = {
