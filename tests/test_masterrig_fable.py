@@ -106,14 +106,37 @@ class JointFitTests(unittest.TestCase):
 class EnvelopeWiringTests(unittest.TestCase):
     def test_a_fable_heavy_row_solves_against_a_known_b5(self):
         credits = C.load_credits()
-        fable_row = _stretch(POST, 5.0, _tokens(**{"claude-fable-5": _fable(100_000, 10_000)}))
+        fable_row = _stretch(POST, 10.0, _tokens(**{"claude-fable-5": _fable(100_000, 10_000)}))
         rows = fable_rows([fable_row], credits)
         self.assertEqual(len(rows), 1)
         b5 = {"median": 10_000.0, "range": [10_000.0, 10_000.0]}
         env = envelope(b5, rows)
         self.assertEqual(env["n"], 1)
-        # f = (5.0 * 10_000 - 0) / (100_000 + 5*10_000) = 50_000 / 150_000
-        self.assertAlmostEqual(env["median"], 50_000 / 150_000, places=6)
+        # f = (10.0 * 10_000 - 0) / (100_000 + 5*10_000) = 100_000 / 150_000
+        self.assertAlmostEqual(env["median"], 100_000 / 150_000, places=6)
+
+    def test_a_row_below_delta_min_is_dropped_even_if_fable_heavy(self):
+        credits = C.load_credits()
+        fable_row = _stretch(POST, 5.0, _tokens(**{"claude-fable-5": _fable(100_000, 10_000)}))
+        self.assertEqual(fable_rows([fable_row], credits), [])
+
+    def test_claude_opus_4_7_is_charged_at_its_own_coefficient_not_the_opus_5_weight(self):
+        credits = C.load_credits()
+        # Fable at 90% of raw tokens, claude-opus-4-7 the rest, so the row still clears
+        # FABLE_SHARE with the opus47 tokens present.
+        row = _stretch(POST, 10.0, _tokens(
+            **{"claude-fable-5": _fable(90_000, 0), "claude-opus-4-7": _opus(10_000)}))
+        rows_no_charge = fable_rows([row], credits, coef_opus47=0.0)
+        rows_charged = fable_rows([row], credits, coef_opus47=2e-4)
+        self.assertEqual(rows_no_charge[0]["opus47_pct_charge"], 0.0)
+        self.assertAlmostEqual(rows_charged[0]["opus47_pct_charge"], 2e-4 * 10_000, places=8)
+        self.assertEqual(rows_no_charge[0]["other_charge_fixed"], 0.0)
+        b5 = {"median": 10_000.0, "range": [10_000.0, 10_000.0]}
+        f_no_charge = envelope(b5, rows_no_charge)["median"]
+        f_charged = envelope(b5, rows_charged)["median"]
+        # A positive opus47 coefficient subtracts its own percentage-point charge from
+        # delta_pct before the B5 multiplication, so the solved f falls.
+        self.assertLess(f_charged, f_no_charge)
 
 
 if __name__ == "__main__":

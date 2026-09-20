@@ -119,15 +119,18 @@ change needs an independent debit or allowance observation that no committed str
 carries. `five_hour_window_credits.per_account` is kept, as data, with no spread field.
 
 The one fact these stretches do establish is the pooled ratio itself:
-`windows_per_week_ratio` reports it fell 23.65% (before: 144 windows, sum five-hour-percent
-3,365, sum seven-day-percent 519; after: 57 windows, sum five-hour-percent 1,089, sum
-seven-day-percent 220), which is one equation in two unknowns. A window at a regime
+`windows_per_week_ratio` reports it fell 23.72% (before: 144 windows, sum five-hour-percent
+3,365, sum seven-day-percent 519; after: 58 windows, sum five-hour-percent 1,098, sum
+seven-day-percent 222), which is one equation in two unknowns. A window at a regime
 boundary that two different accounts' rows can share is counted once, in the earlier
-regime, so a boundary instant never inflates both sides. It is equally consistent
-with the weekly cap falling 23.65% and the five-hour window unchanged, the five-hour window
-rising about 31% and the weekly cap unchanged, or any split between -- including the
-announced 17% weekly cut paired with an implied 8.7% five-hour rise. `meter_attribution`
-stays "unresolved", and nothing published anywhere says the five-hour window did not move.
+regime, by membership on the shared instant itself, not on either regime's whole
+boundary side -- excluding a whole side would also drop the later regime's own first
+window whenever its own timestamp happened to equal its own `start`. It is equally
+consistent with the weekly cap falling 23.72% and the five-hour window unchanged, the
+five-hour window rising about 31% and the weekly cap unchanged, or any split between --
+including the announced 17% weekly cut paired with an implied 8.8% five-hour rise.
+`meter_attribution` stays "unresolved", and nothing published anywhere says the
+five-hour window did not move.
 
 **`reference`** -- Shellac's table with its January 2026 date, and the three announced
 changes since it, each with the sentence it was read from: the 6 May five-hour doubling,

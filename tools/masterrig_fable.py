@@ -43,16 +43,23 @@ Either way, cache reads carry a weight of 0.015 relative to Opus input in step 2
 below (the range `data/prices.json` keeps beside its published 0), writes count 1x, output 5x --
 stated assumptions, not re-derived.
 
-Step 2, the Fable solve, is unchanged from the first pass: for every stretch where Fable is at
-least 50% of input + cache_write + output (unweighted, raw counts, no output multiplier), solve
-`f = (delta_pct * B5 - other_models_charge - read_charge) / (Fable_input + Fable_write + 5 *
-Fable_output)`, in units of Opus input tokens, where `other_models_charge` is every non-Fable
-family's own input-equivalent tokens (claude-opus-4-7 included) taken at Opus's own per-token
-weight (an assumption: it treats one Opus-equivalent token from any family, priced or not, as
-one Opus input token) and `read_charge` is 0.015 times the stretch's total cache reads across
-every model. `f` is solved once at B5's point estimate (`1 / coef_opus` from the joint fit, full
-group) and once at each of two rounding-implied edges, built by refitting the joint fit against
-`delta_pct -+ windows` instead of `delta_pct`.
+Step 2, the Fable solve, is now also gated on `delta_pct >= DELTA_MIN` (the same rounding-noise
+gate as route A), among stretches where Fable is at least 50% of input + cache_write + output
+(unweighted, raw counts, no output multiplier). It solves `f = (delta_pct * B5 -
+other_charge_fixed - opus47_pct_charge * B5) / (Fable_input + Fable_write + 5 * Fable_output)`,
+in units of Opus input tokens. `other_charge_fixed` is Sonnet, Haiku and the *priced* Opus
+models' own input-equivalent tokens (claude-opus-4-7 excluded) taken at Opus's own per-token
+weight, plus 0.015 times the stretch's total cache reads across every model -- the same
+one-opus-equivalent-token assumption as before, but no longer applied to claude-opus-4-7.
+claude-opus-4-7's own tokens are instead charged at `opus47_pct_charge = coef_opus47 *
+opus47_input_equivalent_tokens`, its own fitted percentage-points-per-raw-token coefficient
+from the joint fit (route A, full group), not the priced-Opus per-token weight -- the two
+families are priced at different rates in that fit and treating one as the other would carry
+the wrong rate into rows that are Fable-heavy for the same reason they were opus47-priced in
+the fit: masterrig runs Sonnet, Fable and claude-opus-4-7 together. `f` is solved once at B5's
+point estimate (`1 / coef_opus` from the joint fit, full group) and once at each of two
+rounding-implied edges, built by refitting the joint fit against `delta_pct -+ windows` instead
+of `delta_pct`.
 
 Stretches starting before 2026-09-06T00:00 UTC are excluded: `history/harness-runs.jsonl`
 carries no masterrig entry for that window, so this is a dated exclusion stated here rather than
@@ -203,7 +210,10 @@ def joint_design(rows: list[dict], credits: dict) -> tuple[np.ndarray, np.ndarra
     x = np.array([[ie5(js[f]) / IE_UNIT for f in JOINT_FAMILIES] + [total_reads(gs) / IE_UNIT]
                  for js, gs in zip(jsums, gsums)])
     y = np.array([s["delta_pct"] for s in rows])
-    p = np.array([s.get("windows", 1) for s in rows])
+    # No default: a stretch missing `windows` (tracker/join.py's Stretch field, always written
+    # by this repository's own producer) is missing data the rounding edges depend on, matching
+    # tools/model_rates.py's prepare(), which raises rather than silently assuming one window.
+    p = np.array([s["windows"] for s in rows])
     return x, y, p
 
 
@@ -309,25 +319,43 @@ def opus_anchor(rows: list[dict]) -> dict | None:
 
 # --- Step 2: the Fable solve, against whichever B5 (route A) was found -------------------------
 
-def fable_rows(stretches: list[dict], credits: dict) -> list[dict]:
-    """Rows behind the Fable solve: every stretch where Fable is >= FABLE_SHARE of raw tokens."""
+def fable_rows(stretches: list[dict], credits: dict, coef_opus47: float = 0.0) -> list[dict]:
+    """Rows behind the Fable solve: stretches gated at `delta_pct >= DELTA_MIN` (the same
+    rounding-noise gate the joint fit uses) where Fable is also >= FABLE_SHARE of raw tokens.
+
+    claude-opus-4-7's own tokens are charged at `coef_opus47` (its own fitted percentage-points-
+    per-raw-token coefficient from the joint fit), not folded into the rest of the Opus family
+    at the priced-Opus one-token-equals-one-opus-token convention `other_charge_fixed` uses for
+    every other family. Its charge is in percentage points, fixed regardless of which B5 the
+    solve runs at, so `solve_f` folds it in by subtracting it from `delta_pct` before the B5
+    multiplication rather than adding a token-unit term that would need its own B5 conversion.
+    """
     rows = []
     for s in stretches:
+        if (s.get("delta_pct") or 0) < DELTA_MIN:
+            continue
         sums = family_sums(s["tokens"], credits)
+        jsums = joint_family_sums(s["tokens"], credits)
         fable = sums["fable"]
         raw_total = sum(v["input"] + v["cache_write"] + v["output"] for v in sums.values())
         fable_raw = fable["input"] + fable["cache_write"] + fable["output"]
         if raw_total <= 0 or fable_raw / raw_total < FABLE_SHARE:
             continue
-        other_charge = sum(ie5(v) for f, v in sums.items() if f != "fable")
-        read_charge = READ_WEIGHT * total_reads(sums)
+        opus47_ie = ie5(jsums["opus47"])
+        # `sums["opus"]` (via tracker.credits.family) buckets claude-opus-4-7 together with the
+        # priced Opus models; subtract its own ie5 back out so it is not also charged at the
+        # priced-Opus convention below.
+        priced_opus_ie = ie5(sums["opus"]) - opus47_ie
+        other_charge_fixed = (priced_opus_ie + ie5(sums["sonnet"]) + ie5(sums["haiku"])
+                              + READ_WEIGHT * total_reads(sums))
         fable_ie = ie5(fable)
         rows.append({
             "start": s["start"], "end": s["end"], "delta_pct": s["delta_pct"], "windows": s["windows"],
             "capture_status": s.get("capture_status"),
             "fable_input_plus_write": fable["input"] + WRITE_MULT * fable["cache_write"],
             "fable_output": fable["output"], "fable_reads": fable["cache_read"],
-            "other_model_charge": other_charge + read_charge,
+            "opus47_pct_charge": coef_opus47 * opus47_ie,
+            "other_charge_fixed": other_charge_fixed,
             "fable_ie": fable_ie,
         })
     return rows
@@ -336,8 +364,15 @@ def fable_rows(stretches: list[dict], credits: dict) -> list[dict]:
 def solve_f(row: dict, b5: float) -> float | None:
     if row["fable_ie"] <= 0:
         return None
-    numerator = row["delta_pct"] * b5 - row["other_model_charge"]
+    numerator = b5 * (row["delta_pct"] - row["opus47_pct_charge"]) - row["other_charge_fixed"]
     return numerator / row["fable_ie"]
+
+
+def display_other_charge(row: dict, b5: float) -> float:
+    """`other_model_charge` at a given B5, for the printed table: `other_charge_fixed` plus
+    claude-opus-4-7's own percentage-point charge converted to the same opus-equivalent-token
+    units by the B5 the table row is shown at."""
+    return row["other_charge_fixed"] + row["opus47_pct_charge"] * b5
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -355,7 +390,8 @@ def envelope(anchor: dict, rows: list[dict]) -> dict:
     for row in rows:
         f_med, f_lo, f_hi = solve_f(row, b5_med), solve_f(row, b5_lo), solve_f(row, b5_hi)
         solved.append({**row, "f_at_b5_median": f_med, "f_at_b5_range_lo": f_lo,
-                      "f_at_b5_range_hi": f_hi})
+                      "f_at_b5_range_hi": f_hi,
+                      "other_model_charge": display_other_charge(row, b5_med)})
     at_median = [r["f_at_b5_median"] for r in solved if r["f_at_b5_median"] is not None]
     return {
         "n": len(solved),
@@ -459,7 +495,8 @@ def main(argv: list[str] | None = None) -> int:
     single_anchor_rows = opus_anchor_rows(all_since_cut, credits)
     single_anchor = opus_anchor(single_anchor_rows)
 
-    fable = fable_rows(all_since_cut, credits)
+    coef_opus47 = joint_full["coef"]["opus47"] if joint_full else 0.0
+    fable = fable_rows(all_since_cut, credits, coef_opus47)
     env = envelope(joint_full_b5, fable) if joint_full_b5 else {
         "n": 0, "median": None, "p10_p90": None, "rows": []}
 

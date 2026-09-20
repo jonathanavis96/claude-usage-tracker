@@ -100,35 +100,43 @@ This route is not extended further -- Route A above is the route that uses every
 
 ## Step 2: the Fable solve, against Route A's full-group B5
 
-17 of the 70 post-cut stretches are Fable-heavy enough (raw share >= 50%) to solve. Using the
-all-70-rows joint fit's B5 (median 344,019; range 301,628-400,273):
+17 of the 70 post-cut stretches are Fable-heavy enough (raw share >= 50%) and clear the same
+`delta_pct >= 10` gate as Route A (every one of them already had `delta_pct >= 10`, so the gate
+changes no row here, only makes the two steps consistent) to solve. Using the all-70-rows joint
+fit's B5 (median 344,019; range 301,628-400,273):
 
-**n = 17, median f = 2.701 Opus input tokens, 10th-90th percentile [2.339, 3.639].**
+**n = 17, median f = 2.4446 Opus input tokens, 10th-90th percentile [2.2800, 3.3867].**
+
+`other_chg` prices claude-opus-4-7's own tokens at its own fitted coefficient from the joint fit
+above (5.722e-06 pp per raw token), not at the priced-Opus per-token weight the rest of
+`other_chg` uses -- the two families are priced at different rates in the same fit, and every
+row below carries claude-opus-4-7 tokens (that is what makes it `"unpriced"`), so charging them
+at the priced-Opus rate would carry the wrong rate into every row of this table.
 
 | start | end | delta | win | capture | F_in+wr | F_out | F_reads | other_chg | f@median |
 |---|---|---:|---:|---|---:|---:|---:|---:|---:|
-| 2026-09-06T02:06 | 2026-09-06T02:41 | 10.0 | 1 | unpriced | 360,401 | 21,649 | 17,024,211 | 612,044 | 6.0347 |
-| 2026-09-06T14:05 | 2026-09-06T15:57 | 10.0 | 1 | unpriced | 403,991 | 108,936 | 20,200,889 | 923,430 | 2.6529 |
-| 2026-09-07T14:49 | 2026-09-08T07:13 | 10.0 | 4 | unpriced | 449,962 | 88,229 | 18,608,624 | 938,993 | 2.8068 |
-| 2026-09-08T07:13 | 2026-09-08T12:39 | 11.0 | 2 | unpriced | 478,188 | 151,710 | 28,241,937 | 667,612 | 2.5200 |
+| 2026-09-06T02:06 | 2026-09-06T02:41 | 10.0 | 1 | unpriced | 360,401 | 21,649 | 17,024,211 | 880,676 | 5.4615 |
+| 2026-09-06T14:05 | 2026-09-06T15:57 | 10.0 | 1 | unpriced | 403,991 | 108,936 | 20,200,889 | 1,214,866 | 2.3457 |
+| 2026-09-07T14:49 | 2026-09-08T07:13 | 10.0 | 4 | unpriced | 449,962 | 88,229 | 18,608,624 | 978,298 | 2.7627 |
+| 2026-09-08T07:13 | 2026-09-08T12:39 | 11.0 | 2 | unpriced | 478,188 | 151,710 | 28,241,937 | 760,887 | 2.4446 |
 | 2026-09-08T15:51 | 2026-09-08T23:22 | 10.0 | 3 | surplus | 392,259 | 122,896 | 34,124,155 | 511,862 | 2.9087 |
-| 2026-09-09T14:30 | 2026-09-09T18:41 | 10.0 | 2 | unpriced | 415,158 | 127,440 | 29,239,193 | 847,267 | 2.4639 |
-| 2026-09-09T21:34 | 2026-09-10T01:33 | 10.0 | 2 | unpriced | 442,786 | 142,530 | 30,403,323 | 753,714 | 2.3251 |
-| 2026-09-10T12:30 | 2026-09-10T13:57 | 10.0 | 2 | unpriced | 463,022 | 68,338 | 11,502,940 | 935,183 | 3.1129 |
-| 2026-09-10T13:57 | 2026-09-10T15:33 | 10.0 | 1 | unpriced | 337,096 | 121,285 | 17,240,090 | 800,925 | 2.7973 |
-| 2026-09-11T18:34 | 2026-09-12T16:46 | 10.0 | 2 | unpriced | 308,002 | 63,036 | 12,468,056 | 680,871 | 4.4278 |
+| 2026-09-09T14:30 | 2026-09-09T18:41 | 10.0 | 2 | unpriced | 415,158 | 127,440 | 29,239,193 | 1,004,826 | 2.3142 |
+| 2026-09-09T21:34 | 2026-09-10T01:33 | 10.0 | 2 | unpriced | 442,786 | 142,530 | 30,403,323 | 916,702 | 2.1840 |
+| 2026-09-10T12:30 | 2026-09-10T13:57 | 10.0 | 2 | unpriced | 463,022 | 68,338 | 11,502,940 | 1,100,789 | 2.9071 |
+| 2026-09-10T13:57 | 2026-09-10T15:33 | 10.0 | 1 | unpriced | 337,096 | 121,285 | 17,240,090 | 982,700 | 2.6046 |
+| 2026-09-11T18:34 | 2026-09-12T16:46 | 10.0 | 2 | unpriced | 308,002 | 63,036 | 12,468,056 | 965,474 | 3.9711 |
 | 2026-09-12T16:46 | 2026-09-12T17:32 | 10.0 | 1 | surplus | 494,760 | 115,796 | 12,172,702 | 376,878 | 2.8529 |
 | 2026-09-12T17:32 | 2026-09-12T18:17 | 11.0 | 1 | surplus | 685,516 | 134,899 | 20,046,070 | 557,078 | 2.3729 |
 | 2026-09-12T18:17 | 2026-09-12T20:19 | 10.0 | 2 | surplus | 382,166 | 129,731 | 19,561,922 | 1,019,942 | 2.3479 |
 | 2026-09-12T20:19 | 2026-09-12T20:59 | 10.0 | 1 | surplus | 463,141 | 104,592 | 22,334,539 | 484,772 | 2.9971 |
 | 2026-09-12T20:59 | 2026-09-12T22:51 | 10.0 | 1 | surplus | 445,032 | 151,014 | 35,191,414 | 686,301 | 2.2947 |
-| 2026-09-19T13:21 | 2026-09-19T19:31 | 10.0 | 3 | unpriced | 582,271 | 121,132 | 12,941,060 | 381,181 | 2.5751 |
-| 2026-09-19T19:31 | 2026-09-19T20:52 | 10.0 | 1 | unpriced | 304,775 | 131,832 | 21,821,400 | 836,216 | 2.7014 |
+| 2026-09-19T13:21 | 2026-09-19T19:31 | 10.0 | 3 | unpriced | 582,271 | 121,132 | 12,941,060 | 543,971 | 2.4380 |
+| 2026-09-19T19:31 | 2026-09-19T20:52 | 10.0 | 1 | unpriced | 304,775 | 131,832 | 21,821,400 | 1,263,630 | 2.2580 |
 
 Stated assumptions, not re-derived: output multiplier 5x, cache-write multiplier 1x, cache-read
 weight 0.015 relative to Opus input (used in Route B's per-row solve and here to weight
-`other_model_charge`'s read term; Route A's own joint fit gives cache reads their own
-free-standing, unweighted column instead of this fixed relative weight).
+`other_chg`'s read term for every family except claude-opus-4-7; Route A's own joint fit gives
+cache reads their own free-standing, unweighted column instead of this fixed relative weight).
 
 ## What this does and does not say
 

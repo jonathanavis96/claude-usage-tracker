@@ -1487,6 +1487,27 @@ class WindowsPerWeekRatioNoteTests(unittest.TestCase):
         # or duplicated, only assigned once.
         self.assertEqual(out["before"]["sum_seven_day_pct"] + out["after"]["sum_seven_day_pct"], 40.0)
 
+    def test_a_row_at_the_after_regimes_own_start_is_not_the_boundary_tie_and_is_kept(self):
+        # The after regime's own first window sits at its own `start`, which is not the
+        # shared instant unless it also equals the before regime's `end`. Excluding every
+        # row at the after regime's `start` -- rather than only the one shared instant --
+        # would drop this window from both sums, counting it nowhere.
+        regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-04T00:00:00+00:00"),
+                  self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
+        by_window = [
+            self._row("2026-09-02T00:00:00+00:00", 10.0, 20.0, account="a1"),
+            self._row("2026-09-06T00:00:00+00:00", 4.0, 10.0, account="a2"),  # after's own start
+            self._row("2026-09-08T00:00:00+00:00", 6.0, 10.0, account="a2"),
+        ]
+        out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
+        self.assertEqual(out["before"]["n_windows"], 1)
+        self.assertEqual(out["before"]["sum_seven_day_pct"], 20.0)
+        self.assertEqual(out["after"]["n_windows"], 2)
+        self.assertEqual(out["after"]["sum_seven_day_pct"], 20.0)
+        self.assertEqual(out["after"]["sum_five_hour_pct"], 10.0)
+        # Every row is accounted for exactly once.
+        self.assertEqual(out["before"]["sum_seven_day_pct"] + out["after"]["sum_seven_day_pct"], 40.0)
+
     def test_rho_fall_pct_and_five_hour_only_pct(self):
         regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
                   self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
