@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-20T21:30:12.947252+00:00",
+ "generated_at": "2026-09-20T22:30:12.837464+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 926,
+    "reset_verified_samples": 937,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 4031,
+    "samples": 4042,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-20T21:27:39+00:00"
+    "last": "2026-09-20T22:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -6792,7 +6792,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-20T21:27:39+00:00",
+     "window_ending": "2026-09-20T22:27:39+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
@@ -6813,18 +6813,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 699,
+    "reset_verified_samples": 710,
     "since": null,
-    "samples": 1259,
+    "samples": 1270,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-20T21:27:39+00:00"
+    "last": "2026-09-20T22:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 612,
-    "turns": 20863,
+    "files": 636,
+    "turns": 21487,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -8573,6 +8573,60 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-20T21:06:39+00:00",
+     "end": "2026-09-20T22:16:39+00:00",
+     "delta_pct": 12.0,
+     "windows": 1,
+     "usd": 10.934,
+     "usd_per_pct": 0.9112,
+     "bounds": [
+      0.8411,
+      0.994
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 1010,
+       "output": 42634,
+       "cache_read": 62265955,
+       "cache_write": 2138518
+      },
+      "claude-fable-5-1": {
+       "input": 1800,
+       "output": 53966,
+       "cache_read": 20987381,
+       "cache_write": 82891,
+       "cache_write_1h": 82891
+      },
+      "claude-opus-5": {
+       "input": 26,
+       "output": 2157,
+       "cache_read": 896255,
+       "cache_write": 116993
+      },
+      "claude-haiku-4-5": {
+       "input": 304,
+       "output": 59,
+       "cache_read": 937662,
+       "cache_write": 134616
+      }
+     },
+     "unpriced_tokens": 1072641,
+     "unpriced": {
+      "claude-haiku-4-5": {
+       "input": 304,
+       "output": 59,
+       "cache_read": 937662,
+       "cache_write": 134616
+      }
+     },
+     "turns": 621,
+     "reset_verified": true,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
     }
    ],
    "runs": [
@@ -8816,12 +8870,12 @@
     },
     {
      "window_ending": "2026-09-21T00:40:00.203132+00:00",
-     "windows": 4.8,
-     "five_hour_pct": 24.0,
-     "seven_day_pct": 5.0,
+     "windows": 5.14,
+     "five_hour_pct": 36.0,
+     "seven_day_pct": 7.0,
      "rounding_interval": [
-      3.4136,
-      7.4562
+      4.0172,
+      6.9198
      ],
      "pieces": 1,
      "reset_verified": true
