@@ -17,12 +17,16 @@ The selection rule, once, here. A stretch is evidence about ordinary use when:
   rounding is most of the reading),
 - it carries tokens at all (an empty stretch says the meter moved and the host saw
   nothing of it),
-- it does not overlap one of the tracker's own runs on its own account -- a probe
-  row in `history/probes.jsonl` or the effort-matrix run in
-  `data/effort_matrix.json`'s `_meta`. There the tracker was driving the account, so
-  the percent is not a reading of a session's tokens. The rule is keyed to the runs,
-  never to a date: the 2026-09-09 jwork contamination was the effort matrix, not a
-  probe, and a date rule would have taken the rest of that day with it.
+- it does not overlap one of the tracker's own runs on its own account, as
+  `history/harness-runs.jsonl` records them. There the tracker was driving the
+  account, so the percent is not a reading of a session's tokens. The rule is keyed
+  to the runs, never to a date: the 2026-09-09 jwork contamination was the effort
+  matrix, not a probe, and a date rule would have taken the rest of that day with it.
+  That file is the single source of the runs, and it is wider than the two files it
+  replaced here: a probe writes a `history/probes.jsonl` row only when it finishes,
+  and an aborted or crashed probe sent its prompts all the same. `tools/harness_runs.py`
+  builds the file from `history/probes.jsonl`, `data/effort_matrix.json` and the two
+  ops logs the probes write; nothing downstream reads those four again.
 - and it passes whichever acceptance column the caller asks for (`require`).
 
 Both callers gate on `capture_status`, not on `status`: 42 jwork stretches read
@@ -42,11 +46,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
 
 PRICES_PATH = Path(__file__).resolve().parent.parent / "data" / "prices.json"
+#: Every run the tracker's own instruments made, one JSON object per line, written by
+#: tools/harness_runs.py. Anchored to the checkout, not the working directory, because the
+#: publisher runs from cron and the report tools run from anywhere.
+HARNESS_RUNS_PATH = Path(__file__).resolve().parent.parent / "history" / "harness-runs.jsonl"
 
 #: Below this much meter movement a stretch is mostly whole-percent rounding.
 MIN_DELTA_PCT = 3.0
@@ -56,7 +64,8 @@ MIN_DELTA_PCT = 3.0
 CUT_AT = datetime(2026, 9, 14, 12, tzinfo=timezone.utc)
 #: data/effort_matrix.json's `_meta` records `started` and `finished` but not which
 #: account the matrix ran on. It ran on jwork (2026-09-20 review), so the account is
-#: named here rather than read. If a later matrix runs elsewhere, this is the line.
+#: named here rather than read, and tools/harness_runs.py reads it from here when it
+#: writes the matrix's row. If a later matrix runs elsewhere, this is the line.
 EFFORT_MATRIX_ACCOUNT = "jwork"
 
 #: What Anthropic announced, quoted, with where the quote was read. The page shows
@@ -215,30 +224,41 @@ class HarnessRun:
     reason: str
 
 
-def harness_runs(probe_rows: list[dict] | None = None, effort_meta: dict | None = None,
-                 *, effort_account: str = EFFORT_MATRIX_ACCOUNT) -> list[HarnessRun]:
+def harness_runs(path: Path | None = None) -> list[HarnessRun]:
     """Every span the tracker's own instruments occupied, per account.
 
-    A probe row's `ts` is the run's start (tracker/probe.py returns
-    ProbeResult(start, ...)) and `elapsed_s` its duration. The effort matrix records
-    its own `started` and `finished`. Outlier and output probe rows count: they moved
-    the account's meter like any other run.
+    One row per run in `history/harness-runs.jsonl`, written by `tools/harness_runs.py`:
+    the completed probes (whose interval is the probes.jsonl row's `ts` to
+    `ts + elapsed_s`), the effort-matrix run, and the probes that aborted or crashed
+    part way and never wrote a row at all. Outlier and output probe rows count too:
+    they moved the account's meter like any other run.
+
+    A missing file yields no runs, which excludes nothing. That is the honest reading of
+    an absent record rather than a guess at what it would have held, and it is what a
+    price table from before the file existed, or a fixture, gets.
     """
+    p = Path(path) if path is not None else HARNESS_RUNS_PATH
     out: list[HarnessRun] = []
-    for row in probe_rows or []:
-        if not row.get("account") or not row.get("ts"):
+    if not p.exists():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
             continue
-        start = datetime.fromisoformat(row["ts"])
-        out.append(HarnessRun(row["account"], start,
-                              start + timedelta(seconds=row.get("elapsed_s") or 0),
-                              f"probe {row.get('model', '?')}/{row.get('effort', '?')} "
-                              f"from {row['ts'][:19]}Z"))
-    meta = effort_meta or {}
-    if meta.get("started") and meta.get("finished"):
-        out.append(HarnessRun(effort_account, datetime.fromisoformat(meta["started"]),
-                              datetime.fromisoformat(meta["finished"]),
-                              f"effort matrix {meta['started'][:19]}Z to {meta['finished'][:19]}Z"))
+        row = json.loads(line)
+        if not row.get("account") or not row.get("start") or not row.get("end"):
+            continue
+        out.append(HarnessRun(row["account"], datetime.fromisoformat(row["start"]),
+                              datetime.fromisoformat(row["end"]), run_reason(row)))
     return sorted(out, key=lambda r: (r.account, r.start))
+
+
+def run_reason(row: dict) -> str:
+    """The published one-line description of a harness run: what it was and how it ended."""
+    model = "/".join(str(x) for x in (row.get("model"), row.get("effort")) if x)
+    what = " ".join(x for x in (row.get("kind") or "run", model) if x)
+    ended = row.get("outcome") or "ran"
+    detail = f": {row['detail']}" if row.get("detail") else ""
+    return f"{what} {ended}{detail} from {str(row['start'])[:19]}Z"
 
 
 def overlapping_run(runs: list[HarnessRun], account: str, start: datetime,

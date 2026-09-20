@@ -1,9 +1,11 @@
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from tools.harness_runs import _resolve, attribute, bracket, parse_log, resets
+from tools.harness_runs import _resolve, attribute, bracket, effort_matrix_row, parse_log, probe_rows, resets
+from tracker import credits as C
 
 LOG = """\
 prompt 9 (burst of 9): five_hour=7.0 resets_at=2026-09-10T03:30:00.284968+00:00 spent=input=18 output=45
@@ -112,6 +114,37 @@ class AttributionTests(unittest.TestCase):
         start, end, how = bracket(run, "jwork", {})
         self.assertEqual(how, "log-clock")
         self.assertEqual((start.hour, start.minute, end.hour, end.minute), (12, 3, 12, 58))
+
+
+class RowShapeTests(unittest.TestCase):
+    """What this tool writes is what tracker/credits.py reads, field for field."""
+
+    def _written(self, rows):
+        path = Path(self.dir.name) / "harness-runs.jsonl"
+        path.write_text("".join(json.dumps(r, default=str) + "\n" for r in rows), encoding="utf-8")
+        return C.harness_runs(path)
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+    def test_a_probe_row_survives_the_round_trip_with_its_span_intact(self):
+        rows = probe_rows()
+        if not rows:
+            self.skipTest("no committed history/probes.jsonl")
+        runs = self._written(rows)
+        self.assertEqual(len(runs), len(rows))
+        by_start = {r.start: r for r in runs}
+        for row in rows:
+            run = by_start[row["start"]]
+            self.assertEqual((run.account, run.end), (row["account"], row["end"]))
+            self.assertIn(row["model"], run.reason)
+
+    def test_the_effort_matrix_row_survives_it_too(self):
+        row = effort_matrix_row()
+        runs = self._written([row])
+        self.assertEqual([(r.account, r.start, r.end) for r in runs],
+                         [(row["account"], row["start"], row["end"])])
 
 
 if __name__ == "__main__":

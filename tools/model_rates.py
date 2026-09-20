@@ -35,8 +35,17 @@ from pathlib import Path
 
 import numpy as np
 
-from tools.harness_runs import OUT as HARNESS_RUNS, load_runs
-from tools.reconcile_window import CUT, P, RATES, clean, harness_runs, load, split
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.harness_runs import effort_matrix_row, probe_rows
+from tracker import credits as C
+
+CUT = C.CUT_AT
+P = datetime.fromisoformat
+HARNESS_RUNS = C.HARNESS_RUNS_PATH
+#: Cache reads count nothing here, as in the reconciliation. data/prices.json publishes 0
+#: with an uncertainty range, and this analysis reads the reference literally.
+CACHE_READ_WEIGHT = 0.0
 
 FAMILIES = ("opus", "sonnet", "haiku", "fable")
 OUT_MULTS = (5, 3)
@@ -48,20 +57,19 @@ SEED = 20260920
 RESAMPLES = 600
 INTERVAL = (10, 90)     # bootstrap percentiles reported as the interval
 
-# Priors. Shellac's per-model input rates are RATES in tools.reconcile_window, keyed by model
-# id; Fable is not in its table, and the interval below is the one
-# docs/findings-2026-09-20-reconciliation.md publishes (1.8 to 4.0 times Opus, from the
-# Fable-heavy stretches), with the credits-model note's fitted 25/15 as its point value.
-SHELLAC = {f: next(r[0] for m, r in RATES.items() if f in m) for f in FAMILIES if any(f in m for m in RATES)}
+# Priors. Shellac's per-model input rates come from data/prices.json's `_credits` block
+# through tracker.credits, so this tool carries no rate of its own. Fable is not in that
+# table: the interval below is the one docs/findings-2026-09-20-reconciliation.md publishes
+# (1.8 to 4.0 times Opus, from the Fable-heavy stretches), with the credits-model note's
+# fitted 25/15 as its point value.
+CREDITS = C.load_credits()
+SHELLAC = {f: pair[0] for f in FAMILIES for pair in [C.rates(f, CREDITS)] if pair}
 FABLE_POINT = 25 / 15
 FABLE_INTERVAL = (1.8, 4.0)
 
 
 def family(model: str) -> str:
-    for f in FAMILIES:
-        if f in model:
-            return f
-    return "other"
+    return C.family(model, CREDITS) or "other"
 
 
 def api_ratio(prices: dict, num: str, den: str) -> float | None:
@@ -73,17 +81,18 @@ def api_ratio(prices: dict, num: str, den: str) -> float | None:
     return a / b if a and b else None
 
 
-def prepare(account: str, kept: list[tuple[dict, float, dict]]) -> list[dict]:
+def prepare(account: str, kept: list[dict]) -> list[dict]:
     """One record per clean stretch: its era, its per-family token counts and its meter movement."""
     out = []
-    for s, d, t in kept:
+    for s in kept:
+        d, t = s["delta_pct"], s["tokens"]
         ie = {m: {f: 0.0 for f in FAMILIES + ("other",)} for m in OUT_MULTS}
         raw = {f: 0.0 for f in FAMILIES + ("other",)}
         for model, tok in t.items():
             if not isinstance(tok, dict):
                 continue
             f = family(model)
-            i, o = tok.get("input", 0) + tok.get("cache_write", 0), tok.get("output", 0)
+            i, o = C.input_side(tok, CACHE_READ_WEIGHT), tok.get("output", 0)
             raw[f] += i + o
             for m in OUT_MULTS:
                 ie[m][f] += i + m * o
@@ -251,27 +260,41 @@ def verdict(num: str, den: str, free: str, value: float, iv: list[float]) -> dic
             "interval_width": hi / lo if lo else None}
 
 
+def clean(by_account: dict[str, list[dict]], runs: list) -> dict[str, list[dict]]:
+    """The reconciliation's own selection: capture-accepted, harness-clean, masterrig exempt."""
+    return C.clean_stretches(by_account, runs, require="capture_status", exempt=("masterrig",))
+
+
+def probes_only_runs() -> list:
+    """The exclusion list as it was before history/harness-runs.jsonl: completed probes only.
+
+    Kept for the comparison in section 0 and for --exclusions probes-only. It is built here
+    from the same two files tools/harness_runs.py reads, so nothing else in the tracker has
+    to keep reading them.
+    """
+    rows = probe_rows() + [effort_matrix_row()]
+    return sorted((C.HarnessRun(r["account"], r["start"], r["end"], C.run_reason(r)) for r in rows),
+                  key=lambda r: (r.account, r.start))
+
+
 def window_check(S: dict, lists: dict[str, list]) -> dict:
     """Reproduce the reconciliation's pure-Opus jwork window under each exclusion list."""
     out = {}
     for label, runs in lists.items():
-        v = []
-        for s, d, t in clean(S["jwork"], "jwork", runs):
-            ok, known, fi, fo, raw = split(t)
-            if P(s["start"]) < CUT and ok and fi + fo == 0 and all(m.startswith("claude-opus") for m in t):
-                v.append(known / d)
+        pure = C.pure_family_rows(clean(S, runs), CREDITS, "opus", CACHE_READ_WEIGHT)
+        v = [r["credits_per_pct"] for r in pure.get("jwork", []) if P(r["start"]) < CUT]
         out[label] = quantiles(v) if v else None
     return out
 
 
 def exclusion_report(S: dict, lists: dict[str, list]) -> dict:
     """What the harness-runs list removes beyond the probes-only rule, per account."""
+    kept = {label: clean(S, runs) for label, runs in lists.items()}
     out = {}
     for a in S:
-        kept = {label: clean(S[a], a, runs) for label, runs in lists.items()}
-        keys = {label: {s["start"] for s, _, _ in k} for label, k in kept.items()}
+        keys = {label: {s["start"] for s in k[a]} for label, k in kept.items()}
         dropped = sorted(keys["probes-only"] - keys["harness-runs"])
-        out[a] = {"probes_only": len(kept["probes-only"]), "harness_runs": len(kept["harness-runs"]),
+        out[a] = {"probes_only": len(kept["probes-only"][a]), "harness_runs": len(kept["harness-runs"][a]),
                   "dropped": [{"start": d, "era": "pre" if P(d) < CUT else "post"} for d in dropped]}
     return out
 
@@ -452,10 +475,12 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
          chosen: str = "harness-runs") -> None:
     print(f"0. Exclusion list ({chosen} is the one sections 1 to 5 use)")
     kinds = {}
-    for a, h0, h1 in lists["harness-runs"]:
-        kinds[a] = kinds.get(a, 0) + 1
+    for run in lists["harness-runs"]:
+        kinds[run.account] = kinds.get(run.account, 0) + 1
+    where = HARNESS_RUNS.relative_to(Path(__file__).resolve().parent.parent)
     print(f"   {len(lists['probes-only'])} runs from probes.jsonl and the effort matrix, "
-          f"{len(lists['harness-runs'])} from {HARNESS_RUNS} ({', '.join(f'{a} {n}' for a, n in sorted(kinds.items()))})")
+          f"{len(lists['harness-runs'])} from {where} "
+          f"({', '.join(f'{a} {n}' for a, n in sorted(kinds.items()))})")
     for a, e in excl.items():
         extra = ", ".join(f"{d['start'][:19]} ({d['era']})" for d in e["dropped"]) or "none"
         print(f"   {a:9} clean stretches {e['probes_only']:3} -> {e['harness_runs']:3}   removed beyond the current rule: {extra}")
@@ -575,12 +600,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
     a = ap.parse_args(argv)
-    S = load(a.masterrig)
-    lists = {"probes-only": harness_runs()}
-    lists["harness-runs"] = load_runs() if HARNESS_RUNS.exists() else lists["probes-only"]
+    S = C.stretches_by_account(json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8")),
+                               json.loads(a.masterrig.read_text(encoding="utf-8")))
+    lists = {"probes-only": probes_only_runs(), "harness-runs": C.harness_runs()}
     excl = exclusion_report(S, lists)
     win = window_check(S, lists)
-    data = {acct: prepare(acct, clean(S[acct], acct, lists[a.exclusions])) for acct in S}
+    kept = clean(S, lists[a.exclusions])
+    data = {acct: prepare(acct, kept[acct]) for acct in S}
     # Every group draws from its own seeded resampler, keyed by its name, so a figure quoted
     # from one row does not move when a different row gains or loses a stretch.
     s1 = section1(data)

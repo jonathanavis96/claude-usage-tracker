@@ -24,8 +24,8 @@ does not move when a different row gains or loses a stretch.
 
 ## The exclusion list, first
 
-`tools/reconcile_window.py` excludes stretches that overlap one of the tracker's own runs, and
-it knows about 16 of them: 15 completed probe rows in `history/probes.jsonl` and the
+The tracker excludes stretches that overlap one of its own runs. When this work started that
+rule knew about 16 of them: 15 completed probe rows in `history/probes.jsonl` and the
 effort-matrix run in `data/effort_matrix.json`'s `_meta`. A probe only writes a probes.jsonl
 row when it finishes. `tools/harness_runs.py` parses `~/.paperclip/ops/claude-usage-probe.log`
 and `~/.paperclip/ops/claude-usage-output-probe.log` as well, and finds **10 more runs that
@@ -283,24 +283,86 @@ The Opus row cannot be checked by this work at all. Every rate here is measured 
 Opus, and Opus is fixed at Shellac's 10/15 to set the scale; if that one row is wrong, every
 credit figure on the page scales with it and nothing in our data would show it.
 
+## After PR #65: the run file is now the exclusion, and what that moved
+
+PR #65 merged, bringing `tracker/credits.py` -- the selection rule, the rates and the Fable
+solve in one module, imported by the publisher, `tools/reconcile_window.py` and
+`tools/credits_report.py`. Its exclusion list was built from `history/probes.jsonl` and
+`data/effort_matrix.json`, so it knew the 16 completed runs and none of the 10 that aborted or
+crashed. `history/harness-runs.jsonl` is now the single source: `tracker.credits.harness_runs()`
+reads that file and nothing else, `clean_stretches` takes what it yields, and the two
+original files are inputs to `tools/harness_runs.py` alone. Reproduce with:
+
+```
+python3 -m tools.harness_runs
+python3 -m tools.model_rates history/masterrig-passive.json
+python3 -m tracker.publish --probes history/probes.jsonl --passive history/passive.json \
+    --gs-passive history/gs-passive.json --out /tmp/claude-usage-55.json
+python3 tools/credits_report.py --publish-check /tmp/claude-usage-55.json
+```
+
+**Clean stretches removed, per account.** One, on jwork.
+
+| Account | Old rule (16 runs) | New rule (26 runs) | Removed |
+|---|---|---|---|
+| jwork | 56 | 55 | 2026-09-09T23:13:14 to 2026-09-10T01:02:44 |
+| dave | 14 | 14 | none |
+| masterrig | 211 | 211 | none |
+
+The removed stretch contains the probe that crashed on 2026-09-10 between 00:02:18 and
+00:57:14, which wrote no `history/probes.jsonl` row. The other nine unrecorded runs fall
+outside every clean stretch: three of the four crashed runs and three of the six aborted ones
+are dave's before 2026-09-15, and dave's stretch record starts on 2026-09-15. The counts above
+are this document's selection (capture-accepted, masterrig exempt from the capture gate). The
+publisher's own selection, which exempts nobody, moves the same way: jwork 56 to 55, dave 14,
+masterrig 1 (its capture column is not yet usable).
+
+**Every figure in the published `credits` block that moves.** 86 of its 496 leaves differ, and
+82 of those are the `harness_runs_excluded` list itself, which grows from 16 rows to 26 and
+carries a run's outcome in its reason ("probe claude-opus-5/low completed from ...",
+"probe aborted: tick too early from ..."). The four that are figures:
+
+| Figure | Old | New |
+|---|---|---|
+| `five_hour_window_across_cut.per_account.a2.before` | 187,168 | 187,797 |
+| `five_hour_window_across_cut.per_account.a2.change_pct` | 9.3 | 9.0 |
+| `five_hour_window_across_cut.per_account.a2.n_before` | 41 | 40 |
+| `five_hour_window_across_cut.per_account.a2.n_with_capture` | 56 | 55 |
+
+`a2` is the published label of the account this document calls jwork. Everything else holds:
+`window_credits` (the 19.7M-credit five-hour window and its interval), `per_model`, `sessions`,
+`fable_interval`, `window_credits_from_weekly` and every rate. The publish check agrees:
+`All 496 figures reproduce from the history files`, exit 0.
+
+The publisher's `n_before` of 41 and 40 is one below this document's 42 and 41 for the same
+account and era. The difference is not the exclusion: one jwork stretch of 2026-09-05 carries a
+`<synthetic>` model key with all four token counts at zero, which `tracker.credits.price_tokens`
+treats as a model no family covers and so unpriceable, while `tools/model_rates.py` drops a
+family only when it carries tokens. Neither reading changes a figure here; the convention is
+noted so the two counts can be reconciled.
+
+**Does the measured Opus:Sonnet ratio confirm the 1.667 in `data/prices.json` `_credits`? No.**
+The largest fit, jwork's 41 clean stretches before 14 September, measures 1.081 with an 80%
+interval of [0.886, 1.280], which **excludes 1.667**. The two 14-stretch fits after the cut
+measure 1.271 [0.803, 1.933] on jwork and 1.288 [0.988, 1.815] on dave; both contain 1.667 and
+neither can discriminate at that n. All three point estimates are below it, and all three are
+far below the API list ratio of 2.5.
+
+**No rate in `data/prices.json` was changed.** Sonnet's 6/15 stands exactly as PR #65 published
+it. Adopting the measured rate would move a published row (Sonnet's tokens per window falls
+24%, from 49.2M to 37.6M), and that is Jonathan's decision, not this branch's. The rate table
+this document recommends is still written out above as the change to make, not applied.
+
 ## Follow-ups, not done here
 
-1. **Wire `history/harness-runs.jsonl` into the selection rule.** `clean()` in
-   `tools/reconcile_window.py` and the same rule in `tracker/credits.py` (PR #65) build their
-   exclusion list from `history/probes.jsonl` and the effort matrix; they should read
-   `history/harness-runs.jsonl` instead, which is a superset of both and carries the aborted and
-   crashed runs as well. `tools.harness_runs.load_runs()` already returns the list in the shape
-   `clean()` takes, and `tools/model_rates.py` uses it that way, so the change is the two
-   readers plus a test that an aborted run excludes a stretch. It is held back here because
-   PR #65 owns `tracker/credits.py` and is in its review gate, and because moving
-   `reconcile_window.py`'s rule would restate published figures in the same commit as this
-   analysis. On the evidence above the effect is one jwork stretch and under half a percent on
-   the jwork pre-14-September fit.
-2. **Keep the run log current.** `tools/harness_runs.py` reads two machine-local ops logs; the
+1. **Keep the run file current.** `tools/harness_runs.py` reads two machine-local ops logs; the
    committed JSONL is the record for anyone without them. It should be rebuilt whenever a probe
    runs, which is the same moment `history/probes.jsonl` gains a row.
-3. **Adopt the rate table** into `data/prices.json`'s `_credits` block, as written above, once
-   PR #65 merges.
+2. **Adopt the rate table** into `data/prices.json`'s `_credits` block, as written above. It
+   moves a published row, so it is Jonathan's call rather than this branch's.
+3. **Decide what the aborted runs mean for the probe itself.** Six probes aborted and four
+   crashed in eleven days, all of them after sending prompts. The allowance they spent is
+   gone either way; what the exclusion buys back is only the stretches they contaminated.
 
 ## Limits
 
@@ -308,8 +370,8 @@ credit figure on the page scales with it and nothing in our data would show it.
 - The fits assume one input rate and one output rate per family, with the output rate a fixed
   multiple of the input rate (5, and 3 shown beside it). A model whose output ratio differs
   loads that difference onto its input rate.
-- Cache reads are priced at zero, as in `tools/reconcile_window.split`. The reconciliation's
-  0 to 0.015 uncertainty on that weight is carried here untested.
+- Cache reads are priced at zero, as `tracker.credits.price_tokens` is called here with a
+  weight of 0. The reconciliation's 0 to 0.015 uncertainty on that weight is carried untested.
 - The meter reads whole percent, so every stretch carries ±5% of quantisation at these
   delta_pct values; that is the floor on every per-stretch figure above.
 - gs has no ruff. `ruff` runs locally before the gate.
@@ -317,11 +379,16 @@ credit figure on the page scales with it and nothing in our data would show it.
 ## Verification
 
 ```
-$ python3 -m unittest tests.test_model_rates tests.test_reconcile_window
-Ran 16 tests in 0.008s
+$ python3 -m unittest tests.test_model_rates tests.test_harness_runs tests.test_credits \
+      tests.test_credits_report tests.test_publish tests.test_rebuild_offline
+Ran 243 tests in 0.346s
 OK
 ```
 
-`tests/test_harness_runs.py` covers the log parser (14 more tests): run splitting at each
-terminator, the account attribution rule, the date resolution for the log's `HH:MM:SSZ` lines,
-and the meter bracketing of an undated run.
+That is every test file touching code this branch changed. `tests/test_harness_runs.py` covers
+the log parser -- run splitting at each terminator, the account attribution rule, the date
+resolution for the log's `HH:MM:SSZ` lines, the meter bracketing of an undated run -- and that
+what it writes is what `tracker/credits.py` reads. `tests/test_credits.py` covers the new
+exclusion source: every row becomes a run on its own account, an aborted probe excludes a
+stretch no `history/probes.jsonl` row could have excluded, a row without a span is not a run, a
+missing file excludes nothing, and the committed file holds every probe row's span and more.

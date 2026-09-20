@@ -15,10 +15,12 @@ def _tokens(**families) -> dict:
             for f, (i, o) in families.items()}
 
 
-def _kept(day: str, delta: float, tokens: dict, **fields) -> tuple[dict, float, dict]:
-    s = {"start": day, "end": day, "delta_pct": delta, "tokens": tokens, "reset_verified": True}
+def _kept(day: str, delta: float, tokens: dict, **fields) -> dict:
+    """One stretch in the shape tracker.credits.clean_stretches hands back."""
+    s = {"start": day, "end": day, "delta_pct": delta, "tokens": tokens, "reset_verified": True,
+         "capture_status": "accepted"}
     s.update(fields)
-    return s, delta, tokens
+    return s
 
 
 def _recs(rows, account="jwork"):

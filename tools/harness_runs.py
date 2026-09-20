@@ -13,6 +13,9 @@ row per run: account, start, end, kind, outcome, and the source line it came fro
     python3 -m tools.harness_runs                      # rewrite history/harness-runs.jsonl
     python3 -m tools.harness_runs --print              # to stdout, write nothing
 
+The file it writes is the single source of the exclusion: tracker/credits.py reads it and
+nothing else, which is how an aborted probe reaches the publisher's selection at all.
+
 Accounts and times, in order of preference:
 
 1. A completed probe carries its own account and an exact interval (ts, ts + elapsed_s) in
@@ -37,13 +40,17 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tracker.credits import EFFORT_MATRIX_ACCOUNT, HARNESS_RUNS_PATH
 
 OPS = Path.home() / ".paperclip" / "ops"
 PROBE_LOG = OPS / "claude-usage-probe.log"
 OUTPUT_PROBE_LOG = OPS / "claude-usage-output-probe.log"
-OUT = Path("history/harness-runs.jsonl")
+OUT = HARNESS_RUNS_PATH
 WINDOW = timedelta(hours=5)
 P = datetime.fromisoformat
 
@@ -83,24 +90,25 @@ def parse_log(path: Path, kind: str) -> list[dict]:
         m = RESULT.match(line)
         if m:
             runs.append({"kind": kind, "outcome": "completed", "account": m.group(1), "model": m.group(2),
-                         "tokens_per_pct": float(m.group(4)), "line": i, "prompts": buf})
+                         "effort": m.group(3), "tokens_per_pct": float(m.group(4)), "line": i,
+                         "prompts": buf})
             buf = []
             continue
         m = ABORT.match(line)
         if m:
             runs.append({"kind": kind, "outcome": "aborted", "account": m.group(1), "model": None,
-                         "detail": m.group(2), "line": i, "prompts": buf})
+                         "effort": None, "detail": m.group(2), "line": i, "prompts": buf})
             buf = []
             continue
         if line.startswith("Traceback (most recent call last)"):
             detail = next((t.strip() for t in lines[i:] if t.strip() and not t.startswith((" ", "\t"))), "")
             runs.append({"kind": kind, "outcome": "crashed", "account": None, "model": None,
-                         "detail": detail, "line": i, "prompts": buf})
+                         "effort": None, "detail": detail, "line": i, "prompts": buf})
             buf = []
             continue
     if buf:
         runs.append({"kind": kind, "outcome": "unterminated", "account": None, "model": None,
-                     "line": buf[-1]["line"], "prompts": buf})
+                     "effort": None, "line": buf[-1]["line"], "prompts": buf})
     return [r for r in runs if r["prompts"]]
 
 
@@ -174,15 +182,17 @@ def probe_rows() -> list[dict]:
             rows.append({"account": r["account"], "start": start,
                          "end": start + timedelta(seconds=r.get("elapsed_s", 3600)),
                          "kind": "probe", "outcome": "completed", "model": r.get("model"),
-                         "tokens_per_pct": r.get("tokens_per_pct"), "precision": "elapsed_s",
+                         "effort": r.get("effort"), "tokens_per_pct": r.get("tokens_per_pct"),
+                         "precision": "elapsed_s",
                          "account_source": "probes.jsonl", "source": f"history/probes.jsonl:{n}"})
     return rows
 
 
 def effort_matrix_row() -> dict:
     meta = json.load(open("data/effort_matrix.json"))["_meta"]
-    return {"account": "jwork", "start": P(meta["started"]), "end": P(meta["finished"]),
-            "kind": "effort-matrix", "outcome": "completed", "model": None, "tokens_per_pct": None,
+    return {"account": EFFORT_MATRIX_ACCOUNT, "start": P(meta["started"]), "end": P(meta["finished"]),
+            "kind": "effort-matrix", "outcome": "completed", "model": None, "effort": None,
+            "tokens_per_pct": None,
             "precision": "recorded", "account_source": "effort_matrix", "source": "data/effort_matrix.json:_meta"}
 
 
@@ -201,7 +211,7 @@ def collect() -> list[dict]:
                     continue
             start, end, precision = bracket(run, account, series)
             rows.append({"account": account, "start": start, "end": end, "kind": kind,
-                         "outcome": run["outcome"], "model": run["model"],
+                         "outcome": run["outcome"], "model": run["model"], "effort": run.get("effort"),
                          "tokens_per_pct": run.get("tokens_per_pct"), "precision": precision,
                          "account_source": how, "detail": run.get("detail"),
                          "source": f"{path}:{run['line']}"})
@@ -209,12 +219,6 @@ def collect() -> list[dict]:
     for r in rows:
         r["start"], r["end"] = r["start"].isoformat(), r["end"].isoformat()
     return rows
-
-
-def load_runs(path: Path = OUT) -> list[tuple[str, datetime, datetime]]:
-    """The exclusion list in the shape tools.reconcile_window.clean expects."""
-    return [(r["account"], P(r["start"]), P(r["end"]))
-            for r in (json.loads(line) for line in open(path) if line.strip())]
 
 
 def main(argv: list[str] | None = None) -> int:

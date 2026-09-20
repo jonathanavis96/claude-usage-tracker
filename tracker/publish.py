@@ -796,7 +796,12 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     with no pure-Opus stretch produces.
     """
     labels = dict(ACCOUNT_LABELS)
-    runs = credit_model.harness_runs(probe_rows, effort_meta)
+    # history/harness-runs.jsonl is the single record of the tracker's own runs: the
+    # completed probes probe_rows also holds, the effort matrix, and the probes that
+    # aborted or crashed without writing a probes.jsonl row at all. probe_rows is no
+    # longer read for the exclusion -- it stays in the signature because the caller hands
+    # the same rows to the weekly block -- and effort_meta is still the cache mix below.
+    runs = credit_model.harness_runs()
     by_account = credit_model.stretches_by_account(gs_passive, masterrig_passive)
     # Two selections, for two different questions. Both gate on capture_status, never
     # on status: 42 stretches read status "accepted" with capture_status "unaccounted",

@@ -33,11 +33,12 @@ are printed:
   `--cache-read-weight 0` reads the article literally.
 
 What is left out, and why it is not a date rule. A stretch is excluded when it overlaps one
-of the tracker's own runs on the same account: a probe row in history/probes.jsonl, spanning
-[ts, ts + elapsed_s], or the effort-matrix run recorded in data/effort_matrix.json's `_meta`
-(2026-09-09T11:28:37Z to 14:53:22Z, on jwork). There the tracker was driving the account, so
-the meter moved on the instrument's own work and the stretch's percent is not a reading of a
-session's tokens.
+of the tracker's own runs on the same account, as history/harness-runs.jsonl records them:
+each completed probe over [ts, ts + elapsed_s], the effort-matrix run
+(2026-09-09T11:28:37Z to 14:53:22Z, on jwork), and every probe that aborted or crashed part
+way, which sent its prompts and never wrote a probes.jsonl row. There the tracker was driving
+the account, so the meter moved on the instrument's own work and the stretch's percent is not
+a reading of a session's tokens.
 
 The six jwork stretches from 12:20 to 14:58 on 2026-09-09 that read 0.28 to 0.53 capture,
 against about 1.0 either side, were first put down to a probe. They were not: probes.jsonl
@@ -99,6 +100,7 @@ CLASSES = ("input", "output", "cache_read", "cache_write")
 
 REPORTS = {"gs": Path("history/gs-passive.json"), "masterrig": Path("history/masterrig-passive.json")}
 PROBES = Path("history/probes.jsonl")
+HARNESS_RUNS = Path("history/harness-runs.jsonl")
 EFFORT_MATRIX = Path("data/effort_matrix.json")
 #: data/effort_matrix.json's `_meta` records `started` and `finished` but not which account
 #: the matrix ran on. It ran on jwork (2026-09-20 review), so the account is named here
@@ -115,12 +117,13 @@ class HarnessRun:
     reason: str
 
 
-def harness_runs(probes: Path = PROBES, effort_matrix: Path = EFFORT_MATRIX) -> list[HarnessRun]:
-    """Every span the tracker's own instruments occupied, per account.
+def harness_runs(path: Path = HARNESS_RUNS) -> list[HarnessRun]:
+    """Every span the tracker's own instruments occupied, per account, from one file.
 
-    A probe row's `ts` is the run's start (tracker/probe.py returns ProbeResult(start, ...))
-    and `elapsed_s` its duration, so the row occupies [ts, ts + elapsed_s] on its own
-    `account`. The effort matrix records its own `started` and `finished`.
+    `history/harness-runs.jsonl` carries one row per run: the completed probes (each
+    occupying [ts, ts + elapsed_s] of its own account, as history/probes.jsonl records
+    it), the effort-matrix run, and the probes that aborted or crashed part way and so
+    never wrote a probes.jsonl row at all. tools/harness_runs.py builds it; this reads it.
 
     Why this and not a date rule. The six jwork stretches of 2026-09-09 that read 0.28 to
     0.53 capture against about 1.0 either side were first blamed on a probe; there is no
@@ -130,24 +133,21 @@ def harness_runs(probes: Path = PROBES, effort_matrix: Path = EFFORT_MATRIX) -> 
     and leaves the rest of 9 September in the series -- which a blanket date rule would not.
     """
     out: list[HarnessRun] = []
-    if probes.exists():
-        for line in probes.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            if not row.get("account") or not row.get("ts"):
-                continue
-            start = datetime.fromisoformat(row["ts"])
-            out.append(HarnessRun(row["account"], start,
-                                  start + timedelta(seconds=row.get("elapsed_s") or 0),
-                                  f"probe {row.get('model', '?')}/{row.get('effort', '?')} "
-                                  f"from {row['ts'][:19]}Z"))
-    if effort_matrix.exists():
-        meta = json.loads(effort_matrix.read_text(encoding="utf-8")).get("_meta") or {}
-        if meta.get("started") and meta.get("finished"):
-            out.append(HarnessRun(EFFORT_MATRIX_ACCOUNT, datetime.fromisoformat(meta["started"]),
-                                  datetime.fromisoformat(meta["finished"]),
-                                  f"effort matrix {meta['started'][:19]}Z to {meta['finished'][:19]}Z"))
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if not (row.get("account") and row.get("start") and row.get("end")):
+            continue
+        model = "/".join(str(x) for x in (row.get("model"), row.get("effort")) if x)
+        reason = " ".join(x for x in (row.get("kind") or "run", model) if x)
+        detail = f": {row['detail']}" if row.get("detail") else ""
+        out.append(HarnessRun(row["account"], datetime.fromisoformat(row["start"]),
+                              datetime.fromisoformat(row["end"]),
+                              f"{reason} {row.get('outcome') or 'ran'}{detail} "
+                              f"from {row['start'][:19]}Z"))
     return sorted(out, key=lambda r: (r.account, r.start))
 
 
@@ -624,12 +624,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="provisional Fable input rate in credits per token")
     ap.add_argument("--fable-output-ratio", type=float, default=FABLE_OUTPUT_RATIO,
                     help="provisional Fable output rate as a multiple of its input rate")
+    ap.add_argument("--harness-runs", type=Path, default=HARNESS_RUNS, dest="harness_runs",
+                    help="history/harness-runs.jsonl: the runs whose spans are excluded from "
+                         "their own account")
     ap.add_argument("--probes", type=Path, default=PROBES,
-                    help="probe rows whose spans are excluded from their own account")
+                    help="probe rows, for --publish-check's weekly window points")
     ap.add_argument("--effort-matrix", type=Path, default=EFFORT_MATRIX,
-                    help=f"effort-matrix run whose span is excluded from {EFFORT_MATRIX_ACCOUNT}")
+                    help=f"the effort matrix, for --publish-check's effort cache mix "
+                         f"(it ran on {EFFORT_MATRIX_ACCOUNT})")
     ap.add_argument("--keep-harness-runs", action="store_true",
-                    help="do not exclude stretches overlapping a probe or the effort-matrix run")
+                    help="do not exclude stretches overlapping one of the tracker's own runs")
     ap.add_argument("--min-capture", type=float,
                     help="keep only stretches whose own capture is at least this "
                          "(for masterrig, where the meter counts more than this host)")
@@ -647,7 +651,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.publish_check:
         return publish_check(a)
-    runs = [] if a.keep_harness_runs else harness_runs(a.probes, a.effort_matrix)
+    runs = [] if a.keep_harness_runs else harness_runs(a.harness_runs)
     rows, skipped, excluded = load_rows({"gs": a.gs, "masterrig": a.masterrig}, a.cache_read_weight,
                                         a.fable_input, a.fable_output_ratio, a.min_capture, runs)
     if not rows:

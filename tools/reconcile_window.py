@@ -4,9 +4,10 @@ Read-only analysis over history/gs-passive.json and a masterrig stretch file in 
 same record shape. Prints (1) the Fable-free window from pure-Opus stretches, (2) Fable's
 credit rate solved per Fable-heavy stretch against that window, (3) the five-hour window
 before and after 2026-09-14 on every account, and (4) jwork against Dave across a range
-of assumed Fable rates. Stretches that overlap a harness run on the same account (a probe
-row in history/probes.jsonl, or the 2026-09-09 effort-matrix run on jwork recorded in
-data/effort_matrix.json _meta) are excluded; gs stretches must also be capture-accepted.
+of assumed Fable rates. Stretches that overlap a harness run on the same account are
+excluded, as history/harness-runs.jsonl records them -- the completed probes, the
+2026-09-09 effort-matrix run on jwork, and the probes that aborted or crashed without
+writing a probes.jsonl row; gs stretches must also be capture-accepted.
 
 The rates, the exclusion rule and the stretch selection live in tracker/credits.py, which
 the publisher imports too: the figures this prints and the figures the public JSON carries
@@ -44,9 +45,7 @@ def load(masterrig: Path) -> dict[str, list[dict]]:
 def main() -> int:
     credits = C.load_credits()
     weight = 0.0  # this report reads the article literally: cache reads free
-    runs = C.harness_runs(
-        [json.loads(line) for line in Path("history/probes.jsonl").read_text().splitlines() if line.strip()],
-        json.loads(Path("data/effort_matrix.json").read_text())["_meta"])
+    runs = C.harness_runs()
     Cl = C.clean_stretches(load(Path(sys.argv[1])), runs, require="capture_status",
                            exempt=("masterrig",))
     print("1. Pure-Opus stretches (no Fable, no fitted rate), credits per 1%, cache reads 0")
