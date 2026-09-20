@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-19T23:30:13.251170+00:00",
+ "generated_at": "2026-09-20T00:30:13.179391+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -16,11 +16,11 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-jwork.log",
     "format": "meter",
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
-    "reset_verified_samples": 690,
+    "reset_verified_samples": 701,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 3789,
+    "samples": 3800,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-19T23:26:39+00:00"
+    "last": "2026-09-20T00:26:38+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -29,12 +29,12 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1709,
-    "turns": 49994,
+    "files": 1710,
+    "turns": 50040,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1709,
-     "dropped": 1029,
+     "kept": 1710,
+     "dropped": 1031,
      "subagent_files": 697
     }
    },
@@ -6584,6 +6584,18 @@
      ],
      "pieces": 1,
      "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-20T02:29:59.869039+00:00",
+     "windows": null,
+     "five_hour_pct": 3.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.9101,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": true
     }
    ]
   },
@@ -6593,18 +6605,18 @@
     "log": "/home/jonathan/.paperclip/ops/claude-usage-meter-dave.log",
     "format": "meter",
     "legacy_log": null,
-    "reset_verified_samples": 462,
+    "reset_verified_samples": 473,
     "since": null,
-    "samples": 1017,
+    "samples": 1028,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-19T23:26:39+00:00"
+    "last": "2026-09-20T00:26:38+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 405,
-    "turns": 9941,
+    "files": 413,
+    "turns": 10612,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -7529,6 +7541,103 @@
      "capture_status": "accepted",
      "reference": 1.5458,
      "capture": 0.7689
+    },
+    {
+     "start": "2026-09-19T21:43:39+00:00",
+     "end": "2026-09-19T23:43:09+00:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 12.9977,
+     "usd_per_pct": 1.2998,
+     "bounds": [
+      1.0831,
+      1.6247
+     ],
+     "tokens": {
+      "claude-opus-5": {
+       "input": 94,
+       "output": 15010,
+       "cache_read": 5945488,
+       "cache_write": 172981
+      },
+      "claude-fable-5-1": {
+       "input": 1430,
+       "output": 39009,
+       "cache_read": 22579120,
+       "cache_write": 415858,
+       "cache_write_1h": 415858
+      },
+      "claude-sonnet-5": {
+       "input": 78,
+       "output": 8687,
+       "cache_read": 7490175,
+       "cache_write": 468777
+      },
+      "claude-haiku-4-5": {
+       "input": 9,
+       "output": 228,
+       "cache_read": 13689,
+       "cache_write": 20566,
+       "cache_write_1h": 20566
+      }
+     },
+     "unpriced_tokens": 34492,
+     "unpriced": {
+      "claude-haiku-4-5": {
+       "input": 9,
+       "output": 228,
+       "cache_read": 13689,
+       "cache_write": 20566,
+       "cache_write_1h": 20566
+      }
+     },
+     "turns": 161,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
+    },
+    {
+     "start": "2026-09-19T23:43:09+00:00",
+     "end": "2026-09-20T00:21:09+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 13.0477,
+     "usd_per_pct": 1.3048,
+     "bounds": [
+      1.1862,
+      1.4497
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 1382,
+       "output": 57579,
+       "cache_read": 12529834,
+       "cache_write": 186899,
+       "cache_write_1h": 186899
+      },
+      "claude-sonnet-5": {
+       "input": 906,
+       "output": 59042,
+       "cache_read": 110141801,
+       "cache_write": 1434217
+      },
+      "claude-opus-5": {
+       "input": 124,
+       "output": 5621,
+       "cache_read": 4688927,
+       "cache_write": 335691
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 570,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.5458,
+     "capture": 0.8441
     }
    ],
    "runs": [
@@ -7572,33 +7681,47 @@
      "pieces": 4,
      "reset_verified": true,
      "capture_diagnosed": 1
+    },
+    {
+     "date": "2026-09-20",
+     "usd_per_pct": 1.3048,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.1,
+     "bounds": [
+      1.1862,
+      1.4497
+     ],
+     "pieces": 1,
+     "reset_verified": true,
+     "capture_diagnosed": 0
     }
    ],
    "split": {
     "input": 1.8e-05,
-    "output": 0.002811,
-    "cache_read": 0.982078,
-    "cache_write": 0.015093,
-    "cache_write_1h": 0.006179
+    "output": 0.002627,
+    "cache_read": 0.98226,
+    "cache_write": 0.015095,
+    "cache_write_1h": 0.005713
    },
-   "last_usable_at": "2026-09-19T21:43:39+00:00",
+   "last_usable_at": "2026-09-20T00:21:09+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 14,
-     "median": 1.5458,
-     "half_range": 0.3243,
-     "mad": 0.171,
-     "cv": 0.167
+     "n": 15,
+     "median": 1.5376,
+     "half_range": 0.3261,
+     "mad": 0.1734,
+     "cv": 0.1683
     },
     "daily": {
-     "n": 2,
-     "median": 1.5572,
-     "half_range": 0.0061,
-     "mad": 0.009,
-     "cv": 0.0086
+     "n": 3,
+     "median": 1.5477,
+     "half_range": 0.0846,
+     "mad": 0.0182,
+     "cv": 0.0991
     }
    },
    "weekly_by_window": [
@@ -7697,6 +7820,18 @@
      ],
      "pieces": 1,
      "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-20T00:26:38+00:00",
+     "windows": 4.33,
+     "five_hour_pct": 13.0,
+     "seven_day_pct": 3.0,
+     "rounding_interval": [
+      2.5007,
+      10.1932
+     ],
+     "pieces": 1,
+     "reset_verified": false
     }
    ]
   }
