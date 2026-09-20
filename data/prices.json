@@ -1,5 +1,79 @@
 {
   "_source": "https://docs.anthropic.com/en/docs/about-claude/pricing fetched 2026-09-06; USD per million tokens; cache_write is the 5-minute rate. meter_weight is meter percent per list dollar relative to Sonnet 5; Fable's 1.0 is measured: the 2026-09-06 5-tick Fable probe cost $1.08 of list value per 1% against $0.98 for Sonnet on the same cache-write-heavy payload (ratio 0.91, within probe error). class_weight is meter percent per list dollar for each token class relative to cache_write, the class the Sonnet probe is made of. class_weight.output is maintained by the publisher (tracker/weight.py): the weekly Sunday Fable output run (bin/output-probe.sh, payload output) supplies a row, and the next daily publish solves the weight at which that row and the latest Fable prose row read the same meter dollars per 1%, writes it to every model here, and records the pair under _output_weight; a value more than 30% from the current one is refused, recorded with applied false, and alerts Jonathan instead. The 1.8 hand-entered on 2026-09-06 was the crude ratio of the two rows' list values; the first automatic recompute from the same pair gave 1.95 because the output row's own cache traffic (12% of its list value) sits on the unweighted side. input and cache_read are unmeasured and assumed 1.0; the same class weights are assumed for every model. Opus 5's 1.0 is measured too: a paired run on the Jono Work account on 2026-09-08, same 5-hour window, cost $0.918 of list value per 1% for Opus (ticks 7 to 10) against $0.963 for Sonnet (ticks 2 to 5), ratio 0.954, within probe error, so Opus keeps meter_weight 1.0. The first Opus row (2026-09-07 on Dave, $0.682 per 1%, early tick) is flagged outlier by hand under the rotation's own decide rule: the later same-model reading agreed with the all-model median, not with it. cache_read is 0.0 since 2026-09-16, measured on masterrig: over 111 idle-bounded windows (tools/idle_burst.py, 18 Aug to 15 Sep, $4,759 of list value against 2,214 meter points) the list value per 1% climbs with the cache_read share of the window (median $1.67 at a 25-45% share, $2.69 at 45-60%, $3.28 at 60-75%, $6.13 above 75%) while the non-cache_read value per 1% holds at $1.11, $1.15, $1.25, $1.43 across the same bins ($0.94 aggregate), and a non-negative least squares fit gives cache_read a weight of 0.000 in every configuration tried. The probe never saw this because its payload is 98% cache_write by list value. output is 1.0 since 2026-09-16, measured on gs: a least-squares fit of meter movement on list dollars of (input + cache_write) and of output over the 60 jwork stretches the capture check accepted 2026-09-05..15 (tracker.gs_passive --fit-output-weight, cache_read pinned at 0.0) gives output 1.018 relative to cache_write, residual 1.7 points of meter on 10% stretches, with output 42% of the list value fitted. The 1.8 from the single 2026-09-06 output probe run is superseded; the Sunday output probe is retired with the rest of the probes.",
+  "_credits": {
+    "_source": "Credits per token for the five-hour meter. The meter does not work in dollars: it charges ceil(input_tokens x input_rate + output_tokens x output_rate) of an internal unit, at a small rational rate per model. The per-family rates are the Shellac reconstruction (https://she-llac.com/claude-limits, crossposted 2026-01-25), recorded in docs/reference-2026-09-20-shellac-credits-model.md on branch step-vs-trend-finding -- which was never pushed to origin and is not in this repository, so the rates are restated here and in docs/findings-2026-09-20-reconciliation.md rather than read from it. That table is a January 2026 reference, never an input to arithmetic: the five-hour window, the cache-read weight and Fable's interval below are all measured against it in docs/findings-2026-09-20-reconciliation.md (reproduce with tools/reconcile_window.py over the watched accounts' stretch files). The dollar table above is untouched and still feeds the contributor path and the legacy token figures.",
+    "unit": "credits per token. input and output are [numerator, denominator] so the exact fifteenths survive a JSON round trip; a consumer divides.",
+    "cache_write": "charged at the model's plain input rate, not the API's 1.25x write premium",
+    "cache_read_weight": 0,
+    "cache_read_weight_range": [
+      0,
+      0.015
+    ],
+    "cache_read_weight_source": "docs/findings-2026-09-20-reconciliation.md, 'Cache reads': at 0.015 the pure-Opus window reads 23.6M credits, above the 22M the May doubling implies; at 0 it reads 19.7M, between the two official-anchored figures. The data prefer a weight at or near zero; the 0 to 0.015 range from the fits is the uncertainty carried on every credit figure.",
+    "per_family": {
+      "haiku": {
+        "matches": "haiku",
+        "input": [
+          2,
+          15
+        ],
+        "output": [
+          10,
+          15
+        ]
+      },
+      "sonnet": {
+        "matches": "sonnet",
+        "input": [
+          6,
+          15
+        ],
+        "output": [
+          30,
+          15
+        ]
+      },
+      "opus": {
+        "matches": "opus",
+        "input": [
+          10,
+          15
+        ],
+        "output": [
+          50,
+          15
+        ],
+        "note": "every Opus version prices as Opus, which is why this table is keyed by family"
+      },
+      "fable": {
+        "matches": "fable",
+        "input": null,
+        "output": null,
+        "interval": {
+          "input_low": 2.0,
+          "input_high": 2.9,
+          "output_ratio": [
+            3,
+            5
+          ],
+          "status": "interval, not yet separable"
+        },
+        "interval_source": "docs/findings-2026-09-20-reconciliation.md, \"Fable's rate\": solved per Fable-heavy stretch against the measured window -- n=8 on the account with a usable capture column, with a second account's p25 as the usable edge of an inflated solve. Fable input is about 2.0 to 2.9 credits per token, 3 to 4.3 times Opus; the output ratio (3x or 5x) is not separable."
+      }
+    },
+    "list_price_model": {
+      "haiku": null,
+      "sonnet": "claude-sonnet-5",
+      "opus": "claude-opus-5",
+      "fable": "claude-fable-5-1"
+    },
+    "list_price_model_note": "which model id of the dollar table above prices a family's tokens in API dollars. Haiku is null: it has credits but no row in the dollar table, so its API value is published as null with a status.",
+    "across_cut_fable_rate": {
+      "input": 1.667,
+      "output": 5.0,
+      "why": "tools/reconcile_window.py section 3 holds this one rate on both sides of 2026-09-14 so the before and after medians can be compared with each other. It is not a claim about Fable's rate -- that is the interval above -- and it sits below the interval's low end; what makes the comparison work is that the same rate is in both medians."
+    }
+  },
   "claude-sonnet-5": {
     "input": 2,
     "output": 10,
