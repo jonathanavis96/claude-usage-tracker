@@ -76,6 +76,7 @@ from statistics import median
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tracker import credits as credit_model
 from tracker import publish as publisher
 
 #: Credits per token as (input, output), from the article's table. The key is matched as a
@@ -409,7 +410,8 @@ def _excluded_table(excluded: list[dict]) -> list[str]:
     return out
 
 
-def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse.Namespace) -> str:
+def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse.Namespace,
+           window_tokens: dict | None = None) -> str:
     out: list[str] = []
     out.append("Credits per 1% of the five-hour meter, from history/*-passive.json.")
     out.append("Rates: docs/reference-2026-09-20-shellac-credits-model.md,")
@@ -465,7 +467,83 @@ def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse
                                for a, v in sorted(by_account.items())))
         out.append(f"  assumed for the tables above: {args.fable_input:.4f} "
                    f"({args.fable_input / OPUS_INPUT:.2f}x Opus)")
+    out.extend(window_tokens_lines(window_tokens))
     return "\n".join(out) + "\n"
+
+
+def window_tokens_block(a: argparse.Namespace) -> dict | None:
+    """The `credits.window_tokens` the publisher would write from these same files.
+
+    Built by `tracker.publish.rebuild_public_json`, the publisher's own code, rather than
+    recomputed here: the point of printing the block in this report is that the report and
+    the published page state one figure, and a second implementation of the arithmetic
+    would only prove this file's. Returns None when an input the publish needs is missing
+    or unreadable -- the rest of this report reads only the stretch files and must still
+    run without history/passive.json or data/effort_matrix.json.
+    """
+    try:
+        return publisher.rebuild_public_json(
+            datetime.now(timezone.utc), probes=a.probes, passive=a.passive,
+            effort=a.effort_matrix, prices=a.prices, gs_passive=a.gs,
+            masterrig_passive=a.masterrig,
+            model_rates=getattr(a, "model_rates", MODEL_RATES))["credits"]["window_tokens"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def window_tokens_lines(block: dict | None) -> list[str]:
+    """The published window-tokens block as the report's own table.
+
+    The same numbers `credits.window_tokens` carries, in the order the block lists them:
+    what a five-hour window holds in tokens per class, measured as the cluster's own
+    counts over its own meter movement, then each family's conversion of it and the week.
+    """
+    out = ["\nWhat a five-hour window buys in TOKENS, measured directly (credits.window_tokens)",
+           "The same pure-Opus cluster as above, read for its token counts rather than its credits:",
+           "tokens per 1% of the meter, times 100. No rate and no class weight enters the Opus row."]
+    if block is None:
+        return [*out, "  (unavailable: the publish inputs for this block could not be read)"]
+    if block["all"]["value"] is None:
+        return [*out, f"  (none: {block['all']['status']})"]
+    head = ("scope", "n", "all four", "input", "cache_write", "cache_read", "output")
+    widths = (9, 4, 15, 9, 13, 15, 13)
+
+    def row(label: str, n: str, figure: dict, per_class: dict | None) -> tuple[str, ...]:
+        cells = [_fmt(figure["value"], widths[2])]
+        for cls, width in zip(credit_model.TOKEN_CLASSES, widths[3:]):
+            cells.append(_fmt(per_class[cls]["value"] if per_class else None, width))
+        return (label, n, *cells)
+
+    lines = [row("pooled", str(block["n"]), block["all"], block["per_class"])]
+    for label, acc in sorted(block["accounts"].items()):
+        lines.append(row(label, str(acc["n"]), acc["all"], acc["per_class"]))
+    out.append(_table(head, widths, lines))
+    lo, hi = block["all"]["interval"]
+    out.append(f"  pooled interval {lo:,} to {hi:,}; cache reads are "
+               f"{block['cache_read_share']['value']:.1%} of the tokens "
+               f"({block['cache_read_share']['interval'][0]:.1%} to "
+               f"{block['cache_read_share']['interval'][1]:.1%}). as_of {block['as_of']}.")
+    out.append("\n  per family (Opus measured; the rest converted at the two families' rates)")
+    fam_head = ("family", "source", "per window", "low", "high", "per week")
+    fam_widths = (9, 9, 15, 15, 15, 17)
+    fam_lines = []
+    for fam, fam_row in sorted(block["per_family"].items()):
+        interval = fam_row["all"]["interval"] or [None, None]
+        week = block["per_week"]["per_family"][fam]["all"]
+        fam_lines.append((fam, fam_row["rate_source"], _fmt(fam_row["all"]["value"], fam_widths[2]),
+                          _fmt(interval[0], fam_widths[3]), _fmt(interval[1], fam_widths[4]),
+                          _fmt(week["value"], fam_widths[5])))
+    out.append(_table(fam_head, fam_widths, fam_lines))
+    for fam, fam_row in sorted(block["per_family"].items()):
+        if fam_row["all"]["status"]:
+            out.append(f"  {fam}: {fam_row['all']['status']}")
+    windows = block["per_week"]["windows_per_week"]
+    if windows["value"] is None:
+        out.append(f"  per week: {block['per_week']['status']}")
+    else:
+        out.append(f"  windows per week {windows['value']:g} "
+                   f"({windows['interval'][0]:g} to {windows['interval'][1]:g}, {windows['source']})")
+    return out
 
 
 #: A recomputed figure may differ from the published one only by this much. It is a
@@ -751,7 +829,7 @@ def main(argv: list[str] | None = None) -> int:
     if not rows:
         print(f"no priceable stretches in {a.gs} or {a.masterrig}")
         return 1
-    print(render(rows, skipped, excluded, a), end="")
+    print(render(rows, skipped, excluded, a, window_tokens_block(a)), end="")
     if a.json:
         a.json.parent.mkdir(parents=True, exist_ok=True)
         a.json.write_text(json.dumps({

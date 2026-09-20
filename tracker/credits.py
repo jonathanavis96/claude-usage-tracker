@@ -87,6 +87,10 @@ HARNESS_RUNS_PATH = Path(__file__).resolve().parent.parent / "history" / "harnes
 
 #: Below this much meter movement a stretch is mostly whole-percent rounding.
 MIN_DELTA_PCT = 3.0
+#: The four token classes, in the order the published blocks list them. `cache_write_1h`
+#: is already inside `cache_write` (tracker/turns.py), so it is not a fifth class and
+#: counting it again would count those tokens twice.
+TOKEN_CLASSES = ("input", "cache_write", "cache_read", "output")
 #: The announced date of the weekly change (see ANNOUNCEMENT), used to split an
 #: account's stretches into before and after. Not a contamination rule: nothing is
 #: excluded by date anywhere in this module.
@@ -483,9 +487,23 @@ def pure_family_rows(clean: dict[str, list[dict]], credits: dict, fam: str,
                 continue
             rows.append({"account": account, "start": st.get("start"), "end": st.get("end"),
                          "delta_pct": st["delta_pct"], "credits": priced.known,
-                         "credits_per_pct": priced.known / st["delta_pct"]})
+                         "credits_per_pct": priced.known / st["delta_pct"],
+                         # The stretch's own token counts, carried so `window_tokens` can
+                         # read the same cluster without a second selection rule.
+                         "tokens": tokens})
         out[account] = sorted(rows, key=lambda r: r["credits_per_pct"])
     return out
+
+
+def selection_sentence(min_delta_pct: float = MIN_DELTA_PCT) -> str:
+    """The acceptance rule of the module docstring as one published sentence, in one place.
+
+    `window_credits` and `window_tokens` read the same cluster, so they state the same
+    rule; stating it twice is how the two sentences drift apart while the code does not.
+    """
+    return (f"A stretch counts when it moved the meter at least {min_delta_pct:g}%, carries "
+            f"tokens, does not overlap one of the tracker's own runs on its own account (a "
+            f"probe row or the effort-matrix run), and reads capture_status 'accepted'.")
 
 
 def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
@@ -515,10 +533,7 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
             "interval": [round(values[0] * 100), round(values[-1] * 100)] if values else None,
         }
     method = (f"median credits per 1% of the five-hour meter over the pure-{fam} stretches of every "
-              f"watched account's passive stretch file, times 100. A stretch "
-              f"counts when it moved the meter at least {MIN_DELTA_PCT:g}%, carries tokens, does not "
-              f"overlap one of the tracker's own runs on its own account (a probe row or the "
-              f"effort-matrix run), and reads capture_status 'accepted'. Every token in a "
+              f"watched account's passive stretch file, times 100. {selection_sentence()} Every token in a "
               f"pure-{fam} stretch is priced at a rate data/prices.json publishes, so the figure "
               f"carries no fitted parameter. Cache writes at the input rate, cache reads at "
               f"{weight:g} of it.")
@@ -534,6 +549,255 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
         "method": method,
         "status": None if pooled else f"no capture-accepted pure-{fam} stretch in the history files",
         "derivation": "credits",
+    }
+
+
+def class_totals(tokens: dict) -> dict[str, int]:
+    """One stretch's tokens summed per class across every model in it."""
+    out = {cls: 0 for cls in TOKEN_CLASSES}
+    for tok in tokens.values():
+        if isinstance(tok, dict):
+            for cls in TOKEN_CLASSES:
+                out[cls] += tok.get(cls, 0)
+    return out
+
+
+def _round(value: float | None, ndigits: int = 0):
+    if value is None:
+        return None
+    return round(value) if ndigits == 0 else round(value, ndigits)
+
+
+def _figure_from(per_account: dict[str, list[float]], ndigits: int = 0) -> dict:
+    """The published shape of one measured quantity: a pooled median and an interval.
+
+    `value` is the median of every reading, pooled across accounts. `interval` is the
+    union of the per-account intervals -- each account's own lowest and highest reading
+    -- which is the spread of the readings and not a confidence interval. Pooling the
+    medians instead would average two accounts that differ by more than either's spread;
+    taking a standard error would claim an error model these eleven readings do not have.
+    """
+    pooled = [v for values in per_account.values() for v in values]
+    if not pooled:
+        return {"value": None, "interval": None}
+    lows = [min(values) for values in per_account.values() if values]
+    highs = [max(values) for values in per_account.values() if values]
+    return {"value": _round(median(pooled), ndigits),
+            "interval": [_round(min(lows), ndigits), _round(max(highs), ndigits)]}
+
+
+def _mix_credits_per_token(shares: dict[str, float] | None, rate_in: float | None,
+                           rate_out: float | None, weight: float) -> float | None:
+    """Credits one token of a stated class mix costs at one family's rates.
+
+    `shares` are the four classes as fractions of the whole token count, so this is the
+    credits a stretch of that mix spends per token of it. Cache writes ride the plain
+    input rate and cache reads ride `weight` of it, the same rule `price_tokens` applies
+    to a real bundle.
+    """
+    if shares is None or rate_in is None or rate_out is None:
+        return None
+    at_input = shares["input"] + shares["cache_write"] + shares["cache_read"] * weight
+    return at_input * rate_in + shares["output"] * rate_out
+
+
+def _rate_source(rate: FamilyRate) -> str:
+    """Where a family's rate comes from, as one word, from the shape of the rate itself.
+
+    "anchor" is the unit anchor and nothing tests it; "measured" is a rate the meter fit
+    produced; "envelope" is a family whose fits disagree, so only an interval survives;
+    "none" is a family there is nothing at all to measure a rate from.
+    """
+    if rate.anchor:
+        return "anchor"
+    if rate.input is not None:
+        return "measured"
+    if rate.input_interval:
+        return "envelope"
+    return "none"
+
+
+def _conversion_sentence(anchor_fam: str, fam: str, source: str) -> str | None:
+    """How one family's window tokens were got from the anchor's, or None where it was not."""
+    if source == "anchor" or source == "none":
+        return None
+    over = (f"the measured {fam.capitalize()} input rate" if source == "measured"
+            else f"the {fam.capitalize()} input-rate envelope")
+    tail = ("" if source == "measured" else
+            " The envelope has no single rate, so there is no value, only the interval.")
+    return (f"the {anchor_fam.capitalize()} window tokens times the {anchor_fam.capitalize()} input "
+            f"rate over {over}, at the same token-class mix (`per_class` above, cache reads at the "
+            f"published cache-read weight); the interval combines the window interval with the rate "
+            f"interval.{tail}")
+
+
+def _family_window_tokens(all_figure: dict, anchor_per_token: float | None, rate: FamilyRate,
+                          shares: dict[str, float] | None, weight: float) -> dict:
+    """One family's window tokens: the anchor's, rescaled by the two families' rates.
+
+    The measurement is the anchor family's -- token counts divided by the meter movement
+    they caused, with no rate in it at all. Another family's figure is that same window of
+    credits spent at that family's rate instead, at the mix the measurement was taken at,
+    which is a conversion and not a second measurement. A family with no rate at all
+    publishes null and the rate's own status sentence; a family with only an interval
+    publishes the interval and no value, never the middle of it.
+    """
+    if all_figure["value"] is None or anchor_per_token is None:
+        return {"value": None, "interval": None,
+                "status": rate.status or all_figure.get("status") or "no measured window"}
+    in_lo, in_hi = rate.input_edges
+    out_lo, out_hi = rate.output_edges
+    cheapest = _mix_credits_per_token(shares, in_lo, out_lo, weight)
+    dearest = _mix_credits_per_token(shares, in_hi, out_hi, weight)
+    point = _mix_credits_per_token(shares, rate.input, rate.output, weight)
+    if cheapest is None or dearest is None or cheapest <= 0 or dearest <= 0:
+        return {"value": None, "interval": None,
+                "status": rate.status or "no rate to convert the window tokens at"}
+    lo, hi = all_figure["interval"]
+    return {
+        "value": round(all_figure["value"] * anchor_per_token / point) if point else None,
+        # The cheapest rate buys the most tokens, so it is the top of the interval.
+        "interval": [round(lo * anchor_per_token / dearest), round(hi * anchor_per_token / cheapest)],
+        "status": None if point else rate.status,
+    }
+
+
+def _times_windows(figure: dict, windows: float | None,
+                   windows_interval: list | None) -> dict:
+    """One per-window figure multiplied out to a week, both edges at once.
+
+    A row with an interval and no value -- a family whose rate the fits did not separate
+    -- keeps that shape: the interval is multiplied out and the value stays null. The
+    week never invents a number the window did not have.
+    """
+    if windows is None:
+        return {"value": None, "interval": None,
+                "status": "no measured windows per week to multiply by"}
+    lo_w, hi_w = windows_interval or [windows, windows]
+    interval = ([round(figure["interval"][0] * lo_w), round(figure["interval"][1] * hi_w)]
+                if figure.get("interval") else None)
+    value = round(figure["value"] * windows) if figure.get("value") is not None else None
+    return {"value": value, "interval": interval,
+            "status": None if value is not None else figure.get("status")}
+
+
+def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
+                  model_rates: dict | None = None, *, windows_per_week: float | None = None,
+                  windows_per_week_interval: list | None = None,
+                  windows_per_week_source: str = "weekly_windows current, max20, newest regime",
+                  fam: str = "opus", weight: float | None = None) -> dict:
+    """What a five-hour window buys in tokens, measured on the meter rather than priced.
+
+    The same cluster `window_credits` is the median of -- the capture-accepted,
+    harness-clean, pure-`fam` stretches -- read for its token counts instead of its
+    credits: tokens per 1% of the five-hour meter, times 100, per class and over all four
+    classes together. No credit rate and no class weight enters the anchor family's
+    figure, so it is a reading of the meter and not a scenario. That is the difference
+    from the route the page states today, where `window_credits` divided by one model's
+    rate for one class answers "how much fresh Sonnet input alone would fill a window" --
+    a quantity no account's use looks like (docs/findings-2026-09-20-window-tokens.md).
+
+    `per_class` is what makes it a measurement rather than a mix assumption: the cluster's
+    own median is 444M cache reads, 15M cache writes, 2.8M output and 5.8k input per
+    window, and a page that states one number without that shape is stating a scenario
+    again. `cache_read_share` is the same fact as one fraction.
+
+    The other families are a conversion of the anchor's figure at the two families' own
+    rates, marked as such in each row's `conversion`, and a family whose rate is a status
+    sentence publishes null (`_family_window_tokens`). `per_week` multiplies by the
+    measured windows per week the page's headline already uses; with none measured it
+    carries a status and nulls rather than a week nobody counted.
+    """
+    weight = cache_read_weight(credits) if weight is None else weight
+    per_account = pure_family_rows(clean, credits, fam, weight)
+    rows = {label: per_account.get(name, []) for name, label in labels.items()}
+    pooled_rows = [row for name in labels for row in per_account.get(name, [])]
+
+    def readings(account_rows: list[dict], cls: str | None = None) -> list[float]:
+        """Each stretch's tokens per full window: its own counts over its own percent."""
+        out = []
+        for row in account_rows:
+            totals = class_totals(row["tokens"])
+            count = sum(totals.values()) if cls is None else totals[cls]
+            out.append(count / row["delta_pct"] * 100)
+        return out
+
+    accounts = {}
+    for label, account_rows in rows.items():
+        if not account_rows:
+            accounts[label] = {"n": 0, "per_class": None,
+                               "all": {"value": None, "interval": None,
+                                       "status": f"contributed no clean pure-{fam} stretch"}}
+            continue
+        accounts[label] = {
+            "n": len(account_rows),
+            "all": dict(_figure_from({label: readings(account_rows)}), status=None),
+            "per_class": {cls: _figure_from({label: readings(account_rows, cls)})
+                          for cls in TOKEN_CLASSES},
+        }
+    by_account = {label: readings(account_rows) for label, account_rows in rows.items()}
+    all_figure = dict(_figure_from(by_account),
+                      status=None if pooled_rows else
+                      f"no capture-accepted pure-{fam} stretch in the history files")
+    per_class = {cls: _figure_from({label: readings(account_rows, cls)
+                                    for label, account_rows in rows.items()})
+                 for cls in TOKEN_CLASSES}
+    share = _figure_from({label: [r / t if t else 0.0 for r, t in
+                                  zip(readings(account_rows, "cache_read"), readings(account_rows))]
+                          for label, account_rows in rows.items()}, ndigits=4)
+
+    # The mix the conversions hold: the published per-class medians themselves, so a
+    # reader can redo the arithmetic from the numbers on the page. They are medians of
+    # separate samples and so need not sum to `all.value`; what the conversion needs is
+    # their shape, and the shares are taken of their own total.
+    mix_total = sum(per_class[cls]["value"] or 0 for cls in TOKEN_CLASSES)
+    shares = ({cls: (per_class[cls]["value"] or 0) / mix_total for cls in TOKEN_CLASSES}
+              if mix_total else None)
+    anchor = family_rate(fam, credits, model_rates)
+    anchor_per_token = _mix_credits_per_token(shares, anchor.input, anchor.output, weight)
+
+    families = {}
+    for name in credits["per_family"]:
+        rate = family_rate(name, credits, model_rates)
+        source = _rate_source(rate)
+        families[name] = {
+            "all": _family_window_tokens(all_figure, anchor_per_token, rate, shares, weight),
+            "rate_source": source,
+            "conversion": _conversion_sentence(fam, name, source),
+        }
+
+    windows_figure = {"value": windows_per_week,
+                      "interval": list(windows_per_week_interval) if windows_per_week_interval else None,
+                      "source": windows_per_week_source}
+    per_week = {
+        "windows_per_week": windows_figure,
+        "all": _times_windows(all_figure, windows_per_week, windows_per_week_interval),
+        "per_family": {name: {"all": _times_windows(row["all"], windows_per_week,
+                                                    windows_per_week_interval)}
+                       for name, row in families.items()},
+        "status": None if windows_per_week is not None else
+                  "no measured windows per week to multiply by",
+    }
+    method = (f"median over the pure-{fam} clean stretches of the tokens the stretch carried per 1% "
+              f"of the five-hour meter, times 100, taken per token class and over all four classes "
+              f"together. The interval is the spread of the readings themselves -- per account its "
+              f"own lowest and highest per-stretch value, pooled the union of the account intervals "
+              f"-- and not a confidence interval. No credit rate and no class weight enters the "
+              f"pure-{fam} figure: it is the stretch's own token counts over its own meter movement. "
+              f"Every other family is a conversion of it at the two families' rates (`conversion`), "
+              f"and a family whose rate is a status sentence publishes no number.")
+    return {
+        "derivation": "credits",
+        "as_of": newest_end(pooled_rows),
+        "method": method,
+        "selection": selection_sentence(),
+        "n": len(pooled_rows),
+        "accounts": accounts,
+        "per_class": per_class,
+        "all": all_figure,
+        "cache_read_share": share,
+        "per_family": families,
+        "per_week": per_week,
     }
 
 
