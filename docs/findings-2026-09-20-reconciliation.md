@@ -36,14 +36,14 @@ Applied to Shellac's Max 20x row (11.0M credits per five hours, 83.33M per week)
 
 ## Fable's rate
 
-Solved per Fable-heavy stretch (Fable over half the raw tokens) against W = 197k, cache reads at 0, capture-accepted and harness-clean only:
+Solved per Fable-heavy stretch (Fable over half the raw tokens) against W = 197k, cache reads at 0, capture-accepted and harness-clean only. The credit rates for the priced models (Haiku 2/15 and 10/15, Sonnet 6/15 and 30/15, Opus 10/15 and 50/15 per input and output token, cache writes as input, cache reads free) are Shellac's, recorded with their derivation in `docs/reference-2026-09-20-shellac-credits-model.md`; they are the meter's ratios and differ from the API list-price ratios in `data/prices.json` on purpose:
 
 | Account | Output at 3x | Output at 5x |
 |---|---|---|
-| jwork (n=3) | 1.70 credits per input token, p25 1.42, p75 2.65 | 1.31, p25 1.20, p75 1.92 |
+| jwork (n=3) | 1.70 credits per input token (the three values: 1.42, 1.70, 2.65) | 1.31 (1.20, 1.31, 1.92) |
 | masterrig (n=75) | 3.88, p25 2.67 | 3.10, p25 1.99 |
 
-Only three jwork stretches survive the capture gate, and masterrig's solve is inflated by phantom meter movement, so its p25 is the usable edge. **Fable input is somewhere between 1.2 and 2.7 credits per token (jwork p25 at output 5x to masterrig p25 at output 3x), 1.8 to 4.0 times Opus; the output ratio (3x or 5x) is not separable.** The credits-model note's 25/15 (2.5x Opus) sits inside the interval. Fable's rate goes on the page as an interval with its status, not a number; it narrows as clean Fable-heavy stretches accrue from ordinary use.
+Only three jwork stretches survive the capture gate, and masterrig's solve is inflated by phantom meter movement, so its p25 is the usable edge. **Fable input is somewhere between 1.2 and 2.7 credits per token (the lowest jwork value at output 5x to masterrig's p25 at output 3x; with three jwork stretches the tool's p25 and p75 are its lowest and highest values), 1.8 to 4.0 times Opus; the output ratio (3x or 5x) is not separable.** The credits-model note's 25/15 (2.5x Opus) sits inside the interval. Fable's rate goes on the page as an interval with its status, not a number; it narrows as clean Fable-heavy stretches accrue from ordinary use.
 
 ## Cache reads
 
