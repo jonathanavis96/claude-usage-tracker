@@ -478,6 +478,31 @@ class PublishCheckTests(unittest.TestCase):
         self.assertEqual(self.check({"generated_at": NOW.isoformat()})[0], 1)
 
 
+class PriceTableRoundTripTests(unittest.TestCase):
+    """The credits block has to survive the publisher rewriting data/prices.json.
+
+    tracker/weight.py rewrites the whole file whenever the output class weight moves.
+    It loads the raw table and writes it back, so an underscore-prefixed block rides
+    through -- but nothing said so, and a block silently dropped on a Sunday would take
+    every credit figure on the page with it.
+    """
+
+    def test_the_credits_block_survives_a_weight_rewrite(self):
+        from tracker.weight import _write
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "prices.json"
+            raw = json.loads(Path("data/prices.json").read_text())
+            _write(path, raw)
+            self.assertEqual(json.loads(path.read_text())["_credits"], raw["_credits"])
+
+    def test_the_credits_block_is_not_mistaken_for_a_model(self):
+        """build_public_json is handed the table with underscore keys already filtered."""
+        raw = json.loads(Path("data/prices.json").read_text())
+        priced = {k: v for k, v in raw.items() if not k.startswith("_")}
+        self.assertNotIn("_credits", priced)
+        self.assertEqual(sorted(priced), ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"])
+
+
 class CompareTests(unittest.TestCase):
     def test_a_number_within_tolerance_is_ok_and_one_outside_it_is_not(self):
         rows = {r["key"]: r for r in compare_published({"a": 1000.0, "b": 1000.0},
