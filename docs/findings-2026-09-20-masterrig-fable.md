@@ -15,49 +15,70 @@ to 5 September stretches are excluded: a pipeline ran against this account from 
 during that window. `history/harness-runs.jsonl` carries no masterrig entry for it, so this is
 a **dated exclusion stated here**, not a file-backed one -- `tools/masterrig_fable.py`'s own
 `CUT_REASON` constant says the same thing, so the code and this document cannot drift apart on
-it. 70 of masterrig's stretches since the cut carry tokens.
+it. All 70 of masterrig's stretches since the cut carry tokens.
 
-## Method
+Two routes for the Opus anchor B5 (Opus input-equivalent tokens per 1% of the five-hour meter)
+are tried. Route A, the joint fit, is the one this revision adds and leads with, because the
+single-family anchor's 90% threshold was never going to find much: masterrig does not run Opus
+alone. Route B, the original single-family anchor, is kept below as a paragraph.
 
-1. **Opus anchor.** B5 = Opus input-equivalent tokens per 1% of the five-hour meter (input +
-   cache_write + 5x output + 0.015x cache reads, all relative to Opus's own input), from every
-   stretch where Opus is at least 90% of input + cache_write + 5x output summed across every
-   family in the stretch. Output 5x, cache writes 1x, and cache reads at 0.015 relative to Opus
-   input are assumptions -- the last is `data/prices.json`'s own published range's upper edge,
-   not a value fitted here.
-2. **Fable solve.** For every stretch where Fable is at least 50% of raw (unweighted) input +
-   cache_write + output, solve
-   `f = (delta_pct * B5 - other_models_charge - read_charge) / (Fable_input + Fable_write + 5 *
-   Fable_output)`, in units of Opus input tokens. `other_models_charge` treats every non-Fable
-   family's own input-equivalent tokens as worth the same as an equal count of Opus's (an
-   assumption this document states rather than hides); `read_charge` is 0.015 times the
-   stretch's total cache reads across every model. `f` is solved once at B5's median and once
-   at each of its two rounding-implied edges (`tracker/join.py`'s `Stretch.bounds`,
-   `delta_pct +- windows`).
+## Route A: joint fit over accepted-capture-status rows
 
-## Result: no stretch since 6 September is Opus-dominant enough to anchor B5
+Nonnegative least squares of `delta_pct` on four columns -- Opus, Sonnet and Fable
+input-equivalent tokens (input + cache_write + 5x output, an assumption on the output
+multiplier) and total cache reads, unweighted as its own column here rather than folded into
+Opus at a fixed relative weight -- fit jointly over every stretch since the cut whose
+`capture_status` is `"accepted"`. `tools/rounding_feasibility.py`'s linear programme (same three
+input-equivalent columns, reads free, i.e. weight 0) runs on the same rows to say whether any
+nonnegative stationary rate is even consistent with whole-percent rounding. An 80% row-bootstrap
+interval (10th-90th percentile of the resampled ratio, 600 resamples, seed 20260920, matching
+`tools/model_rates.py`'s own convention) is reported on the Fable/Opus coefficient ratio.
 
-Under the 90% threshold above, **n = 0**. The highest Opus share any of the 70 post-cut
-stretches reaches is 76.35% (2026-09-18T19:51:55+02:00, input + cache_write + 5x output
-basis), and only 32 of the 70 clear even 50%. masterrig's usage since 6 September never runs
-Opus alone for long enough, at the volume this account produces, to isolate an Opus-only
-window the way `tools/model_rates.py` does on jwork's pure-Opus cluster.
+**Result: n = 0.** Of the 70 post-cut stretches, `capture_status` is `"unpriced"` for 58 and
+`"surplus"` for 12; none is `"accepted"`. There is no row this joint fit can run on, so there
+are no coefficients, no ratio, no bootstrap interval, and no feasibility slack to report --
+`tools/masterrig_fable.py --json` writes `joint_fit: null`, `feasibility_reads_free: null`.
+This is a sharper form of the same absence Route B already found: it is not only that no
+90%-Opus stretch exists, but that no stretch on this account since 6 September carries the
+capture status the joint fit needs at all. masterrig's post-cut capture is not "accepted";
+whatever this account measures since 6 September, it is not yet a row this repository is
+willing to fit a stationary rate against.
 
-Because there is no B5 anchor, the Fable solve in step 2 cannot run either, even though 17 of
-the 70 post-cut stretches are Fable-heavy enough (raw share >= 50%) to qualify for it: the
-formula needs B5's median and its two rounding edges as an input, and none exist. **The
-envelope this document set out to report is empty at the stated threshold, and this is reported
-as the finding rather than relaxed to produce a number.** `tools/masterrig_fable.py --json`
-still writes `opus_anchor: null` and `fable_envelope: {"n": 0, "rows": []}` so a caller sees the
-same absence of data.
+## Route B: the single-family >=90%-Opus anchor (kept as a paragraph)
+
+Under a 90% Opus-share threshold (input + cache_write + 5x output basis, all 70 post-cut
+stretches regardless of capture status), **n = 0** as well. The highest Opus share any of the 70
+reaches is 76.35% (2026-09-18T19:51:55+02:00), and only 32 of the 70 clear even 50%.
+masterrig's usage since 6 September never runs Opus alone for long enough, at the volume this
+account produces, to isolate an Opus-only window the way `tools/model_rates.py` does on jwork's
+pure-Opus cluster. This route is not extended further -- it was already a null result in the
+first pass of this file, and Route A above is the one that uses every row (had any been
+accepted).
+
+## Consequence: the Fable solve does not run
+
+Because neither route produces a B5, the Fable solve (`f = (delta_pct * B5 -
+other_models_charge - read_charge) / (Fable_input + Fable_write + 5 * Fable_output)`, in units
+of Opus input tokens) cannot run, even though 17 of the 70 post-cut stretches are Fable-heavy
+enough (raw share >= 50%) to qualify for it. The formula needs B5's point estimate and its two
+rounding edges as an input, and neither route supplies one. **The envelope this document set
+out to report is empty, and this is reported as the finding rather than relaxed to produce a
+number.** `tools/masterrig_fable.py --json` writes `joint_fit_b5: null` and
+`fable_envelope: {"n": 0, "rows": []}` so a caller sees the same absence of data.
+
+Stated assumptions, not re-derived: output multiplier 5x, cache-write multiplier 1x, cache-read
+weight 0.015 relative to Opus input (used in the Route B per-row solve and in the Fable-solve
+step; Route A's joint fit gives cache reads their own free-standing, unweighted column instead).
 
 ## What this does and does not say
 
-It does not say masterrig cannot anchor an Opus rate at all -- a looser dominance threshold, or
-a longer observation window that eventually accumulates an Opus-heavy stretch, might. It does
-say that at the assumptions and threshold stated up front, masterrig's own committed record
-since 6 September does not support this particular anchor-and-solve method, and that Fable's
-rate on this account remains exactly as unidentified as the published page already says.
+It does not say masterrig cannot anchor an Opus rate at all -- a longer observation window that
+eventually accumulates an accepted-capture-status stretch, or one with a genuinely Opus-heavy
+mix, might change either route's result. It does say that at the assumptions and thresholds
+stated up front, masterrig's own committed record since 6 September supports neither
+anchor-and-solve route, that its post-cut rows do not even carry the capture status the joint
+fit requires, and that Fable's rate on this account remains exactly as unidentified as the
+published page already says.
 
 ## Source
 
