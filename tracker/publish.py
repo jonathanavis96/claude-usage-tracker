@@ -25,18 +25,29 @@ from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
 from .weekly import _iso_week_ending, probe_weekly_windows
 
-# The credits table (she-llac.com/claude-limits, undated) gives each plan's credits per
+# The credits table (she-llac.com/claude-limits) gives each plan's credits per
 # five-hour window and per week. One window is worth 1 : 6 : 20 between Pro, Max 5x and
 # Max 20x; that says nothing about how many windows a week holds on each plan, which is
 # WEEKLY_WINDOW_RATIOS below. A documented figure is a reference to compare a
 # measurement against, never a substitute for one.
 CREDITS_TABLE_URL = "https://she-llac.com/claude-limits"
+#: The date the credits table describes, and the one date every block that quotes the
+#: table publishes. The page reads the same URL in four places -- `plan_ratios_basis`,
+#: `weekly_window_ratios_basis`, `reference` and
+#: `credits.window_credits_from_weekly.weekly_cap_baseline_source` -- and two of them
+#: used to say `dated: false` beside two that said 2026-01-25, so the page could print
+#: one source with two dates. The reconciliation established the date
+#: (docs/findings-2026-09-20-reconciliation.md, "The dates that explain the numbers"):
+#: the article was crossposted on 25 January 2026, so its table describes the plans as
+#: they were in January. One constant, four blocks, and a test that the four agree.
+CREDITS_TABLE_AS_OF = "2026-01-25"
 CREDITS_PER_WINDOW = {"pro": 550_000, "max5": 3_300_000, "max20": 11_000_000}
 CREDITS_PER_WEEK = {"pro": 5_000_000, "max5": 41_666_700, "max20": 83_333_300}
 PLAN_RATIOS_BASE = {"pro": 0.05, "max5": 0.30, "max20": 1.0}
 PLAN_RATIOS_BASIS = {"kind": "credits_table", "scope": "one five-hour window",
                      "credits_per_window": dict(CREDITS_PER_WINDOW),
-                     "source_url": CREDITS_TABLE_URL, "dated": False}
+                     "source_url": CREDITS_TABLE_URL, "as_of": CREDITS_TABLE_AS_OF,
+                     "dated": True}
 # How many five-hour windows a week's cap holds, per plan, relative to max20. NOT
 # PLAN_RATIOS_BASE: that one is what a single window is worth (the 1 : 6 : 20 above),
 # this one is how many windows a week contains, and the two pull in opposite
@@ -52,7 +63,7 @@ WEEKLY_WINDOW_RATIOS_BASIS = {
     "kind": "credits_table", "scope": "five-hour windows per week, relative to max20",
     "credits_per_week": dict(CREDITS_PER_WEEK),
     "documented_windows_per_week": dict(DOCUMENTED_WINDOWS_PER_WEEK),
-    "source_url": CREDITS_TABLE_URL, "dated": False,
+    "source_url": CREDITS_TABLE_URL, "as_of": CREDITS_TABLE_AS_OF, "dated": True,
     "measured_confirmation": {"max5_over_max20": 1.66,
                               "spans": "Max 5x Jun-Aug over Max 20x 19 Aug-11 Sep"},
 }
@@ -75,7 +86,6 @@ REFERENCE_MIX = json.loads((Path(__file__).resolve().parent.parent / "data" / "r
 # table they are published against. An offline rebuild passes its archive's own.
 CREDITS = credit_model.load_credits(json.loads(
     (Path(__file__).resolve().parent.parent / "data" / "prices.json").read_text()))
-CREDITS_TABLE_AS_OF = "2026-01-25"
 CREDITS_TABLE_CROSSPOST = ("braddelong.substack.com, \"CROSSPOST: SHELLAC\", dated January 25, 2026")
 PLAN_CHANGES_SINCE_REFERENCE = (
     {"date": "2026-05-06", "scope": "five_hour_window", "multiplier": 2.0, "date_known": True,
@@ -92,6 +102,22 @@ PLAN_CHANGES_SINCE_REFERENCE = (
      "quote": credit_model.ANNOUNCEMENT["also_quoted"],
      "source": credit_model.ANNOUNCEMENT["source"]},
 )
+#: The multipliers in force the day before the 14 September weekly change, taken from
+#: PLAN_CHANGES_SINCE_REFERENCE above: the five-hour window doubled on 6 May and stayed
+#: doubled, and the weekly cap carried the +50% promotion that ran until 13 September.
+#: Named here rather than scanned out of the tuple because the promotion's own start is a
+#: month and not a date; tests/test_publish.py asserts the two agree with the tuple.
+PRE_CUT_MULTIPLIERS = {"five_hour_window": 2.0, "weekly": credit_model.WEEKLY_CAP_MULTIPLIER["before"]}
+#: The plans the reconciliation's explanation of the pre-cut shortfall reaches. Every
+#: change it rests on was announced for "Pro, Max, Team and seat-based Enterprise", so it
+#: covers all three plans the page draws. A plan that gained a measured ratio outside this
+#: set would leave the shortfall `status` "open" rather than "explained".
+SHORTFALL_EXPLAINED_PLANS = ("pro", "max5", "max20")
+SHORTFALL_EXPLANATION = (
+    "the reference table predates the 6 May five-hour doubling and the May and 14 September "
+    "weekly changes, so its windows per week are not comparable to the measured levels: at "
+    "the five-hour window doubled and the weekly cap at +50% the same table predicts the "
+    "`expected_windows_per_week` beside each plan, and the measurement sits above it.")
 
 
 def _model_plan_limits(prices: dict) -> dict:
@@ -523,7 +549,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "history": history,
         "weekly_windows": weekly_windows,
         "credits": credits_block,
-        "reference": _reference_block(),
+        "reference": _reference_block(weekly_windows),
         "last_change": _latest_change_with_scope(events, weekly_events, across_cut),
         "events": _build_events(events, weekly_events, across_cut),
         # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the median
@@ -601,8 +627,26 @@ def _relabel(value, labels: dict[str, str]):
     return value
 
 
+def _row_as_of(rate, window_as_of: str | None, fits_as_of: str | None) -> str | None:
+    """The newest reading behind one per-model row's published figures.
+
+    Every row divides the five-hour window by a rate, so the window's own date is in all
+    of them; a row whose rate is measured also rests on the stretches the fit ran over, so
+    it takes the newer of the two. The Opus row's rate is the reference anchor and carries
+    no measurement date of its own, so it reads the window's. A row that publishes no
+    figure at all -- Haiku, whose rate is not measurable -- publishes no date either,
+    rather than a date for numbers that are not there.
+    """
+    if rate.input is None and rate.input_interval is None:
+        return None
+    if rate.rate_source == "reference":
+        return window_as_of
+    return credit_model.newest(window_as_of, fits_as_of)
+
+
 def _credits_per_model(window: dict, credits: dict, prices: dict,
-                       model_rates: dict | None, labels: dict[str, str]) -> dict:
+                       model_rates: dict | None, labels: dict[str, str],
+                       window_as_of: str | None = None, fits_as_of: str | None = None) -> dict:
     """Tokens per window per model, and the API list value of exactly those tokens.
 
     The measured quantity is the window in credits; a model's token figure is that
@@ -655,6 +699,10 @@ def _credits_per_model(window: dict, credits: dict, prices: dict,
             "interval_rule": row.get("interval_rule"),
             "tokens_per_window": tokens,
             "api_value_per_window_usd": api,
+            "as_of": _row_as_of(rate, window_as_of, fits_as_of),
+            "as_of_source": ("the newest stretch this row's figures rest on: the pure-family "
+                             "cluster behind the window, and the fits behind the rate where "
+                             "the rate is measured"),
             "status": status,
             "derivation": "credits",
         }
@@ -922,14 +970,93 @@ def _window_credits_from_weekly(weekly: dict, weekly_events: list) -> dict:
     }
 
 
-def _reference_block() -> dict:
-    """Shellac's table with its date, and every announced change since it.
+def _pre_cut_regime(plan_block: dict) -> dict | None:
+    """The newest weekly-window regime of one plan that ended before the 14 September cut.
+
+    The shortfall is a pre-cut quantity: the reference table's windows per week describe a
+    week whose cap carried the +50% promotion, and the 14 September change replaced it. A
+    regime still running across the cut is not a pre-cut reading, so the test is on the
+    regime's own end stamp rather than on its position in the list.
+    """
+    pre = []
+    for regime in plan_block.get("regimes") or []:
+        end = regime.get("end")
+        if not end:
+            continue
+        ended = datetime.fromisoformat(end)
+        if ended <= credit_model.CUT_AT:
+            pre.append((ended, regime))
+    return max(pre, key=lambda p: p[0])[1] if pre else None
+
+
+def _shortfall(weekly: dict) -> dict:
+    """Goal 7 on the page: measured windows per week against the January table's, per plan.
+
+    Both measured plans sat at about 0.86 of the reference table's windows per week before
+    the 14 September cut, and until now that reading lived only in
+    docs/findings-2026-09-20-reconciliation.md -- so the page drew a dashed line below the
+    measurement with nothing saying why. The reconciliation's answer is arithmetic, not a
+    shortfall: the table is January's, the five-hour window doubled on 6 May and the weekly
+    cap ran at +50% from May, so a week held fewer of a bigger window than the table says.
+    `expected_windows_per_week` applies those two multipliers to the table's own figures and
+    `ratio_to_expected` is the measurement against that, which is the number the
+    reconciliation calls "the five-hour window being 20M rather than 22M".
+
+    A plan with no measured regime of its own (Pro, whose weekly figure is inferred from
+    max20) publishes nulls and a status rather than a scaled figure: scaling max20 by
+    WEEKLY_WINDOW_RATIOS and then dividing by the table those same ratios come from would
+    publish the max20 ratio three times over and call it three measurements.
+    """
+    per_plan, ratios = {}, []
+    for plan, documented in DOCUMENTED_WINDOWS_PER_WEEK.items():
+        block = weekly.get(plan) or {}
+        regime = _pre_cut_regime(block)
+        measured = regime.get("windows") if regime else None
+        expected = ((CREDITS_PER_WEEK[plan] * PRE_CUT_MULTIPLIERS["weekly"])
+                    / (CREDITS_PER_WINDOW[plan] * PRE_CUT_MULTIPLIERS["five_hour_window"]))
+        ratio = round(measured / documented, 4) if measured is not None else None
+        if ratio is not None:
+            ratios.append(ratio)
+        per_plan[plan] = {
+            "measured_windows_per_week": measured,
+            "documented_windows_per_week": documented,
+            "ratio": ratio,
+            "expected_windows_per_week": round(expected, 4),
+            "ratio_to_expected": round(measured / expected, 4) if measured is not None else None,
+            "from": regime.get("start") if regime else None,
+            "to": regime.get("end") if regime else None,
+            "status": None if measured is not None else (
+                f"no measured weekly-window regime for {plan} ending before the cut; its "
+                "published windows per week are inferred from max20, never measured"),
+        }
+    measured_plans = [p for p, row in per_plan.items() if row["ratio"] is not None]
+    covered = all(p in SHORTFALL_EXPLAINED_PLANS for p in measured_plans)
+    return {
+        "what": ("this tracker's measured five-hour windows per week against the reference "
+                 "table's, per plan, for the last regime that ended before the 14 September "
+                 "weekly change"),
+        "cut_at": credit_model.CUT_AT.isoformat(),
+        "per_plan": per_plan,
+        "ratio_range": [min(ratios), max(ratios)] if ratios else None,
+        "plans_measured": measured_plans,
+        "multipliers_applied": dict(PRE_CUT_MULTIPLIERS),
+        "status": "explained" if measured_plans and covered else "open",
+        "explanation": SHORTFALL_EXPLANATION if measured_plans and covered else (
+            "no plan has a measured pre-cut regime to compare" if not measured_plans else
+            "the reconciliation's explanation does not reach every plan with a measured ratio"),
+        "source": "docs/findings-2026-09-20-reconciliation.md",
+    }
+
+
+def _reference_block(weekly: dict) -> dict:
+    """Shellac's table with its date, every announced change since it, and the shortfall.
 
     The page draws the table as a dashed line. Undated it reads as a figure for now,
     and the gap between it and the measurement reads as an unexplained factor -- which
     is exactly how the credits-model note's "2.1x unexplained" came about, comparing a
     September measurement against a January number. Dating the line and listing what
-    changed after it turns the gap back into arithmetic.
+    changed after it turns the gap back into arithmetic, and `shortfall` publishes that
+    arithmetic instead of leaving it in a findings document (_shortfall).
     """
     return {
         "name": "Shellac credits table",
@@ -942,6 +1069,7 @@ def _reference_block() -> dict:
         "credits_per_week": dict(CREDITS_PER_WEEK),
         "windows_per_week": dict(DOCUMENTED_WINDOWS_PER_WEEK),
         "changes_since": [dict(c) for c in PLAN_CHANGES_SINCE_REFERENCE],
+        "shortfall": _shortfall(weekly),
         "note": "a reference to compare a measurement against, never an input to one",
     }
 
@@ -984,10 +1112,25 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     cut = credit_model.across_cut(priceable, credits, labels)
     fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels)
     windows_per_week = weekly["max20"]["current"]
+    # The date under every credit figure. The block had none, so the page printed a
+    # neighbouring block's date beneath the per-model rows. Two readings stand behind it:
+    # the pure-family cluster the window is the median of, and the stretches the per-model
+    # fits ran over. `as_of` is the newer, and each per-model row carries its own.
+    window_as_of = credit_model.cluster_as_of(clean, credits, window["pure_family"])
+    fits_as_of = credit_model.fits_as_of(priceable, credits, model_rates)
     return {
+        "as_of": credit_model.newest(window_as_of, fits_as_of),
+        "as_of_source": {
+            "window_cluster": window_as_of,
+            "measured_rate_fits": fits_as_of,
+            "rule": ("the newest stretch end in the pure-family cluster behind window_credits "
+                     "and the newest stretch behind the pooled per-model fits, whichever is "
+                     "later; null where neither has a stretch to date"),
+        },
         "window_credits": window,
         "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
-        "per_model": _credits_per_model(window, credits, prices, model_rates, labels),
+        "per_model": _credits_per_model(window, credits, prices, model_rates, labels,
+                                        window_as_of, fits_as_of),
         "sessions": _credits_sessions(window, credits, split, split_source, session_tokens,
                                       windows_per_week, model_rates),
         "measured_rates": _measured_rates_block(model_rates, labels),
@@ -1523,6 +1666,53 @@ def load_gs_passive(path: Path | None) -> dict | None:
     return block
 
 
+def rebuild_public_json(now: datetime, *, probes: Path, passive: Path, effort: Path, prices: Path,
+                        gs_passive: Path | None = None, masterrig_passive: Path | None = None,
+                        model_rates: Path | None = None, contributed: Path | None = None) -> dict:
+    """The whole public JSON, read off the files on disk and built at `now`.
+
+    The one place the publish's inputs are turned into the published document, so that
+    `main` below and `tools/credits_report.py --publish-check` cannot drift apart: a check
+    that rebuilds the file its own way proves its own arithmetic, not the publisher's.
+    Everything the document states is derived here, from the six files named in the
+    arguments plus the two the publisher imports from the checkout (data/reference_mix.json
+    and the measured rates); `now` is the only thing that does not come off disk, and the
+    check takes it from the published `generated_at` rather than from the clock.
+
+    `main` runs `update_output_weight` against data/prices.json before calling this, so a
+    weight the weekly output run supplied is already in the table this reads. Nothing here
+    writes.
+    """
+    probe_rows = load_probes(probes)
+    passive_body = json.loads(passive.read_text()) if Path(passive).exists() else {}
+    prices_raw = json.loads(Path(prices).read_text())
+    priced = {k: v for k, v in prices_raw.items() if not k.startswith("_")}
+    effort_raw = json.loads(Path(effort).read_text())
+    if effort_raw.get("_status") == "placeholder":
+        raise ValueError(f"{effort} is still a placeholder; calibrate it before publishing")
+    # The matrix's cells and usd are derived from its stored runs at the prices in force
+    # right now (see main): a committed usd block would be stale the moment the output
+    # class weight moved. Only a matrix with no runs (a fixture) uses its stored cells.
+    if effort_raw.get("_meta", {}).get("runs"):
+        from .calibrate import recompute
+        effort_raw = recompute(effort_raw, priced)
+    j = build_public_json(
+        probe_rows, passive_body,
+        {k: v for k, v in effort_raw.items() if not k.startswith("_") and k != "usd"},
+        priced, now,
+        effort_usd={k: v for k, v in effort_raw.get("usd", {}).items() if not k.startswith("_")},
+        gs_passive=load_gs_passive(gs_passive), masterrig_passive=load_gs_passive(masterrig_passive),
+        effort_meta=effort_raw.get("_meta"),
+        credits=credit_model.load_credits(prices_raw, default=CREDITS),
+        model_rates=None if model_rates is None else credit_model.load_model_rates(model_rates))
+    # Contributed figures sit beside the probe and passive ones; nothing above reads
+    # them, so no existing field changes whether or not the block is present.
+    block = load_contributed(contributed)
+    if block is not None:
+        j["contributed"] = block
+    return j
+
+
 def write_json(path: Path, obj: dict) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(path).with_suffix(".tmp")
@@ -1557,48 +1747,23 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
     now = now or datetime.now(timezone.utc)
     # A missing passive file is allowed (it arrives from masterrig and may lag); an unreadable one is not.
     try:
-        probe_rows = load_probes(a.probes)
         # The weekly output run's weight goes into prices.json first, so this publish uses
         # it. Advisory: a bad pair of rows is a warning and the publish carries on with
         # the weight prices.json already holds.
         try:
-            update_output_weight(probe_rows, a.prices, post=post or _default_post, environ=environ,
-                                 env_file=a.alert_env_file, now=now)
+            update_output_weight(load_probes(a.probes), a.prices, post=post or _default_post,
+                                 environ=environ, env_file=a.alert_env_file, now=now)
         except (OSError, ValueError, KeyError) as e:
             print(f"warning: output weight not recomputed: {e}", file=sys.stderr)
-        passive = json.loads(a.passive.read_text()) if a.passive.exists() else {}
-        effort_raw = json.loads(a.effort.read_text())
-        if effort_raw.get("_status") == "placeholder":
-            raise ValueError(f"{a.effort} is still a placeholder; calibrate it before publishing")
-        prices_raw = json.loads(a.prices.read_text())
-        prices = {k: v for k, v in prices_raw.items() if not k.startswith("_")}
-        # The matrix's cells and usd are derived from its stored runs at the prices
-        # in force right now, after update_output_weight above may have changed
-        # class_weight.output: a committed usd block would be stale the moment the
-        # weight moved, and the committed file need not carry one at all. The file
-        # itself is never rewritten here; --recompute does that for human readers.
-        # Only a matrix with no runs (fixtures) uses its stored cells as-is.
-        if effort_raw.get("_meta", {}).get("runs"):
-            from .calibrate import recompute
-            effort_raw = recompute(effort_raw, prices)
-        effort = {k: v for k, v in effort_raw.items() if not k.startswith("_") and k != "usd"}
-        effort_usd = {k: v for k, v in effort_raw.get("usd", {}).items() if not k.startswith("_")}
-        gs_passive = load_gs_passive(a.gs_passive)
-        # The third account's stretches, for the credits block alone: the published
-        # dollar series is the gs accounts' and is not touched by this file.
-        masterrig_passive = load_gs_passive(a.masterrig_passive)
-        j = build_public_json(probe_rows, passive, effort, prices, now, effort_usd=effort_usd,
-                              gs_passive=gs_passive, masterrig_passive=masterrig_passive,
-                              effort_meta=effort_raw.get("_meta"),
-                              credits=credit_model.load_credits(prices_raw, default=CREDITS))
+        # One code path for the whole document, shared with --publish-check. The third
+        # account's stretches (--masterrig-passive) are read for the credits block alone:
+        # the published dollar series is the gs accounts' and is not touched by that file.
+        j = rebuild_public_json(now, probes=a.probes, passive=a.passive, effort=a.effort,
+                                prices=a.prices, gs_passive=a.gs_passive,
+                                masterrig_passive=a.masterrig_passive, contributed=a.contributed)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
-    # Contributed figures sit beside the probe and passive ones; nothing above reads
-    # them, so no existing field changes whether or not the block is present.
-    contributed = load_contributed(a.contributed)
-    if contributed is not None:
-        j["contributed"] = contributed
     write_json(a.out, j)
     print(f"wrote {a.out}: {len(j['rates'])} models, last_change={j['last_change']}")
     return 0

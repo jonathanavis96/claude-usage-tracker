@@ -537,6 +537,52 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
     }
 
 
+def newest_end(stretches: list[dict]) -> str | None:
+    """The newest `end` stamp of a set of stretches, as the record's own string.
+
+    Ordered by the parsed instant, not by the string: the watched accounts do not all
+    write UTC (one file carries `+02:00`), and a lexical maximum over mixed offsets
+    would read the wrong stretch as the newest. The string is returned unchanged so
+    the published date is the record's own and not a re-rendering of it.
+    """
+    dated = [(datetime.fromisoformat(st["end"]), st["end"]) for st in stretches if st.get("end")]
+    return max(dated, key=lambda p: p[0])[1] if dated else None
+
+
+def newest(*stamps: str | None) -> str | None:
+    """The newest of some ISO stamps, comparing instants and returning the stamp itself."""
+    return newest_end([{"end": s} for s in stamps if s])
+
+
+def cluster_as_of(clean: dict[str, list[dict]], credits: dict, fam: str = "opus",
+                  weight: float | None = None) -> str | None:
+    """The newest stretch end in the pure-`fam` cluster `window_credits` is the median of.
+
+    The date behind the five-hour window, and so behind every figure derived by dividing
+    it. The page had no date for the credit figures at all and printed a neighbouring
+    block's, which is what this answers.
+    """
+    rows = pure_family_rows(clean, credits, fam, weight)
+    return newest_end([r for account_rows in rows.values() for r in account_rows])
+
+
+def fits_as_of(priceable: dict[str, list[dict]], credits: dict,
+               model_rates: dict | None) -> str | None:
+    """The newest stretch end behind the pooled per-model fits in history/model-rates.json.
+
+    `measured_rates.fits_pooled` names the fits the published rates were pooled from as
+    `<account>/<era>`; the stretches behind them are that account's capture-accepted,
+    harness-clean ones whose every model the credit table can price, which is the same
+    selection `tools/model_rates.py` builds its design matrix from (its `ok` column is
+    exactly `price_tokens(...).priced`). The account names stay inside this function --
+    nothing published names an account -- and only the date comes out.
+    """
+    accounts = {key.split("/")[0] for key in (model_rates or {}).get("fits_pooled", [])}
+    rows = [st for account in accounts for st in priceable.get(account, [])
+            if price_tokens(st["tokens"], credits).priced]
+    return newest_end(rows)
+
+
 #: A stretch is Fable-heavy, and so worth solving a Fable rate from, when Fable holds
 #: more than this share of the tokens the meter charges for. Below it the divisor is
 #: small and the residual of everything else lands on the solved rate.

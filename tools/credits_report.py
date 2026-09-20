@@ -76,7 +76,6 @@ from statistics import median
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tracker import credits as credit_model
 from tracker import publish as publisher
 
 #: Credits per token as (input, output), from the article's table. The key is matched as a
@@ -476,62 +475,113 @@ def render(rows: list[dict], skipped: dict, excluded: list[dict], args: argparse
 PUBLISH_CHECK_TOLERANCE = 0.005
 PASSIVE = Path("history/passive.json")
 PRICES = Path("data/prices.json")
+CONTRIBUTED = Path("data/contributed.json")
 #: The measured per-model rates the publisher divides by, written by tools/model_rates.py.
 MODEL_RATES = Path("history/model-rates.json")
+
+#: What each top-level block of the published document is, for the coverage summary the
+#: check prints. Every block is compared the same way -- leaf by leaf against a rebuild --
+#: so this classification is documentation, not a filter:
+#:
+#: - `derived`: computed by the publisher from the history files.
+#: - `pass_through`: an input file's own content, carried into the document unchanged and
+#:   therefore compared against that file rather than against an arithmetic.
+#: - `constant`: a documented reference or a policy figure the publisher holds, compared
+#:   against the constant the running checkout holds.
+#: - `from_publish`: taken from the published file itself and so trivially equal --
+#:   `generated_at` alone, which is the instant the rebuild is made at.
+#:
+#: An unlisted block is treated as `derived` and named in the summary, so a new block
+#: cannot arrive unclassified and unnoticed. tests/test_credits.py asserts a real publish
+#: leaves nothing unclassified.
+BLOCK_KIND = {
+    "generated_at": "from_publish",
+    "api_price_per_mtok": "pass_through",
+    "contributed": "pass_through",
+    "passive_generated_at": "pass_through",
+    "session_tokens": "pass_through",
+    "model_plan_limits": "constant",
+    "plan_measured": "constant",
+    "plan_ratios": "constant",
+    "plan_ratios_basis": "constant",
+    "rate_basis": "constant",
+    "schema_version": "constant",
+    "weekly_window_ratios": "constant",
+    "weekly_window_ratios_basis": "constant",
+    "availability": "derived",
+    "credits": "derived",
+    "effort": "derived",
+    "effort_usd": "derived",
+    "events": "derived",
+    "history": "derived",
+    "instrument": "derived",
+    "last_change": "derived",
+    "last_sample_at": "derived",
+    "meter_read_at": "derived",
+    "passive_account_count": "derived",
+    "probe_account_count": "derived",
+    "rates": "derived",
+    "reference": "derived",
+    "weekly_windows": "derived",
+}
+
+
+def recompute_published(published: dict, gs: Path, masterrig: Path, probes: Path,
+                        effort_matrix: Path, passive: Path, prices: Path,
+                        model_rates: Path = MODEL_RATES,
+                        contributed: Path = CONTRIBUTED) -> dict:
+    """The whole published document rebuilt from the files, at the publish's own instant.
+
+    Every block is read again from disk -- the stretches, the probe rows, the effort-matrix
+    runs, the weekly window points, the price table, the measured per-model rates, the
+    contributed figures -- and put through `tracker.publish.rebuild_public_json`, which is
+    the same function the publisher itself runs. Rebuilding the document a second way here
+    would only prove this file's arithmetic; running the publisher's proves the publish.
+
+    The one thing taken from the published JSON is `generated_at`: the weekly block's
+    current regime, the history's last day and the freshness fields are all bounded by the
+    publish time, so recomputing at "now" would compare two different questions.
+
+    The measured rates are read from `history/model-rates.json`, never from the published
+    JSON, so a per-model row published at a rate the committed fit does not hold fails.
+    `contributed` is pass-through data and is read only when the published file carries the
+    block: the daily publish passes `--contributed` and an offline one does not, and a
+    rebuild must not invent a block the publish under check never wrote.
+    """
+    return publisher.rebuild_public_json(
+        datetime.fromisoformat(published["generated_at"]),
+        probes=probes, passive=passive, effort=effort_matrix, prices=prices,
+        gs_passive=gs, masterrig_passive=masterrig, model_rates=model_rates,
+        contributed=contributed if "contributed" in published else None)
 
 
 def recompute_credits_block(published: dict, gs: Path, masterrig: Path, probes: Path,
                             effort_matrix: Path, passive: Path, prices: Path,
                             model_rates: Path = MODEL_RATES) -> dict:
-    """The `credits` block rebuilt from the history files, at the publish's own instant.
-
-    Everything is read again from disk -- the stretches, the probe rows, the
-    effort-matrix runs, the weekly window points, the rates, the measured per-model
-    rates -- and put through the publisher's own code. The one thing taken from the
-    published JSON is `generated_at`: the weekly block's current regime is bounded by the
-    publish time, so recomputing at "now" would compare two different questions.
-
-    A figure nothing on disk can produce is what this is for. The measured rates are read
-    from `history/model-rates.json` here, never from the published JSON, so a per-model row
-    published at a rate the committed fit does not hold fails the check.
-    """
-    def read(path: Path, default=None):
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
-
-    now = datetime.fromisoformat(published["generated_at"])
-    probe_rows = [json.loads(line) for line in
-                  (probes.read_text(encoding="utf-8").splitlines() if probes.exists() else [])
-                  if line.strip()]
-    passive_body = read(passive, {}) or {}
-    prices_raw = read(prices, {}) or {}
-    priced_models = {k: v for k, v in prices_raw.items() if not k.startswith("_")}
-    matrix = read(effort_matrix, {}) or {}
-    mix = json.loads((Path("data/reference_mix.json")).read_text(encoding="utf-8"))
-    weekly, weekly_events = publisher._weekly_block(
-        passive_body.get("weekly_windows"),
-        publisher.probe_weekly_windows(probe_rows, now=now), now,
-        gs_passive=read(gs, {}))
-    split = passive_body.get("split") or mix["split"]
-    source = ("history/passive.json `split`, the watched accounts' own token-class shares"
-              if passive_body.get("split") else
-              f"data/reference_mix.json `split` ({mix['id']}): history/passive.json carried none")
-    block, _cut = publisher._credits_block(
-        read(gs, {}), read(masterrig, {}), probe_rows, matrix.get("_meta"),
-        credit_model.load_credits(prices_raw), priced_models, split, source,
-        passive_body.get("session_tokens", {}), weekly, weekly_events,
-        credit_model.load_model_rates(model_rates))
-    return block
+    """Just the `credits` block of the rebuild, for a caller that wants only that."""
+    return recompute_published(published, gs, masterrig, probes, effort_matrix, passive,
+                               prices, model_rates)["credits"]
 
 
 def _leaves(obj, path: str = "") -> dict[str, object]:
-    """Every scalar in a nested structure, keyed by its dotted path."""
+    """Every scalar in a nested structure, keyed by its dotted path.
+
+    An empty dict or list is a leaf of its own rather than nothing at all. Dropping it
+    would make a block that gained its first entry -- a plan's first weekly regime, a
+    family's first fit -- indistinguishable from a path that was never there, which is the
+    one thing a reproducibility check must never miss.
+    """
     out: dict[str, object] = {}
-    if isinstance(obj, dict):
+    if isinstance(obj, dict) and obj:
         for key, value in obj.items():
             out.update(_leaves(value, f"{path}.{key}" if path else str(key)))
-    elif isinstance(obj, list):
+    elif isinstance(obj, list) and obj:
         for i, value in enumerate(obj):
             out.update(_leaves(value, f"{path}[{i}]"))
+    elif isinstance(obj, dict):
+        out[path] = "<empty object>"
+    elif isinstance(obj, list):
+        out[path] = "<empty array>"
     else:
         out[path] = obj
     return out
@@ -576,12 +626,37 @@ def _show(value) -> str:
     return text if len(text) <= 46 else text[:43] + "..."
 
 
+def _block_of(key: str) -> str:
+    """The top-level block a dotted leaf path belongs to."""
+    return key.split(".")[0].split("[")[0]
+
+
+def coverage(rows: list[dict]) -> list[tuple[str, str, int, int]]:
+    """(block, kind, figures, failures) per top-level block, in the order they are checked."""
+    order, counts, bad = [], {}, {}
+    for r in rows:
+        block = _block_of(r["key"])
+        if block not in counts:
+            order.append(block)
+            counts[block] = bad[block] = 0
+        counts[block] += 1
+        bad[block] += 0 if r["ok"] else 1
+    return [(b, BLOCK_KIND.get(b, "derived (unclassified)"), counts[b], bad[b]) for b in order]
+
+
 def render_publish_check(rows: list[dict], path: Path, tolerance: float) -> str:
     """The published-against-recomputed table, failures last and called out."""
-    out = [f"Publish check: every figure of the `credits` block in {path},",
-           "beside the same figure recomputed from the history files by the publisher's own code.",
+    out = [f"Publish check: every figure of {path}, beside the same figure recomputed from",
+           "the history files by the publisher's own code (tracker.publish.rebuild_public_json).",
            f"A number may differ by at most {tolerance:.1%} of the published value.",
            ""]
+    out.append("  ".join(h.ljust(w) for h, w in zip(("block", "kind", "figures", "fail"),
+                                                    (28, 24, 8, 4))).rstrip())
+    out.append("  ".join("-" * w for w in (28, 24, 8, 4)))
+    for block, kind, n, failures in coverage(rows):
+        out.append("  ".join([block.ljust(28), kind.ljust(24), f"{n:,}".rjust(8),
+                              (str(failures) if failures else "").rjust(4)]).rstrip())
+    out.append("")
     widths = (58, 24, 24, 3)
     head = ("figure", "published", "recomputed", "")
     out.append("  ".join(h.ljust(w) for h, w in zip(head, widths)).rstrip())
@@ -605,7 +680,7 @@ def render_publish_check(rows: list[dict], path: Path, tolerance: float) -> str:
 
 
 def publish_check(a: argparse.Namespace) -> int:
-    """--publish-check: reproduce the published credits block, or say what did not."""
+    """--publish-check: reproduce the whole published document, or say what did not."""
     try:
         published = json.loads(a.publish_check.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -614,10 +689,14 @@ def publish_check(a: argparse.Namespace) -> int:
     if not isinstance(published.get("credits"), dict):
         print(f"publish check failed: {a.publish_check} carries no `credits` block")
         return 1
-    recomputed = recompute_credits_block(published, a.gs, a.masterrig, a.probes,
-                                         a.effort_matrix, a.passive, a.prices,
-                                         getattr(a, "model_rates", MODEL_RATES))
-    rows = compare_published(published["credits"], recomputed, a.tolerance)
+    if not published.get("generated_at"):
+        print(f"publish check failed: {a.publish_check} carries no `generated_at` to rebuild at")
+        return 1
+    recomputed = recompute_published(published, a.gs, a.masterrig, a.probes,
+                                     a.effort_matrix, a.passive, a.prices,
+                                     getattr(a, "model_rates", MODEL_RATES),
+                                     getattr(a, "contributed", CONTRIBUTED))
+    rows = compare_published(published, recomputed, a.tolerance)
     print(render_publish_check(rows, a.publish_check, a.tolerance), end="")
     return 1 if any(not r["ok"] for r in rows) else 0
 
@@ -648,9 +727,12 @@ def main(argv: list[str] | None = None) -> int:
                          "(for masterrig, where the meter counts more than this host)")
     ap.add_argument("--json", type=Path, help="also dump the per-stretch rows here")
     ap.add_argument("--publish-check", type=Path, dest="publish_check",
-                    help="a published claude-usage.json: print every figure of its `credits` block "
+                    help="a published claude-usage.json: print every figure of the whole file "
                          "beside the same figure recomputed from the history files, and exit 1 if any "
                          "differ by more than the tolerance")
+    ap.add_argument("--contributed", type=Path, default=CONTRIBUTED,
+                    help="data/contributed.json, for --publish-check's pass-through contributed "
+                         "block; read only when the published file carries one")
     ap.add_argument("--passive", type=Path, default=PASSIVE,
                     help="history/passive.json, for --publish-check's weekly window points")
     ap.add_argument("--prices", type=Path, default=PRICES,
