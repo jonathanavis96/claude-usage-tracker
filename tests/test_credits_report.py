@@ -63,6 +63,13 @@ def rows_for(stretches: list[dict], account: str = "acct", **kw):
     return rows, skipped
 
 
+def _run_file(root: Path, rows: list[dict], name: str = "harness-runs.jsonl") -> Path:
+    """A history/harness-runs.jsonl in the shape tools/harness_runs.py writes."""
+    path = root / name
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return path
+
+
 def run(account: str, start: str, end: str, reason: str = "probe x/low") -> HarnessRun:
     return HarnessRun(account, datetime.fromisoformat(start), datetime.fromisoformat(end), reason)
 
@@ -361,41 +368,54 @@ class HarnessRunTests(unittest.TestCase):
     date.
     """
 
-    def test_a_probe_row_spans_ts_to_ts_plus_elapsed_on_its_own_account(self):
+    def test_each_row_of_the_run_file_spans_its_own_account(self):
         with tempfile.TemporaryDirectory() as d:
-            probes = Path(d) / "probes.jsonl"
-            probes.write_text("\n".join([
-                json.dumps({"ts": "2026-09-08T11:36:02+00:00", "elapsed_s": 600, "account": "jwork",
-                            "model": "claude-sonnet-5", "effort": "low"}),
-                "",  # a blank line is not a row
-                json.dumps({"ts": "2026-09-09T00:02:08+00:00", "elapsed_s": 60, "account": "dave",
-                            "model": "claude-fable-5-1", "effort": "low"}),
-                json.dumps({"ts": "2026-09-09T05:00:00+00:00", "elapsed_s": 60}),  # no account: skipped
-            ]) + "\n")
-            runs = harness_runs(probes, Path(d) / "no-matrix.json")
+            runs = harness_runs(_run_file(Path(d), [
+                {"account": "jwork", "start": "2026-09-08T11:36:02+00:00",
+                 "end": "2026-09-08T11:46:02+00:00", "kind": "probe", "outcome": "completed",
+                 "model": "claude-sonnet-5", "effort": "low"},
+                {"account": "dave", "start": "2026-09-09T00:02:08+00:00",
+                 "end": "2026-09-09T00:03:08+00:00", "kind": "probe", "outcome": "completed",
+                 "model": "claude-fable-5-1", "effort": "low"},
+                {"start": "2026-09-09T05:00:00+00:00", "end": "2026-09-09T05:01:00+00:00"},
+            ]))
         self.assertEqual([(r.account, r.start.isoformat(), r.end.isoformat()) for r in runs],
                          [("dave", "2026-09-09T00:02:08+00:00", "2026-09-09T00:03:08+00:00"),
                           ("jwork", "2026-09-08T11:36:02+00:00", "2026-09-08T11:46:02+00:00")])
         self.assertIn("claude-sonnet-5/low", runs[1].reason)
 
-    def test_the_effort_matrix_window_is_read_from_its_meta_and_is_jworks(self):
+    def test_a_probe_that_aborted_is_a_run_like_any_other(self):
+        # It sent its prompts and moved the meter; what it never did is write a
+        # history/probes.jsonl row, which is why that file is no longer the source.
         with tempfile.TemporaryDirectory() as d:
-            matrix = Path(d) / "effort_matrix.json"
-            matrix.write_text(json.dumps({"_meta": {"started": "2026-09-09T11:28:37.136014+00:00",
-                                                    "finished": "2026-09-09T14:53:22.399540+00:00"}}))
-            runs = harness_runs(Path(d) / "no-probes.jsonl", matrix)
+            runs = harness_runs(_run_file(Path(d), [
+                {"account": "jwork", "start": "2026-09-15T13:16:32+00:00",
+                 "end": "2026-09-15T15:27:25+00:00", "kind": "probe", "outcome": "aborted",
+                 "detail": "tick too early"},
+            ]))
+        self.assertEqual(len(runs), 1)
+        self.assertIn("aborted", runs[0].reason)
+        self.assertIn("tick too early", runs[0].reason)
+
+    def test_the_effort_matrix_row_carries_the_account_it_ran_on(self):
+        with tempfile.TemporaryDirectory() as d:
+            runs = harness_runs(_run_file(Path(d), [
+                {"account": EFFORT_MATRIX_ACCOUNT, "start": "2026-09-09T11:28:37.136014+00:00",
+                 "end": "2026-09-09T14:53:22.399540+00:00", "kind": "effort-matrix",
+                 "outcome": "completed"},
+            ]))
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0].account, EFFORT_MATRIX_ACCOUNT)
         self.assertEqual((runs[0].start.isoformat(), runs[0].end.isoformat()),
                          ("2026-09-09T11:28:37.136014+00:00", "2026-09-09T14:53:22.399540+00:00"))
-        self.assertIn("effort matrix", runs[0].reason)
+        self.assertIn("effort-matrix", runs[0].reason)
 
-    def test_missing_or_incomplete_sources_give_no_runs_rather_than_raising(self):
+    def test_a_missing_or_incomplete_run_file_gives_no_runs_rather_than_raising(self):
         with tempfile.TemporaryDirectory() as d:
-            matrix = Path(d) / "m.json"
-            matrix.write_text(json.dumps({"_meta": {"started": "2026-09-09T11:28:37+00:00"}}))  # no finish
-            self.assertEqual(harness_runs(Path(d) / "none.jsonl", Path(d) / "none.json"), [])
-            self.assertEqual(harness_runs(Path(d) / "none.jsonl", matrix), [])
+            self.assertEqual(harness_runs(Path(d) / "none.jsonl"), [])
+            self.assertEqual(harness_runs(_run_file(Path(d), [
+                {"account": "jwork", "start": "2026-09-09T11:28:37+00:00"},  # no end
+            ])), [])
 
     def test_overlap_is_half_open_so_touching_a_boundary_is_not_overlapping(self):
         r = [run("jwork", "2026-09-09T11:28:37+00:00", "2026-09-09T14:53:22+00:00")]
@@ -464,15 +484,14 @@ class HarnessRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             report_file(root, "gs", self._three(), account="jwork")
-            probes = root / "probes.jsonl"
-            probes.write_text(json.dumps({"ts": "2026-09-09T00:02:08+00:00", "elapsed_s": 60,
-                                          "account": "dave", "model": "claude-fable-5-1",
-                                          "effort": "low"}) + "\n")
-            matrix = root / "effort_matrix.json"
-            matrix.write_text(json.dumps({"_meta": {"started": "2026-09-09T11:28:37+00:00",
-                                                    "finished": "2026-09-09T14:53:22+00:00"}}))
+            runs = _run_file(root, [
+                {"account": "dave", "kind": "probe", "outcome": "completed",
+                 "model": "claude-fable-5-1", "effort": "low",
+                 "start": "2026-09-09T00:02:08+00:00", "end": "2026-09-09T00:03:08+00:00"},
+                {"account": EFFORT_MATRIX_ACCOUNT, "kind": "effort-matrix", "outcome": "completed",
+                 "start": "2026-09-09T11:28:37+00:00", "end": "2026-09-09T14:53:22+00:00"}])
             argv = ["--gs", str(root / "gs.json"), "--masterrig", str(root / "none.json"),
-                    "--probes", str(probes), "--effort-matrix", str(matrix), "--cache-read-weight", "0"]
+                    "--harness-runs", str(runs), "--cache-read-weight", "0"]
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 self.assertEqual(main(argv), 0)
@@ -483,7 +502,7 @@ class HarnessRunTests(unittest.TestCase):
             kept_run = buf.getvalue()
         self.assertIn("harness_run 1", excluded_run)
         self.assertIn("2026-09-09T12:20:15", excluded_run)
-        self.assertIn("effort matrix 2026-09-09T11:28:37Z to 2026-09-09T14:53:22Z", excluded_run)
+        self.assertIn("effort-matrix completed from 2026-09-09T11:28:37Z", excluded_run)
         # The Dave probe is not jwork's, so it excludes nothing here.
         self.assertNotIn("claude-fable-5-1/low", excluded_run)
         self.assertIn("(none)", kept_run)
@@ -499,7 +518,10 @@ class HarnessRunTests(unittest.TestCase):
             out = root / "rows.json"
             with contextlib.redirect_stdout(io.StringIO()):
                 main(["--gs", str(root / "gs.json"), "--masterrig", str(root / "none.json"),
-                      "--probes", str(root / "none.jsonl"), "--effort-matrix", str(matrix),
+                      "--harness-runs", str(_run_file(root, [
+                          {"account": EFFORT_MATRIX_ACCOUNT, "kind": "effort-matrix",
+                           "outcome": "completed", "start": "2026-09-09T11:28:37+00:00",
+                           "end": "2026-09-09T14:53:22+00:00"}])),
                       "--json", str(out)])
             written = json.loads(out.read_text())
         self.assertEqual([r["account"] for r in written["harness_runs"]], [EFFORT_MATRIX_ACCOUNT])
@@ -512,13 +534,16 @@ class HarnessRunTests(unittest.TestCase):
         gs = root / "history" / "gs-passive.json"
         if not gs.exists():
             self.skipTest("no committed history/gs-passive.json")
-        runs = harness_runs(root / "history" / "probes.jsonl", root / "data" / "effort_matrix.json")
-        # No jwork probe ran on 9 September; the two rows that day are Dave's.
-        self.assertEqual([r.account for r in runs if r.start.date().isoformat() == "2026-09-09"
-                          and "probe" in r.reason], ["dave", "dave"])
+        runs = harness_runs(root / "history" / "harness-runs.jsonl")
+        # No jwork probe ran on 9 September: every probe run that day is Dave's, the two
+        # that finished and the one that aborted.
+        nine_september = [r for r in runs if r.start.date().isoformat() == "2026-09-09"
+                          and "probe" in r.reason]
+        self.assertEqual({r.account for r in nine_september}, {"dave"})
+        self.assertGreaterEqual(len(nine_september), 2)
         _, skipped, excluded = load_rows({"gs": gs}, 0.0, 25 / 15, 3, runs=runs)
         self.assertEqual(skipped["harness_run"], len(excluded))
-        matrix = [e for e in excluded if "effort matrix" in e["reason"]]
+        matrix = [e for e in excluded if "effort-matrix" in e["reason"]]
         self.assertEqual([e["account"] for e in matrix], ["jwork"] * len(matrix))
         # The six stretches the review named, plus the two that straddle the window's ends.
         self.assertEqual([e["start"][11:19] for e in matrix],

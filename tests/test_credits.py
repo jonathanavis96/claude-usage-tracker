@@ -379,6 +379,71 @@ def _published(gs=None, masterrig=None, passive=None, effort_meta=None, prices=N
                              effort_meta=effort_meta, credits=CREDITS)
 
 
+class HarnessRunFileTests(unittest.TestCase):
+    """The runs come from history/harness-runs.jsonl and from nowhere else.
+
+    A probe writes a history/probes.jsonl row only when it finishes, so the old source
+    could not see a probe that aborted or crashed part way -- and one of those sent 80
+    prompts. tools/harness_runs.py collects every run into one file; this module reads it.
+    """
+
+    ROWS: ClassVar[list] = [
+        {"account": "jwork", "start": "2026-09-09T11:28:37+00:00", "end": "2026-09-09T14:53:22+00:00",
+         "kind": "effort-matrix", "outcome": "completed"},
+        {"account": "dave", "start": "2026-09-09T00:02:08+00:00", "end": "2026-09-09T00:12:05+00:00",
+         "kind": "probe", "outcome": "completed", "model": "claude-fable-5-1", "effort": "low"},
+        {"account": "jwork", "start": "2026-09-15T00:03:13+00:00", "end": "2026-09-15T02:13:32+00:00",
+         "kind": "probe", "outcome": "aborted", "detail": "no second tick after 80 prompts"},
+    ]
+
+    def runs(self, rows=None):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "harness-runs.jsonl"
+            path.write_text("".join(json.dumps(r) + "\n" for r in
+                                    (self.ROWS if rows is None else rows)), encoding="utf-8")
+            return C.harness_runs(path)
+
+    def test_every_row_becomes_a_run_on_its_own_account(self):
+        self.assertEqual([(r.account, r.start.isoformat()) for r in self.runs()],
+                         [("dave", "2026-09-09T00:02:08+00:00"),
+                          ("jwork", "2026-09-09T11:28:37+00:00"),
+                          ("jwork", "2026-09-15T00:03:13+00:00")])
+
+    def test_an_aborted_probe_excludes_a_stretch_the_old_source_could_not_see(self):
+        # The run is in no probes.jsonl row: it never finished one.
+        overlapping = opus_stretch("2026-09-15T01:00:00+00:00", 200_000, end="2026-09-15T01:30:00+00:00")
+        clean = C.clean_stretches({"jwork": [overlapping]}, self.runs())
+        self.assertEqual(clean["jwork"], [])
+        self.assertEqual(len(C.clean_stretches({"jwork": [overlapping]}, [])["jwork"]), 1)
+
+    def test_the_reason_says_what_ran_and_how_it_ended(self):
+        reasons = [r.reason for r in self.runs()]
+        self.assertEqual(reasons[0], "probe claude-fable-5-1/low completed from 2026-09-09T00:02:08Z")
+        self.assertIn("aborted: no second tick after 80 prompts", reasons[2])
+
+    def test_a_row_without_a_span_or_an_account_is_not_a_run(self):
+        self.assertEqual(self.runs([{"account": "jwork", "start": "2026-09-15T00:03:13+00:00"},
+                                    {"start": "2026-09-15T00:03:13+00:00",
+                                     "end": "2026-09-15T02:13:32+00:00"}]), [])
+
+    def test_a_missing_file_excludes_nothing_rather_than_raising(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(C.harness_runs(Path(d) / "absent.jsonl"), [])
+
+    def test_the_committed_file_holds_the_runs_the_probe_rows_hold_and_more(self):
+        root = Path(__file__).resolve().parent.parent
+        if not (root / "history" / "harness-runs.jsonl").exists():
+            self.skipTest("no committed history/harness-runs.jsonl")
+        runs = C.harness_runs()
+        spans = {(r.account, r.start.isoformat()) for r in runs}
+        probes = [json.loads(line) for line in
+                  (root / "history" / "probes.jsonl").read_text(encoding="utf-8").splitlines()
+                  if line.strip()]
+        for row in probes:
+            self.assertIn((row["account"], datetime.fromisoformat(row["ts"]).isoformat()), spans)
+        self.assertGreater(len(runs), len(probes))
+
+
 class PublishedBlockTests(unittest.TestCase):
     """What build_public_json writes: the block, and what it refuses to write."""
 
