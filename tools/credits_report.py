@@ -556,6 +556,8 @@ def compare_published(published: dict, recomputed: dict,
 
 
 def _show(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"  # before the int branch: a bool is an int
     if isinstance(value, float):
         return f"{value:,.4f}".rstrip("0").rstrip(".")
     if isinstance(value, int):
