@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-21T16:30:13.394982+00:00",
+ "generated_at": "2026-09-21T17:30:12.875264+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 1099,
+    "reset_verified_samples": 1110,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 4239,
+    "samples": 4250,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-21T16:27:38+00:00"
+    "last": "2026-09-21T17:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,12 +32,12 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 1755,
-    "turns": 51803,
+    "files": 1756,
+    "turns": 51804,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1755,
-     "dropped": 1081,
+     "kept": 1756,
+     "dropped": 1092,
      "subagent_files": 700
     }
    },
@@ -6944,18 +6944,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 897,
+    "reset_verified_samples": 908,
     "since": null,
-    "samples": 1467,
+    "samples": 1478,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-21T16:27:38+00:00"
+    "last": "2026-09-21T17:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 779,
-    "turns": 25981,
+    "files": 829,
+    "turns": 26320,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -9235,6 +9235,42 @@
      "capture_status": "accepted",
      "reference": 1.2834,
      "capture": 0.8566
+    },
+    {
+     "start": "2026-09-21T15:05:39+00:00",
+     "end": "2026-09-21T17:00:38+00:00",
+     "delta_pct": 11.0,
+     "windows": 2,
+     "usd": 8.893,
+     "usd_per_pct": 0.8085,
+     "bounds": [
+      0.6841,
+      0.9881
+     ],
+     "tokens": {
+      "claude-opus-5": {
+       "input": 296,
+       "output": 108091,
+       "cache_read": 20695286,
+       "cache_write": 291447,
+       "cache_write_1h": 291447
+      },
+      "claude-sonnet-5": {
+       "input": 300,
+       "output": 108978,
+       "cache_read": 16777712,
+       "cache_write": 546094,
+       "cache_write_1h": 546094
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 298,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "unaccounted",
+     "reference": 1.2488,
+     "capture": 0.6474
     }
    ],
    "runs": [
@@ -9292,6 +9328,17 @@
      "capture": 0.7489,
      "corroborated_by": [],
      "contradicted_by": []
+    },
+    {
+     "start": "2026-09-21T15:05:39+00:00",
+     "end": "2026-09-21T17:00:38+00:00",
+     "kind": "unaccounted",
+     "direction": "low",
+     "stretches": 1,
+     "step": -0.3526,
+     "capture": 0.6474,
+     "corroborated_by": [],
+     "contradicted_by": []
     }
    ],
    "daily": [
@@ -9339,44 +9386,44 @@
     },
     {
      "date": "2026-09-21",
-     "usd_per_pct": 1.1041,
-     "delta_pct": 41.0,
-     "stretches": 4,
-     "rounding": 0.0732,
+     "usd_per_pct": 1.0415,
+     "delta_pct": 52.0,
+     "stretches": 5,
+     "rounding": 0.0769,
      "bounds": [
-      1.0288,
-      1.1913
+      0.9672,
+      1.1283
      ],
-     "pieces": 3,
+     "pieces": 4,
      "reset_verified": true,
-     "capture_diagnosed": 1
+     "capture_diagnosed": 2
     }
    ],
    "split": {
     "input": 1.8e-05,
-    "output": 0.002116,
-    "cache_read": 0.982606,
-    "cache_write": 0.01526,
-    "cache_write_1h": 0.004629
+    "output": 0.002171,
+    "cache_read": 0.982451,
+    "cache_write": 0.01536,
+    "cache_write_1h": 0.004894
    },
-   "last_usable_at": "2026-09-21T15:05:39+00:00",
+   "last_usable_at": "2026-09-21T17:00:38+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 28,
-     "median": 1.2772,
-     "half_range": 0.7056,
-     "mad": 0.3119,
-     "cv": 0.3183
+     "n": 29,
+     "median": 1.262,
+     "half_range": 0.7141,
+     "mad": 0.3238,
+     "cv": 0.3237
     },
     "daily": {
      "n": 4,
-     "median": 1.3259,
-     "half_range": 0.2441,
-     "mad": 0.2586,
-     "cv": 0.2522
+     "median": 1.2946,
+     "half_range": 0.25,
+     "mad": 0.3007,
+     "cv": 0.2654
     }
    },
    "weekly_by_window": [
@@ -9556,6 +9603,18 @@
      "rounding_interval": [
       6.5292,
       11.8685
+     ],
+     "pieces": 1,
+     "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-21T21:30:00.870510+00:00",
+     "windows": 9.5,
+     "five_hour_pct": 19.0,
+     "seven_day_pct": 2.0,
+     "rounding_interval": [
+      4.8814,
+      47.9012
      ],
      "pieces": 1,
      "reset_verified": true
