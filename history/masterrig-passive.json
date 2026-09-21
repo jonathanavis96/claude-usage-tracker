@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-20T00:45:06.097748+00:00",
+ "generated_at": "2026-09-21T01:15:22.405222+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 3187,
+    "reset_verified_samples": 3222,
     "since": null,
-    "samples": 10836,
+    "samples": 11165,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-09-20T02:41:55+02:00"
+    "last": "2026-09-21T03:11:46+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 3815,
-    "turns": 86948,
+    "files": 3872,
+    "turns": 89341,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -11056,6 +11056,362 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-20T02:16:35+02:00",
+     "end": "2026-09-20T03:07:14+02:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 10.1869,
+     "usd_per_pct": 1.0187,
+     "bounds": [
+      0.9261,
+      1.1319
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 880,
+       "output": 42133,
+       "cache_read": 7859115,
+       "cache_write": 202406,
+       "cache_write_1h": 58995
+      },
+      "claude-opus-5": {
+       "input": 396,
+       "output": 105999,
+       "cache_read": 34360607,
+       "cache_write": 244693,
+       "cache_write_1h": 244693
+      },
+      "claude-opus-4-7": {
+       "input": 78,
+       "output": 44169,
+       "cache_read": 2100837,
+       "cache_write": 353252
+      }
+     },
+     "unpriced_tokens": 2498336,
+     "unpriced": {
+      "claude-opus-4-7": {
+       "input": 78,
+       "output": 44169,
+       "cache_read": 2100837,
+       "cache_write": 353252
+      }
+     },
+     "turns": 311,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
+    },
+    {
+     "start": "2026-09-20T03:07:14+02:00",
+     "end": "2026-09-20T03:47:45+02:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 11.809,
+     "usd_per_pct": 1.1809,
+     "bounds": [
+      1.0735,
+      1.3121
+     ],
+     "tokens": {
+      "claude-opus-5": {
+       "input": 244,
+       "output": 65961,
+       "cache_read": 21814913,
+       "cache_write": 195588,
+       "cache_write_1h": 195588
+      },
+      "claude-fable-5-1": {
+       "input": 750,
+       "output": 53862,
+       "cache_read": 8408120,
+       "cache_write": 214837,
+       "cache_write_1h": 169630
+      },
+      "claude-sonnet-5": {
+       "input": 258,
+       "output": 13307,
+       "cache_read": 12284484,
+       "cache_write": 564411
+      },
+      "claude-opus-4-7": {
+       "input": 74,
+       "output": 36309,
+       "cache_read": 1736119,
+       "cache_write": 288847
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 2061349,
+     "unpriced": {
+      "claude-opus-4-7": {
+       "input": 74,
+       "output": 36309,
+       "cache_read": 1736119,
+       "cache_write": 288847
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 340,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
+    },
+    {
+     "start": "2026-09-20T03:47:45+02:00",
+     "end": "2026-09-20T05:18:55+02:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 14.0363,
+     "usd_per_pct": 1.4036,
+     "bounds": [
+      1.1697,
+      1.7545
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 26,
+       "output": 4536,
+       "cache_read": 1430469,
+       "cache_write": 25066
+      },
+      "claude-fable-5-1": {
+       "input": 2884,
+       "output": 128851,
+       "cache_read": 21442331,
+       "cache_write": 314542,
+       "cache_write_1h": 314542
+      },
+      "claude-opus-5": {
+       "input": 88,
+       "output": 29472,
+       "cache_read": 9470590,
+       "cache_write": 42874,
+       "cache_write_1h": 42874
+      },
+      "claude-opus-4-7": {
+       "input": 14,
+       "output": 906,
+       "cache_read": 75720,
+       "cache_write": 52805
+      }
+     },
+     "unpriced_tokens": 129445,
+     "unpriced": {
+      "claude-opus-4-7": {
+       "input": 14,
+       "output": 906,
+       "cache_read": 75720,
+       "cache_write": 52805
+      }
+     },
+     "turns": 175,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
+    },
+    {
+     "start": "2026-09-20T05:18:55+02:00",
+     "end": "2026-09-20T10:48:07+02:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 13.8683,
+     "usd_per_pct": 1.3868,
+     "bounds": [
+      1.1557,
+      1.7335
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 3172,
+       "output": 90899,
+       "cache_read": 22681510,
+       "cache_write": 527091,
+       "cache_write_1h": 360399
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 162,
+     "reset_verified": false,
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 0.0,
+     "capture": null
+    },
+    {
+     "start": "2026-09-20T10:48:07+02:00",
+     "end": "2026-09-20T13:40:26+02:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 14.1988,
+     "usd_per_pct": 1.4199,
+     "bounds": [
+      1.2908,
+      1.5776
+     ],
+     "tokens": {
+      "claude-fable-5-1": {
+       "input": 2826,
+       "output": 109243,
+       "cache_read": 15694579,
+       "cache_write": 379488,
+       "cache_write_1h": 379488
+      },
+      "claude-sonnet-5": {
+       "input": 350,
+       "output": 22495,
+       "cache_read": 23102053,
+       "cache_write": 357183
+      },
+      "claude-opus-4-7": {
+       "input": 43,
+       "output": 12579,
+       "cache_read": 502738,
+       "cache_write": 133915
+      }
+     },
+     "unpriced_tokens": 649275,
+     "unpriced": {
+      "claude-opus-4-7": {
+       "input": 43,
+       "output": 12579,
+       "cache_read": 502738,
+       "cache_write": 133915
+      }
+     },
+     "turns": 296,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
+    },
+    {
+     "start": "2026-09-20T13:40:26+02:00",
+     "end": "2026-09-20T20:20:56+02:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 9.7878,
+     "usd_per_pct": 0.9788,
+     "bounds": [
+      0.8157,
+      1.2235
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 590,
+       "output": 39272,
+       "cache_read": 42810842,
+       "cache_write": 1545141
+      },
+      "claude-fable-5-1": {
+       "input": 1522,
+       "output": 28959,
+       "cache_read": 9159506,
+       "cache_write": 203396,
+       "cache_write_1h": 203396
+      },
+      "claude-opus-4-7": {
+       "input": 86,
+       "output": 24044,
+       "cache_read": 1617223,
+       "cache_write": 305267
+      }
+     },
+     "unpriced_tokens": 1946620,
+     "unpriced": {
+      "claude-opus-4-7": {
+       "input": 86,
+       "output": 24044,
+       "cache_read": 1617223,
+       "cache_write": 305267
+      }
+     },
+     "turns": 395,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
+    },
+    {
+     "start": "2026-09-20T20:20:56+02:00",
+     "end": "2026-09-20T23:08:23+02:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 9.8641,
+     "usd_per_pct": 0.9864,
+     "bounds": [
+      0.8967,
+      1.096
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 960,
+       "output": 45193,
+       "cache_read": 71575428,
+       "cache_write": 1704380
+      },
+      "claude-fable-5-1": {
+       "input": 2592,
+       "output": 39162,
+       "cache_read": 16611037,
+       "cache_write": 158266,
+       "cache_write_1h": 158266
+      },
+      "claude-opus-4-7": {
+       "input": 127,
+       "output": 35475,
+       "cache_read": 2741979,
+       "cache_write": 445650
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 3223231,
+     "unpriced": {
+      "claude-opus-4-7": {
+       "input": 127,
+       "output": 35475,
+       "cache_read": 2741979,
+       "cache_write": 445650
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 645,
+     "reset_verified": false,
+     "status": "unpriced",
+     "capture_status": "unpriced",
+     "reference": null,
+     "capture": null
     }
    ],
    "runs": [
@@ -11094,10 +11450,10 @@
     },
     {
      "start": "2026-09-08T15:51:26+02:00",
-     "end": "2026-09-18T06:23:14+02:00",
+     "end": "2026-09-20T10:48:07+02:00",
      "kind": "unknown",
      "direction": "high",
-     "stretches": 12,
+     "stretches": 13,
      "step": null,
      "capture": null,
      "corroborated_by": [],
@@ -11302,33 +11658,47 @@
      "pieces": 1,
      "reset_verified": false,
      "capture_diagnosed": 1
+    },
+    {
+     "date": "2026-09-20",
+     "usd_per_pct": 1.3868,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.2,
+     "bounds": [
+      1.1557,
+      1.7335
+     ],
+     "pieces": 2,
+     "reset_verified": false,
+     "capture_diagnosed": 1
     }
    ],
    "split": {
-    "input": 6.2e-05,
-    "output": 0.005145,
-    "cache_read": 0.968218,
-    "cache_write": 0.026575,
-    "cache_write_1h": 0.021114
+    "input": 6.3e-05,
+    "output": 0.005128,
+    "cache_read": 0.96829,
+    "cache_write": 0.026519,
+    "cache_write_1h": 0.021035
    },
-   "last_usable_at": "2026-09-18T06:23:14+02:00",
+   "last_usable_at": "2026-09-20T10:48:07+02:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 55,
-     "median": 1.1524,
-     "half_range": 0.8442,
-     "mad": 0.8893,
-     "cv": 0.7849
+     "n": 56,
+     "median": 1.2059,
+     "half_range": 0.8068,
+     "mad": 0.7632,
+     "cv": 0.7737
     },
     "daily": {
-     "n": 14,
-     "median": 1.051,
-     "half_range": 0.7852,
-     "mad": 0.9046,
-     "cv": 0.7039
+     "n": 15,
+     "median": 1.3868,
+     "half_range": 0.5951,
+     "mad": 0.394,
+     "cv": 0.6681
     }
    },
    "weekly_by_window": [
@@ -12749,13 +13119,61 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-20T02:41:55+02:00",
-     "windows": 4.67,
-     "five_hour_pct": 28.0,
-     "seven_day_pct": 6.0,
+     "window_ending": "2026-09-20T04:28:17+02:00",
+     "windows": 4.45,
+     "five_hour_pct": 49.0,
+     "seven_day_pct": 11.0,
      "rounding_interval": [
-      3.4911,
-      6.6759
+      3.7731,
+      5.3631
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-20T09:27:04+02:00",
+     "windows": 5.5,
+     "five_hour_pct": 11.0,
+     "seven_day_pct": 2.0,
+     "rounding_interval": [
+      2.6409,
+      29.2722
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-20T14:26:03+02:00",
+     "windows": 4.2,
+     "five_hour_pct": 21.0,
+     "seven_day_pct": 5.0,
+     "rounding_interval": [
+      2.957,
+      6.5814
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-21T00:29:38+02:00",
+     "windows": 4.67,
+     "five_hour_pct": 14.0,
+     "seven_day_pct": 3.0,
+     "rounding_interval": [
+      2.7195,
+      10.8928
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-21T03:11:46+02:00",
+     "windows": 4.0,
+     "five_hour_pct": 4.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      0.9451,
+      null
      ],
      "pieces": 1,
      "reset_verified": false
