@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-21T14:30:14.597223+00:00",
+ "generated_at": "2026-09-21T15:30:13.521132+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 1077,
+    "reset_verified_samples": 1088,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 4217,
+    "samples": 4228,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-21T14:27:39+00:00"
+    "last": "2026-09-21T15:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,11 +33,11 @@
      ".claude-jono"
     ],
     "files": 1755,
-    "turns": 51748,
+    "turns": 51803,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1755,
-     "dropped": 1077,
+     "dropped": 1080,
      "subagent_files": 700
     }
    },
@@ -6924,12 +6924,12 @@
     },
     {
      "window_ending": "2026-09-21T16:39:59.937882+00:00",
-     "windows": 5.0,
-     "five_hour_pct": 15.0,
-     "seven_day_pct": 3.0,
+     "windows": 4.0,
+     "five_hour_pct": 16.0,
+     "seven_day_pct": 4.0,
      "rounding_interval": [
-      2.9382,
-      11.5924
+      2.5903,
+      7.2324
      ],
      "pieces": 1,
      "reset_verified": true
@@ -6944,18 +6944,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 875,
+    "reset_verified_samples": 886,
     "since": null,
-    "samples": 1445,
+    "samples": 1456,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-21T14:27:39+00:00"
+    "last": "2026-09-21T15:27:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 777,
-    "turns": 25756,
+    "files": 778,
+    "turns": 25955,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -9206,6 +9206,35 @@
      "capture_status": "unpriced",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-21T14:11:09+00:00",
+     "end": "2026-09-21T15:05:39+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 10.9941,
+     "usd_per_pct": 1.0994,
+     "bounds": [
+      0.9995,
+      1.2216
+     ],
+     "tokens": {
+      "claude-opus-5": {
+       "input": 504,
+       "output": 210495,
+       "cache_read": 59202794,
+       "cache_write": 572917,
+       "cache_write_1h": 572917
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 252,
+     "reset_verified": true,
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.2834,
+     "capture": 0.8566
     }
    ],
    "runs": [
@@ -9310,44 +9339,44 @@
     },
     {
      "date": "2026-09-21",
-     "usd_per_pct": 1.1056,
-     "delta_pct": 31.0,
-     "stretches": 3,
-     "rounding": 0.0645,
+     "usd_per_pct": 1.1041,
+     "delta_pct": 41.0,
+     "stretches": 4,
+     "rounding": 0.0732,
      "bounds": [
-      1.0386,
-      1.1818
+      1.0288,
+      1.1913
      ],
-     "pieces": 2,
+     "pieces": 3,
      "reset_verified": true,
      "capture_diagnosed": 1
     }
    ],
    "split": {
     "input": 1.8e-05,
-    "output": 0.002081,
-    "cache_read": 0.982497,
-    "cache_write": 0.015403,
-    "cache_write_1h": 0.004506
+    "output": 0.002116,
+    "cache_read": 0.982606,
+    "cache_write": 0.01526,
+    "cache_write_1h": 0.004629
    },
-   "last_usable_at": "2026-09-21T13:10:39+00:00",
+   "last_usable_at": "2026-09-21T15:05:39+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 27,
-     "median": 1.2923,
-     "half_range": 0.6973,
-     "mad": 0.3003,
-     "cv": 0.3217
+     "n": 28,
+     "median": 1.2772,
+     "half_range": 0.7056,
+     "mad": 0.3119,
+     "cv": 0.3183
     },
     "daily": {
      "n": 4,
-     "median": 1.3266,
-     "half_range": 0.244,
-     "mad": 0.2577,
-     "cv": 0.2519
+     "median": 1.3259,
+     "half_range": 0.2441,
+     "mad": 0.2586,
+     "cv": 0.2522
     }
    },
    "weekly_by_window": [
@@ -9521,12 +9550,12 @@
     },
     {
      "window_ending": "2026-09-21T16:30:00.908047+00:00",
-     "windows": 8.8,
-     "five_hour_pct": 44.0,
-     "seven_day_pct": 5.0,
+     "windows": 8.5,
+     "five_hour_pct": 51.0,
+     "seven_day_pct": 6.0,
      "rounding_interval": [
-      6.4575,
-      13.2881
+      6.5292,
+      11.8685
      ],
      "pieces": 1,
      "reset_verified": true
