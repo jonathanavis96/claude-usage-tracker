@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-21T01:30:13.739028+00:00",
+ "generated_at": "2026-09-21T02:30:12.907698+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 968,
+    "reset_verified_samples": 979,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 4075,
+    "samples": 4086,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-21T01:26:39+00:00"
+    "last": "2026-09-21T02:26:08+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -31,13 +31,13 @@
      ".claude",
      ".claude-jono"
     ],
-    "files": 1741,
-    "turns": 51217,
+    "files": 1749,
+    "turns": 51326,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1741,
-     "dropped": 1063,
-     "subagent_files": 697
+     "kept": 1749,
+     "dropped": 1064,
+     "subagent_files": 700
     }
    },
    "stretches": [
@@ -6804,12 +6804,12 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-21T01:26:39+00:00",
-     "windows": null,
-     "five_hour_pct": 1.0,
-     "seven_day_pct": 0.0,
+     "window_ending": "2026-09-21T02:26:08+00:00",
+     "windows": 5.0,
+     "five_hour_pct": 5.0,
+     "seven_day_pct": 1.0,
      "rounding_interval": [
-      0.0,
+      1.3341,
       null
      ],
      "pieces": 1,
@@ -6825,11 +6825,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 743,
+    "reset_verified_samples": 754,
     "since": null,
-    "samples": 1303,
+    "samples": 1314,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-21T01:26:39+00:00"
+    "last": "2026-09-21T02:26:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -9145,12 +9145,12 @@
     },
     {
      "window_ending": "2026-09-21T05:40:00.866361+00:00",
-     "windows": 5.0,
-     "five_hour_pct": 10.0,
+     "windows": 5.5,
+     "five_hour_pct": 11.0,
      "seven_day_pct": 2.0,
      "rounding_interval": [
-      2.3608,
-      26.9435
+      2.6409,
+      29.2722
      ],
      "pieces": 1,
      "reset_verified": true
