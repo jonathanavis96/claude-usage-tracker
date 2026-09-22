@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-22T18:30:13.001666+00:00",
+ "generated_at": "2026-09-22T19:30:13.821006+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 1378,
+    "reset_verified_samples": 1388,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 4522,
+    "samples": 4532,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-22T18:27:09+00:00"
+    "last": "2026-09-22T19:27:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,12 +32,12 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 1773,
-    "turns": 51896,
+    "files": 1774,
+    "turns": 51897,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1773,
-     "dropped": 1674,
+     "kept": 1774,
+     "dropped": 1684,
      "subagent_files": 700
     }
    },
@@ -7038,16 +7038,16 @@
     "note": null,
     "reset_verified_samples": 952,
     "since": null,
-    "samples": 1751,
+    "samples": 1761,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-22T18:27:09+00:00"
+    "last": "2026-09-22T19:27:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 891,
-    "turns": 26385,
+    "files": 895,
+    "turns": 26389,
     "withheld_patterns": [],
     "own_sessions": null
    },
