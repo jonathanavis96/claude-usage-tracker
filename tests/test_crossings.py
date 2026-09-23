@@ -88,31 +88,34 @@ def _five_hour_crossings(values_and_minutes):
 
 class WindowsPerWeekFromCrossingsTests(unittest.TestCase):
     def test_definite_five_hour_points_counted_between_seven_day_crossings(self):
-        # Seven-day crossings bracketed at [0,10] (value 11) and [50,60] (value 12), k=1 apart.
+        # Seven-day crossings bracketed at [0,10] (value 11) and [20,30] (value 12), k=1 apart;
+        # every gap in the chain (10min) is well under max_gap, so it stays one segment.
         seven = crossings([sample(0, 40.0, 10.0), sample(10, 40.0, 11.0),
-                           sample(50, 40.0, 11.0), sample(60, 40.0, 12.0)], "seven_day")
-        # Five-hour crossings squarely inside [10, 50]: three of them, well clear of both ends.
-        five = _five_hour_crossings([(10, 40.0), (20, 41.0), (30, 42.0), (40, 43.0)])
+                           sample(20, 40.0, 11.0), sample(30, 40.0, 12.0)], "seven_day")
+        # Five-hour crossings squarely inside [10, 20]: three of them, well clear of both ends.
+        five = _five_hour_crossings([(10, 40.0), (12, 41.0), (15, 42.0), (18, 43.0)])
         pairs = windows_per_week_from_crossings(five, seven, k=1)
         self.assertEqual(len(pairs), 1)
         p = pairs[0]
-        self.assertEqual(p["five_hour_points_definite"], 3)  # 41, 42, 43 land inside [0,60]
+        self.assertEqual(p["five_hour_points_definite"], 3)  # 41, 42, 43 land inside [10,20]
         self.assertEqual(p["five_hour_points_ambiguous"], 0)
         self.assertEqual(p["windows"], 3.0)
         self.assertEqual(p["windows_bounds"], [3.0, 3.0])
 
     def test_ambiguous_crossings_widen_the_bounds_not_the_midpoint_by_half(self):
-        # Seven-day crossing brackets: [0,10] for value 10->11, [50,60] for value 11->12.
-        seven = crossings([sample(0, 40.0, 10.0), sample(10, 40.0, 11.0),
-                           sample(50, 40.0, 11.0), sample(60, 40.0, 12.0)], "seven_day")
-        # One five-hour crossing overlapping the low bracket [0,10] (its own bracket is [5,15]),
-        # one squarely inside, one overlapping the high bracket [50,60] (bracket [45,55]).
-        five = crossings([sample(5, 40.0), sample(15, 41.0), sample(30, 41.0), sample(31, 42.0),
-                          sample(45, 42.0), sample(55, 43.0)], "five_hour")
+        # Seven-day crossing brackets: [0,5] for value 10->11, [25,30] for value 11->12;
+        # every gap in the chain (<=13min) stays under max_gap, so it is one segment.
+        seven = crossings([sample(0, 40.0, 10.0), sample(5, 40.0, 11.0),
+                           sample(15, 40.0, 11.0), sample(25, 40.0, 11.0),
+                           sample(30, 40.0, 12.0)], "seven_day")
+        # One five-hour crossing overlapping the low bracket [0,5] (its own bracket is [2,8]),
+        # one squarely inside, one overlapping the high bracket [25,30] (bracket [24,29]).
+        five = crossings([sample(2, 40.0), sample(8, 41.0), sample(10, 41.0), sample(11, 42.0),
+                          sample(24, 42.0), sample(29, 43.0)], "five_hour")
         pairs = windows_per_week_from_crossings(five, seven, k=1)
         self.assertEqual(len(pairs), 1)
         p = pairs[0]
-        self.assertEqual(p["five_hour_points_definite"], 1)  # the 42 crossing at [30,31]
+        self.assertEqual(p["five_hour_points_definite"], 1)  # the 42 crossing at [10,11]
         self.assertEqual(p["five_hour_points_ambiguous"], 2)  # the 41 and 43 crossings
         self.assertEqual(p["windows"], 2.0)  # (1 + 2/2) / 1
         self.assertEqual(p["windows_bounds"], [1.0, 3.0])
@@ -128,21 +131,46 @@ class WindowsPerWeekFromCrossingsTests(unittest.TestCase):
         seven = crossings([sample(0, 40.0, 10.0), sample(10, 40.0, 11.0)], "seven_day")
         self.assertEqual(windows_per_week_from_crossings([], seven, k=5), [])
 
+    def test_a_sampling_outage_mid_window_is_not_bridged(self):
+        # Same window throughout (one resets_at, no drop), but the reading pauses at 11 for
+        # 35 minutes -- an outage past the 15-minute max_gap -- before resuming and crossing
+        # 12. Nothing was necessarily missed on the seven-day meter itself (it read 11 right
+        # before and right after), but the outage still must not bridge the two crossings:
+        # list position alone puts them k=1 apart even though a real gap sits between them.
+        seven = crossings([sample(0, 40.0, 10.0), sample(10, 40.0, 11.0),
+                           sample(45, 40.0, 11.0), sample(50, 40.0, 12.0)], "seven_day")
+        self.assertEqual([c.value for c in seven], [11, 12])
+        self.assertEqual(seven[0].window_id, seven[1].window_id)  # same window...
+        self.assertNotEqual(seven[0].segment_id, seven[1].segment_id)  # ...different segment
+        self.assertEqual(windows_per_week_from_crossings([], seven, k=1), [])
+
 
 class TokensBetweenCrossingsTests(unittest.TestCase):
     def _turn(self, m, total):
         return Turn(dt(m), "claude-sonnet-5", total, 0, 0, 0)
 
     def test_tokens_summed_in_the_confirmed_span_only(self):
-        # Two crossings with a gap between their brackets: 41 over [0,10], 42 over [50,60].
-        five = crossings([sample(0, 40.0), sample(10, 41.0), sample(50, 41.0), sample(60, 42.0)], "five_hour")
-        turns = [self._turn(5, 100), self._turn(30, 200), self._turn(55, 400)]
+        # Two crossings with a gap between their brackets: 41 over [0,10], 42 over [20,30];
+        # every gap in the chain (10min) stays under max_gap, so it is one segment.
+        five = crossings([sample(0, 40.0), sample(10, 41.0), sample(20, 41.0), sample(30, 42.0)], "five_hour")
+        turns = [self._turn(5, 100), self._turn(15, 200), self._turn(25, 400)]
         out = tokens_between_crossings(five, turns, n=1)
         self.assertEqual(len(out), 1)
         r = out[0]
-        self.assertEqual(r["tokens"], 200)  # only the turn at minute 30 is inside [10, 50]
+        self.assertEqual(r["tokens"], 200)  # only the turn at minute 15 is inside [10, 20]
         self.assertEqual(r["tokens_per_pct"], 200.0)
         self.assertEqual(r["timing_error_tokens"], {"lower_gap": 100, "upper_gap": 400})
+
+    def test_a_sampling_outage_mid_window_is_not_bridged(self):
+        # Same window throughout, but the reading pauses at 41 for 35 minutes -- an outage
+        # past the 15-minute max_gap -- before resuming and crossing 42. Whatever tokens were
+        # spent during the outage are missing from both sides, so the two crossings must not
+        # be paired even though they are exactly n=1 apart in value and share a window_id.
+        five = crossings([sample(0, 40.0), sample(10, 41.0), sample(45, 41.0), sample(50, 42.0)], "five_hour")
+        self.assertEqual([c.value for c in five], [41, 42])
+        self.assertEqual(five[0].window_id, five[1].window_id)
+        self.assertNotEqual(five[0].segment_id, five[1].segment_id)
+        self.assertEqual(tokens_between_crossings(five, [self._turn(25, 900)], n=1), [])
 
     def test_n_greater_than_one_divides_tokens_per_pct(self):
         # Three separate-bracket crossings 41,42,43; n=2 pairs the first and third.

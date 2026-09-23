@@ -46,11 +46,24 @@ class Crossing:
     the timestamp of the first reading of the window's first paired piece
     (matching `tracker/join.py` `window_points`'s fallback), so crossings
     never straddle a reset even on a reset-less log.
+
+    `segment_id` is finer than `window_id`: it also breaks at a mid-window
+    gap wider than `max_gap` (a pair `crossings` already refuses to read
+    across). Two crossings share a `window_id` whenever they belong to the
+    same reset cycle, gap or no gap; they share a `segment_id` only when
+    every pair between them was actually read, so their values are exactly
+    contiguous integers. Pairing crossings for a ratio or a token sum must
+    use `segment_id` -- pairing on `window_id` alone would silently bridge a
+    gap, pairing (say) value 24 read just before an outage with value 32 read
+    just after it as if they were 8 points apart for real, when the ~30
+    points of actual movement `crossings` never sampled through are missing
+    from both sides.
     """
     lower: datetime
     upper: datetime
     value: int
     window_id: str
+    segment_id: int
     reset_verified: bool
     meter: str = "five_hour"
 
@@ -84,15 +97,25 @@ def crossings(samples: Iterable[Sample], meter: str = "five_hour",
     window_start: datetime | None = None
     window_id: str | None = None
     window_reset_verified = False
+    segment_id = -1
+    in_segment = False
     for a, b in zip(ordered, ordered[1:]):
         av, bv = getattr(a, meter), getattr(b, meter)
         ar, br = getattr(a, resets_attr), getattr(b, resets_attr)
         if av is None or bv is None:
             window_start = window_id = None
+            in_segment = False
             continue
         is_reset = not same_reset(ar, br) or bv < av
-        if is_reset or b.ts - a.ts > max_gap:
+        if is_reset:
             window_start = window_id = None
+            in_segment = False
+            continue
+        if b.ts - a.ts > max_gap:
+            # Still the same window (a reset id has not changed), but the chain of pairs
+            # actually read is broken here: nothing bridges the un-sampled movement inside
+            # the gap, so a later crossing must not be paired against one from before it.
+            in_segment = False
             continue
         if window_start is None:
             # The window's id is fixed once, at the first reading of the chain, and reused
@@ -102,9 +125,12 @@ def crossings(samples: Iterable[Sample], meter: str = "five_hour",
             window_start = a.ts
             window_id = ar if ar is not None else window_start.isoformat()
             window_reset_verified = ar is not None
+        if not in_segment:
+            segment_id += 1
+            in_segment = True
         lo_int, hi_int = int(av), int(bv)
         for v in range(lo_int + 1, hi_int + 1):
-            out.append(Crossing(a.ts, b.ts, v, window_id, window_reset_verified, meter))
+            out.append(Crossing(a.ts, b.ts, v, window_id, segment_id, window_reset_verified, meter))
     return out
 
 
@@ -135,26 +161,36 @@ def windows_per_week_from_crossings(five_hour_crossings: list[Crossing],
     rounding interval. A pair whose seven-day crossings' brackets already
     overlap (the two are closer together than one sample gap) is skipped: the
     "definite" span would be empty or negative and nothing safe can be said.
+
+    `cs[i]` is paired only with `cs[i + k]` from the *same segment*
+    (`Crossing.segment_id`, not `window_id`): two crossings that share a
+    window but sit on either side of a sampling gap are exactly `k` points
+    apart in list position without having actually moved `k` points in real
+    time -- the gap could hide any amount of movement (see `crossings`'
+    docstring). Grouping by segment already rules that out; the explicit
+    `hi7.value - lo7.value != k` check is kept as a second guard rather than
+    trusted alone, since a caller could hand this function crossings that
+    were not produced by `crossings` itself.
     """
     five_hour_crossings = sorted(five_hour_crossings, key=lambda c: c.lower)
-    by_window: dict[str, list[Crossing]] = {}
+    by_segment: dict[int, list[Crossing]] = {}
     for c in seven_day_crossings:
-        by_window.setdefault(c.window_id, []).append(c)
+        by_segment.setdefault(c.segment_id, []).append(c)
     out: list[dict] = []
-    for wid, cs in by_window.items():
+    for cs in by_segment.values():
         cs = sorted(cs, key=lambda c: c.value)
         for i in range(len(cs) - k):
             lo7, hi7 = cs[i], cs[i + k]
-            if hi7.lower < lo7.upper:
+            if hi7.value - lo7.value != k or hi7.lower < lo7.upper:
                 continue
-            definite = [f for f in five_hour_crossings if f.lower >= lo7.upper and f.upper <= hi7.lower]
-            amb_lo = [f for f in five_hour_crossings if f not in definite and _overlaps(f, lo7.lower, lo7.upper)]
-            amb_hi = [f for f in five_hour_crossings if f not in definite and _overlaps(f, hi7.lower, hi7.upper)]
+            definite = {f for f in five_hour_crossings if f.lower >= lo7.upper and f.upper <= hi7.lower}
+            amb_lo = {f for f in five_hour_crossings if f not in definite and _overlaps(f, lo7.lower, lo7.upper)}
+            amb_hi = {f for f in five_hour_crossings if f not in definite and _overlaps(f, hi7.lower, hi7.upper)}
             n_definite, n_amb = len(definite), len(amb_lo) + len(amb_hi)
             n_min, n_max = n_definite, n_definite + n_amb
             n_mid = n_definite + n_amb / 2
             out.append({
-                "window_id": wid, "k": k,
+                "window_id": lo7.window_id, "k": k,
                 "seven_day_from": lo7.value, "seven_day_to": hi7.value,
                 "at": hi7.upper.isoformat(),
                 "windows": round(n_mid / k, 4),
@@ -180,6 +216,14 @@ def tokens_between_crossings(five_hour_crossings: list[Crossing], turns: Iterabl
     not belong to the `n`-percent span, depending on exactly when inside that
     gap the crossing happened. A pair whose brackets already overlap is
     skipped, as in `windows_per_week_from_crossings`.
+
+    Pairing is within one `segment_id`, not `window_id` (see `crossings`'
+    docstring and `windows_per_week_from_crossings`): a crossing from before
+    a sampling gap and one from after it can share a window while the tokens
+    spent inside the gap are simply missing from both, so pairing them would
+    report a wrong tokens-per-percent for the "n percent" they are `n` list
+    positions but not `n` real points apart. `hi.value - lo.value != n` is
+    kept as an explicit second guard on top of the segment grouping.
     """
     turns = sorted(turns, key=lambda t: t.ts)
     ts_keys = [t.ts for t in turns]
@@ -188,19 +232,19 @@ def tokens_between_crossings(five_hour_crossings: list[Crossing], turns: Iterabl
         i, j = bisect.bisect_left(ts_keys, lo), bisect.bisect_left(ts_keys, hi)
         return sum(t.total for t in turns[i:j])
 
-    by_window: dict[str, list[Crossing]] = {}
+    by_segment: dict[int, list[Crossing]] = {}
     for c in five_hour_crossings:
-        by_window.setdefault(c.window_id, []).append(c)
+        by_segment.setdefault(c.segment_id, []).append(c)
     out: list[dict] = []
-    for wid, cs in by_window.items():
+    for cs in by_segment.values():
         cs = sorted(cs, key=lambda c: c.value)
         for i in range(len(cs) - n):
             lo, hi = cs[i], cs[i + n]
-            if hi.lower < lo.upper:
+            if hi.value - lo.value != n or hi.lower < lo.upper:
                 continue
             tokens = _sum(lo.upper, hi.lower)
             out.append({
-                "window_id": wid, "n": n,
+                "window_id": lo.window_id, "n": n,
                 "from_value": lo.value, "to_value": hi.value,
                 "at": hi.upper.isoformat(),
                 "tokens": tokens, "tokens_per_pct": round(tokens / n, 2),
