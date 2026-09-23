@@ -233,19 +233,24 @@ def _utilization(row: dict) -> float | None:
 
 
 def _model_tokens(row: dict, field: str = "tokens_since_five_hour_reset") -> dict[str, dict]:
+    """Per-model token counts, keyed by the normalised id `_price` values them at, so a
+    `[1m]` or dated id and the plain id land in one bucket with their counts summed."""
     t = row.get(field)
     if not isinstance(t, dict):
         return {}
-    out = {}
+    out: dict[str, dict] = {}
     for model, counts in t.items():
         if not isinstance(counts, dict):
             continue
         try:
-            out[model] = {c: int(counts.get(c) or 0) for c in CLASSES}
+            parsed = {c: int(counts.get(c) or 0) for c in CLASSES}
             if counts.get("cache_write_1h") is not None:
-                out[model]["cache_write_1h"] = int(counts["cache_write_1h"])
+                parsed["cache_write_1h"] = int(counts["cache_write_1h"])
         except (TypeError, ValueError):
             continue
+        merged = out.setdefault(_normalize_model(model), {c: 0 for c in CLASSES})
+        for c, n in parsed.items():
+            merged[c] = merged.get(c, 0) + n
     return out
 
 

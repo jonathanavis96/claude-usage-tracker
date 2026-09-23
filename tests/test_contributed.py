@@ -361,6 +361,22 @@ class PriceTests(unittest.TestCase):
                        {"claude-sonnet-5[1m]": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 400_000}})]
         self.assertEqual(aggregate(rows, NOW, PRICES)["max20"]["usd_per_pct"]["median"], 0.02)
 
+    def test_a_marked_sample_and_a_plain_sample_share_one_model_bucket(self):
+        # PR 85 review: normalising only in _price left the per-model figures keyed by the
+        # raw id, so claude-sonnet-5[1m] and claude-sonnet-5 were published as two models.
+        marked = {"claude-sonnet-5[1m]": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 400_000}}
+        dated = {"claude-sonnet-5-20260901": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 200_000},
+                 "claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 200_000}}
+        rows = [sample(A, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0, marked),
+                sample(B, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0, sonnet(400_000)),
+                sample(C, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0, dated)]
+        j = aggregate(rows, NOW, PRICES)["max20"]
+        self.assertEqual(list(j["tokens_per_pct"]), ["claude-sonnet-5"])
+        self.assertEqual(j["tokens_per_pct"]["claude-sonnet-5"]["samples"], 3)
+        self.assertEqual(j["tokens_per_pct"]["claude-sonnet-5"]["median"], 8000)
+        by_model = [p["tokens_per_pct_by_model"] for p in j["points"]]
+        self.assertEqual(by_model, [{"claude-sonnet-5": 8000}] * 3)
+
 
 class PointsTests(unittest.TestCase):
     # One point per accepted sample (see TokensPerPctTests).
