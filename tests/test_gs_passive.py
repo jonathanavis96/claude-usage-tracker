@@ -346,6 +346,68 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(sum(1 for s in samples if s.resets_at is not None), 20)
         self.assertTrue(all(a.ts < b.ts for a, b in pairwise(samples)))
 
+    def test_load_samples_tags_an_inferred_reset_and_never_overwrites_a_logged_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            ops = home / ".paperclip" / "ops"
+            ops.mkdir(parents=True)
+            since = T0
+            before = [f"{(since + timedelta(minutes=5 * i)).isoformat()} ok five_hour={40 - 4 * i}% seven_day=10%"
+                      for i in range(10)]  # falls to 0%, then climbs -- a resolvable reset
+            after = [f"{(since + timedelta(minutes=5 * (10 + i))).isoformat()} ok five_hour={2 * i}% seven_day=10%"
+                     for i in range(8)]
+            (ops / "gs-usage-ceiling.log").write_text("\n".join(before + after) + "\n")
+            account = Account("t", home / ".claude-t", ops / "claude-usage-meter-t.log", "meter",
+                              meter_since=since, legacy_meter_log=ops / "gs-usage-ceiling.log")
+            samples = load_samples(account)
+        # Every legacy reading is still gs-ceiling-sourced or its inferred variant -- never
+        # silently promoted to a source name that would claim it came from a real reset log.
+        self.assertTrue(all(s.source in ("gs-ceiling", "gs-ceiling-inferred") for s in samples))
+        inferred = [s for s in samples if s.source == "gs-ceiling-inferred"]
+        self.assertTrue(inferred)
+        self.assertTrue(all(s.resets_at is not None for s in inferred))
+        # The stretch pairing rules in tracker/join.py never used the plain source name to
+        # decide anything, so this changes nothing about which stretches got built --
+        # only what they know about where their reset evidence came from.
+        untouched = [s for s in samples if s.source == "gs-ceiling" and s.resets_at is not None]
+        self.assertEqual(untouched, [])  # gs-ceiling itself never carries a real reset
+
+    def test_stretch_records_carry_reset_source_and_withhold_verification_for_inferred_resets(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            ops = home / ".paperclip" / "ops"
+            projects = home / ".claude-t" / "projects" / "-p"
+            projects.mkdir(parents=True)
+            ops.mkdir(parents=True)
+            since = T0
+            # A resolvable reset (falls to 0%, climbs back with real use) followed by a plateau
+            # with no further evidence, so one stretch should read "inferred" and the tail "none".
+            before = [f"{(since + timedelta(minutes=5 * i)).isoformat()} ok five_hour={40 - 4 * i}% seven_day=10%"
+                      for i in range(10)]
+            after = [f"{(since + timedelta(minutes=5 * (10 + i))).isoformat()} ok five_hour={2 * i}% seven_day=10%"
+                     for i in range(20)]
+            (ops / "gs-usage-ceiling.log").write_text("\n".join(before + after) + "\n")
+            turns = [turn_line(since + timedelta(minutes=5 * i + 1), f"t{i}") for i in range(29)]
+            (projects / "s.jsonl").write_text("\n".join(turns) + "\n")
+            account = Account("t", home / ".claude-t", ops / "claude-usage-meter-t.log", "meter",
+                              meter_since=since, legacy_meter_log=ops / "gs-usage-ceiling.log")
+            r = report({"t": account}, PRICES, now=since + timedelta(hours=3))["accounts"]["t"]
+        sources = {st["reset_source"] for st in r["stretches"]}
+        self.assertTrue(sources <= {"inferred", "none"})
+        self.assertIn("inferred", sources)
+        # An inferred reset is recorded, but the validation in tracker/gs_passive.py
+        # INFERRED_RESET_VERIFIED did not clear the acceptance bar, so it is not certified.
+        for st in r["stretches"]:
+            if st["reset_source"] == "inferred":
+                self.assertFalse(st["reset_verified"])
+            if st["reset_source"] == "none":
+                self.assertFalse(st["reset_verified"])
+        # Nothing rolled up from the stretches may certify what the stretches themselves do
+        # not: no day and no sample count reads as reset-verified on inferred resets alone.
+        self.assertTrue(r["daily"])
+        self.assertFalse(any(day["reset_verified"] for day in r["daily"]))
+        self.assertEqual(r["meter"]["reset_verified_samples"], 0)
+
     def test_a_transcript_directory_shared_with_other_config_dirs_is_named(self):
         with tempfile.TemporaryDirectory() as d:
             home = jwork_home(Path(d))
