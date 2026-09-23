@@ -287,3 +287,355 @@ In rough order of the meter percent it would recover for jwork:
   and under `history/model-rates.json`'s measured rates.
 - `grep` over `~/.paperclip/ops/gs-usage-ceiling.log` and `claude-usage-meter-jwork.log`,
   and `systemctl --user cat gs-usage-ceiling.service`.
+
+## Re-run at the refitted rates, 2026-09-23
+
+PR #79 refitted the meter's per-model rates: Sonnet from 0.5178 to 0.3967 credits per
+input token (0.777x Opus to 0.595x), Fable from 1.3068 to 1.4014, Opus unchanged at 0.6667
+as the anchor. This section re-runs the method above at the new rates. The sections above
+are left as they were written.
+
+### What in the method reads the rates
+
+Two scripts produced the figures above, and only one of them depends on the rates.
+
+- The cause ladder (off gs, dropped transcripts, harness run, model mix, spread,
+  unexplained, in that order) runs over the stretches `history/gs-passive.json` marks
+  `unaccounted`. That verdict is `tracker/capture.py`'s, in list dollars, and the ladder's
+  model-mix rung is an Opus-plus-Fable token share below 0.85. Nothing in it reads
+  `history/model-rates.json`. Re-run unchanged on the same file it gives the same 27 / 8 /
+  6 / 7 / 1, whatever the rates are.
+- The credit re-judge replays `capture.py`'s `judge` over each stretch valued at the
+  measured rates (cache reads at weight 0, cache writes at the input rate, output at five
+  times input). That is the step the refit moves, and it is what "the new rates explain a
+  stretch" has to mean: valued in credits, the stretch's meter movement falls inside the
+  account's normal spread, so `judge` accepts it.
+
+So the re-run feeds each stretch's credit capture back through the same ladder. A stretch
+the credit judge accepts is explained by valuation; one it still calls unaccounted gets the
+ladder's cause, with the credit capture standing in for the list-dollar one at the
+dropped-transcripts and spread rungs. Both runs use the 08:30Z `history/gs-passive.json`
+the original classification used (commit `a366108`), so the stretch set is the same 49.
+The old rates are `history/model-rates.json` as of `c5118ab^`, the new ones as of
+`c5118ab` (PR #79). The list-dollar replay reproduces the committed verdict on all 107
+judged jwork stretches and all 30 judged dave ones.
+
+### jwork: 12 of the 27 model-mix stretches are explained at the new rates
+
+| cause | original (list $) | credits, old rates | credits, new rates |
+|---|---|---|---|
+| accepted under credits (explained by valuation) | -- | 18 (195%) | **14 (152%)** |
+| no gs transcript (off gs) | 6 (67%) | 6 (67%) | 6 (67%) |
+| the tracker's own harness run | 8 (91%) | 8 (91%) | 8 (91%) |
+| model mix | 27 (286%) | 11 (113%) | **15 (156%)** |
+| inside the spread (capture at or above 0.5) | 7 (77%) | 5 (55%) | 5 (55%) |
+| unexplained | 1 (10%) | 1 (10%) | 1 (10%) |
+| dropped pooled transcripts | 0 | 0 | 0 |
+| **still unaccounted** | **49 (531%)** | **31 (336%)** | **35 (379%)** |
+
+Of the 27 model-mix stretches, **12 (130 meter percent) are explained at the new rates**
+and 15 (156 percent) stay unaccounted. The 15 do not become anything else: every rung above
+model mix still fails for them (they have transcripts, no harness run overlaps them, and no
+dropped transcripts lift them), and each is under 0.85 Opus-plus-Fable, so the ladder still
+names model mix. What that now means is "non-Opus work that measured credits at the
+current rates still value too low", not list-dollar mis-valuation. Two of the seven spread
+stretches are also accepted under credits, at both rate sets.
+
+The refit explains **fewer** of them than the old rates did, not more: 16 of the 27 were
+accepted at the old rates, and four -- 2026-09-12T15:16Z, 2026-09-16T14:50Z,
+2026-09-17T13:05Z and 2026-09-17T14:05Z -- fall back to unaccounted at the new ones. No
+stretch moves the other way. That is the direction a lower Sonnet rate has to push: it
+values Sonnet-heavy stretches at fewer credits, so their capture drops. What the refit does
+fix is the other tail. Across all of jwork's stretches the credit judge goes from 64
+accepted / 31 unaccounted / 11 surplus at the old rates to **69 accepted / 35 unaccounted /
+2 surplus** at the new ones, and the median capture from 0.930 to 0.892. Nine of the eleven
+surplus stretches (ten of them accepted in list dollars) are accepted at the new rates. No
+stretch accepted in list dollars turns unaccounted under credits at either rate set.
+
+Per stretch (the figure in brackets is the stretch's capture under that valuation;
+"changed by refit" marks a class that differs between the old and new rates):
+
+| stretch start | meter % | Opus+Fable share | cause (list $) | credits, old rates | credits, new rates | changed by refit |
+|---|---|---|---|---|---|---|
+| 2026-09-05T12:14Z | 11 | 0.90 | spread | **accepted** (0.86) | **accepted** (0.83) |  |
+| 2026-09-05T13:20Z | 11 | 0.72 | model mix | **accepted** (0.94) | **accepted** (0.86) |  |
+| 2026-09-05T13:41Z | 12 | 0.84 | model mix | **accepted** (0.84) | **accepted** (0.81) |  |
+| 2026-09-05T17:09Z | 12 | 0.69 | model mix | **accepted** (0.82) | **accepted** (0.78) |  |
+| 2026-09-05T17:47Z | 12 | 0.72 | model mix | **accepted** (0.89) | **accepted** (0.88) |  |
+| 2026-09-05T18:30Z | 11 | 0.51 | model mix | **accepted** (0.88) | **accepted** (0.86) |  |
+| 2026-09-05T21:14Z | 10 | 0.26 | model mix | **accepted** (0.86) | **accepted** (0.79) |  |
+| 2026-09-05T23:58Z | 13 | 0.98 | spread | spread (0.75) | spread (0.75) |  |
+| 2026-09-08T13:12Z | 10 | 0.86 | spread | spread (0.63) | spread (0.62) |  |
+| 2026-09-09T10:47Z | 10 | 1.00 | harness run | harness run (0.61) | harness run (0.61) |  |
+| 2026-09-09T11:58Z | 10 | 1.00 | harness run | harness run (0.67) | harness run (0.67) |  |
+| 2026-09-09T12:20Z | 11 | 1.00 | harness run | harness run (0.49) | harness run (0.49) |  |
+| 2026-09-09T12:52Z | 13 | 1.00 | harness run | harness run (0.47) | harness run (0.47) |  |
+| 2026-09-09T13:30Z | 11 | 1.00 | harness run | harness run (0.45) | harness run (0.45) |  |
+| 2026-09-09T13:47Z | 14 | 1.00 | harness run | harness run (0.31) | harness run (0.31) |  |
+| 2026-09-09T14:09Z | 12 | 1.00 | harness run | harness run (0.29) | harness run (0.28) |  |
+| 2026-09-09T14:36Z | 10 | 1.00 | harness run | harness run (0.32) | harness run (0.32) |  |
+| 2026-09-10T09:43Z | 12 | 0.96 | spread | spread (0.62) | spread (0.65) |  |
+| 2026-09-10T10:21Z | 10 | 0.80 | model mix | model mix (0.37) | model mix (0.35) |  |
+| 2026-09-10T10:54Z | 10 | 0.94 | unexplained | unexplained (0.41) | unexplained (0.42) |  |
+| 2026-09-10T11:21Z | 10 | 0.44 | model mix | model mix (0.71) | model mix (0.73) |  |
+| 2026-09-10T12:16Z | 10 | 0.58 | model mix | model mix (0.23) | model mix (0.23) |  |
+| 2026-09-10T12:44Z | 10 | 0.59 | model mix | model mix (0.50) | model mix (0.49) |  |
+| 2026-09-10T17:54Z | 11 | 0.84 | model mix | **accepted** (0.77) | **accepted** (0.77) |  |
+| 2026-09-11T09:47Z | 11 | 0.84 | model mix | **accepted** (0.88) | **accepted** (0.90) |  |
+| 2026-09-11T10:35Z | 10 | 0.83 | model mix | model mix (0.41) | model mix (0.40) |  |
+| 2026-09-11T11:12Z | 10 | 0.82 | model mix | model mix (0.57) | model mix (0.56) |  |
+| 2026-09-11T12:32Z | 10 | 0.85 | spread | spread (0.64) | spread (0.65) |  |
+| 2026-09-11T13:42Z | 10 | 0.82 | model mix | model mix (0.43) | model mix (0.42) |  |
+| 2026-09-12T15:16Z | 10 | 0.84 | model mix | **accepted** (0.77) | model mix (0.75) | yes |
+| 2026-09-12T21:53Z | 10 | 0.98 | spread | spread (0.76) | spread (0.76) |  |
+| 2026-09-13T21:52Z | 10 | - | off gs | off gs (0.00) | off gs (0.00) |  |
+| 2026-09-13T22:18Z | 10 | - | off gs | off gs (0.00) | off gs (0.00) |  |
+| 2026-09-13T22:50Z | 13 | - | off gs | off gs (0.00) | off gs (0.00) |  |
+| 2026-09-13T23:22Z | 11 | - | off gs | off gs (0.00) | off gs (0.00) |  |
+| 2026-09-13T23:48Z | 12 | - | off gs | off gs (0.00) | off gs (0.00) |  |
+| 2026-09-14T00:20Z | 11 | - | off gs | off gs (0.00) | off gs (0.00) |  |
+| 2026-09-15T16:11Z | 10 | 0.41 | model mix | **accepted** (0.83) | **accepted** (0.75) |  |
+| 2026-09-16T14:50Z | 10 | 0.70 | model mix | **accepted** (0.81) | model mix (0.73) | yes |
+| 2026-09-16T15:23Z | 11 | 0.87 | spread | **accepted** (1.03) | **accepted** (0.90) |  |
+| 2026-09-17T10:09Z | 12 | 0.30 | model mix | model mix (0.47) | model mix (0.38) |  |
+| 2026-09-17T13:05Z | 12 | 0.48 | model mix | **accepted** (0.89) | model mix (0.72) | yes |
+| 2026-09-17T14:05Z | 11 | 0.23 | model mix | **accepted** (0.89) | model mix (0.64) | yes |
+| 2026-09-17T15:06Z | 11 | 0.27 | model mix | model mix (0.24) | model mix (0.17) |  |
+| 2026-09-17T15:17Z | 10 | 0.31 | model mix | **accepted** (1.11) | **accepted** (0.82) |  |
+| 2026-09-17T15:50Z | 10 | 0.13 | model mix | model mix (0.22) | model mix (0.16) |  |
+| 2026-09-17T16:01Z | 10 | 0.22 | model mix | model mix (0.50) | model mix (0.40) |  |
+| 2026-09-17T16:34Z | 10 | 0.43 | model mix | **accepted** (0.83) | **accepted** (0.69) |  |
+| 2026-09-17T22:48Z | 10 | 0.76 | model mix | **accepted** (1.06) | **accepted** (0.90) |  |
+
+### dave: 2 of 9
+
+dave's 10 were classified the first time (9 model mix, 1 spread), and the same method
+applies unchanged, so it was re-run the same way. At the new rates **2 of the 9 model-mix
+stretches (20 meter percent) are explained** and 7 (73 percent) stay model mix; the old
+rates explained 3. 2026-09-20T22:16Z is the one the refit loses. The spread stretch stays
+where it was. Across all of dave's stretches the credit judge gives 18 accepted / 10
+unaccounted / 1 surplus at the new rates against 19 / 9 / 1 at the old, with 23 not judged
+either way (they carry unpriced tokens, or tokens of a family with no measured rate). Two
+stretches accepted in list dollars, 2026-09-21T12:27Z and 2026-09-21T14:11Z, read
+unaccounted under credits at both rate sets (0.73 and 0.75 at the new rates); both are over
+0.9 Opus, so the ladder puts them in the spread.
+
+| stretch start | meter % | Opus+Fable share | cause (list $) | credits, old rates | credits, new rates | changed by refit |
+|---|---|---|---|---|---|---|
+| 2026-09-20T00:21Z | 11 | 0.21 | model mix | model mix (0.62) | model mix (0.59) |  |
+| 2026-09-20T01:47Z | 10 | 0.14 | model mix | model mix (0.61) | model mix (0.55) |  |
+| 2026-09-20T02:31Z | 10 | 0.37 | model mix | **accepted** (0.83) | **accepted** (0.79) |  |
+| 2026-09-20T15:05Z | 11 | 0.01 | model mix | model mix (0.48) | model mix (0.38) |  |
+| 2026-09-20T16:27Z | 10 | 0.11 | model mix | **accepted** (0.94) | **accepted** (0.81) |  |
+| 2026-09-20T22:16Z | 10 | 0.34 | model mix | **accepted** (0.84) | model mix (0.76) | yes |
+| 2026-09-20T22:44Z | 10 | 0.28 | model mix | model mix (0.53) | model mix (0.46) |  |
+| 2026-09-21T12:05Z | 10 | 0.92 | spread | spread (0.72) | spread (0.73) |  |
+| 2026-09-21T15:05Z | 11 | 0.55 | model mix | model mix (0.68) | model mix (0.62) |  |
+| 2026-09-21T17:00Z | 10 | 0.01 | model mix | model mix (0.18) | model mix (0.15) |  |
+
+### What this changes in the conclusions above
+
+- The model-mix bucket shrinks under measured credits at either rate set, but the refit
+  shrinks it less, not more: 15 jwork stretches and 156 meter percent remain, against 11
+  and 113 at the old rates. "Value stretches in measured credits" still recovers more
+  meter percent than anything else in "What would close it", but 130 percent of the 286,
+  not all of it.
+- The residual pulls against the refit. The refit wants Sonnet cheaper and it clears the
+  surplus tail; the 15 remaining stretches, all below 0.85 Opus-plus-Fable, would need
+  non-Opus work valued dearer to be accepted. One input rate per family cannot satisfy
+  both sets, so the next thing to test is how the valuation weights cache writes, cache
+  reads and output on those stretches, rather than a further move in the Sonnet input
+  rate.
+- The earlier remark that dave's data imply a Sonnet rate near 0.49x Opus pointed the same
+  way as the refit, which moved to 0.595x. dave's own model-mix residual is still 7 of 9
+  stretches.
+- The off-gs, harness-run, spread and unexplained buckets do not depend on the rates and are
+  unchanged.
+
+### The committed file has moved since 08:30Z
+
+`history/gs-passive.json` is rewritten hourly. At 11:30Z (commit `b0a8874`) the price table
+covers the 33 jwork and 22 dave stretches that were unpriced at 08:30Z, so the list-dollar verdicts
+differ: jwork 82 accepted / 50 unaccounted / 8 surplus, dave 32 / 16 / 4. Run on that file,
+the ladder gives jwork 23 model mix (242%), 8 harness run (91%), 6 off gs (67%), 10 spread
+(108%) and 3 unexplained (31%); dave 15 model mix (160%) and 1 spread (10%). At the new
+rates 7 of jwork's 23 model-mix stretches are accepted under credits, 15 stay model mix and
+1 is not judged; for dave 1 of 15 is accepted, 7 stay and 7 are not judged. The per-stretch
+answer to the refit is the same on both files, because each stretch's tokens and meter
+movement are the same; only the list-dollar starting set differs.
+
+### Commands
+
+The two scripts behind the original section were not committed; they were recovered from
+the session that wrote it. `rerun.py` below is both of them joined, with the input paths as
+arguments and nothing else changed. The manifest is the per-transcript manifest of the gs
+config dirs described in "Commands the figures come from"; it only feeds the
+dropped-transcripts rung, which fires for no stretch at either rate set. Run from the
+repository root, since the script imports `tracker.capture` and `tracker.credits` and reads
+`history/harness-runs.jsonl`:
+
+```
+git show a366108:history/gs-passive.json > gsp-0830.json
+git show c5118ab^:history/model-rates.json > rates-old.json
+git show c5118ab:history/model-rates.json > rates-new.json
+python3 rerun.py gsp-0830.json rates-old.json manifest.json out-0830-old.json
+python3 rerun.py gsp-0830.json rates-new.json manifest.json out-0830-new.json
+python3 rerun.py history/gs-passive.json rates-old.json manifest.json out-head-old.json
+python3 rerun.py history/gs-passive.json rates-new.json manifest.json out-head-new.json
+```
+
+<details>
+<summary><code>rerun.py</code></summary>
+
+```python
+"""PR #76's classify.py and revalue.py, unchanged in method, with the input paths as arguments.
+
+usage: rerun.py <gs-passive.json> <model-rates.json> <manifest.json> <out.json>
+Writes, per account, every stretch's committed verdict, its replayed list-dollar and
+measured-credit verdicts, and the cause classify.py assigns to each unaccounted one.
+"""
+import json, sys
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from statistics import median
+
+REPO = Path.cwd()
+sys.path.insert(0, str(REPO))
+from tracker.capture import TOLERANCE, BOOTSTRAP, MIN_REFERENCE, LOOKBACK  # noqa: E402
+from tracker.credits import family, load_credits, harness_runs  # noqa: E402
+
+gsp, rates_path, man_path, out_path = map(Path, sys.argv[1:5])
+rpt = json.loads(gsp.read_text())
+mr = json.loads(rates_path.read_text())["measured_rates"]
+man = json.loads(man_path.read_text())
+credits = load_credits()
+RATE = {f: v["input"] for f, v in mr["per_family"].items() if v.get("input")}
+OUT_MULT = mr.get("output_multiplier", 5)
+runs = harness_runs(REPO / "history/harness-runs.jsonl")
+env = man["env"]
+
+
+def T(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def owner(f):
+    o = [c for c, e in env.items() if f["sid"] in e]
+    return o[0] if o else None
+
+
+pooled = [f for f in man["files"] if f["tag"] == "pooled" and f["turns"] and f["last"]]
+unowned = [f for f in pooled if owner(f) is None]
+
+
+def tok_in(files, a, b):
+    return sum(sum(f["tokens"].values()) for f in files if a <= T(f["last"]) <= b)
+
+
+def opus_share(s):
+    tot = Counter()
+    for m, t in s["tokens"].items():
+        tot[m] += sum(v for c, v in t.items() if c != "cache_write_1h")
+    g = sum(tot.values())
+    return None if not g else sum(v for m, v in tot.items() if "opus" in m or "fable" in m) / g
+
+
+# ---- revalue.py
+def value(st, mode):
+    if mode == "list":
+        return st["usd"]
+    total = 0.0
+    for m, tok in st["tokens"].items():
+        r = RATE.get(family(m, credits))
+        if r is None:
+            return None
+        inp = tok.get("input", 0) + tok.get("cache_write", 0)
+        total += inp * r + tok.get("output", 0) * r * OUT_MULT
+    return total
+
+
+def judge(rows, mode):
+    pool, k = [], 0
+    priced = [r for r in rows if r["unpriced_tokens"] == 0 and value(r, mode) is not None]
+    verdicts = {}
+    while k < len(priced):
+        if len(pool) < MIN_REFERENCE:
+            batch = priced[k:k + BOOTSTRAP]
+            if len(batch) < BOOTSTRAP:
+                break
+            ref = median(value(r, mode) / r["delta_pct"] for r in batch)
+            k += BOOTSTRAP
+        else:
+            batch = [priced[k]]
+            ref = median(pool[-LOOKBACK:])
+            k += 1
+        for r in batch:
+            v = value(r, mode)
+            per = v / r["delta_pct"]
+            lo = v / (r["delta_pct"] + r["windows"])
+            hi = v / (r["delta_pct"] - r["windows"]) if r["delta_pct"] > r["windows"] else float("inf")
+            if hi < ref * (1 - TOLERANCE):
+                s = "unaccounted"
+            elif lo > ref * (1 + TOLERANCE):
+                s = "surplus"
+            else:
+                s = "accepted"
+                pool.append(per)
+            verdicts[r["start"]] = (s, per / ref)
+    return verdicts
+
+
+# ---- classify.py's cause ladder, over a given capture figure
+def cause(name, s, cap):
+    a, b = T(s["start"]), T(s["end"])
+    own = sum(sum(v for c, v in t.items() if c != "cache_write_1h") for t in s["tokens"].values())
+    drop = tok_in(unowned, a, b) if name == "jwork" else 0
+    newcap = cap * (1 + drop / own) if own else None
+    h = any(r.account == name and r.start < b and r.end > a for r in runs)
+    os_ = opus_share(s)
+    if s["turns"] == 0:
+        return "off-gs"
+    if newcap is not None and newcap >= 0.85:
+        return "dropped"
+    if h:
+        return "harness"
+    if os_ is not None and os_ < 0.85:
+        return "model-mix"
+    if cap >= 0.5:
+        return "spread"
+    return "unexplained"
+
+
+out = {}
+for name in ("jwork", "dave"):
+    rows = sorted(rpt["accounts"][name]["stretches"], key=lambda s: s["end"])
+    lst, mea = judge(rows, "list"), judge(rows, "measured")
+    recs = []
+    for s in rows:
+        rec = {"start": s["start"], "end": s["end"], "delta_pct": s["delta_pct"], "turns": s["turns"],
+               "opus_share": opus_share(s), "committed": s["capture_status"], "capture": s.get("capture"),
+               "list": lst.get(s["start"]), "measured": mea.get(s["start"])}
+        if s["capture_status"] == "unaccounted":
+            rec["cause_committed"] = cause(name, s, s["capture"])
+        if rec["measured"] and rec["measured"][0] == "unaccounted":
+            rec["cause_measured"] = cause(name, s, rec["measured"][1])
+        recs.append(rec)
+    out[name] = recs
+    agree = sum(1 for r in recs if r["list"] and r["list"][0] == r["committed"])
+    print(f"== {name}: {len(recs)} stretches; list replay agrees with committed on {agree} "
+          f"of {sum(1 for r in recs if r['list'])} judged")
+    for key, label in (("committed", "committed verdict"), ("measured", "measured-credit verdict")):
+        c = Counter((r[key] if key == "committed" else (r[key][0] if r[key] else "unjudged")) for r in recs)
+        print(f"   {label}: {dict(c)}")
+    for key in ("cause_committed", "cause_measured"):
+        c, p = Counter(), Counter()
+        for r in recs:
+            if key in r:
+                c[r[key]] += 1
+                p[r[key]] += r["delta_pct"]
+        print(f"   {key}: " + ", ".join(f"{k} {c[k]} ({p[k]:.0f}%)" for k in sorted(c)))
+Path(out_path).write_text(json.dumps(out, indent=1))
+```
+
+</details>
