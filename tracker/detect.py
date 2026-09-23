@@ -158,6 +158,109 @@ announces a date twice.
 
 The quoted six windows of issue #25 on their own (116/19 before, 81/18 after,
 three pieces each) certify nothing: neither side carries 20 points of d7.
+
+Credit stretches: the same weighted detector, a second error model
+---------------------------------------------------------------------
+
+The passive dollar series had the opposite problem to the weekly one. It pooled
+each account to one median per UTC day and fed that to detect_smoothed_changes,
+which is a sample detector: every day counts once whether the meter moved 10%
+or 60% that day, and a day's value was list-price dollars, so a day spent on
+Opus read dearer than a day spent on Sonnet even when the meter charged the
+same. Measured on history/gs-passive.json as committed 2026-09-23, the ratio of
+credits to list dollars over a stretch has an IQR of 19% of its median on jwork
+and 24% on dave (cv 0.13 and 0.21): that whole spread is model mix, and it is
+what the list-dollar series carried as if it were the limit moving. It is the
+mechanism behind the withdrawn 20 September event.
+
+Both are fixed by feeding the same weighted machinery a different series:
+one point per stretch, numerator its value in meter credits at the measured
+per-family rates (tracker/credits.py), denominator the stretch's own
+`delta_pct`. Pooling is then total credits over total meter percent, so a
+stretch that moved the meter 40% weighs four times one that moved it 10%, and
+the model mix inside a stretch is priced at what the meter actually charges.
+
+What differs is the error model, which is why `WeightedSeries` exists rather
+than a third detector. On the weekly series both d5 and d7 are whole-percent
+meter readings, so the pooled error is conceded to each in opposite directions
+(`numerator_scale` 1.0). On the credit series the numerator is not a meter
+reading at all -- it is a token count times a rate, exact to as many digits as
+the rate is -- and every unit of uncertainty sits in `delta_pct`, the
+whole-percent denominator, so `numerator_scale` is 0.0 and the interval is
+credits / (pct +/- e).
+
+That leaves the real scatter to `dispersion`, exactly as it does on the weekly
+series: a stretch's credits per percent varies because the work inside a
+stretch varies, and the constant is measured, not assumed. Fitted the same way
+(residual variance over the rounding model's, per degree of freedom) on each
+account's own verified stretches in the live regime of history/gs-passive.json
+as committed 2026-09-23:
+
+    account  stretches  span               pooled credits/pct  dispersion
+    jwork    21         17-21 Sep          169,658             80.0   <- used
+    dave     29         18-21 Sep          141,104             54.4
+    jwork    99         5-21 Sep (legacy)  162,575             60.6
+
+STRETCH_DISPERSION takes the largest of the three, 80. It is two orders above
+WINDOW_DISPERSION because it is absorbing something else: a window point's
+scatter around its pooled ratio is mostly rounding, a stretch's credits per
+percent scatters 36-39% (cv) on real work, and at 10 percent a stretch the
+rounding of `delta_pct` is only about 4%. So the interval this produces is in
+practice a standard error of the pooled mean at ROUNDING_Z sigma -- with all of
+jwork's 21 verified stretches on one side it is +/-16%, and 0.36/sqrt(21) x 2 is
+15.7%. Calling the constant a dispersion keeps one mechanism for two series;
+what it is calibrated to is stated here so nobody reads the interval as
+rounding alone.
+
+MIN_STRETCH_PCT is the minimum-evidence rule, and it is total meter percent per
+side per account, not a count of stretches: two 40% stretches are better
+evidence of a level than eight 10% ones, and a count cannot say so. 100 points
+is one full five-hour window of meter movement, about ten stretches at the size
+these accounts produce, which is the smallest side that pools work from more
+than one day.
+
+The floor is a bound on a degenerate split, not what makes the test safe -- the
+non-overlapping intervals are that, and at this dispersion they are demanding.
+Swept over a noiseless synthetic step of 10-percent, one-piece stretches, the
+smallest side that certifies:
+
+    step   stretches per side   meter percent per side
+    -15%   82                   820
+    -20%   44                   440
+    -25%   27                   270
+    -30%   18                   180
+    -40%   10                   100   <- the floor binds, not the interval
+    -50%   10                   100   <- the floor binds, not the interval
+
+So the floor is set exactly where it stops mattering: above a 40% step the
+interval would certify on less evidence than one window of meter movement, and
+a side that small is one session's work. Everything below that the interval
+governs. Against the 217 (jwork) and 300 (dave) points of verified movement the
+series holds on 2026-09-23, that means a real change smaller than about 25% is
+not yet detectable on either account, and nothing certifies on both. That is
+the honest reading of the data there is, not a reason to loosen the test.
+
+What credits do not fix: capture
+--------------------------------
+
+Run on history/gs-passive.json as committed 2026-09-23, this finds exactly one
+single-account step, dave -35% on 20 September, and it is not a limit change.
+Every stretch on the low side of it carries the report's own `unaccounted`
+verdict, with `capture` from 0.14 to 0.65: the meter moved further than the
+transcripts on this host explain. That understates the numerator and leaves the
+denominator alone, so it can only push credits per percent down, and it cannot
+be a rise. Credits remove the model mix from a reading; they do nothing about
+work the host never saw, which is a separate defect (the "unaccounted"
+stretches, 49 of jwork's 139).
+
+Nothing publishes it -- it is one account, and tracker/publish.py
+`_agreeing_credit_events` needs two in the same direction -- and it is recorded
+here because the two-account rule is the only thing standing in front of it. It
+is NOT filtered out by a capture threshold: the 2026-09-16 audit (finding 10)
+warned specifically against selecting observations by how close they sit to the
+expected rate, CAPTURE_GATE is off for that reason, and reinstating a gate here
+under another name would be the same mistake. The fix belongs where the
+capture gap is, not in the detector.
 """
 from __future__ import annotations
 
@@ -178,6 +281,42 @@ ROUNDING_Z = 2.0         # standard deviations of pooled error conceded
 # flat Max 20x run 2026-08-28T01:50Z..2026-09-13T21:30Z, excluding the 27 Aug spike
 # (derivation: module docstring, 3.).
 WINDOW_DISPERSION = 3.7
+
+# detect_credit_changes: one point per stretch, numerator meter credits, denominator
+# the stretch's own delta_pct (module docstring, "Credit stretches").
+MIN_STRETCH_PCT = 100.0   # points of five-hour meter movement each side of a split needs
+MIN_STRETCH_POINTS = 2    # ...spread over at least this many stretches
+# Variance of a stretch's credits-per-percent residual over the denominator-only
+# rounding model's, measured on jwork's 21 verified stretches of 17-21 Sep 2026
+# (derivation and the two lower estimates: module docstring).
+STRETCH_DISPERSION = 80.0
+
+
+@dataclass(frozen=True)
+class WeightedSeries:
+    """The error model and evidence floors one weighted series certifies under.
+
+    `numerator_scale` is how many points of error are conceded to the numerator per
+    point conceded to the denominator: 1.0 where both are whole-percent meter
+    readings (the weekly series), 0.0 where the numerator is exact and only the
+    denominator is a meter reading (the credit series). `min_base` and `min_pool`
+    are in the denominator's own unit -- points of seven-day movement on the weekly
+    series, points of five-hour movement on the credit one.
+    """
+    name: str
+    dispersion: float
+    min_base: float
+    min_pool: float
+    min_points: int
+    numerator_scale: float
+
+
+#: Five-hour over seven-day meter movement, one point per window (tracker/weekly.py).
+WINDOWS = WeightedSeries("windows_per_week", WINDOW_DISPERSION, MIN_BASE_D7, MIN_POOL_D7,
+                         MIN_POOL_POINTS, 1.0)
+#: Meter credits over five-hour meter percent, one point per stretch (tracker/gs_passive.py).
+CREDIT_STRETCHES = WeightedSeries("credits_per_window", STRETCH_DISPERSION, MIN_STRETCH_PCT,
+                                  MIN_STRETCH_PCT, MIN_STRETCH_POINTS, 0.0)
 
 
 @dataclass(frozen=True)
@@ -319,35 +458,41 @@ def _pieces(point: tuple) -> int:
     return int(point[3]) if len(point) > 3 and point[3] else 1
 
 
-def rounding_error(pieces: int) -> float:
+def rounding_error(pieces: int, series: WeightedSeries = WINDOWS) -> float:
     """Points of error conceded to a total pooled from `pieces` separate differences (module docstring, 3.)."""
-    return ROUNDING_Z * math.sqrt(WINDOW_DISPERSION * pieces / 6)
+    return ROUNDING_Z * math.sqrt(series.dispersion * pieces / 6)
 
 
-def ratio_interval(d5: float, d7: float, pieces: int) -> tuple[float | None, float | None]:
+def ratio_interval(d5: float, d7: float, pieces: int,
+                   series: WeightedSeries = WINDOWS) -> tuple[float | None, float | None]:
     """The lowest and highest d5/d7 the whole-percent readings allow (module docstring, 3.).
 
     The upper end is None when the conceded error could take d7 to zero: the pool
-    cannot bound the ratio from above at all.
+    cannot bound the ratio from above at all. `series.numerator_scale` says how much
+    of the same error the numerator carries -- all of it where the numerator is a
+    meter reading too, none of it where it is an exact credit total.
     """
-    e = rounding_error(pieces)
-    lo = max(0.0, d5 - e) / (d7 + e) if d7 + e > 0 else None
-    hi = (d5 + e) / (d7 - e) if d7 > e else None
+    e = rounding_error(pieces, series)
+    en = e * series.numerator_scale
+    lo = max(0.0, d5 - en) / (d7 + e) if d7 + e > 0 else None
+    hi = (d5 + en) / (d7 - e) if d7 > e else None
     return lo, hi
 
 
-def pooled_interval(points: list[tuple]) -> tuple[float | None, float | None]:
+def pooled_interval(points: list[tuple], series: WeightedSeries = WINDOWS) -> tuple[float | None, float | None]:
     """ratio_interval over a pool of window points."""
     if not points:
         return None, None
-    return ratio_interval(sum(p[1] for p in points), sum(p[2] for p in points), sum(_pieces(p) for p in points))
+    return ratio_interval(sum(p[1] for p in points), sum(p[2] for p in points),
+                          sum(_pieces(p) for p in points), series)
 
 
-def _certified_change(before: list[tuple], after: list[tuple], threshold: float) -> float | None:
+def _certified_change(before: list[tuple], after: list[tuple], threshold: float,
+                      series: WeightedSeries = WINDOWS) -> float | None:
     """after's pooled level over before's, minus one, when it certifies a change; else None."""
-    if len(before) < MIN_POOL_POINTS or len(after) < MIN_POOL_POINTS:
+    if len(before) < series.min_points or len(after) < series.min_points:
         return None
-    if sum(p[2] for p in before) < MIN_BASE_D7 or sum(p[2] for p in after) < MIN_POOL_D7:
+    if sum(p[2] for p in before) < series.min_base or sum(p[2] for p in after) < series.min_pool:
         return None
     level_before, level_after = pooled_windows(before), pooled_windows(after)
     # A zero level on either side is not a window budget: over at least MIN_POOL_D7
@@ -359,8 +504,8 @@ def _certified_change(before: list[tuple], after: list[tuple], threshold: float)
     change = level_after / level_before - 1
     if abs(change) <= threshold:
         return None
-    blo, bhi = pooled_interval(before)
-    alo, ahi = pooled_interval(after)
+    blo, bhi = pooled_interval(before, series)
+    alo, ahi = pooled_interval(after, series)
     if change < 0:
         separated = ahi is not None and blo is not None and ahi < blo
     else:
@@ -376,26 +521,42 @@ def _residual(points: list[tuple]) -> float:
     return sum(abs(p[1] - level * p[2]) for p in points)
 
 
-def detect_weighted_changes(points: list[tuple], threshold: float = 0.15) -> list[ChangeEvent]:
+def detect_weighted_changes(points: list[tuple], threshold: float = 0.15,
+                            series: WeightedSeries = WINDOWS) -> list[ChangeEvent]:
     """Certified step changes in a (window_ending, d5, d7[, pieces]) series -- see the module docstring.
 
     Points where neither meter moved are dropped; a point with d7 == 0 still pools.
     Events are dated by the first window at the new level, in whatever zone the
     timestamps carry.
     """
-    return _detect_weighted(points, threshold)[0]
+    return _detect_weighted(points, threshold, series)[0]
 
 
-def current_regime_points(points: list[tuple], threshold: float = 0.15) -> list[tuple]:
+def detect_credit_changes(points: list[tuple], threshold: float = 0.15) -> list[ChangeEvent]:
+    """Certified step changes in a (stretch_end, credits, delta_pct[, pieces]) series.
+
+    The same detector under the credit series' own error model and floors
+    (CREDIT_STRETCHES, and the module docstring's "Credit stretches"): pooled
+    credits per meter percent, each stretch weighted by the meter movement it
+    carries, both sides of a split above MIN_STRETCH_PCT points of that movement,
+    and the two intervals separated. `denominator_pct` on the event is the
+    five-hour meter percent behind the new level, not seven-day percent.
+    """
+    return _detect_weighted(points, threshold, CREDIT_STRETCHES)[0]
+
+
+def current_regime_points(points: list[tuple], threshold: float = 0.15,
+                          series: WeightedSeries = WINDOWS) -> list[tuple]:
     """The points of the current regime, oldest first: from the newest event's
     first window on, or the whole series when nothing has been certified. Compared
     by full timestamp, so an earlier window on the event's own day (still at the old
     level) stays out of the new regime."""
-    _, ordered, starts = _detect_weighted(points, threshold)
+    _, ordered, starts = _detect_weighted(points, threshold, series)
     return ordered[starts[-1]:]
 
 
-def weighted_regimes(points: list[tuple], threshold: float = 0.15) -> list[dict]:
+def weighted_regimes(points: list[tuple], threshold: float = 0.15,
+                     series: WeightedSeries = WINDOWS) -> list[dict]:
     """Every regime the detector found, oldest first, each held flat at its pooled level.
 
     Windows per week is a plan constant: it moves when the limit moves and not
@@ -412,7 +573,7 @@ def weighted_regimes(points: list[tuple], threshold: float = 0.15) -> list[dict]
     timestamp; the newest regime's end is simply the newest window, not a claim
     that it has finished.
     """
-    _, ordered, starts = _detect_weighted(points, threshold)
+    _, ordered, starts = _detect_weighted(points, threshold, series)
     regimes = []
     for n, start in enumerate(starts):
         stop = starts[n + 1] if n + 1 < len(starts) else len(ordered)
@@ -420,7 +581,7 @@ def weighted_regimes(points: list[tuple], threshold: float = 0.15) -> list[dict]
         level = pooled_windows(span)
         if not span or level is None:
             continue
-        lo, hi = pooled_interval(span)
+        lo, hi = pooled_interval(span, series)
         regimes.append({
             "start": span[0][0].isoformat(),
             "end": span[-1][0].isoformat(),
@@ -434,7 +595,8 @@ def weighted_regimes(points: list[tuple], threshold: float = 0.15) -> list[dict]
     return regimes
 
 
-def _detect_weighted(points: list[tuple], threshold: float) -> tuple[list[ChangeEvent], list[tuple], list[int]]:
+def _detect_weighted(points: list[tuple], threshold: float,
+                     series: WeightedSeries = WINDOWS) -> tuple[list[ChangeEvent], list[tuple], list[int]]:
     """(events, ordered points, regime start indices). `starts` always begins with 0 --
     the series before any event is itself a regime -- and gains each certified split,
     so starts[-1] is the current regime's start."""
@@ -445,9 +607,9 @@ def _detect_weighted(points: list[tuple], threshold: float) -> tuple[list[Change
     def segment(lo: int, hi: int) -> None:
         whole = _residual(ordered[lo:hi])
         best: tuple[float, int] | None = None
-        for split in range(lo + MIN_POOL_POINTS, hi - MIN_POOL_POINTS + 1):
+        for split in range(lo + series.min_points, hi - series.min_points + 1):
             before, after = ordered[lo:split], ordered[split:hi]
-            if _certified_change(before, after, threshold) is None:
+            if _certified_change(before, after, threshold, series) is None:
                 continue
             gain = whole - _residual(before) - _residual(after)
             if best is None or gain > best[0]:
@@ -469,14 +631,14 @@ def _detect_weighted(points: list[tuple], threshold: float) -> tuple[list[Change
         after = ordered[split:starts[n + 1] if n + 1 < len(starts) else len(ordered)]
         change = pooled_windows(after) / pooled_windows(before) - 1
         # The first window by which the post-change pool alone certified against the old level.
-        confirmed = next(j for j in range(split + MIN_POOL_POINTS, hi + 1)
-                         if _certified_change(ordered[lo:split], ordered[split:j], threshold) is not None)
+        confirmed = next(j for j in range(split + series.min_points, hi + 1)
+                         if _certified_change(ordered[lo:split], ordered[split:j], threshold, series) is not None)
         events.append(ChangeEvent(
             ordered[split][0].date(), "increased" if change > 0 else "decreased", round(abs(change) * 100),
             onset_earliest=ordered[split - 1][0].date(), onset_latest=ordered[split][0].date(),
             confirmed_at=ordered[confirmed - 1][0].date(), evidence_points=len(before) + len(after),
             denominator_pct=round(sum(p[2] for p in after), 1),
-            before_interval=pooled_interval(before), after_interval=pooled_interval(after),
+            before_interval=pooled_interval(before, series), after_interval=pooled_interval(after, series),
         ))
     return sorted(events, key=lambda e: e.date), ordered, starts
 

@@ -11,16 +11,17 @@ from statistics import median
 from . import credits as credit_model
 from .capture import ACCEPTED
 from .detect import (
+    CREDIT_STRETCHES,
     MIN_POOL_D7,
-    SMOOTH_MIN_POINTS,
+    MIN_STRETCH_PCT,
     ChangeEvent,
     current_regime_points,
-    detect_smoothed_changes,
+    detect_credit_changes,
     detect_weighted_changes,
     pooled_interval,
     weighted_regimes,
 )
-from .gs_passive import passive_dollar_readings
+from .gs_passive import credit_rate_sources, passive_credit_points, passive_dollar_readings
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
@@ -75,8 +76,8 @@ WEEKLY_WINDOW_RATIOS_BASIS = {
 ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"))
 MAX_SAMPLE_AGE_DAYS = 10
 #: How far apart two accounts' onsets may sit and still be read as one dollar-series
-#: change (_agreeing_dollar_events). A limit change reaches each account on its own
-#: reading cadence, and a day's pooled readings are dated at the day.
+#: change (_agreeing_credit_events). A limit change reaches each account on its own
+#: cadence of use, and a stretch is dated at the reading that closed it.
 DOLLAR_AGREEMENT_DAYS = timedelta(days=3)
 WEEKLY_CURRENT_DAYS = 14
 FIVE_HOURS = timedelta(hours=5)
@@ -245,17 +246,24 @@ def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_u
     return out
 
 
-def _account_dollar_readings(gs_passive: dict | None, prices: dict) -> dict[str, list[tuple]]:
-    """Each watched account's own verified daily dollar readings, keyed by account name.
+def _account_credit_points(gs_passive: dict | None, prices: dict, credits: dict,
+                           model_rates: dict | None) -> dict[str, list[tuple]]:
+    """Each watched account's own verified stretches as credit points, keyed by account name.
 
-    `passive_dollar_readings` pools every account into one series and drops which account
-    a reading came from, and one pooled series cannot tell a change from two accounts
-    moving in opposite directions: on 20 September 2026 one account's readings rose and
-    the other's fell, and the pooled medians read -23%. The same function is asked for one
-    account at a time instead, so the acceptance rule stays in one place.
+    Per account, because one pooled series cannot tell a change from two accounts moving
+    in opposite directions: on 20 September 2026 one account's readings rose and the
+    other's fell, and the pooled medians read -23%. `passive_credit_points` is asked for
+    one account at a time so the acceptance rule stays in one place.
+
+    Per stretch and in credits, because a day is not a unit of evidence and list dollars
+    are not what the meter charges. A UTC day pooled a 10% and a 60% stretch into one
+    equal vote, and list dollars moved the reading with the model mix -- the ratio of
+    credits to list dollars over a stretch has an IQR of 19% of its median on jwork and
+    24% on dave (measured on history/gs-passive.json as committed 2026-09-23), which is
+    the same mechanism that produced the withdrawn 20 September event.
     """
     accounts = ((gs_passive or {}).get("accounts") or {})
-    return {name: passive_dollar_readings({"accounts": {name: account}}, prices, by="day")
+    return {name: passive_credit_points({"accounts": {name: account}}, prices, credits, model_rates)
             for name, account in accounts.items()}
 
 
@@ -280,35 +288,57 @@ def _merged_dollar_event(cluster: list[tuple]) -> ChangeEvent:
         onset_latest=onsets[-1],
         confirmed_at=max(confirmed) if confirmed else None,
         evidence_points=sum(e.evidence_points or 0 for e in events),
+        denominator_pct=round(sum(e.denominator_pct or 0 for e in events), 1) or None,
+        before_interval=_widest([e.before_interval for e in events]),
+        after_interval=_widest([e.after_interval for e in events]),
     )
 
 
-def _agreeing_dollar_events(account_readings: dict[str, list[tuple]],
-                            min_points: int = SMOOTH_MIN_POINTS,
-                            within: timedelta = DOLLAR_AGREEMENT_DAYS) -> list[ChangeEvent]:
-    """Dollar-series changes two accounts saw in the same direction within days of each other.
+def _widest(intervals: list) -> tuple[float | None, float | None] | None:
+    """The union of the agreeing accounts' own credit intervals, in their own units.
 
-    The detector runs on each account's own verified daily series, never on the pooled
-    one. A pooled series is not a measurement of a shared limit: it mixes accounts whose
-    levels differ by more than any step in either of them, so a busy day on one account
-    and a quiet day on the other move the pooled median on their own. That is what the
-    published 20 September -23% was -- one account's readings went up across it and the
-    other's went down (and the one that went down spent those days on a model the list
-    price values low), and neither account's own series steps there.
+    Each account's level is its own -- the accounts do not share a scale -- so a merged
+    event cannot state one interval that bounds both. The union is published so the
+    reader sees the loosest bound behind the merged event rather than one account's,
+    and `_event_record` still calls the event provisional either way.
+    """
+    have = [i for i in intervals if i]
+    if not have:
+        return None
+    lows = [i[0] for i in have if i[0] is not None]
+    highs = [i[1] for i in have if i[1] is not None]
+    return (min(lows) if lows else None,
+            None if len(highs) < len(have) else max(highs))
+
+
+def _agreeing_credit_events(account_points: dict[str, list[tuple]],
+                            min_pct: float = MIN_STRETCH_PCT,
+                            within: timedelta = DOLLAR_AGREEMENT_DAYS) -> list[ChangeEvent]:
+    """Credit-series changes two accounts saw in the same direction within days of each other.
+
+    The detector (`detect_credit_changes`) runs on each account's own verified stretches,
+    never on the pooled series. A pooled series is not a measurement of a shared limit: it
+    mixes accounts whose levels differ by more than any step in either of them, so a busy
+    stretch on one account and a quiet one on the other move the pooled level on their
+    own. That is what the published 20 September -23% was -- one account's readings went
+    up across it and the other's went down (and the one that went down spent those days on
+    a model the list price values low), and neither account's own series steps there.
 
     A change is published only when at least two accounts each detect a step in the same
-    direction with onsets no more than `within` apart. An account needs 2 x `min_points`
-    readings before the detector can split it at all, so an account with fewer is not
-    testable, and with fewer than two testable accounts nothing is published: one account
-    stepping alone is that account's own workload until a second one agrees. The events
-    are provisional either way -- the readings carry no rounding bounds (_event_record).
+    direction with onsets no more than `within` apart. The minimum evidence is meter
+    movement, not a count of readings: an account needs 2 x `min_pct` points of five-hour
+    meter movement in its accepted stretches before the detector can split it at all, so
+    an account with less is not testable, and with fewer than two testable accounts
+    nothing is published: one account stepping alone is that account's own workload until
+    a second one agrees. The events stay provisional (_provisional): capture completeness
+    is not proven from one host's transcripts, whatever the intervals say.
     """
-    testable = {name: sorted(readings) for name, readings in account_readings.items()
-                if len(readings) >= 2 * min_points}
+    testable = {name: sorted(points, key=lambda p: p[0]) for name, points in account_points.items()
+                if sum(p[2] for p in points) >= 2 * min_pct}
     if len(testable) < 2:
         return []
-    found = [(e.date, name, e) for name, readings in testable.items()
-             for e in detect_smoothed_changes(readings, min_points=min_points)]
+    found = [(e.date, name, e) for name, points in testable.items()
+             for e in detect_credit_changes(points)]
     clusters: list[list[tuple]] = []
     for candidate in sorted(found, key=lambda f: (f[0], f[1])):
         day, _name, event = candidate
@@ -395,8 +425,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     `history` is a step function of the measured limit, not the raw daily series:
     Jonathan's own passive account is noisy 2x-5x day to day (the rolling meter
     decays), and the public chart must show only what change detection actually
-    found, not that noise. detect_smoothed_changes splits the whole dollar series
-    into regimes; each regime is held flat at the median of the readings inside it,
+    found, not that noise. detect_credit_changes splits each account's own
+    credit-valued stretches into regimes and _agreeing_credit_events keeps the splits
+    two accounts agree on; the dollar series is bucketed into those regimes; each regime is held flat at the median of the readings inside it,
     and every model's tokens_per_window for that regime is that same median divided
     by the model's own blended price times its own meter_weight -- so every model
     steps on the same dates, just at different levels. Days before the first
@@ -432,15 +463,23 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # Output rows and outliers still stay out of everything the probe rows supply
     # (probed_at, probe_effort, account counts; tracker/rows.py).
     probe_rows = usable_rows(probe_rows)
+    credits = credits or CREDITS
 
     all_readings = passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True) if gs_passive else []
     verified_readings = passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else []
     evidence_status = "measured" if verified_readings else ("conditional" if all_readings else "unavailable")
     series = sorted(verified_readings if verified_readings else all_readings)
-    # Detection runs per account and publishes only what two accounts agree on
-    # (_agreeing_dollar_events); the pooled series is still what the levels are held at.
-    account_readings = _account_dollar_readings(gs_passive, prices)
-    events = _agreeing_dollar_events(account_readings) if evidence_status == "measured" else []
+    # The measured per-family credit rates, needed here and again for the credits block.
+    model_rates = credit_model.load_model_rates() if model_rates is None else model_rates
+    # Detection runs per account, on that account's own stretches valued in meter
+    # credits and weighted by the meter movement each one carries, and publishes only
+    # what two accounts agree on (_agreeing_credit_events). The list-dollar daily
+    # series above is untouched: it is still what the published levels are held at and
+    # what every other rate field is derived from. Credits decide WHERE the series
+    # steps; the held dollar levels decide how big the step the page draws is, so the
+    # headline and the chart still read one number (_percent_from_held_levels).
+    account_points = _account_credit_points(gs_passive, prices, credits, model_rates)
+    events = _agreeing_credit_events(account_points) if evidence_status == "measured" else []
     regime_start = max((e.date for e in events), default=None)
 
     measured_at = series[-1][0] if series else None
@@ -471,7 +510,21 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 "meter_movement_pct": round(movement, 1),
                 "window_pieces": pieces,
                 "rounding_relative": round(pieces / movement, 4) if movement else None,
-                "capture_diagnosed": sum(1 for st in stretches if st.get("capture_status") not in (None, ACCEPTED))}
+                "capture_diagnosed": sum(1 for st in stretches if st.get("capture_status") not in (None, ACCEPTED)),
+                # What change detection itself ran on, which is not what the rate above is
+                # derived from: the rate is list-price meter dollars pooled per day, the
+                # detector reads meter credits per stretch. Published so a reader can see
+                # which per-family rate source the events rested on, and how much meter
+                # movement a side of a split has to carry before one is possible at all.
+                "credit_detection": {
+                    "series": CREDIT_STRETCHES.name,
+                    "points": sum(len(pts) for pts in account_points.values()),
+                    "meter_pct": round(sum(p[2] for pts in account_points.values() for p in pts), 1),
+                    "min_meter_pct_per_side": MIN_STRETCH_PCT,
+                    "testable_accounts": sum(1 for pts in account_points.values()
+                                             if sum(p[2] for p in pts) >= 2 * MIN_STRETCH_PCT),
+                    "rate_sources": credit_rate_sources(gs_passive, prices, credits, model_rates)
+                    if gs_passive else {}}}
     quality = {"status": "unavailable" if evidence_status == "unavailable" else "conditional",
                "reasons": reasons, "capture_complete": None,
                "unpriced_work": False if series else None}
@@ -487,7 +540,6 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
             latest_row_per_model[m] = r
 
     reference_mix = reference_mix or REFERENCE_MIX
-    credits = credits or CREDITS
     mix = dict(reference_mix["split"])
     verified_days = {ts.date() for ts, _ in verified_readings}
     # A day with verified readings publishes those alone; any other day publishes its
@@ -503,7 +555,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         by_day.setdefault(ts.date(), []).append(v)
 
     # The step function (restored 2026-09-17, findings 11/12): every event
-    # detect_smoothed_changes found over the whole series, not just the newest one,
+    # _agreeing_credit_events found over the whole series, not just the newest one,
     # bounds a regime. `day_readings` (broader than `series`: it fills a measured
     # day's gap with a legacy reading, see above) is bucketed into those regimes so
     # a regime's held value pools everything published for its span.
@@ -636,7 +688,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         gs_passive, masterrig_passive, all_probe_rows, effort_meta, credits, prices,
         session_split, session_split_source, passive.get("session_tokens", {}),
         weekly_windows, weekly_events,
-        credit_model.load_model_rates() if model_rates is None else model_rates)
+        model_rates)
     # Accounts behind the passive evidence: those with an accepted stretch (the rates)
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
