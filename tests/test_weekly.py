@@ -235,6 +235,41 @@ def probe_row(ts, fhb, fha, sdb, sda, seven_resets=None):
             **({"seven_day_resets_at": seven_resets} if seven_resets else {})}
 
 
+class SevenDayCapTests(unittest.TestCase):
+    """A window whose seven-day meter has reached 100 measures the cap, not the ratio."""
+
+    R7 = "2026-09-24T23:00:00+00:00"
+
+    def _row(self, ts, five, five_resets, seven):
+        return {"ts": ts, "five_hour": five, "five_resets_at": five_resets,
+                "seven_day": seven, "seven_resets_at": self.R7}
+
+    def test_the_week_keeps_its_uncapped_windows_and_drops_the_capped_one(self):
+        a, b = "2026-09-21T10:00:00+00:00", "2026-09-21T15:00:00+00:00"
+        rows = [self._row("t0", 0.0, a, 40.0), self._row("t1", 60.0, a, 52.0),   # 60 over 12: kept
+                self._row("t2", 0.0, b, 98.0), self._row("t3", 51.0, b, 100.0)]  # 51 over 2: capped
+        out = weekly_windows(rows, now=datetime(2026, 9, 26, tzinfo=timezone.utc))
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"]) for p in out["by_window"]],
+                         [(60.0, 12.0)])
+        self.assertEqual([(h["five_hour_pct"], h["seven_day_pct"], h["windows"]) for h in out["history"]],
+                         [(60.0, 12.0, 5.0)])
+
+    def test_uncapped_readings_give_the_same_figures_as_before(self):
+        a = "2026-09-21T10:00:00+00:00"
+        rows = [self._row("t0", 0.0, a, 40.0), self._row("t1", 60.0, a, 52.0),
+                None, self._row("t2", 60.0, a, 52.0), self._row("t3", 70.0, a, 99.0)]
+        out = weekly_windows(rows, now=datetime(2026, 9, 26, tzinfo=timezone.utc))
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"], p["pieces"]) for p in out["by_window"]],
+                         [(70.0, 59.0, 2)])
+        self.assertEqual(out["history"][0]["pieces"], 2)
+
+    def test_a_probe_run_that_ends_at_the_cap_is_dropped(self):
+        rows = [{"ts": "2026-09-21T12:00:00+00:00", "five_hour_before": 10, "five_hour_after": 40,
+                 "seven_day_before": 99, "seven_day_after": 100}]
+        out = probe_weekly_windows(rows, now=datetime(2026, 9, 26, tzinfo=timezone.utc))
+        self.assertEqual(out["by_window"], [])
+
+
 class ProbeWeeklyWindowsTests(unittest.TestCase):
     def test_rows_missing_five_hour_fields_are_skipped(self):
         rows = [{"ts": "2026-09-01T00:00:00+00:00", "seven_day_before": 10.0, "seven_day_after": 12.0}]

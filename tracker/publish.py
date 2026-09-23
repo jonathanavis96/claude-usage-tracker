@@ -873,6 +873,9 @@ def _credits_per_model(window: dict, credits: dict, prices: dict,
                                             "output": list(rate.output_interval)}
                                            if rate.input_interval else None),
             "rate_source": rate.rate_source,
+            # "reference_table" or "list_price" where the rate is inferred, not measured
+            # (credits.family_rate); null on a measured or anchor row.
+            "inferred_from": rate.detail.get("inferred_from"),
             "anchor": rate.anchor,
             "reference_rate": {"input": rate.reference_input, "output": rate.reference_output},
             "reference_rate_note": ("the January 2026 table's figure for this family, drawn beside "
@@ -1283,22 +1286,21 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # which is what leaves the phantom-inflated pure-Opus cluster (1,917 to 24,546
     # credits per 1% against 175,934 to 208,197 on the account with a usable capture
     # column) out of a median that claims to be a measurement. The before-and-after
-    # comparison and the Fable solve ask about each account's own meter, and the
-    # inflated account's p25 is the usable edge of the Fable interval rather than
-    # something to drop, so they exempt masterrig exactly as
-    # tools/reconcile_window.py does, and carry n_with_capture so a reader can see
-    # which accounts have a usable capture column.
+    # comparison and Fable's rate use the rate fits' own selection (capture test on every
+    # account, masterrig from 6 September, no stretch spanning the cut) and the pooled fit's
+    # rates, so the comparison is measured on the stretches its prices were measured on
+    # (docs/findings-2026-09-23-pooled-rates.md).
     clean = credit_model.clean_stretches(by_account, runs, require="capture_status")
-    priceable = credit_model.clean_stretches(by_account, runs, require="capture_status",
-                                             exempt=("masterrig",))
+    priceable = credit_model.rate_fit_stretches(by_account, runs)
     # The five-hour change across the cut is read first: the pure-family cluster is mostly
     # pre-cut, so the current window is the after cluster where there is one and the before
     # cluster scaled by this change where there is not (credits.current_cluster_rule).
-    cut = credit_model.across_cut(priceable, credits, labels)
+    cut = credit_model.across_cut(priceable, credits, labels, model_rates=model_rates)
     five_hour = credit_model.five_hour_window_change(cut)
     five_hour_pct = five_hour["pct"] if five_hour else None
     window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct)
-    fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels)
+    fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels,
+                                        model_rates=model_rates)
     windows_per_week = weekly["max20"]["current"]
     # The date under every credit figure. The block had none, so the page printed a
     # neighbouring block's date beneath the per-model rows. Two readings stand behind it:

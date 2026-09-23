@@ -18,7 +18,7 @@ from statistics import median
 from .samples import Sample
 from .turns import Turn, normalize_model, normalized_raw_model
 from .usage_api import same_reset
-from .weekly import _window_point
+from .weekly import _window_point, capped
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
 DETAIL_CLASSES = ("cache_write_1h",)
@@ -262,7 +262,9 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
     `by_window` point.
     `window_ending` is the window's recorded reset time when the log has one;
     gs's ceiling log records none, so there it is the window's last paired
-    reading and `reset_verified` is false.
+    reading and `reset_verified` is false. A window whose seven-day reading at
+    its end has reached the cap (tracker/weekly.py SEVEN_DAY_CAP_PCT) is left
+    out: past it the weekly meter stops while the five-hour one keeps counting.
     """
     samples = sorted(samples, key=lambda s: s.ts)
     windows: list[dict] = []
@@ -288,11 +290,12 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
                 chain["pieces"] += 1
             else:
                 chain = {"resets_at": a.resets_at, "seven_resets_at": a.seven_resets_at, "end": b.ts,
-                         "d5": 0.0, "d7": 0.0, "pieces": 1}
+                         "d5": 0.0, "d7": 0.0, "pieces": 1, "seven_end": b.seven_day}
                 windows.append(chain)
         chain["d5"] += d5
         chain["d7"] += d7
         chain["end"] = b.ts
+        chain["seven_end"] = max(chain["seven_end"], b.seven_day)
     return [_window_point(w["resets_at"] or w["end"].isoformat(), w["d5"], w["d7"], w["pieces"],
                           reset_verified=w["resets_at"] is not None)
-            for w in windows if w["d5"] > 0 or w["d7"] > 0]
+            for w in windows if (w["d5"] > 0 or w["d7"] > 0) and not capped(w["seven_end"])]

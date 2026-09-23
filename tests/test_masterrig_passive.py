@@ -14,9 +14,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import pairwise
 from pathlib import Path
 
-from tracker.capture import UNKNOWN
 from tracker.gs_passive import (
-    NO_TOKENS,
     Account,
     MeterLog,
     gs_accounts,
@@ -201,29 +199,31 @@ class RecordTests(unittest.TestCase):
 class EmptyCaptureTests(unittest.TestCase):
     """masterrig's own failure mode: the meter moves on work this host never saw.
 
-    Five leading stretches with no turns make the capture check's bootstrap median zero.
-    Every later stretch is then judged against a reference of zero -- no capture to
-    divide out -- and the run of them had nothing to take a median of:
-    `statistics.StatisticsError: no median for empty data` from Run.capture. The run is
-    now `unknown` and the stretches are still written.
+    Five leading stretches with no turns used to make the capture check's bootstrap median
+    zero, so every later stretch was judged against a reference of zero. Since #84 the
+    bootstrap is taken from stretches that spent something only (tracker/capture.py `judge`):
+    the reference comes from the five real stretches, and the five empty ones are judged
+    against it -- `unaccounted` at a capture of zero, one `collection_gap` run -- rather than
+    setting it. These expectations were updated to that behaviour, which is intended.
     """
 
     def _report(self, d: Path) -> dict:
         home = masterrig_home(d, readings=51, moonlighter_until=50, opus_stretch=None, empty_stretches=5)
         return report({"masterrig": masterrig_account(home)}, PRICES, now=T0 + timedelta(days=1))
 
-    def test_a_run_with_no_capture_verdicts_is_unknown_instead_of_raising(self):
+    def test_empty_stretches_are_judged_against_the_real_ones_and_read_as_a_collection_gap(self):
         with tempfile.TemporaryDirectory() as d:
             r = self._report(Path(d))["accounts"]["masterrig"]
         self.assertEqual(len(r["stretches"]), 10)
-        self.assertEqual([v["reference"] for v in r["stretches"][:5]], [0.0] * 5)
+        self.assertEqual([v["reference"] for v in r["stretches"]], [0.5] * 10)
+        self.assertEqual([v["capture"] for v in r["stretches"][:5]], [0.0] * 5)
         self.assertEqual([(run["kind"], run["capture"], run["step"]) for run in r["runs"]],
-                         [(UNKNOWN, None, None)])
+                         [("collection_gap", 0.0, -1.0)])
 
     def test_a_stretch_the_transcripts_leave_empty_is_not_called_accepted(self):
         with tempfile.TemporaryDirectory() as d:
             r = self._report(Path(d))["accounts"]["masterrig"]
-        self.assertEqual([s["status"] for s in r["stretches"][:5]], [NO_TOKENS] * 5)
+        self.assertEqual([s["status"] for s in r["stretches"][:5]], ["unaccounted"] * 5)
         self.assertEqual([s["tokens"] for s in r["stretches"][:5]], [{}] * 5)
         # The five real ones are published, and the empty ones do not drag the day down.
         self.assertEqual([s["status"] for s in r["stretches"][5:]], ["accepted"] * 5)

@@ -19,6 +19,19 @@ _FIVE_HOUR_TOLERANCE = timedelta(seconds=120)
 _MIN_FIVE_HOUR_PCT = 50.0
 _MIN_PROBE_FIVE_HOUR_PCT = 20.0
 _MIN_PROBE_SEVEN_DAY_PCT = 10.0
+#: The seven-day meter's ceiling. Once it reads this, the weekly allowance is spent and the
+#: meter stops moving while the five-hour meter keeps counting, so a window whose seven-day
+#: reading has reached it measures the cap, not the ratio: dave's windows ending 2026-09-21
+#: 16:30 and 21:30 read 51% over 6% and 25% over 2% of the two meters, 8.5 and 12.5 windows,
+#: and lifted that account's current figure from about 5.3 to 5.64
+#: (docs/findings-2026-09-23-pooled-rates.md). Such a window is left out of every
+#: windows-per-week figure, whole, including any movement it had before the meter capped.
+SEVEN_DAY_CAP_PCT = 100.0
+
+
+def capped(seven_day_end: float | None) -> bool:
+    """True when a window's seven-day reading at its end is at or over the cap."""
+    return seven_day_end is not None and seven_day_end >= SEVEN_DAY_CAP_PCT
 
 
 def parse_rows(lines: Iterable[str]) -> list[dict | None]:
@@ -133,9 +146,12 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
     per-window floor: a thin window is not a vote on its own, but its
     movement still belongs in the pooled sums, and the detector applies its
     own weight rules.
+
+    A window whose seven-day reading reaches SEVEN_DAY_CAP_PCT is left out of
+    both series, whole: past the cap the weekly meter stops and the ratio
+    reads the cap rather than the week.
     """
     now = now or datetime.now(timezone.utc)
-    buckets: dict[str, dict] = {}
     windows: list[dict] = []
     prev: dict | None = None
     chain: dict | None = None
@@ -153,33 +169,46 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
                 # A pair where neither moved still counts, as continuity: the chain of
                 # readings it sits in telescopes to one rounding error per meter.
                 week_key = _week_key(cur["seven_resets_at"])
-                b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0, "resets_at": cur["seven_resets_at"],
-                                                 "pieces": 0})
-                b["d5"] += d5
-                b["d7"] += d7
-                b["resets_at"] = cur["seven_resets_at"]
-                if chain is None:
+                new_piece = chain is None
+                if new_piece:
                     # A new piece: a separate difference of two rounded readings per meter.
                     # Pieces of the same five-hour window (split by a gap in the log) stay
                     # one window point with a wider rounding interval.
-                    b["pieces"] += 1
                     if (windows and _same_five_hour_window(windows[-1], cur)
                             and _same_weekly_window(windows[-1], cur)):
                         chain = windows[-1]
                         chain["pieces"] += 1
                     else:
                         chain = {"five_resets_at": prev["five_resets_at"], "seven_resets_at": cur["seven_resets_at"],
-                                 "d5": 0.0, "d7": 0.0, "pieces": 1}
+                                 "d5": 0.0, "d7": 0.0, "pieces": 1, "seven_end": None, "weeks": {}}
                         windows.append(chain)
+                # The week's own sums are kept per window, so a window the seven-day cap
+                # disqualifies leaves the weekly figures as well as the per-window series.
+                b = chain["weeks"].setdefault(week_key, {"d5": 0.0, "d7": 0.0, "pieces": 0})
+                b["d5"] += d5
+                b["d7"] += d7
+                b["resets_at"] = cur["seven_resets_at"]
+                if new_piece:
+                    b["pieces"] += 1
                 chain["d5"] += d5
                 chain["d7"] += d7
+                chain["seven_end"] = max(chain["seven_end"] or 0.0, cur["seven_day"])
             else:
                 chain = None  # a meter fell inside one window: a glitch, not movement
         else:
             chain = None
         prev = cur
+    windows = [w for w in windows if not capped(w["seven_end"])]
     by_window = [_window_point(w["five_resets_at"], w["d5"], w["d7"], w["pieces"])
                  for w in windows if w["d5"] > 0 or w["d7"] > 0]
+    buckets: dict[str, dict] = {}
+    for w in windows:
+        for week_key, part in w["weeks"].items():
+            b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0, "pieces": 0})
+            b["d5"] += part["d5"]
+            b["d7"] += part["d7"]
+            b["pieces"] += part["pieces"]
+            b["resets_at"] = part["resets_at"]
 
     history = []
     for week_key in sorted(buckets):
@@ -252,7 +281,8 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     (d5 <= 0 rows, which crossed a reset, are already out). It carries every
     row that clears the sign checks, with no d5/d7 floor -- the floors above
     are for publishing a week's ratio on its own; per-window points are
-    pooled by weight downstream (tracker/detect.py).
+    pooled by weight downstream (tracker/detect.py). A row whose seven-day
+    reading after the run is at SEVEN_DAY_CAP_PCT is dropped from both.
     """
     now = now or datetime.now(timezone.utc)
     buckets: dict[str, dict] = {}
@@ -266,7 +296,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
         if d5 < 0:
             continue
         d7 = sda - sdb
-        if d7 < 0 or (d5 == 0 and d7 == 0):
+        if d7 < 0 or (d5 == 0 and d7 == 0) or capped(sda):
             continue
         # A probe row records no five-hour reset id: it sits in one window by construction only.
         by_window.append(_window_point(r["ts"], d5, d7, reset_verified=False))

@@ -205,6 +205,28 @@ class WindowPointTests(unittest.TestCase):
                                                     s.source, s.seven_resets_at) for s in samples[2:]]
         self.assertEqual([(p["five_hour_pct"], p["pieces"]) for p in window_points(gapped)], [(6.0, 1), (6.0, 1)])
 
+    def test_a_window_whose_weekly_meter_reaches_the_cap_is_left_out_whole(self):
+        # dave, 21 September: the seven-day meter reached 100 and stopped while the
+        # five-hour meter kept counting. The window that ends at 100 goes, the movement it
+        # had before the cap included; so does one that starts there. The window before is kept.
+        samples = [S7(0, 10, 90), S7(5, 20, 92),              # 10 over 2: kept
+                   S7(10, 2, 92), S7(15, 30, 98), S7(20, 51, 100),   # reaches the cap: out
+                   S7(25, 1, 100), S7(30, 25, 100)]            # starts at the cap: out
+        pts = window_points(samples)
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"]) for p in pts], [(10.0, 2.0)])
+        rows = [{"ts": s.ts.isoformat(), "five_hour": float(s.five_hour),
+                 "five_resets_at": ("a" if i < 2 else "b" if i < 5 else "c"),
+                 "seven_day": float(s.seven_day), "seven_resets_at": "2026-09-24T23:00:00+00:00"}
+                for i, s in enumerate(samples)]
+        for r in rows:  # tracker/weekly.py compares recorded resets as instants
+            r["five_resets_at"] = {"a": "2026-09-01T15:00:00+00:00", "b": "2026-09-01T20:00:00+00:00",
+                                   "c": "2026-09-02T01:00:00+00:00"}[r["five_resets_at"]]
+        out = weekly_windows(rows, now=T0)
+        self.assertEqual([(p["five_hour_pct"], p["seven_day_pct"]) for p in out["by_window"]],
+                         [(10.0, 2.0)])
+        # The week's own sums lose the capped windows too, not only the per-window series.
+        self.assertEqual(out["history"], [])
+
     def test_sums_match_tracker_weekly_on_the_same_readings(self):
         fh, sd = [0, 10, 20, 30, 40, 50, 60], [0, 1, 3, 4, 6, 7, 9]
         r5, r7 = "2026-09-01T15:00:00+00:00", "2026-09-04T04:00:00+00:00"
