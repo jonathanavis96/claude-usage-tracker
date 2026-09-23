@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample Avis's Claude usage meter every minute
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=claude-usage-meter-avis.service
+
+[Install]
+WantedBy=timers.target

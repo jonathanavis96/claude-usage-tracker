@@ -70,10 +70,12 @@ WEEKLY_WINDOW_RATIOS_BASIS = {
                               "spans": "Max 5x Jun-Aug over Max 20x 19 Aug-11 Sep"},
 }
 # The watched Max 20x accounts, in the fixed order their published labels follow. Names
-# are never published: the JSON carries `a1`, `a2`, `a3` and counts. masterrig's points
+# are never published: the JSON carries `a1`, `a2`, `a3`, `a4` and counts. masterrig's points
 # are history/passive.json's `weekly_windows.by_window` (its own meter log); the others'
 # are history/gs-passive.json's `accounts.<name>.weekly_by_window`, the same point shape.
-ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"))
+# New accounts are appended, never inserted: an existing label must keep naming the same
+# account across published runs, or a reader's saved comparison silently repoints.
+ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"), ("avis", "a4"))
 MAX_SAMPLE_AGE_DAYS = 10
 #: How far apart two accounts' onsets may sit and still be read as one dollar-series
 #: change (_agreeing_credit_events). A limit change reaches each account on its own
@@ -1395,7 +1397,7 @@ def _account_window_dicts(passive_points: list[dict],
     """Each watched Max 20x account's own per-window points, keyed by published label.
 
     masterrig (`a1`) is history/passive.json's own `weekly_windows.by_window`;
-    jwork (`a2`) and dave (`a3`) are history/gs-passive.json's
+    jwork (`a2`), dave (`a3`) and avis (`a4`) are history/gs-passive.json's
     `accounts.<name>.weekly_by_window`, the same point shape from the same pairing
     code. Account names are never published: the labels are fixed by
     ACCOUNT_LABELS and the JSON carries only those and counts.
