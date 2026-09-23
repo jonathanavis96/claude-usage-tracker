@@ -18,7 +18,8 @@ rates -- (4) whether model mix, reset_verified or stretch length explains the jw
 fits that agree within their intervals. Ratios from fewer than three stretches on a side are
 reported as not measurable rather than as a number.
 
-Token counts are grouped into model families (every claude-opus-* into Opus, and so on),
+Token counts are grouped into model families (Opus 5, 4.8 and 4.7 into Opus, and so on;
+Opus 5.5 is a family of its own, tracker.credits.family taking the most specific match),
 because Shellac's rows are unversioned; a stretch carrying tokens from a family this tool does
 not know is dropped from that account's fits. Input-equivalent tokens are
 input + cache_write + OUT x output, with OUT = 5 (Shellac's output ratio for every model in
@@ -58,12 +59,24 @@ HARNESS_RUNS = C.HARNESS_RUNS_PATH
 #: with an uncertainty range, and this analysis reads the reference literally.
 CACHE_READ_WEIGHT = 0.0
 
-FAMILIES = ("opus", "sonnet", "haiku", "fable")
+FAMILIES = ("opus", "sonnet", "haiku", "fable", "opus-5-5")
+#: How a family is named in a sentence. `opus-5-5` is a key, not a name.
+NAMES = {"opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "fable": "Fable",
+         "opus-5-5": "Opus 5.5"}
 OUT_MULTS = (5, 3)
 DOMINANCE = 0.95        # share of raw tokens one family must carry for a stretch to price it alone
 MIN_N = 3               # fewer stretches than this on either side of a ratio is not measurable
 MIN_FIT_N = 8           # fewer clean stretches than this does not support a four-rate fit
 MIN_NONZERO = 3         # a family needs this many stretches with tokens before it is fitted
+#: The dominance rule for pooling. A fit contributes to a family's pooled rate only if at
+#: least DOMINANCE_MIN_N of its stretches carry DOMINANCE_SHARE or more of their raw tokens
+#: on that family. A fit in which the family is only ever a minority column has no stretch
+#: whose meter movement the family explains, and its coefficient is whatever the majority
+#: columns leave -- the mechanism docs/findings-2026-09-23-sonnet-rate.md found behind the
+#: old Sonnet rate. The anchor is exempt: it is not fitted, it sets the unit.
+DOMINANCE_SHARE = 0.60
+DOMINANCE_MIN_N = 3
+ANCHOR = "opus"
 SEED = 20260920
 RESAMPLES = 600
 INTERVAL = (10, 90)     # bootstrap percentiles reported as the interval
@@ -81,6 +94,10 @@ FABLE_INTERVAL = (1.8, 4.0)
 
 def family(model: str) -> str:
     return C.family(model, CREDITS) or "other"
+
+
+def name(f: str) -> str:
+    return NAMES.get(f, f.capitalize())
 
 
 def api_ratio(prices: dict, num: str, den: str) -> float | None:
@@ -261,6 +278,10 @@ def fit(recs: list[dict], out_mult: int, joint: bool = False) -> dict | None:
     pred = X @ b
     return {"n": len(y), "families": families, "joint": joint,
             "rates": {f: v * scale for f, v in zip(families, b)},
+            # How many of the fit's stretches each family dominates, for the pooling rule
+            # (DOMINANCE_SHARE, DOMINANCE_MIN_N). Every family is counted, fitted or not.
+            "dominant_n": {f: sum(1 for r in usable if r["share"][f] >= DOMINANCE_SHARE)
+                           for f in FAMILIES},
             "cache_read_rate": fitted_weight(b, families) * SHELLAC["opus"] if joint else 0.0,
             "cache_read_weight": fitted_weight(b, families) if joint else 0.0,
             "window_credits_per_pct": SHELLAC["opus"] / (b[0] / 1e6),
@@ -441,6 +462,7 @@ def section2(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
 def _fit_row(f: dict) -> dict:
     """One fit's published figures."""
     return {"n": f["n"], "rates": f["rates"], "interval": f["interval"],
+            "dominant_n": f["dominant_n"],
             "cache_read_weight": f["cache_read_weight"],
             "cache_read_weight_interval": f["cache_read_weight_interval"],
             "window_credits_per_pct": f["window_credits_per_pct"],
@@ -592,6 +614,13 @@ def adopt(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
     Opus on jwork before 14 September and 3.798 [3.324, 4.324] after, and where those disagree
     the published rate is the median of the two with the union of their intervals as its
     interval, not a status sentence in place of a number.
+
+    Only the fits that pass the dominance rule are pooled: at least DOMINANCE_MIN_N of the
+    fit's stretches must carry DOMINANCE_SHARE or more of their raw tokens on the family (the
+    anchor is exempt). Every fit that returned a coefficient stays in `per_fit` either way,
+    with `qualified` and a `qualification` sentence saying why it was or was not pooled, and
+    `n_fits` counts the pooled ones. One qualifying fit is enough: its rate and interval are
+    then the family's.
     """
     fits = group_fits(s3, variant, mult)
     out = {}
@@ -601,12 +630,23 @@ def adopt(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
             rate = v["rates"].get(f, 0)
             iv = v["interval"].get(f)
             if rate > 0 and iv:
-                pts.append(rate)
-                ivs.append(list(iv))
-                per_fit[label] = {"rate": rate, "interval": list(iv), "n": v["n"]}
+                k = (v.get("dominant_n") or {}).get(f, 0)
+                qualified = f == ANCHOR or k >= DOMINANCE_MIN_N
+                if f == ANCHOR:
+                    why = "the anchor is exempt from the dominance rule"
+                else:
+                    why = (f"{k} of its {v['n']} stretches carry {DOMINANCE_SHARE:.0%} or more of "
+                           f"their raw tokens on {name(f)}; pooling needs {DOMINANCE_MIN_N}")
+                per_fit[label] = {"rate": rate, "interval": list(iv), "n": v["n"],
+                                  "dominant_n": k, "qualified": qualified,
+                                  "qualification": why}
+                if qualified:
+                    pts.append(rate)
+                    ivs.append(list(iv))
         row = {"measured": None, "interval": None, "n_fits": len(pts), "points": sorted(pts),
-               "per_fit": per_fit, "agree": None, "shellac": SHELLAC.get(f), "variant": variant}
-        if len(pts) >= MIN_N - 1 and ivs:
+               "n_fits_fitted": len(per_fit), "per_fit": per_fit, "agree": None,
+               "shellac": SHELLAC.get(f), "variant": variant}
+        if pts and ivs:
             row["agree"] = agree(ivs)
             row["interval"] = [min(i[0] for i in ivs), max(i[1] for i in ivs)]
             row["measured"] = st.median(pts)
@@ -652,6 +692,11 @@ NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
 #: nine million Haiku tokens with no upper bound on it.
 NOT_IDENTIFIED = ("not measurable, the fits cannot separate {family} from free: its pooled "
                   "interval reaches zero")
+#: The same, for a family the fits carry but none of them dominates: no fit has
+#: DOMINANCE_MIN_N stretches in which the family carries DOMINANCE_SHARE of the raw tokens,
+#: so every coefficient for it is extrapolated from a minority column (see `adopt`).
+NOT_DOMINANT = ("not measurable, no fit has {min_n} clean stretches that are {share:.0%} or "
+                "more {family}")
 
 
 def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
@@ -667,12 +712,12 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
     pooled = adopt(s3, variant, mult)
     out_mult = int(mult.removeprefix("out").removesuffix("x"))
     opus_in = SHELLAC["opus"]
-    max_share = {f: max((row["max_share"][f] for key, row in s1.items()
+    max_share = {f: max((row["max_share"].get(f, 0.0) for key, row in s1.items()
                          if key.split("/")[0] in FIT_ACCOUNTS), default=0.0) for f in FAMILIES}
     per_family = {}
     for f in FAMILIES:
         row = pooled[f]
-        anchor = f == "opus"
+        anchor = f == ANCHOR
         value = opus_in if anchor else row["measured"]
         # A pooled interval that reaches zero is not a measurement of the family, whatever
         # the point estimate is: withhold the value and the interval both, and say so
@@ -691,9 +736,12 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
         elif value is not None:
             status = None
         elif row["n_fits"]:
-            status = NOT_IDENTIFIED.format(family=f.capitalize())
+            status = NOT_IDENTIFIED.format(family=name(f))
+        elif row["n_fits_fitted"]:
+            status = NOT_DOMINANT.format(family=name(f), min_n=DOMINANCE_MIN_N,
+                                         share=DOMINANCE_SHARE)
         else:
-            status = NOT_MEASURABLE.format(family=f.capitalize())
+            status = NOT_MEASURABLE.format(family=name(f))
         per_family[f] = {
             "input": value,
             "interval": pooled_interval,
@@ -709,6 +757,7 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             "times_opus_interval": ([pooled_interval[0] / opus_in, pooled_interval[1] / opus_in]
                                     if pooled_interval else None),
             "n_fits": row["n_fits"], "points": row["points"], "per_fit": row["per_fit"],
+            "n_fits_fitted": row["n_fits_fitted"],
             "agree": row["agree"],
             "max_share_of_a_clean_stretch": max_share[f],
         }
@@ -724,7 +773,7 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             continue
         sides = ", ".join(f"{label} {v['rate'] / opus_in:.3f}x Opus "
                           f"[{v['interval'][0] / opus_in:.3f}, {v['interval'][1] / opus_in:.3f}]"
-                          for label, v in row["per_fit"].items())
+                          for label, v in row["per_fit"].items() if v["qualified"])
         row["why"] = (
             f"the fits disagree within their intervals ({sides}), so the published rate is the "
             f"median of the per-fit rates ({row['input']:.4f} credits per input token, "
@@ -734,11 +783,40 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             "moves the same way.")
     for f in FAMILIES:
         row = per_family[f]
+        if f == ANCHOR or row["input"] is None or row["agree"] is False:
+            continue
+        pooled_from = [label for label, v in row["per_fit"].items() if v["qualified"]]
+        left_out = [f"{label} ({v['dominant_n']} of {v['n']})"
+                    for label, v in row["per_fit"].items() if not v["qualified"]]
+        if not left_out:
+            continue
+        row["why"] = (
+            f"pooled from {', '.join(pooled_from)} only. A fit contributes to a family's rate "
+            f"only if at least {DOMINANCE_MIN_N} of its stretches carry {DOMINANCE_SHARE:.0%} or "
+            f"more of their raw tokens on it, and {', '.join(left_out)} fall short, so their "
+            f"coefficients for {name(f)} are extrapolated from a minority column and stay on "
+            "the record in per_fit without entering the rate.")
+    for f in FAMILIES:
+        row = per_family[f]
         if not row["status"]:
             continue
-        share = (f"the highest {f.capitalize()} share of any clean stretch on a fitted account "
+        reference = ("The reference figure stands beside this row, untested by our data and "
+                     "used in no arithmetic." if SHELLAC.get(f) is not None else
+                     f"There is no reference figure for {name(f)} either: the January table "
+                     "predates it.")
+        share = (f"the highest {name(f)} share of any clean stretch on a fitted account "
                  f"is {max_share[f]:.3f}")
-        if row["n_fits"]:
+        if not row["n_fits"] and row["n_fits_fitted"]:
+            counts = ", ".join(f"{label} {v['dominant_n']} of {v['n']}"
+                               for label, v in row["per_fit"].items())
+            row["why"] = (
+                f"{share}. {row['n_fits_fitted']} fits return a coefficient for it, but a fit "
+                f"contributes to a family's rate only if at least {DOMINANCE_MIN_N} of its "
+                f"stretches carry {DOMINANCE_SHARE:.0%} or more of their raw tokens on that "
+                f"family, and none does ({counts}). A coefficient fitted from a minority column "
+                "is whatever the majority columns leave, so neither a value nor an interval is "
+                f"published. The per-fit coefficients are on this record. {reference}")
+        elif row["n_fits"]:
             iv = pooled[f]["interval"]
             row["why"] = (
                 f"{share}, so no fit has a stretch in which this family carries the meter "
@@ -749,13 +827,11 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
                 "explained without it. Neither the value nor that interval is published, "
                 "because a published interval is priced at its midpoint where there is no "
                 "value (tracker/gs_passive.py) and this one's midpoint is not a rate anything "
-                "measured. The per-fit coefficients are on this record; the reference figure "
-                "stands beside the row, untested by our data and used in no arithmetic.")
+                f"measured. The per-fit coefficients are on this record. {reference}")
         else:
             row["why"] = (
-                f"{share}, and no fit includes {f.capitalize()} at all, so there is nothing "
-                "to measure a rate from. The reference figure stands beside this row, "
-                "untested by our data and used in no arithmetic.")
+                f"{share}, and no fit includes {name(f)} at all, so there is nothing "
+                f"to measure a rate from. {reference}")
     return {
         "unit": "credits per input token; the output rate is output_multiplier times it",
         "variant": variant, "output_multiplier": out_mult,
@@ -770,9 +846,12 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             f"{opus_in:.4f} credits per token so the fit reads in credits. Intervals are 80% "
             "bootstrap intervals over resampled stretches. A family's rate is the median of the "
             "per-fit point estimates and its interval is the union of theirs, whether or not the "
-            "fits agree (`agree` records that, and `why` says what the disagreement is). A family "
-            "whose pooled interval reaches zero keeps the interval and no value: the fit cannot "
-            "separate it from free."),
+            "fits agree (`agree` records that, and `why` says what the disagreement is). Only fits "
+            f"with at least {DOMINANCE_MIN_N} stretches carrying {DOMINANCE_SHARE:.0%} or more of "
+            "their raw tokens on the family are pooled (the anchor is exempt); the others stay "
+            "in per_fit with `qualified: false`, and a family no fit qualifies for is withheld "
+            "with a status sentence. A family whose pooled interval reaches zero is withheld "
+            "too, value and interval both: the fit cannot separate it from free."),
     }
 
 
@@ -876,7 +955,7 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
                 if fam == "opus":
                     against = "Shellac 0.667, fixed to set the scale"
                 elif SHELLAC.get(fam) is None:
-                    against = "no Shellac rate: Fable is not in the table"
+                    against = f"no Shellac rate: {name(fam)} is not in the table"
                 else:
                     against = (f"Shellac {SHELLAC[fam]:.3f} "
                                f"{'inside' if lo <= SHELLAC[fam] <= hi else 'OUTSIDE'} the interval")
@@ -927,7 +1006,7 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
           f"({s5['window_credits_per_pct']:,.0f} per 1%), input-equivalent tokens at output 5x")
     for f, row in s5["rows"].items():
         shellac = (f"Shellac rate={row['shellac_rate']:.3f} tokens={row['shellac_tokens']:,.0f}"
-                   if row["shellac_rate"] else "Shellac rate=absent (Fable is not in the table)")
+                   if row["shellac_rate"] else f"Shellac rate=absent ({name(f)} is not in the table)")
         if row["measured_rate"] and row["rate_interval"]:
             iv = row["measured_tokens_interval"]
             measured = (f"measured rate={row['measured_rate']:.3f} "
@@ -1021,7 +1100,8 @@ def main(argv: list[str] | None = None) -> int:
                 "inputs": ["history/gs-passive.json", str(a.masterrig), "history/harness-runs.jsonl",
                            "history/probes.jsonl", "data/effort_matrix.json", "data/prices.json"],
                 "findings": ["docs/findings-2026-09-20-measured-rates.md",
-                             "docs/findings-2026-09-23-sonnet-rate.md"],
+                             "docs/findings-2026-09-23-sonnet-rate.md",
+                             "docs/findings-2026-09-23-opus-5-5-and-dominance.md"],
                 "no_traffic": "read-only arithmetic over committed files; no account was driven",
             },
             "measured_rates": mr,
@@ -1029,6 +1109,7 @@ def main(argv: list[str] | None = None) -> int:
             "seed": a.seed, "resamples": a.resamples, "exclusions": a.exclusions,
             "variant": a.variant,
             "dominance": DOMINANCE, "min_n": MIN_N,
+            "pool_dominance_share": DOMINANCE_SHARE, "pool_dominance_min_n": DOMINANCE_MIN_N,
             "interval_percentiles": INTERVAL, "shellac_rates": SHELLAC, "fable_point": FABLE_POINT,
             "fable_interval": FABLE_INTERVAL, "exclusion": excl, "window_check": win,
             "section1": s1, "section2": s2, "section3": s3, "section4": s4, "section5": s5,

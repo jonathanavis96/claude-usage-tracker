@@ -611,10 +611,10 @@ class PublishedBlockTests(unittest.TestCase):
 
         The solve and the fit are two instruments. The solve has nothing to work on here and
         says so; the row's rate comes from the committed fit, which is measured over other
-        stretches and does not depend on this fixture. The committed fit's three per-account
-        fits disagree, so the row still carries a value (their median) and the union of their
-        intervals, with `status` null and `agree` false -- not a status sentence in place of a
-        number.
+        stretches and does not depend on this fixture. Under the dominance rule only one of the
+        committed per-account fits has three Fable-dominant stretches, so the row carries that
+        fit's value and interval with `status` null, and `why` names the fits left out of the
+        pool -- not a status sentence in place of a number.
         """
         fable = self.credits["fable_interval"]
         self.assertIsNone(fable["input_low"])
@@ -624,8 +624,9 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertIsNotNone(row["tokens_per_window"]["input"]["value"])
         self.assertIsNone(row["status"])
         rate = C.family_rate("fable", CREDITS, C.load_model_rates())
-        self.assertFalse(rate.detail["agree"])
-        self.assertIn("disagree", rate.detail["why"])
+        self.assertEqual(rate.detail["n_fits"], 1)
+        self.assertIn("pooled from", rate.detail["why"])
+        self.assertTrue(any(not v["qualified"] for v in rate.detail["per_fit"].values()))
 
     def test_the_fable_session_count_is_an_interval_too(self):
         sessions = self.credits["sessions"].get("claude-fable-5-1")
