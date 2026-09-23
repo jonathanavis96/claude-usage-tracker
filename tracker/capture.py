@@ -18,7 +18,9 @@ recent accepted stretches before it can be published:
 
 - The reference is the median of the account's last LOOKBACK accepted
   stretches. It starts from a bootstrap: the median of the first BOOTSTRAP
-  priced stretches, each then judged against it. Until there are enough
+  priced stretches that spent anything, each stretch up to the last of them
+  then judged against it (one that spent nothing sets no reference: a median
+  of zero divides nothing). Until there are enough
   stretches for that, a stretch is `unjudged`, never accepted. The reference
   is the account's own and never the probe's: real sessions are nearly all
   cache reads and value very differently from the cache-write-heavy probe
@@ -147,13 +149,23 @@ def judge(stretches: Iterable[Stretch], restarts: Iterable[datetime] = ()) -> li
         k = 0
         while k < len(priced):
             if len(pool) < MIN_REFERENCE:
-                batch = priced[k:k + BOOTSTRAP]
-                if len(batch) < BOOTSTRAP:
+                # The batch runs until it holds BOOTSTRAP stretches that spent something,
+                # and only their rates set the reference. A stretch whose transcripts hold
+                # nothing -- masterrig's July and August ones, cleaned up before collection
+                # began -- would otherwise make the median zero, and nothing after it could
+                # ever be divided. The zero ones are still judged against the result.
+                batch, spent = [], []
+                while k < len(priced) and len(spent) < BOOTSTRAP:
+                    i = priced[k]
+                    batch.append(i)
+                    if ordered[i].usd_per_pct > 0:
+                        spent.append(ordered[i].usd_per_pct)
+                    k += 1
+                if len(spent) < BOOTSTRAP:
                     for i in batch:
                         out[i] = Verdict(ordered[i], UNJUDGED)
                     break
-                reference = median(ordered[i].usd_per_pct for i in batch)
-                k += BOOTSTRAP
+                reference = median(spent)
             else:
                 batch = [priced[k]]
                 reference = median(pool[-LOOKBACK:])

@@ -1,8 +1,9 @@
 import random
 import unittest
 
-from tools.model_rates import (DOMINANCE, DOMINANCE_MIN_N, DOMINANCE_SHARE, MIN_N, SHELLAC,
-                               adopt, agree, fit, fit_bootstrap, measured_rates, prepare,
+from tools.model_rates import (DOMINANCE, DOMINANCE_MIN_N, DOMINANCE_SHARE, FIT_ACCOUNTS,
+                               MASTERRIG_FROM, MIN_N, SHELLAC, adopt, agree, clean, fit,
+                               fit_bootstrap, group_fits, measured_rates, prepare,
                                ratio_bootstrap, section1, section2, section3, section4,
                                single_model)
 
@@ -398,6 +399,56 @@ class PoolingTests(unittest.TestCase):
         self.assertEqual(out["cache_read_weight"], 0.0)
         self.assertAlmostEqual(out["joint"]["cache_read_weight"],
                                JointCacheReadFitTests.WEIGHT, places=6)
+
+
+class MasterrigAdmissionTests(unittest.TestCase):
+    """masterrig pools from 2026-09-06 under the same rules as jwork and dave (2026-09-23)."""
+
+    def _stretch(self, start, **fields):
+        return _kept(start, 10.0, _tokens(opus=(1000, 100)), **fields)
+
+    def test_masterrig_is_one_of_the_fit_accounts(self):
+        self.assertEqual(FIT_ACCOUNTS, ("jwork", "dave", "masterrig"))
+
+    def test_nothing_before_the_admission_date_enters_and_everything_after_it_does(self):
+        self.assertEqual(MASTERRIG_FROM.isoformat(), "2026-09-06T00:00:00+00:00")
+        starts = ["2026-09-04T12:00:00+00:00",       # the takeoff pipeline on gs
+                  "2026-09-06T01:40:52+02:00",       # 6 September locally, still the 5th in UTC
+                  "2026-09-06T00:00:00+00:00",       # the first admitted instant
+                  "2026-09-16T08:00:00+02:00"]
+        kept = clean({"masterrig": [self._stretch(t) for t in starts],
+                      "jwork": [self._stretch(starts[0])]}, [])
+        self.assertEqual([s["start"] for s in kept["masterrig"]], starts[2:])
+        # The cut is masterrig's alone.
+        self.assertEqual(len(kept["jwork"]), 1)
+
+    def test_masterrig_takes_the_capture_test_like_every_other_account(self):
+        start = "2026-09-16T08:00:00+02:00"
+        kept = clean({"masterrig": [self._stretch(start, capture_status=v)
+                                    for v in ("accepted", "unaccounted", "surplus", None)]}, [])
+        self.assertEqual([s["capture_status"] for s in kept["masterrig"]], ["accepted"])
+
+    def test_the_masterrig_fits_are_pooled_on_both_sides_of_the_cut(self):
+        s3 = PoolingTests()._s3(0.50, 0.54)
+        for era in ("pre", "post"):
+            s3[f"masterrig/{era}/out5x"] = s3[f"jwork/{era}/out5x"]
+        self.assertEqual(sorted(group_fits(s3)),
+                         ["jwork/post", "jwork/pre", "masterrig/post", "masterrig/pre"])
+        self.assertEqual(adopt(s3)["sonnet"]["n_fits"], 4)
+
+    def test_the_dominance_rule_applies_to_masterrig_as_to_the_others(self):
+        s3 = PoolingTests()._s3(0.50, 0.54)
+        for era, k, rate in (("pre", DOMINANCE_MIN_N - 1, 0.10), ("post", DOMINANCE_MIN_N, 0.80)):
+            row = s3[f"jwork/{era}/out5x"]
+            fit_row = {**row, "rates": dict(row["rates"], sonnet=rate),
+                       "interval": dict(row["interval"], sonnet=[rate - 0.02, rate + 0.02]),
+                       "dominant_n": dict(row["dominant_n"], sonnet=k)}
+            s3[f"masterrig/{era}/out5x"] = {**fit_row, "joint": fit_row}
+        row = adopt(s3)["sonnet"]
+        self.assertFalse(row["per_fit"]["masterrig/pre"]["qualified"])
+        self.assertTrue(row["per_fit"]["masterrig/post"]["qualified"])
+        self.assertEqual(row["n_fits"], 3)
+        self.assertEqual(row["points"], [0.50, 0.54, 0.80])
 
 
 if __name__ == "__main__":
