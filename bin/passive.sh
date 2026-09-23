@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Daily on masterrig: passive join, commit history/passive.json and
-# history/masterrig-passive.json, push. Safe to run when gs is down.
+# Daily on masterrig: passive join, commit history/passive.json,
+# history/masterrig-passive.json and history/masterrig-speed.json, push. Safe to run when gs is down.
 #
 # Two joins over the same logs, both kept (issue #52). tracker.passive is the
 # original: 1% intervals, one tokens-per-percent number per UTC day, which is what
@@ -18,10 +18,15 @@ python3 -m tracker.passive --out history/passive.json
 # Never let the stretch record's failure cost the day's passive.json, which the page reads.
 python3 -m tracker.gs_passive --masterrig --out history/masterrig-passive.json \
   || echo "warning: masterrig stretch join failed, history/masterrig-passive.json not updated" >&2
+# Model speed (tracker/speed.py): this host's transcripts are only here, so its daily rows
+# are appended here; old days are kept as stored, never recomputed. Advisory like the above.
+nice -n 10 python3 -m tracker.speed --masterrig --history history/masterrig-speed.json \
+  || echo "warning: speed rows failed, history/masterrig-speed.json not updated" >&2
 # gs pushes probe rows to the same branch, so rebase onto them before committing.
 git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
 git add history/passive.json
 git add history/masterrig-passive.json 2>/dev/null || true
+git add history/masterrig-speed.json 2>/dev/null || true
 git -c user.name=tracker -c user.email=tracker@local commit -q -m "Passive history $(date -u +%F)" || exit 0
 if ! git push -q origin "$BRANCH"; then
   if git pull -q --rebase origin "$BRANCH" && git push -q origin "$BRANCH"; then

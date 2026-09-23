@@ -556,6 +556,7 @@ PRICES = Path("data/prices.json")
 CONTRIBUTED = Path("data/contributed.json")
 #: The measured per-model rates the publisher divides by, written by tools/model_rates.py.
 MODEL_RATES = Path("history/model-rates.json")
+MASTERRIG_SPEED = Path("history/masterrig-speed.json")
 
 #: What each top-level block of the published document is, for the coverage summary the
 #: check prints. Every block is compared the same way -- leaf by leaf against a rebuild --
@@ -601,6 +602,7 @@ BLOCK_KIND = {
     "probe_account_count": "derived",
     "rates": "derived",
     "reference": "derived",
+    "speed": "derived",
     "weekly_windows": "derived",
 }
 
@@ -608,7 +610,8 @@ BLOCK_KIND = {
 def recompute_published(published: dict, gs: Path, masterrig: Path, probes: Path,
                         effort_matrix: Path, passive: Path, prices: Path,
                         model_rates: Path = MODEL_RATES,
-                        contributed: Path = CONTRIBUTED) -> dict:
+                        contributed: Path = CONTRIBUTED,
+                        masterrig_speed: Path | None = None) -> dict:
     """The whole published document rebuilt from the files, at the publish's own instant.
 
     Every block is read again from disk -- the stretches, the probe rows, the effort-matrix
@@ -631,7 +634,8 @@ def recompute_published(published: dict, gs: Path, masterrig: Path, probes: Path
         datetime.fromisoformat(published["generated_at"]),
         probes=probes, passive=passive, effort=effort_matrix, prices=prices,
         gs_passive=gs, masterrig_passive=masterrig, model_rates=model_rates,
-        contributed=contributed if "contributed" in published else None)
+        contributed=contributed if "contributed" in published else None,
+        masterrig_speed=masterrig_speed)
 
 
 def recompute_credits_block(published: dict, gs: Path, masterrig: Path, probes: Path,
@@ -774,7 +778,8 @@ def publish_check(a: argparse.Namespace) -> int:
     recomputed = recompute_published(published, a.gs, a.masterrig, a.probes,
                                      a.effort_matrix, a.passive, a.prices,
                                      getattr(a, "model_rates", MODEL_RATES),
-                                     getattr(a, "contributed", CONTRIBUTED))
+                                     getattr(a, "contributed", CONTRIBUTED),
+                                     getattr(a, "masterrig_speed", None))
     rows = compare_published(published, recomputed, a.tolerance)
     print(render_publish_check(rows, a.publish_check, a.tolerance), end="")
     return 1 if any(not r["ok"] for r in rows) else 0
@@ -819,6 +824,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model-rates", type=Path, default=MODEL_RATES, dest="model_rates",
                     help=f"the measured per-model rates the publisher divides by "
                          f"(default {MODEL_RATES}), written by tools/model_rates.py --json")
+    ap.add_argument("--masterrig-speed", type=Path, default=MASTERRIG_SPEED, dest="masterrig_speed",
+                    help="history/masterrig-speed.json, for --publish-check's speed block")
     ap.add_argument("--tolerance", type=float, default=PUBLISH_CHECK_TOLERANCE,
                     help="how far a recomputed figure may sit from the published one")
     a = ap.parse_args(argv)
