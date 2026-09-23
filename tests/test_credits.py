@@ -75,6 +75,29 @@ class RateTableTests(unittest.TestCase):
         for model in ("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7"):
             self.assertEqual(C.family(model, CREDITS), "opus")
 
+    def test_opus_5_5_is_its_own_family_by_the_most_specific_match(self):
+        """`opus` is a substring of claude-opus-5-5 too; the longer `opus-5-5` must win."""
+        self.assertEqual(C.family("claude-opus-5-5", CREDITS), "opus-5-5")
+        self.assertEqual(C.family("claude-opus-5-5-20260922", CREDITS), "opus-5-5")
+        self.assertEqual(C.family("claude-opus-5", CREDITS), "opus")
+
+    def test_the_most_specific_match_does_not_depend_on_the_table_order(self):
+        rows = dict(CREDITS["per_family"])
+        reordered = dict(CREDITS, per_family={"opus-5-5": rows.pop("opus-5-5"), **rows})
+        backwards = dict(CREDITS, per_family=dict(reversed(list(reordered["per_family"].items()))))
+        for table in (reordered, backwards):
+            self.assertEqual(C.family("claude-opus-5-5", table), "opus-5-5")
+            for model in ("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7"):
+                self.assertEqual(C.family(model, table), "opus")
+
+    def test_opus_5_5_has_no_reference_rate_and_is_not_the_anchor(self):
+        row = CREDITS["per_family"]["opus-5-5"]
+        self.assertIsNone(C.rates("opus-5-5", CREDITS))
+        self.assertEqual(row["role"], "reference")
+        self.assertFalse(row.get("anchor"))
+        self.assertIn("no reference rate", row["measured"])
+        self.assertTrue(CREDITS["per_family"]["opus"]["anchor"])
+
     def test_rates_are_the_exact_fifteenths_the_table_stores(self):
         self.assertEqual(C.rates("haiku", CREDITS), (2 / 15, 10 / 15))
         self.assertEqual(C.rates("sonnet", CREDITS), (6 / 15, 30 / 15))
@@ -544,7 +567,7 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertEqual(sources["opus"], "reference")
         self.assertTrue(self.credits["per_model"]["opus"]["anchor"])
         self.assertEqual({fam for fam, v in sources.items() if v == "measured"},
-                         {"sonnet", "haiku", "fable"})
+                         {"sonnet", "haiku", "fable", "opus-5-5"})
 
     def test_the_sonnet_row_divides_by_the_measured_rate_not_the_tables(self):
         rate = C.family_rate("sonnet", CREDITS, C.load_model_rates())
@@ -588,10 +611,10 @@ class PublishedBlockTests(unittest.TestCase):
 
         The solve and the fit are two instruments. The solve has nothing to work on here and
         says so; the row's rate comes from the committed fit, which is measured over other
-        stretches and does not depend on this fixture. The committed fit's three per-account
-        fits disagree, so the row still carries a value (their median) and the union of their
-        intervals, with `status` null and `agree` false -- not a status sentence in place of a
-        number.
+        stretches and does not depend on this fixture. Under the dominance rule only one of the
+        committed per-account fits has three Fable-dominant stretches, so the row carries that
+        fit's value and interval with `status` null, and `why` names the fits left out of the
+        pool -- not a status sentence in place of a number.
         """
         fable = self.credits["fable_interval"]
         self.assertIsNone(fable["input_low"])
@@ -601,8 +624,9 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertIsNotNone(row["tokens_per_window"]["input"]["value"])
         self.assertIsNone(row["status"])
         rate = C.family_rate("fable", CREDITS, C.load_model_rates())
-        self.assertFalse(rate.detail["agree"])
-        self.assertIn("disagree", rate.detail["why"])
+        self.assertEqual(rate.detail["n_fits"], 1)
+        self.assertIn("pooled from", rate.detail["why"])
+        self.assertTrue(any(not v["qualified"] for v in rate.detail["per_fit"].values()))
 
     def test_the_fable_session_count_is_an_interval_too(self):
         sessions = self.credits["sessions"].get("claude-fable-5-1")
@@ -1846,8 +1870,8 @@ class PricedModelsTests(unittest.TestCase):
                 with self.subTest(model=model):
                     self.assertEqual(normalize_model(model), model)
 
-    def test_the_older_models_land_in_the_right_family(self):
-        for model, fam in (("claude-opus-5-5", "opus"), ("claude-opus-4-8", "opus"),
+    def test_the_added_models_land_in_the_right_family(self):
+        for model, fam in (("claude-opus-5-5", "opus-5-5"), ("claude-opus-4-8", "opus"),
                            ("claude-opus-4-7", "opus"), ("claude-sonnet-4-6", "sonnet"),
                            ("claude-haiku-4-5", "haiku")):
             with self.subTest(model=model):

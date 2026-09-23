@@ -1,9 +1,10 @@
 import random
 import unittest
 
-from tools.model_rates import (DOMINANCE, MIN_N, SHELLAC, adopt, agree, fit, fit_bootstrap,
-                               measured_rates, prepare, ratio_bootstrap, section1, section2,
-                               section3, section4, single_model)
+from tools.model_rates import (DOMINANCE, DOMINANCE_MIN_N, DOMINANCE_SHARE, MIN_N, SHELLAC,
+                               adopt, agree, fit, fit_bootstrap, measured_rates, prepare,
+                               ratio_bootstrap, section1, section2, section3, section4,
+                               single_model)
 
 PRE, POST = "2026-09-10T00:00:00+00:00", "2026-09-16T00:00:00+00:00"
 
@@ -11,7 +12,7 @@ PRE, POST = "2026-09-10T00:00:00+00:00", "2026-09-16T00:00:00+00:00"
 def _tokens(reads: int = 10_000, **families) -> dict:
     """A token block per model id, from {model_family: (input, output)}, `reads` cache reads each."""
     ids = {"opus": "claude-opus-5", "sonnet": "claude-sonnet-5", "haiku": "claude-haiku-4-5",
-           "fable": "claude-fable-5-1"}
+           "fable": "claude-fable-5-1", "opus_5_5": "claude-opus-5-5"}
     return {ids[f]: {"input": i, "output": o, "cache_read": reads, "cache_write": 0}
             for f, (i, o) in families.items()}
 
@@ -133,6 +134,41 @@ class MixedFitTests(unittest.TestCase):
     def test_too_few_stretches_refuse_the_fit(self):
         self.assertIsNone(fit(self._rows()[:4], 5))
 
+    def test_the_fit_counts_the_stretches_each_family_dominates(self):
+        # (0, 1, 9), (2, 2, 6) and (1, 1, 8) are 60% or more Fable; (1, 9, 0) and (3, 6, 1)
+        # are 60% or more Sonnet; Opus carries (9, 1, 0), (7, 2, 1) and (6, 3, 1).
+        f = fit(self._rows(), 5)
+        self.assertEqual(f["dominant_n"], {"opus": 3, "sonnet": 2, "haiku": 0, "fable": 3,
+                                           "opus-5-5": 0})
+
+
+class OpusFiveFiveTests(unittest.TestCase):
+    """Opus 5.5 is its own family, and a family with no tokens at all must not break a fit."""
+
+    def test_opus_5_5_tokens_land_in_their_own_column_and_not_in_opus(self):
+        rec = _recs([_kept(PRE, 10.0, _tokens(opus=(100, 0), opus_5_5=(300, 0)))])[0]
+        self.assertEqual(rec["raw"]["opus"], 100)
+        self.assertEqual(rec["raw"]["opus-5-5"], 300)
+        self.assertTrue(rec["ok"])
+        self.assertEqual(rec["dominant"], "opus-5-5")
+
+    def test_an_all_zero_opus_5_5_column_is_left_out_and_the_family_withheld(self):
+        rows = MixedFitTests()._rows()
+        s3 = section3({"jwork": rows}, 1, 30)
+        fitted = s3["jwork/pre/out5x"]
+        self.assertNotIn("opus-5-5", fitted["rates"])
+        self.assertEqual(fitted["dominant_n"]["opus-5-5"], 0)
+        s1 = section1({"jwork": rows})
+        mr = measured_rates(s1, s3)
+        row = mr["per_family"]["opus-5-5"]
+        self.assertIsNone(row["input"])
+        self.assertIsNone(row["interval"])
+        self.assertEqual(row["status"], "not measurable, no clean stretch is Opus 5.5-heavy")
+        self.assertIsNone(row["reference_input"])
+        self.assertIn("no reference figure for Opus 5.5", row["why"])
+        self.assertEqual(row["rate_source"], "measured")
+        self.assertFalse(row["anchor"])
+
 
 class QuantisationFloorTests(unittest.TestCase):
     """section4's whole-percent floor: `windows` pieces per stretch, not a flat 0.5."""
@@ -228,6 +264,8 @@ class PoolingTests(unittest.TestCase):
             return {"n": 20, "rates": {"opus": 10 / 15, "sonnet": rate},
                     "interval": {"opus": [10 / 15, 10 / 15],
                                  "sonnet": [rate - spread, rate + spread]},
+                    "dominant_n": {"opus": 10, "sonnet": 3, "haiku": 3, "fable": 3,
+                                   "opus-5-5": 0},
                     "cache_read_weight": 0.01, "cache_read_weight_interval": [0.005, 0.015],
                     "window_credits_per_pct": 200_000.0, "window_interval": [190_000.0, 210_000.0],
                     "residual_median_abs_rel": 0.05, "residual_p90_abs_rel": 0.1, "ratios": {}}
@@ -291,6 +329,52 @@ class PoolingTests(unittest.TestCase):
         self.assertIn("reaches zero", haiku["why"])
         # A family the same fits do pin down is untouched by the rule.
         self.assertAlmostEqual(measured_rates(s1, s3)["per_family"]["sonnet"]["input"], 0.52)
+
+    def _dominance(self, s3, fam, counts):
+        for (key, row), k in zip(sorted(s3.items()), counts):
+            for side in (row, row["joint"]):
+                side["dominant_n"] = dict(side["dominant_n"], **{fam: k})
+        return s3
+
+    def test_a_fit_without_enough_dominant_stretches_is_kept_on_record_but_not_pooled(self):
+        # jwork/post (sorted first) has 3 Sonnet-dominant stretches, jwork/pre only 2.
+        s3 = self._dominance(self._s3(0.50, 0.90), "sonnet", [DOMINANCE_MIN_N, DOMINANCE_MIN_N - 1])
+        row = adopt(s3)["sonnet"]
+        self.assertEqual(row["n_fits"], 1)
+        self.assertEqual(row["n_fits_fitted"], 2)
+        self.assertAlmostEqual(row["measured"], 0.90)
+        self.assertEqual(row["interval"], [0.88, 0.92])
+        self.assertTrue(row["per_fit"]["jwork/post"]["qualified"])
+        self.assertFalse(row["per_fit"]["jwork/pre"]["qualified"])
+        self.assertEqual(row["per_fit"]["jwork/pre"]["dominant_n"], DOMINANCE_MIN_N - 1)
+        self.assertAlmostEqual(row["per_fit"]["jwork/pre"]["rate"], 0.50)
+        self.assertIn(f"{DOMINANCE_SHARE:.0%}", row["per_fit"]["jwork/pre"]["qualification"])
+        mr = measured_rates({}, s3)
+        self.assertIn("jwork/pre (2 of 20)", mr["per_family"]["sonnet"]["why"])
+
+    def test_a_family_no_fit_dominates_is_withheld_with_its_coefficients_on_record(self):
+        s3 = self._dominance(self._s3(0.50, 0.54), "fable", [0, 2])
+        for row in s3.values():
+            for side in (row, row["joint"]):
+                side["rates"]["fable"] = 1.4
+                side["interval"]["fable"] = [1.2, 1.6]
+        s1 = {"jwork/pre": {"max_share": {"opus": 1.0, "sonnet": 0.7, "haiku": 0.0,
+                                          "fable": 0.46, "opus-5-5": 0.0}}}
+        fable = measured_rates(s1, s3)["per_family"]["fable"]
+        self.assertIsNone(fable["input"])
+        self.assertIsNone(fable["interval"])
+        self.assertEqual(fable["n_fits"], 0)
+        self.assertEqual(fable["status"],
+                         "not measurable, no fit has 3 clean stretches that are 60% or more Fable")
+        self.assertEqual(sorted(fable["per_fit"]), ["jwork/post", "jwork/pre"])
+        self.assertFalse(any(v["qualified"] for v in fable["per_fit"].values()))
+        self.assertIn("0.460", fable["why"])
+
+    def test_the_anchor_is_exempt_from_the_dominance_rule(self):
+        s3 = self._dominance(self._s3(0.50, 0.54), "opus", [0, 0])
+        opus = adopt(s3)["opus"]
+        self.assertEqual(opus["n_fits"], 2)
+        self.assertTrue(all(v["qualified"] for v in opus["per_fit"].values()))
 
     def test_the_opus_row_is_the_anchor_and_says_it_came_from_the_reference(self):
         mr = measured_rates({}, self._s3(0.50, 0.54))
