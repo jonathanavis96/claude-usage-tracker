@@ -5,6 +5,8 @@ from pathlib import Path
 from statistics import median
 from typing import ClassVar
 
+from tracker.detect import MIN_STRETCH_PCT
+from tracker.gs_passive import passive_credit_points, passive_dollar_readings, stretch_credits
 from tracker.publish import (
     _regime_with_evidence,
     CREDITS_TABLE_AS_OF,
@@ -90,29 +92,44 @@ def gs_passive_report(*, account="dave", end, cache_write, delta_pct=10, model="
     return {"accounts": {account: acct}}
 
 
-def daily_report(budgets, *, start_day=1, account="dave", reset_verified=True):
-    """One accepted stretch a day on 2026-09-(start_day + i), each worth budgets[i] meter dollars per window."""
+#: Stretches a day in the event fixtures. Detection reads stretches, not days, and
+#: weighs each by the meter movement it carries, so what a fixture has to supply is
+#: meter percent: at 10% a stretch, four a day is 40 points a day, and the ten-then-five
+#: day shapes below clear MIN_STRETCH_PCT on both sides with room for the intervals to
+#: separate a 30% step (tracker/detect.py, "Credit stretches": 18 stretches a side).
+#: One a day, the shape these fixtures had while a day was the unit of evidence, is 50
+#: points on the short side and certifies nothing.
+EVENT_STRETCHES_PER_DAY = 4
+
+
+def daily_report(budgets, *, start_day=1, account="dave", reset_verified=True, per_day=1):
+    """`per_day` accepted stretches a day on 2026-09-(start_day + i), each worth budgets[i]
+    meter dollars per window. The day's pooled reading is budgets[i] whatever `per_day` is;
+    only the meter movement behind it grows."""
     stretches = []
     for i, budget in enumerate(budgets):
-        # 10% of a window at $3.75/Mtok cache_write: budget/10 dollars is budget/10/3.75e-6 tokens.
-        stretches.append({"status": "accepted", "end": f"2026-09-{start_day + i:02d}T08:00:00+00:00",
-                          "delta_pct": 10, "windows": 1, "reset_verified": reset_verified,
-                          "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0,
-                                                         "cache_write": round(budget / 10 / 3.75e-6)}}})
+        for k in range(per_day):
+            # 10% of a window at $3.75/Mtok cache_write: budget/10 dollars is budget/10/3.75e-6 tokens.
+            stretches.append({"status": "accepted",
+                              "end": f"2026-09-{start_day + i:02d}T{8 + k:02d}:00:00+00:00",
+                              "delta_pct": 10, "windows": 1, "reset_verified": reset_verified,
+                              "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0,
+                                                             "cache_write": round(budget / 10 / 3.75e-6)}}})
     return {"accounts": {account: {"account": account, "stretches": stretches}}}
 
 
-def agreeing_report(budgets, *, start_day=1, reset_verified=True, accounts=("dave", "jwork")):
+def agreeing_report(budgets, *, start_day=1, reset_verified=True, accounts=("dave", "jwork"),
+                    per_day=EVENT_STRETCHES_PER_DAY):
     """The same daily series on two accounts, which is what a dollar-series change needs.
 
     A step one account alone saw is that account's own workload until a second account
     steps the same way within DOLLAR_AGREEMENT_DAYS (tracker/publish.py
-    _agreeing_dollar_events), so every fixture that expects an event carries two.
+    _agreeing_credit_events), so every fixture that expects an event carries two.
     """
     report = {"accounts": {}}
     for account in accounts:
         report["accounts"].update(daily_report(budgets, start_day=start_day, account=account,
-                                               reset_verified=reset_verified)["accounts"])
+                                               reset_verified=reset_verified, per_day=per_day)["accounts"])
     return report
 
 
@@ -642,15 +659,19 @@ class GsPassiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_public_json([], PASSIVE, EFFORT, {}, now)
 
-    def test_a_passive_series_uses_the_smoothed_detector(self):
+    def test_a_noisy_passive_series_fires_nothing_and_a_sustained_step_does(self):
         # Nine passive days scattering +-20% around one level fire nothing (detect_changes
-        # would have fired on the 4th and 5th); a sustained week 40% higher does.
+        # would have fired on the 4th and 5th); a sustained week 40% higher does. The
+        # series is per stretch now, so each day carries EVENT_STRETCHES_PER_DAY of them
+        # and the evidence is meter percent, not a count of days.
         def rpt(values, start_day=1, accounts=("dave", "jwork")):
             return {"accounts": {account: {"stretches": [
-                {"status": "accepted", "end": f"2026-09-{start_day + i:02d}T08:00:00+00:00", "delta_pct": 10,
-                 "reset_verified": True,
+                {"status": "accepted",
+                 "end": f"2026-09-{start_day + i:02d}T{8 + k:02d}:00:00+00:00", "delta_pct": 10,
+                 "windows": 1, "reset_verified": True,
                  "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": int(v)}}}
-                for i, v in enumerate(values)]} for account in accounts}}
+                for i, v in enumerate(values) for k in range(EVENT_STRETCHES_PER_DAY)]}
+                for account in accounts}}
         noisy = [400_000, 380_000, 320_000, 470_000, 480_000, 420_000, 400_000, 360_000, 300_000]
         now = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
         j = build_public_json([], {"split": {"cache_write": 1.0}}, EFFORT, PRICES, now, gs_passive=rpt(noisy))
@@ -1694,7 +1715,8 @@ class DollarSeriesAgreementTests(unittest.TestCase):
             if isinstance(budgets, tuple):
                 budgets, start_day = budgets
             report["accounts"].update(
-                daily_report(budgets, start_day=start_day, account=account)["accounts"])
+                daily_report(budgets, start_day=start_day, account=account,
+                             per_day=EVENT_STRETCHES_PER_DAY)["accounts"])
         return build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
 
     def test_one_account_stepping_alone_publishes_no_change(self):
@@ -1738,13 +1760,15 @@ class DollarSeriesAgreementTests(unittest.TestCase):
         j = self.published(dave=[15.0] * 10 + [10.5] * 10, jwork=[15.0] * 15 + [10.5] * 5)
         self.assertEqual(j["events"], [])
 
-    def test_an_account_with_too_few_readings_to_split_is_not_a_second_account(self):
-        # The detector needs 2 x SMOOTH_MIN_POINTS readings before it can split an
-        # account at all, so an account below that cannot agree with anything.
+    def test_an_account_with_too_little_meter_movement_is_not_a_second_account(self):
+        # The minimum evidence is five-hour meter percent, not a count of readings: an
+        # account needs 2 x MIN_STRETCH_PCT points of movement before the detector can
+        # split it at all, so an account below that cannot agree with anything. At
+        # EVENT_STRETCHES_PER_DAY x 10% a day, four days is 160 points and six is 240.
         stepped = [15.0] * 8 + [10.5] * 8
-        short = self.published(dave=stepped, jwork=([15.0] * 4 + [10.5] * 3, 5))
+        short = self.published(dave=stepped, jwork=([15.0] * 2 + [10.5] * 2, 5))
         self.assertEqual(short["events"], [])
-        testable = self.published(dave=stepped, jwork=([15.0] * 4 + [10.5] * 4, 5))
+        testable = self.published(dave=stepped, jwork=([15.0] * 5 + [10.5] * 5, 5))
         self.assertEqual([e["date"] for e in testable["events"]], ["2026-09-09"])
 
     def test_the_agreement_rule_is_the_one_the_constant_states(self):
@@ -1849,3 +1873,105 @@ class TokensPerWeekChangeTests(unittest.TestCase):
         out = _event_record(ChangeEvent(date(2026, 9, 6), "decreased", 50), "window",
                             self.ACROSS, None)
         self.assertNotIn("tokens_per_week_change", out)
+
+
+class CreditValuedDetectionTests(unittest.TestCase):
+    """The detector reads meter credits, so the model mix no longer moves the reading.
+
+    These exercise tracker/gs_passive.py's `stretch_credits` and `passive_credit_points`
+    from the publisher's side rather than from tests/test_gs_passive.py, because they are
+    about what the publisher detects on: the eligibility rule and the day pooling are
+    already covered there, and what is new here is the unit.
+    """
+
+    NOW = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+
+    @classmethod
+    def setUpClass(cls):
+        from tracker import credits as credit_model
+        from tracker.publish import CREDITS
+        cls.credits = CREDITS
+        cls.model_rates = credit_model.load_model_rates()
+        cls.rates = {fam: credit_model.family_rate(fam, cls.credits, cls.model_rates)
+                     for fam in ("sonnet", "opus")}
+
+    def mixed_report(self, *, accounts=("dave", "jwork"), per_day=4):
+        """Ten days pure Sonnet then ten days pure Opus, sized so the CREDITS are flat.
+
+        Both models are priced in PRICES, where Opus's cache_write is 2.5x Sonnet's, and
+        the meter charges the two much closer than that. So the list-dollar daily series
+        steps hard at day 11 and the credit series does not move at all: a pure model-mix
+        artefact, the mechanism behind the withdrawn 20 September event.
+        """
+        opus_tokens = 1_000_000
+        sonnet_tokens = round(opus_tokens * self.rates["opus"].input / self.rates["sonnet"].input)
+        report = {"accounts": {}}
+        for account in accounts:
+            stretches = []
+            for day in range(1, 21):
+                model, tok = (("claude-sonnet-5", sonnet_tokens) if day <= 10
+                              else ("claude-opus-5", opus_tokens))
+                for k in range(per_day):
+                    stretches.append({
+                        "status": "accepted", "end": f"2026-09-{day:02d}T{8 + k:02d}:00:00+00:00",
+                        "delta_pct": 10, "windows": 1, "reset_verified": True,
+                        "tokens": {model: {"input": 0, "output": 0, "cache_read": 0, "cache_write": tok}}})
+            report["accounts"][account] = {"account": account, "stretches": stretches}
+        return report
+
+    def test_a_pure_model_mix_step_publishes_no_change(self):
+        report = self.mixed_report()
+        # The list-dollar series really does step here: this is the artefact, not a
+        # series that happens to be flat in both units.
+        dollars = passive_dollar_readings({"accounts": {"dave": report["accounts"]["dave"]}},
+                                          PRICES, by="day")
+        before = median([v for ts, v in dollars if ts.day <= 10])
+        after = median([v for ts, v in dollars if ts.day > 10])
+        self.assertGreater(after / before, 1.5)
+        # The credit series does not move, so nothing is published.
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        self.assertIsNone(window_event(j))
+
+    def test_the_same_shape_with_a_real_credit_step_does_publish(self):
+        # The control: halve the second half's tokens and the credit series steps too.
+        report = self.mixed_report()
+        for account in report["accounts"].values():
+            for st in account["stretches"]:
+                if st["end"][:10] > "2026-09-10":
+                    st["tokens"]["claude-opus-5"]["cache_write"] //= 2
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        event = window_event(j)
+        self.assertIsNotNone(event)
+        self.assertEqual((event["date"], event["direction"]), ("2026-09-11", "decreased"))
+
+    def test_credit_points_are_one_per_stretch_and_weighted_by_delta_pct(self):
+        report = self.mixed_report(accounts=("dave",), per_day=4)
+        points = passive_credit_points(report, PRICES, self.credits, self.model_rates)
+        self.assertEqual(len(points), 80)
+        self.assertEqual(sum(p[2] for p in points), 800.0)
+        # Flat in credits: every stretch carries the same credits per percent.
+        self.assertEqual(len({round(p[1] / p[2]) for p in points}), 1)
+
+    def test_a_stretch_records_which_rate_source_priced_it(self):
+        opus = {"claude-opus-5": {"input": 1000, "output": 0, "cache_read": 0, "cache_write": 0}}
+        sonnet = {"claude-sonnet-5": {"input": 1000, "output": 0, "cache_read": 0, "cache_write": 0}}
+        value, source = stretch_credits(opus, self.credits, self.model_rates)
+        self.assertEqual(source, "anchor")
+        self.assertAlmostEqual(value, 1000 * self.rates["opus"].input)
+        self.assertEqual(stretch_credits({**opus, **sonnet}, self.credits, self.model_rates)[1], "measured")
+        # A family with no measured row at all falls back to the reference table; the
+        # anchor is definitional and survives having no measurement.
+        self.assertEqual(stretch_credits(opus, self.credits, {"per_family": {}})[1], "anchor")
+        self.assertEqual(stretch_credits(sonnet, self.credits, {"per_family": {}})[1], "reference_table")
+        # A model in no family at all cannot be priced, and the stretch is dropped.
+        self.assertEqual(stretch_credits({"some-other-vendor-model": opus["claude-opus-5"]},
+                                         self.credits, self.model_rates), (None, "unpriced"))
+
+    def test_the_evidence_names_the_series_detection_ran_on(self):
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self.mixed_report())
+        block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
+        self.assertEqual(block["series"], "credits_per_window")
+        self.assertEqual((block["points"], block["meter_pct"]), (160, 1600.0))
+        self.assertEqual(block["min_meter_pct_per_side"], MIN_STRETCH_PCT)
+        self.assertEqual(block["testable_accounts"], 2)
+        self.assertEqual(set(block["rate_sources"]), {"anchor", "measured"})

@@ -4,12 +4,17 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from tracker.detect import (
+    CREDIT_STRETCHES,
+    WINDOWS,
     current_regime_points,
     detect_changes,
+    detect_credit_changes,
     detect_smoothed_changes,
     detect_weighted_changes,
     latest_change,
     pooled_windows,
+    ratio_interval,
+    rounding_error,
     weighted_regimes,
 )
 
@@ -407,3 +412,79 @@ class SmoothedDetectTests(unittest.TestCase):
                 ev = detect_smoothed_changes(r)
                 self.assertEqual([(e.direction, e.percent) for e in ev], expected)
                 self.assertEqual([e.date for e in ev], [r[5][0].date(), r[10][0].date()])
+
+
+class CreditStretchTests(unittest.TestCase):
+    """detect_credit_changes: one point per stretch, weighted by the meter it moved.
+
+    The passive series used to be one median per account per UTC day fed to
+    detect_smoothed_changes, which counted days rather than weighing meter movement
+    and valued each day in list-price dollars, so the model mix moved the reading.
+    These are the properties the replacement has to hold (tracker/detect.py, "Credit
+    stretches").
+    """
+
+    T0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+    def points(self, values, *, delta=10.0, pieces=1, start=0):
+        """(end, credits, delta_pct, pieces) an hour apart; `values` are credits per percent."""
+        return [(self.T0 + timedelta(hours=start + i), v * delta, delta, pieces)
+                for i, v in enumerate(values)]
+
+    def test_a_level_pools_credits_over_meter_percent_not_over_readings(self):
+        # One 40% stretch at 200k and four 10% stretches at 100k: the pooled level is
+        # 150k, the mean of the five readings is 120k. Weight is meter movement.
+        heavy = [(self.T0, 200_000 * 40, 40.0, 4)]
+        light = self.points([100_000] * 4, start=1)
+        self.assertAlmostEqual(pooled_windows(heavy + light), 150_000.0)
+
+    def test_the_minimum_evidence_is_meter_percent_not_a_count_of_stretches(self):
+        # Three 40% stretches a side is 120 points and certifies a halving; twelve 4%
+        # stretches a side is the same halving over 48 points and is refused by the
+        # floor, although it has four times as many readings.
+        big = self.points([100_000] * 3, delta=40.0) + self.points([50_000] * 3, delta=40.0, start=3)
+        self.assertEqual([(e.direction, e.percent) for e in detect_credit_changes(big)],
+                         [("decreased", 50)])
+        small = self.points([100_000] * 12, delta=4.0) + self.points([50_000] * 12, delta=4.0, start=12)
+        self.assertEqual(detect_credit_changes(small), [])
+
+    def test_a_forty_percent_step_certifies_at_exactly_one_window_of_movement(self):
+        # The sensitivity table in the module docstring: at -40% the floor binds and ten
+        # 10% stretches a side is the smallest side that certifies.
+        ten = self.points([100_000] * 10) + self.points([60_000] * 10, start=10)
+        nine = self.points([100_000] * 9) + self.points([60_000] * 9, start=9)
+        self.assertEqual([(e.direction, e.percent) for e in detect_credit_changes(ten)],
+                         [("decreased", 40)])
+        self.assertEqual(detect_credit_changes(nine), [])
+
+    def test_a_flat_series_of_any_length_certifies_nothing(self):
+        self.assertEqual(detect_credit_changes(self.points([100_000] * 60)), [])
+
+    def test_the_event_carries_the_five_hour_percent_behind_the_new_level(self):
+        pts = self.points([100_000] * 20) + self.points([60_000] * 20, start=20)
+        event = detect_credit_changes(pts)[0]
+        self.assertEqual(event.denominator_pct, 200.0)
+        self.assertEqual((event.onset_earliest, event.onset_latest),
+                         (pts[19][0].date(), pts[20][0].date()))
+
+    def test_the_credit_interval_concedes_nothing_to_the_numerator(self):
+        # Credits are a token count times a rate, not a meter reading: all the error is
+        # in the whole-percent denominator, so the interval is credits / (pct +/- e).
+        e = rounding_error(4, CREDIT_STRETCHES)
+        self.assertEqual(ratio_interval(1_000_000, 100.0, 4, CREDIT_STRETCHES),
+                         (1_000_000 / (100.0 + e), 1_000_000 / (100.0 - e)))
+
+    def test_the_windows_series_keeps_its_own_error_model(self):
+        # Both meters are whole-percent readings there, so the error is conceded to each
+        # in opposite directions, and the dispersion is the window one.
+        self.assertEqual(WINDOWS.numerator_scale, 1.0)
+        self.assertEqual(CREDIT_STRETCHES.numerator_scale, 0.0)
+        e = rounding_error(4)
+        self.assertEqual(ratio_interval(60.0, 10.0, 4), ((60.0 - e) / (10.0 + e), (60.0 + e) / (10.0 - e)))
+        self.assertNotEqual(rounding_error(4), rounding_error(4, CREDIT_STRETCHES))
+
+    def test_a_staircase_measures_each_step_against_its_own_neighbours(self):
+        pts = (self.points([100_000] * 20) + self.points([50_000] * 20, start=20)
+               + self.points([25_000] * 20, start=40))
+        self.assertEqual([(e.direction, e.percent) for e in detect_credit_changes(pts)],
+                         [("decreased", 50), ("decreased", 50)])

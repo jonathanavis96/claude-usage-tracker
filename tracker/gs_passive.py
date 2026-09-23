@@ -64,8 +64,11 @@ published: CAPTURE_GATE is False. With its 15% tolerance on a quantity whose
 stretch-to-stretch spread is 15-20%, it withheld half of jwork's real
 stretches (49 of 99), and the half it withheld read low, so the published
 median was the median of the expensive half. Every priced stretch counts now
-(bar one the transcripts leave empty, see `publishable`), pooled per UTC day, and step detection smooths over a rolling week
-(tracker/detect.py detect_smoothed_changes) instead of gating stretch by stretch.
+(bar one the transcripts leave empty, see `publishable`), pooled per UTC day for
+the published rate, and step detection reads the stretches one by one in meter
+credits, weighted by the meter movement each one carries
+(`passive_credit_points`, tracker/detect.py `detect_credit_changes`), instead of
+gating stretch by stretch.
 
     python3 -m tracker.gs_passive --out history/passive-gs.json
     python3 -m tracker.gs_passive --account jwork --until 2026-09-13T00:00:00+00:00
@@ -86,6 +89,7 @@ from itertools import pairwise
 from pathlib import Path
 from statistics import mean, median, stdev
 
+from . import credits as credit_model
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
@@ -520,6 +524,140 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             usd = sum(v for _, v in ss)
             out.append((datetime.fromisoformat(ss[-1][0]["end"]), usd / sum(s["delta_pct"] for s, _ in ss) * 100))
     return sorted(out)
+
+
+#: How a stretch's credit value was priced, best first. A stretch takes the worst
+#: source any of its models needed, so one reference-table family marks the whole
+#: reading. `anchor` leads because Opus's rate is definitional rather than a fallback:
+#: it is what a credit means here, nothing in this repository measures it, and every
+#: measured rate is expressed against it. A stretch that reads `measured` therefore had
+#: at least one family whose rate was fitted; one that reads `anchor` was pure Opus.
+CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_table")
+
+
+def stretch_credits(tokens: dict, credits: dict,
+                    model_rates: dict | None) -> tuple[float | None, str]:
+    """A token bundle's value in meter credits, and which rate source it needed.
+
+    The meter does not charge list-price ratios. It charges a small rational rate
+    per token per family, measured in history/model-rates.json: Sonnet at about
+    0.78x Opus where the list price implies 0.4x. Valuing a stretch in credits
+    therefore takes the model mix out of the reading, which is the whole point --
+    in list dollars the same meter movement reads dearer or cheaper purely by which
+    model did the work (tracker/detect.py, "Credit stretches").
+
+    Each family's rate is taken in the order CREDIT_RATE_SOURCES names, falling back
+    the way tracker/credits.py already falls back rather than inventing a step:
+
+    - `family_rate` with a value: the measured rate ("measured"), or Opus's
+      definitional one ("anchor").
+    - `family_rate` with an interval and no single value -- Fable, whose input rate
+      the data bound only loosely -- the midpoint of the interval
+      ("interval_midpoint"). Dropping those stretches instead would throw away most
+      of both accounts' evidence; pricing them at the midpoint is the same choice
+      `fable_interval` publishes, with the reading's source recorded.
+    - no measurement at all: the January reference table's rate ("reference_table").
+    - no rate anywhere, or a model in no family: `(None, "unpriced")`, and the caller
+      drops the stretch whole, exactly as an unpriced model already does in dollars.
+
+    Cache writes join the input side at the plain input rate and cache reads at the
+    table's cache-read weight, which is `credits.price_tokens`' rule; this does the
+    same arithmetic per family so it can report the source and use the measured rate
+    rather than the reference one.
+    """
+    weight = credit_model.cache_read_weight(credits)
+    total, worst = 0.0, CREDIT_RATE_SOURCES[0]
+    for model, tok in tokens.items():
+        if not isinstance(tok, dict):
+            continue
+        fam = credit_model.family(model, credits)
+        if fam is None:
+            return None, "unpriced"
+        rate = credit_model.family_rate(fam, credits, model_rates)
+        if rate.input is not None and rate.output is not None:
+            rate_in, rate_out = rate.input, rate.output
+            source = "anchor" if rate.anchor else "measured"
+        elif rate.input_interval and rate.output_interval:
+            rate_in = sum(rate.input_interval) / 2
+            rate_out = sum(rate.output_interval) / 2
+            source = "interval_midpoint"
+        else:
+            pair = credit_model.rates(fam, credits)
+            if pair is None:
+                return None, "unpriced"
+            rate_in, rate_out = pair
+            source = "reference_table"
+        if CREDIT_RATE_SOURCES.index(source) > CREDIT_RATE_SOURCES.index(worst):
+            worst = source
+        total += credit_model.input_side(tok, weight) * rate_in + tok.get("output", 0) * rate_out
+    return total, worst
+
+
+def passive_credit_points(report: dict, prices: dict, credits: dict,
+                          model_rates: dict | None = None,
+                          allow_legacy_unverified: bool = False) -> list[tuple]:
+    """Accepted passive stretches as (end, credits, delta_pct, pieces) points, one per stretch.
+
+    The credit-valued twin of `passive_dollar_readings`, and the series change
+    detection runs on (`tracker.detect.detect_credit_changes`). Two differences,
+    both deliberate:
+
+    - No day pooling. A day is not a unit of evidence -- the meter is -- so each
+      stretch is its own point and carries its own `delta_pct` as its weight. Pooling
+      to one median per UTC day gave a 10% day and a 60% day the same vote and left
+      jwork with 15 points and dave with 4.
+    - Credits, not list dollars, so the reading does not move with the model mix.
+
+    Eligibility is unchanged from `passive_dollar_readings`, deliberately: `status`
+    accepted, `reset_verified` unless `allow_legacy_unverified`, no unpriced tokens,
+    some tokens, and every model priceable in `prices`. The dollar gate stays in place
+    so that widening it stays one decision in one place (agent A's price table), and a
+    stretch this cannot price in credits at all is dropped the same way.
+
+    `pieces` is the stretch's own `windows` count, which is what it concedes of
+    `delta_pct` to whole-percent rounding. Consecutive stretches are not telescoped
+    the way `_daily` telescopes them: the detector reorders and resplits the series,
+    so which stretches end up pooled together is not known here. That over-concedes
+    at most one point per join, which widens intervals and never narrows them.
+    """
+    out = []
+    for account in report.get("accounts", {}).values():
+        for s in account["stretches"]:
+            if s["status"] != ACCEPTED:
+                continue
+            if s.get("reset_verified") is not True and not allow_legacy_unverified:
+                continue
+            if s.get("unpriced_tokens", 0) > 0 or not s.get("tokens"):
+                continue
+            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()):
+                continue
+            value, _source = stretch_credits(s["tokens"], credits, model_rates)
+            if value is None or not s.get("delta_pct"):
+                continue
+            out.append((datetime.fromisoformat(s["end"]), value, float(s["delta_pct"]),
+                        int(s.get("windows") or 1)))
+    return sorted(out, key=lambda p: p[0])
+
+
+def credit_rate_sources(report: dict, prices: dict, credits: dict,
+                        model_rates: dict | None = None,
+                        allow_legacy_unverified: bool = False) -> dict[str, int]:
+    """How many of the points `passive_credit_points` returns needed each rate source."""
+    counts: dict[str, int] = {}
+    for account in report.get("accounts", {}).values():
+        for s in account["stretches"]:
+            if s["status"] != ACCEPTED or not s.get("tokens") or not s.get("delta_pct"):
+                continue
+            if s.get("reset_verified") is not True and not allow_legacy_unverified:
+                continue
+            if s.get("unpriced_tokens", 0) > 0:
+                continue
+            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()):
+                continue
+            value, source = stretch_credits(s["tokens"], credits, model_rates)
+            if value is not None:
+                counts[source] = counts.get(source, 0) + 1
+    return counts
 
 
 def calibrate(rpt: dict, probe_rows: list[dict], prices: dict, since: datetime, until: datetime) -> dict:
