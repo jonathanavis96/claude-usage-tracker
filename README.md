@@ -95,9 +95,11 @@ windows per plan, and change history.
 
 The headline change, the fall in five-hour windows per week (`last_change.percent`, scope
 `weekly`), is the five-hour meter's movement divided by the seven-day meter's movement over
-the same windows, before and after the change (`tracker/credits.py`
-`windows_per_week_ratio_note`). No token count and no per-model rate enters it, so a change
-to the per-model rates cannot move it. The tokens-per-week figure published beside it
+the same windows, before and after the change. The event's `windows_per_week_ratio`
+(`tracker/credits.py` `windows_per_week_ratio_note`) measures it on each account against
+itself, only for accounts with readings on both sides, and combines them with an interval.
+No token count and no per-model rate enters it, so a change to the per-model rates cannot
+move it. The tokens-per-week figure published beside it
 (`last_change.tokens_per_week_change`) is different: it compounds that ratio with the
 five-hour window's change in credits, which prices tokens per model.
 

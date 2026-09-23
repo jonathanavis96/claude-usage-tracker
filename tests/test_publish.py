@@ -1,4 +1,5 @@
 import json
+import math
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -1816,11 +1817,70 @@ class PlanSeamTests(unittest.TestCase):
                                      (PLAN_CHANGE + timedelta(days=14)).isoformat()})
 
 
+class SameAccountChangeTests(unittest.TestCase):
+    """The published before/after change is measured on the same accounts either side.
+
+    a1 and a2 both step from 6.0 to 4.5 windows per week, at their own resets. a3's
+    meter log starts after the cut and reads 5.5: its windows join only the after side
+    of the pooled regimes, which lifts that pooled level through account mix alone.
+    """
+
+    A1 = flat(range(8, 14), 60.0) + flat(range(14, 20), 45.0)
+    A2 = flat(range(8, 14), 60.0, hour=14) + flat(range(16, 20), 45.0, hour=14)
+    A3 = flat(range(15, 20), 55.0, hour=18)
+    NOW = datetime(2026, 9, 20, 6, tzinfo=timezone.utc)
+
+    def _note(self, **by_label):
+        from tracker.publish import ACCOUNT_LABELS
+        names = {label: name for name, label in ACCOUNT_LABELS}
+        passive = dict(PASSIVE, weekly_windows={"current": None, "history": [], "by_window": self.A1})
+        j = build_public_json([], passive, EFFORT, PRICES, self.NOW,
+                              gs_passive=gs_weekly(**{names[k]: v for k, v in by_label.items()}))
+        return j["last_change"]["windows_per_week_ratio"]
+
+    def test_an_account_present_only_after_the_cut_does_not_move_the_change(self):
+        paired = self._note(a2=self.A2)
+        joined = self._note(a2=self.A2, a3=self.A3)
+        for key in ("accounts", "per_account", "ratio_after_over_before", "ratio_interval",
+                    "ratio_fell_pct", "ratio_fell_interval_pct", "consistent_with"):
+            with self.subTest(key=key):
+                self.assertEqual(joined[key], paired[key])
+        self.assertEqual(joined["accounts"], ["a1", "a2"])
+        self.assertEqual(joined["ratio_fell_pct"], 25.0)
+        self.assertEqual(joined["excluded"], {"a3": "readings_only_after_the_change"})
+        # The pooled figure the change used to be is still moved by a3 joining, which is
+        # why it is kept only as the record.
+        self.assertIn("a3", joined["pooled_all_accounts"]["after"]["accounts"])
+        self.assertLess(joined["pooled_all_accounts"]["ratio_fell_pct"],
+                        paired["pooled_all_accounts"]["ratio_fell_pct"])
+
+    def test_the_interval_brackets_the_combined_change_from_both_sides_rounding(self):
+        note = self._note(a2=self.A2)
+        lo, hi = note["ratio_interval"]
+        self.assertLess(lo, note["ratio_after_over_before"])
+        self.assertGreater(hi, note["ratio_after_over_before"])
+        for label, a in note["per_account"].items():
+            with self.subTest(account=label):
+                b_lo, b_hi = a["before"]["rounding_interval"]
+                a_lo, a_hi = a["after"]["rounding_interval"]
+                self.assertEqual(a["ratio_interval"], [round(a_lo / b_hi, 4), round(a_hi / b_lo, 4)])
+        self.assertAlmostEqual(sum(a["weight"] for a in note["per_account"].values()), 1.0, places=3)
+
+
+def ratio_note(**accounts):
+    """A windows_per_week_ratio note carrying only what _tokens_per_week_change reads:
+    each paired account's own ratio (after over before), its interval and its weight."""
+    return {"per_account": {label: {"ratio_after_over_before": ratio, "ratio_interval": list(interval),
+                                    "weight": weight}
+                            for label, (ratio, interval, weight) in accounts.items()}}
+
+
 class TokensPerWeekChangeTests(unittest.TestCase):
     """What a week's tokens did across the cut: windows per week compounded with the
-    five-hour window, because the window grew while the week held fewer of them."""
+    five-hour window, each account against itself, then combined."""
 
-    RATIO_NOTE: ClassVar[dict] = {"ratio_fell_pct": 21.8}
+    RATIO_NOTE: ClassVar[dict] = ratio_note(a1=(0.75, (0.66, 0.85), 0.6),
+                                            a2=(0.782, (0.70, 0.87), 0.4))
     ACROSS: ClassVar[dict] = {"per_account": {
         "a1": {"change_pct": 17.2, "n_with_capture": 0, "n_before": 166, "n_after": 32},
         "a2": {"change_pct": 8.6, "n_with_capture": 56, "n_before": 40, "n_after": 15},
@@ -1834,21 +1894,54 @@ class TokensPerWeekChangeTests(unittest.TestCase):
                                        self.ACROSS if across is self.UNSET else across)
 
     def test_the_two_measured_changes_compound(self):
-        self.assertEqual(self.change(), {
-            "percent": 15, "direction": "decreased", "signed_pct": -15.1,
-            "windows_per_week_pct": -21.8, "five_hour_window_pct": 8.6,
-            "five_hour_accounts": ["a2"], "method": self.change()["method"]})
-        self.assertIn("windows_per_week_pct", self.change()["method"])
+        # a1 has a windows-per-week change but no usable five-hour one, so only a2,
+        # which has both, carries the compound.
+        out = self.change()
+        self.assertEqual({k: out[k] for k in ("percent", "direction", "signed_pct", "windows_per_week_pct",
+                                              "five_hour_window_pct", "five_hour_accounts", "accounts",
+                                              "signed_interval_pct")},
+                         {"percent": 15, "direction": "decreased", "signed_pct": -15.1,
+                          "windows_per_week_pct": -21.8, "five_hour_window_pct": 8.6,
+                          "five_hour_accounts": ["a2"], "accounts": ["a2"],
+                          "signed_interval_pct": [-24.0, -5.5]})
+        self.assertEqual(out["per_account"]["a2"]["weight"], 1.0)
+        self.assertIn("windows_per_week_pct", out["method"])
 
     def test_the_arithmetic_is_the_published_numbers_own(self):
-        out = self.change()
-        expected = ((1 + out["windows_per_week_pct"] / 100)
-                    * (1 + out["five_hour_window_pct"] / 100) - 1) * 100
-        self.assertEqual(out["signed_pct"], round(expected, 1))
-        self.assertEqual(out["percent"], round(abs(out["signed_pct"])))
+        both = {"per_account": {"a1": {"change_pct": -8.0, "n_with_capture": 9, "n_before": 30, "n_after": 20},
+                                "a2": {"change_pct": 0.0, "n_with_capture": 9, "n_before": 30, "n_after": 20}}}
+        for across in (self.ACROSS, both):
+            with self.subTest(accounts=sorted(across["per_account"])):
+                out = self.change(across=across)
+                expected = ((1 + out["windows_per_week_pct"] / 100)
+                            * (1 + out["five_hour_window_pct"] / 100) - 1) * 100
+                self.assertEqual(out["signed_pct"], round(expected, 1))
+                self.assertEqual(out["percent"], round(abs(out["signed_pct"])))
+
+    def test_two_accounts_combine_by_weight_in_log_terms(self):
+        both = {"per_account": {"a1": {"change_pct": -8.0, "n_with_capture": 9, "n_before": 30, "n_after": 20},
+                                "a2": {"change_pct": 0.0, "n_with_capture": 9, "n_before": 30, "n_after": 20}}}
+        out = self.change(across=both)
+        log = 0.6 * math.log(0.75 * 0.92) + 0.4 * math.log(0.782)
+        self.assertAlmostEqual(out["signed_pct"], (math.exp(log) - 1) * 100, delta=0.1)
+        lo = 0.6 * math.log(0.66 * 0.92) + 0.4 * math.log(0.70)
+        hi = 0.6 * math.log(0.85 * 0.92) + 0.4 * math.log(0.87)
+        self.assertEqual(out["signed_interval_pct"],
+                         [round((math.exp(lo) - 1) * 100, 1), round((math.exp(hi) - 1) * 100, 1)])
+        self.assertEqual(out["per_account"]["a1"]["signed_pct"], round((0.75 * 0.92 - 1) * 100, 1))
+        self.assertEqual(out["accounts"], ["a1", "a2"])
+
+    def test_an_account_with_a_five_hour_change_but_no_windows_change_of_its_own_is_left_out(self):
+        # a3 reads a five-hour change, but its meter log starts after the cut, so it has
+        # no windows-per-week change of its own and cannot enter the compound.
+        across = {"per_account": dict(self.ACROSS["per_account"],
+                                      a3={"change_pct": 30.0, "n_with_capture": 19,
+                                          "n_before": 20, "n_after": 18})}
+        self.assertEqual(self.change(across=across)["signed_pct"], self.change()["signed_pct"])
+        self.assertEqual(self.change(across=across)["accounts"], ["a2"])
 
     def test_a_rise_reads_as_a_rise(self):
-        out = self.change(note={"ratio_fell_pct": -10.0},
+        out = self.change(note=ratio_note(a2=(1.10, (1.0, 1.2), 1.0)),
                           across={"per_account": {"a2": {"change_pct": 5.0, "n_with_capture": 4,
                                                          "n_before": 10, "n_after": 10}}})
         self.assertEqual((out["direction"], out["signed_pct"], out["percent"]),
@@ -1874,9 +1967,11 @@ class TokensPerWeekChangeTests(unittest.TestCase):
             "regimes": [{"start": "2026-09-01T00:00:00+00:00", "end": "2026-09-05T00:00:00+00:00"},
                         {"start": "2026-09-06T00:00:00+00:00", "end": "2026-09-10T00:00:00+00:00"}],
             "by_window": [{"window_ending": "2026-09-02T00:00:00+00:00", "five_hour_pct": 20.0,
-                           "seven_day_pct": 10.0},
+                           "seven_day_pct": 10.0, "account": "a2"},
                           {"window_ending": "2026-09-07T00:00:00+00:00", "five_hour_pct": 10.0,
-                           "seven_day_pct": 10.0}]}}
+                           "seven_day_pct": 10.0, "account": "a2"}]}}
+        weekly["max20"]["by_account"] = {"a2": {"regimes": weekly["max20"]["regimes"],
+                                                "step": {"onset": "2026-09-06"}}}
         event = ChangeEvent(date(2026, 9, 6), "decreased", 50)
         published = _build_events([], [event], self.ACROSS, weekly)
         last = _latest_change_with_scope([], [event], self.ACROSS, weekly)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
@@ -1826,36 +1827,74 @@ def _tokens_per_week_change(ratio_note: dict | None, across_cut: dict | None) ->
     """How much the tokens a week holds moved, from the two measured changes at the cut.
 
     The weekly series measures windows per week -- five-hour meter movement over
-    seven-day meter movement -- and that fell 21.8% across 14 September. It is not the
-    change in what a week buys, because the five-hour window itself grew at the same
-    date: the accounts' own credits per 1% read +8.6% across it
-    (`credit_model.five_hour_window_change`, the accounts whose capture column can carry
-    the reading). A week holds fewer windows, each bigger, so tokens per week fell by
-    about 15% where windows per week fell by 22%, and the page states the tokens figure
-    in the headline while the windows-per-week chart keeps its own.
+    seven-day meter movement. It is not the change in what a week buys, because the
+    five-hour window can move at the same date: the accounts' own credits per 1% either
+    side of 14 September (`credit_model.five_hour_window_changes`, the accounts whose
+    capture column can carry the reading). A week holding fewer windows, each of a
+    different size, holds tokens in proportion to both, so the page states the tokens
+    figure in the headline while the windows-per-week chart keeps its own.
 
-    Both inputs are the published, rounded ones, so a reader can redo the arithmetic
-    from the page. None when no account qualifies to state a five-hour change, or when
-    there are not two regimes to take a windows-per-week change from: with either
-    missing the compound is not measured, and no number is published in its place.
+    Both changes are taken per account, each account against itself: only an account
+    with its own windows-per-week change (`windows_per_week_ratio.per_account`, readings
+    on both sides) and its own five-hour change counts. Its tokens per week move by
+    its own windows-per-week ratio times its own five-hour ratio, and the accounts are
+    combined with the windows-per-week weights (`credit_model.combine_log_ratios`),
+    renormalised over the accounts that have both. `windows_per_week_pct` and
+    `five_hour_window_pct` are the same weighted means taken separately, so compounding
+    those two published figures reproduces `signed_pct`. The interval carries the
+    windows-per-week rounding interval only: the five-hour medians carry none.
+
+    None when no account has both changes: the compound is then not measured, and no
+    number is published in its place.
     """
-    five_hour = credit_model.five_hour_window_change(across_cut)
-    if ratio_note is None or five_hour is None:
+    five_hour = credit_model.five_hour_window_changes(across_cut)
+    per_wpw = (ratio_note or {}).get("per_account") or {}
+    accounts = sorted(label for label in per_wpw if label in five_hour)
+    if not accounts:
         return None
-    windows_pct = round(-ratio_note["ratio_fell_pct"], 1)
-    five_hour_pct = five_hour["pct"]
+    raw = {label: per_wpw[label].get("weight") or 0.0 for label in accounts}
+    if not sum(raw.values()):
+        raw = dict.fromkeys(accounts, 1.0)
+    weights = {label: w / sum(raw.values()) for label, w in raw.items()}
+
+    def mean(f) -> float:
+        return sum(weights[label] * f(label) for label in accounts)
+
+    log_windows = mean(lambda k: math.log(per_wpw[k]["ratio_after_over_before"]))
+    log_five = mean(lambda k: math.log(1 + five_hour[k] / 100))
+    log_lo = mean(lambda k: math.log(per_wpw[k]["ratio_interval"][0])) + log_five
+    log_hi = mean(lambda k: math.log(per_wpw[k]["ratio_interval"][1])) + log_five
+    windows_pct = round((math.exp(log_windows) - 1) * 100, 1)
+    five_hour_pct = round((math.exp(log_five) - 1) * 100, 1)
     signed = round(((1 + windows_pct / 100) * (1 + five_hour_pct / 100) - 1) * 100, 1)
+    per_account = {}
+    for label in accounts:
+        rho, (lo, hi) = per_wpw[label]["ratio_after_over_before"], per_wpw[label]["ratio_interval"]
+        f = 1 + five_hour[label] / 100
+        per_account[label] = {
+            "windows_per_week_pct": round((rho - 1) * 100, 1),
+            "five_hour_window_pct": five_hour[label] + 0.0,  # -0.0 publishes as 0.0
+            "signed_pct": round((rho * f - 1) * 100, 1),
+            "signed_interval_pct": [round((lo * f - 1) * 100, 1), round((hi * f - 1) * 100, 1)],
+            "weight": round(weights[label], 4)}
     return {
         "percent": round(abs(signed)),
         "direction": "decreased" if signed < 0 else "increased",
         "signed_pct": signed,
+        "signed_interval_pct": [round((math.exp(log_lo) - 1) * 100, 1),
+                                round((math.exp(log_hi) - 1) * 100, 1)],
         "windows_per_week_pct": windows_pct,
         "five_hour_window_pct": five_hour_pct,
-        "five_hour_accounts": five_hour["accounts"],
-        "method": ("the event's own before-to-after change in windows per week compounded with "
-                   "the median measured change in the five-hour window across the same cut, "
-                   "(1 + windows_per_week_pct / 100) x (1 + five_hour_window_pct / 100) - 1: a "
-                   "week holds fewer windows, each of them bigger."),
+        "five_hour_accounts": accounts,
+        "accounts": accounts,
+        "per_account": per_account,
+        "method": ("each account against itself: its own before-to-after ratio of windows per "
+                   "week times its own measured five-hour window ratio across the same cut (a week "
+                   "holds fewer windows, each of a different size), only for accounts with both; "
+                   "combined as a weighted mean of the accounts' log changes, weighted by their "
+                   "windows-per-week rounding intervals. (1 + windows_per_week_pct / 100) x "
+                   "(1 + five_hour_window_pct / 100) - 1 reproduces signed_pct. The interval is "
+                   "the windows-per-week rounding interval; the five-hour medians carry none."),
     }
 
 
