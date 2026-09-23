@@ -221,6 +221,35 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(r["spread"]["stretch"]["n"], 8)
         self.assertTrue(r["weekly_by_window"])
 
+    def test_fast_mode_requests_are_left_out_of_their_stretch_and_recorded(self):
+        def opus_session(start_min, n, rate, prefix):
+            lines, t = [], T0 + timedelta(minutes=start_min)
+            for i in range(n):
+                end = t + timedelta(seconds=600 / rate)
+                lines.append(json.dumps({"type": "user", "timestamp": t.isoformat().replace("+00:00", "Z")}))
+                lines.append(json.dumps({"type": "assistant", "timestamp": end.isoformat().replace("+00:00", "Z"),
+                                         "message": {"id": f"{prefix}{i}", "model": "claude-opus-5",
+                                                     "usage": {"input_tokens": 3, "output_tokens": 600,
+                                                               "cache_read_input_tokens": 0,
+                                                               "cache_creation_input_tokens": 0}}}))
+                t = end + timedelta(seconds=2)
+            return "\n".join(lines) + "\n"
+
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            projects = home / ".claude-dave" / "projects" / "-proj-a"
+            (projects / "fast.jsonl").write_text(opus_session(1, 20, 170, "f"))
+            (projects / "std.jsonl").write_text(opus_session(101, 40, 70, "s"))
+            r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1))["accounts"]["dave"]
+        first, fifth = r["stretches"][0], r["stretches"][4]
+        self.assertEqual(first["fast_mode_tokens"], {"claude-opus-5": {"input": 60, "output": 12_000,
+                                                                       "cache_read": 0, "cache_write": 0}})
+        self.assertEqual(first["fast_mode_turns"], 20)
+        self.assertEqual(list(first["tokens"]), ["claude-sonnet-5"])
+        self.assertAlmostEqual(first["usd_per_pct"], 0.5)
+        self.assertEqual((fifth["fast_mode_tokens"], fifth["fast_mode_turns"]), ({}, 0))
+        self.assertEqual(fifth["tokens"]["claude-opus-5"]["output"], 40 * 600)
+
     def test_with_the_gate_off_a_stretch_the_transcripts_leave_empty_is_still_not_published(self):
         # CAPTURE_GATE is False (2026-09-16): the check still judges every stretch and
         # its verdict is kept as capture_status. A stretch outside the 15% band is

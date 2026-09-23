@@ -47,6 +47,7 @@ how masterrig's rows from before its transcripts were deleted were seeded.
 """
 from __future__ import annotations
 
+import bisect
 import gzip
 import json
 import math
@@ -204,20 +205,40 @@ def kept(r: Request) -> bool:
             and r.speed in (None, "standard"))
 
 
-def fast_mode(reqs: Iterable[Request]) -> set[str]:
-    """Ids of the kept Opus requests that ran in fast mode by their timing (module docstring)."""
-    reqs = [r for r in reqs if kept(r)]
-    ref = {m: median(v) for m, v in _group(reqs, lambda r: r.model, lambda r: r.output_rate).items()}
+def fast_mode(reqs: Iterable[Request], every: bool = False) -> set[str]:
+    """Ids of the kept Opus requests that ran in fast mode by their timing (module docstring).
+
+    With `every`, also the Opus requests too short or too long to be kept whose session's
+    running median, over the FAST_WINDOW kept requests nearest them in time, is fast: the
+    same rule, read where the request sits in its session rather than from its own speed.
+    Speed figures need only the kept ones; a stretch's tokens need all of them, since a fast
+    session's short tool-call requests are billed to usage credits like its long ones. A
+    request in a session with no kept request of its model is never counted as fast.
+    """
+    reqs = list(reqs)
+    timed = [r for r in reqs if kept(r)]
+    ref = {m: median(v) for m, v in _group(timed, lambda r: r.model, lambda r: r.output_rate).items()}
     fast = set()
-    sessions = _group([r for r in reqs if r.model.startswith(FAST_MODEL_PREFIX)],
+    sessions = _group([r for r in timed if r.model.startswith(FAST_MODEL_PREFIX)],
                       lambda r: (r.session, r.model), lambda r: r)
     half = FAST_WINDOW // 2
+
+    def is_fast(rs: list[Request], i: int, model: str) -> bool:
+        lo = max(0, min(i - half, len(rs) - FAST_WINDOW))
+        return median(x.output_rate for x in rs[lo:lo + FAST_WINDOW]) >= FAST_FACTOR * ref[model]
+
     for (_, model), rs in sessions.items():
         rs.sort(key=lambda r: r.end)
         for i, r in enumerate(rs):
-            lo = max(0, min(i - half, len(rs) - FAST_WINDOW))
-            window = rs[lo:lo + FAST_WINDOW]
-            if median(x.output_rate for x in window) >= FAST_FACTOR * ref[model]:
+            if is_fast(rs, i, model):
+                fast.add(r.id)
+    if every:
+        ends = {k: [r.end for r in rs] for k, rs in sessions.items()}
+        for r in reqs:
+            key = (r.session, r.model)
+            if r.id in fast or key not in sessions or kept(r):
+                continue
+            if is_fast(sessions[key], bisect.bisect_left(ends[key], r.end), r.model):
                 fast.add(r.id)
     return fast
 
