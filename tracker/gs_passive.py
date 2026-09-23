@@ -79,7 +79,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from itertools import pairwise
@@ -89,7 +89,7 @@ from statistics import mean, median, stdev
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
-from .samples import Sample, merge_samples, parse_log
+from .samples import Sample, infer_resets, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 
 JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
@@ -195,7 +195,13 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     one minute would otherwise pair a reading with itself and add a spurious
     zero-movement pair. `legacy_meter_log` is different -- a log the account was
     read from *before* `meter_log` existed -- so it is only used up to
-    `meter_log`'s first reading.
+    `meter_log`'s first reading. It is also the one reset-less source here
+    (`gs-ceiling` never records a reset time -- tracker/samples.py), so its
+    readings alone go through `infer_resets` (audit finding 10) before joining
+    the rest; a reading that already carries a recorded reset is never touched.
+    A sample whose reset came from that inference, rather than the log, is
+    marked by suffixing its `source` with `-inferred` (`_reset_source` reads
+    this to record each stretch's `reset_source`).
     """
     samples = _read(account.meter_log, account.meter_format, account.meter_since)
     if account.extra_meter_logs:
@@ -203,8 +209,12 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
                                            for m in account.extra_meter_logs))
     if account.legacy_meter_log is not None and account.legacy_meter_log.exists():
         first = min((s.ts for s in samples), default=None)
-        legacy = [s for s in _read(account.legacy_meter_log, "gs-ceiling", account.meter_since)
-                  if first is None or s.ts < first]
+        legacy_raw = [s for s in _read(account.legacy_meter_log, "gs-ceiling", account.meter_since)
+                      if first is None or s.ts < first]
+        # `gs-ceiling` never records a reset itself, so every filled `resets_at` here came
+        # from inference; tag the source so `_reset_source` can tell a stretch built on it.
+        legacy = [replace(s, source=f"{s.source}-inferred") if s.resets_at is not None else s
+                  for s in infer_resets(legacy_raw)]
         samples = sorted(legacy + samples, key=lambda s: s.ts)
     return [s for s in samples if until is None or s.ts <= until]
 
@@ -309,7 +319,36 @@ def _r(x: float | None, n: int = 4) -> float | None:
     return None if x is None or x == float("inf") else round(x, n)
 
 
-def _stretch_record(v: Verdict) -> dict:
+def _reset_source(s: Stretch, samples: list[Sample]) -> str:
+    """How the stretch's five-hour resets are known: `"logged"`, `"inferred"`, or `"none"`.
+
+    Mirrors the rule `build_stretches` already applies to `reset_verified` (any
+    sample in range with no `resets_at` makes the whole stretch unverified): a
+    stretch with such a sample is `"none"`. Otherwise every boundary carries a
+    reset, and it is `"inferred"` if any of them came from `infer_resets` (its
+    `source` is suffixed `-inferred` by `load_samples`), or `"logged"` if every
+    one was read straight from a meter log.
+    """
+    in_range = [x for x in samples if s.start <= x.ts <= s.end]
+    if any(x.resets_at is None for x in in_range):
+        return "none"
+    if any(x.source.endswith("-inferred") for x in in_range):
+        return "inferred"
+    return "logged"
+
+
+#: Whether an inferred reset (tracker/samples.py `infer_resets`) counts as verified evidence.
+#: False: validated against dave, jwork and masterrig's own reset-bearing logs with their
+#: recorded resets stripped and compared back (2026-09-23) -- dave's inferred resets matched
+#: exactly (577/577, zero spurious), but jwork still missed one real window by ~7 minutes
+#: (56/1092 samples outside a one-sample-gap tolerance) and masterrig, whose 30-minute cadence
+#: widens the same blind spot, missed more (402/2738 wrong, 180 spurious). The acceptance bar
+#: is zero wrong and zero spurious; this misses it, so an inferred reset is recorded (`reset_
+#: source: "inferred"`) but not certified (`reset_verified` stays false) until that holds.
+INFERRED_RESET_VERIFIED = False
+
+
+def _stretch_record(v: Verdict, reset_source: str = "logged") -> dict:
     s = v.stretch
     lo, hi = s.bounds
     # Unpriced work is kept by raw model id beside the priced models, so the record
@@ -327,10 +366,14 @@ def _stretch_record(v: Verdict) -> dict:
         status = NO_TOKENS
     else:
         status = v.status
+    # join.py flags `reset_verified` from `resets_at` alone, with no notion of where that
+    # value came from; an inferred one only counts if INFERRED_RESET_VERIFIED says the
+    # inference has earned it (see that constant).
+    reset_verified = s.reset_verified and (reset_source != "inferred" or INFERRED_RESET_VERIFIED)
     return {"start": s.start.isoformat(), "end": s.end.isoformat(), "delta_pct": s.delta_pct, "windows": s.windows,
             "usd": _r(s.usd), "usd_per_pct": _r(s.usd_per_pct), "bounds": [_r(lo), _r(hi)], "tokens": tokens,
             "unpriced_tokens": s.unpriced_tokens, "unpriced": s.unpriced, "turns": s.turns,
-            "reset_verified": s.reset_verified, "status": status, "capture_status": v.status,
+            "reset_verified": reset_verified, "reset_source": reset_source, "status": status, "capture_status": v.status,
             "reference": _r(v.reference), "capture": _r(v.capture)}
 
 
@@ -431,9 +474,10 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
     """Join, judge and summarise every account; the JSON tracker.gs_passive writes."""
     now = now or datetime.now(timezone.utc)
     withhold = withhold or {}
-    stretches, meta, weekly = {}, {}, {}
+    stretches, meta, weekly, samples_by_account = {}, {}, {}, {}
     for name, account in accounts.items():
         samples = load_samples(account, until)
+        samples_by_account[name] = samples
         since = samples[0].ts if samples else None
         files, own_sessions = transcript_files(account, since, withhold.get(name, ())) if samples else ([], None)
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
@@ -462,7 +506,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         accepted = [v for v in vs if publishable(v)]
         out_accounts[name] = {
             "account": name, **meta[name],
-            "stretches": [_stretch_record(v) for v in vs],
+            "stretches": [_stretch_record(v, _reset_source(v.stretch, samples_by_account[name])) for v in vs],
             "runs": [_run_record(r) for r in rs],
             "daily": daily,
             "split": _split([v.stretch for v in accepted]),

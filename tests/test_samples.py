@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 from tracker.samples import (
     MixedAccountLog,
+    Sample,
+    infer_resets,
     merge_samples,
     parse_ceiling_log,
     parse_gs_ceiling_log,
@@ -125,3 +127,76 @@ class ParseLogTests(unittest.TestCase):
             parse_log("csv", [])
         self.assertIn("csv", str(cm.exception))
         self.assertIn("moonlighter", str(cm.exception))
+
+
+def rl(ts, five, resets_at=None):
+    """A bare reset-less sample: only what `infer_resets` looks at."""
+    return Sample(datetime.fromisoformat(ts), five, None, resets_at, "gs-ceiling")
+
+
+class InferResetsTests(unittest.TestCase):
+    def test_a_used_window_gets_the_projected_reset_five_hours_after_its_start(self):
+        samples = [rl("2026-09-16T21:25:00+00:00", 34.0),
+                   rl("2026-09-16T21:31:00+00:00", 0.0),     # drop: reset in the gap
+                   rl("2026-09-16T22:31:00+00:00", 1.0),     # window shows real use
+                   rl("2026-09-16T23:00:00+00:00", 2.0)]
+        out = infer_resets(samples)
+        self.assertIsNone(out[0].resets_at)  # nothing anchors the window before the first drop
+        want = "2026-09-17T02:31:00+00:00"
+        self.assertEqual(out[1].resets_at, want)
+        self.assertEqual(out[2].resets_at, want)
+        self.assertEqual(out[3].resets_at, want)
+
+    def test_a_window_that_never_shows_use_is_left_unresolved(self):
+        samples = [rl("2026-09-16T21:25:00+00:00", 34.0),
+                   rl("2026-09-16T21:31:00+00:00", 0.0),
+                   rl("2026-09-16T22:31:00+00:00", 0.0),
+                   rl("2026-09-17T02:00:00+00:00", 0.0)]  # still zero right up to the horizon
+        out = infer_resets(samples)
+        self.assertTrue(all(s.resets_at is None for s in out))
+
+    def test_a_drop_across_a_gap_over_five_hours_is_left_unresolved(self):
+        samples = [rl("2026-09-16T10:00:00+00:00", 40.0),
+                   rl("2026-09-16T16:00:01+00:00", 1.0),  # gap just over five hours
+                   rl("2026-09-16T17:00:00+00:00", 5.0)]
+        out = infer_resets(samples)
+        self.assertTrue(all(s.resets_at is None for s in out))
+
+    def test_a_recorded_reset_is_never_overwritten(self):
+        samples = [rl("2026-09-16T21:25:00+00:00", 34.0),
+                   rl("2026-09-16T21:31:00+00:00", 0.0, resets_at="2026-09-17T02:29:59+00:00"),
+                   rl("2026-09-16T22:31:00+00:00", 1.0)]
+        out = infer_resets(samples)
+        self.assertEqual(out[1].resets_at, "2026-09-17T02:29:59+00:00")  # untouched
+
+    def test_a_second_drop_anchors_the_next_window_independently(self):
+        samples = [rl("2026-09-16T21:25:00+00:00", 34.0),
+                   rl("2026-09-16T21:31:00+00:00", 0.0),
+                   rl("2026-09-16T22:31:00+00:00", 1.0),
+                   rl("2026-09-17T02:29:00+00:00", 15.0),
+                   rl("2026-09-17T02:33:00+00:00", 0.0),   # second reset
+                   rl("2026-09-17T02:40:00+00:00", 1.0)]
+        out = infer_resets(samples)
+        self.assertEqual(out[2].resets_at, "2026-09-17T02:31:00+00:00")
+        self.assertEqual(out[4].resets_at, "2026-09-17T07:33:00+00:00")
+        self.assertEqual(out[5].resets_at, "2026-09-17T07:33:00+00:00")
+
+    def test_a_plateau_pinned_at_the_same_value_widens_the_gap_it_is_measured_from(self):
+        # Real data: a meter pinned at 100% for a run before the visible drop can already
+        # be on the far side of the true reset; the five-hour bound has to cover that whole
+        # flat run, not just the last hop into the drop.
+        samples = [rl("2026-09-16T10:00:00+00:00", 100.0),
+                   rl("2026-09-16T12:00:00+00:00", 100.0),
+                   rl("2026-09-16T14:00:00+00:00", 100.0),
+                   rl("2026-09-16T18:00:00+00:00", 100.0),   # plateau now spans > 5h from 10:00
+                   rl("2026-09-16T18:30:00+00:00", 5.0),     # drop
+                   rl("2026-09-16T19:00:00+00:00", 6.0)]
+        out = infer_resets(samples)
+        self.assertTrue(all(s.resets_at is None for s in out))
+
+    def test_returns_a_new_list_and_does_not_mutate_the_input(self):
+        samples = [rl("2026-09-16T21:25:00+00:00", 34.0),
+                   rl("2026-09-16T21:31:00+00:00", 0.0),
+                   rl("2026-09-16T22:31:00+00:00", 1.0)]
+        infer_resets(samples)
+        self.assertTrue(all(s.resets_at is None for s in samples))
