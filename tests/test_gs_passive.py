@@ -402,6 +402,11 @@ class ReportTests(unittest.TestCase):
                 self.assertFalse(st["reset_verified"])
             if st["reset_source"] == "none":
                 self.assertFalse(st["reset_verified"])
+        # Nothing rolled up from the stretches may certify what the stretches themselves do
+        # not: no day and no sample count reads as reset-verified on inferred resets alone.
+        self.assertTrue(r["daily"])
+        self.assertFalse(any(day["reset_verified"] for day in r["daily"]))
+        self.assertEqual(r["meter"]["reset_verified_samples"], 0)
 
     def test_a_transcript_directory_shared_with_other_config_dirs_is_named(self):
         with tempfile.TemporaryDirectory() as d:

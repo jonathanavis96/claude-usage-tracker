@@ -525,18 +525,23 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
     for name, account in accounts.items():
         samples = load_samples(account, until)
         samples_by_account[name] = samples
+        # Until inferred resets are certified, nothing is computed from them: the join,
+        # the weekly points and every `reset_verified` rollup see the reset-less samples
+        # they saw before, and only `_reset_source` reads the inferred ones.
+        joined = samples if INFERRED_RESET_VERIFIED else [
+            replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in samples]
         since = samples[0].ts if samples else None
         files, own_sessions = transcript_files(account, since, withhold.get(name, ())) if samples else ([], None)
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
-        stretches[name] = build_stretches(samples, turns, prices)
-        weekly[name] = window_points(samples)
+        stretches[name] = build_stretches(joined, turns, prices)
+        weekly[name] = window_points(joined)
         root = account.config_dir / "projects"
         meta[name] = {
             "meter": {"log": str(account.meter_log), "format": account.meter_format,
                       "legacy_log": str(account.legacy_meter_log) if account.legacy_meter_log else None,
                       "extra_logs": [{"log": str(m.path), "format": m.format} for m in account.extra_meter_logs],
                       "note": account.meter_note,
-                      "reset_verified_samples": sum(1 for s in samples if s.resets_at is not None),
+                      "reset_verified_samples": sum(1 for s in joined if s.resets_at is not None),
                       "since": account.meter_since.isoformat() if account.meter_since else None,
                       "samples": len(samples), "first": since.isoformat() if since else None,
                       "last": samples[-1].ts.isoformat() if samples else None},
