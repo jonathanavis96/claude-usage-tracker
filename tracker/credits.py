@@ -1472,6 +1472,56 @@ def combine_log_ratios(per_account: dict[str, dict]) -> dict:
             "interval": (math.exp(log_lo), math.exp(log_hi))}
 
 
+def paired_levels(note: dict | None, by_window: list[dict]) -> tuple[dict, dict] | None:
+    """The before and after levels over the paired accounts only, each on its own sides.
+
+    The chart draws these as the step across the change instead of the pooled regimes,
+    which hold an account on one side only (a3 and a4 joined after the cut) and put
+    an early-stepping account's post-step windows on the before side (a1 stepped on
+    11 September, the pooled split is 14 September). Each level pools the paired
+    accounts' windows from their own regime on that side (`note.per_account`): total
+    five-hour movement over total seven-day movement, with that pool's rounding
+    interval. The accounts step at their own seven-day resets, so the level's `start`
+    and `end` are drawn at the earliest step -- the event's own date -- and
+    `per_account` names each account's actual span. None when no account pairs.
+    """
+    per_account = (note or {}).get("per_account") or {}
+    if not per_account:
+        return None
+    rows = {"before": [], "after": []}
+    spans = {"before": {}, "after": {}}
+    for label, a in per_account.items():
+        mine = [r for r in by_window if r.get("account") == label]
+        rows["before"] += _regime_rows(mine, a["before"])
+        rows["after"] += _regime_rows(mine, a["after"],
+                                      exclude_at=datetime.fromisoformat(a["before"]["end"]))
+        for side in ("before", "after"):
+            spans[side][label] = {"start": a[side]["start"], "end": a[side]["end"],
+                                  "windows": a[side]["ratio"]}
+
+    def level(side: str, start: str, end: str) -> dict:
+        pool = rows[side]
+        d5 = sum(r["five_hour_pct"] for r in pool)
+        d7 = sum(r["seven_day_pct"] for r in pool)
+        pieces = sum(r.get("pieces", 1) for r in pool)
+        lo, hi = ratio_interval(d5, d7, pieces)
+        return {"start": start, "end": end, "windows": round(d5 / d7, 2) if d7 else None,
+                "seven_day_pct": round(d7, 1), "points": len(pool), "pieces": pieces,
+                "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
+                "quality": "bounded" if hi is not None else "insufficient_precision",
+                "accounts": sorted(per_account), "per_account": spans[side],
+                "source": "passive_paired_deltas_same_accounts", "assumed": False}
+
+    before_starts = [s["start"] for s in spans["before"].values()]
+    before_ends = [s["end"] for s in spans["before"].values()]
+    after_starts = [s["start"] for s in spans["after"].values()]
+    after_ends = [s["end"] for s in spans["after"].values()]
+    return (level("before", min(before_starts, key=datetime.fromisoformat),
+                  min(before_ends, key=datetime.fromisoformat)),
+            level("after", min(after_starts, key=datetime.fromisoformat),
+                  max(after_ends, key=datetime.fromisoformat)))
+
+
 def windows_per_week_ratio_note(weekly: dict) -> dict | None:
     """What the windows-per-week ratio (five-hour movement over seven-day movement)
     identifies across the certified change, measured on the same accounts either side.
@@ -1498,7 +1548,9 @@ def windows_per_week_ratio_note(weekly: dict) -> dict | None:
     either side").
     """
     max20 = weekly["max20"]
-    regimes = max20["regimes"]
+    # The chart's own `regimes` are the paired levels (`paired_levels`) once there are any;
+    # the pooled record keeps the detector's regimes over every account.
+    regimes = max20.get("regimes_pooled_all_accounts") or max20["regimes"]
     if len(regimes) < 2:
         return None
     by_window = max20["by_window"]

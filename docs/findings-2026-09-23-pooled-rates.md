@@ -373,9 +373,42 @@ two regimes:
 The after level is 0.18 (3.8%) higher only because a3 and a4 joined. Over a1 and a2 only, the
 pooled regimes give -25.9%, close to the paired -26.0%. The before level has a smaller problem
 of its own. Its span runs to 09-14, so it also holds 7 of a1's windows from after a1's own
-09-11 step (a1 reads 6.517 in the pooled regime and 6.537 on its own). This PR does not change
-the charts (see its body for the recommendation). The published event `percent` (23) and
-label also still come from the pooled detector.
+09-11 step (a1 reads 6.517 in the pooled regime and 6.537 on its own).
+
+### Follow-up: the chart step, the event percent and the cross-check use the paired accounts
+
+The last two entries of `weekly_windows.max20.regimes`, which the chart draws as its step,
+are now the levels of the accounts with readings on both sides of their own step (a1 and a2).
+Each account contributes the windows of its own before and after regimes, so the before level
+no longer holds a1's windows from after its own 11 September step. a3 and a4 are not on
+either side.
+
+| Level | Old (pooled) | New (a1 + a2, own sides) |
+|---|---|---|
+| Before | 6.48 [6.2214, 6.7656], 144 windows, 08-15 to 09-14 | 6.52 [6.2470, 6.8051], 145 windows, 08-15 to 09-11 |
+| After | 4.99 [4.7166, 5.2852], 91 windows, 09-14 to 09-23 | 4.80 [4.4712, 5.1667], 72 windows, 09-11 to 09-23 |
+
+The step is drawn at a1's 09-11 onset, the event's own date. a2 steps on 09-15, and each level
+names both accounts' actual spans under `per_account`. The old pooled regimes stay published
+as `regimes_pooled_all_accounts`, as a record. `current` is still the pooled 4.99 over every
+account measuring now, a3 and a4 included.
+
+Other figures that change:
+
+- The event's `percent` is now 26 and its label says "fell about 26%", from the combined
+  -25.99%. Its rounding intervals are the paired levels'.
+- `credits.window_credits_from_weekly` divides by 6.52 and 4.80, which gives 19,171,771
+  credits before and 21,701,380 after (was 19,290,116 and 20,875,075).
+- The pre-cut regime behind `reference.shortfall` is the paired before level too: 6.52, ratio
+  0.8602 (was 6.48, 0.8549).
+
+The ratio of the two drawn levels, 4.80 / 6.52, is -26.4%. That differs from the published
+-26.0% because the levels pool windows while the percent weights each account's own change.
+Both round to 26%.
+
+After this, the only published 23s near the change are a1's own change (-23.0%, in
+`per_account` and `by_account.a1.step`) and the old pooled figure kept in
+`pooled_all_accounts` (23.08%).
 
 ### Reproduce
 
@@ -384,6 +417,6 @@ python3 -m tracker.rebuild_offline --root . --now 2026-09-23T17:30:00+00:00 --ou
 python3 -m tools.credits_report --publish-check /tmp/x.json
 ```
 
-The new `windows_per_week_ratio` and `tokens_per_week_change` fields all reproduce. The figures
-that do not reproduce (the `speed` block, `contributed.*` timestamps and three `rebuild.*`
-keys, 5,305 in all) come from the offline rebuild. Main at 669d2f4 shows the same 5,305.
+Every weekly, event and credits figure reproduces. The figures that do not reproduce (the
+`speed` block, `contributed.*` timestamps and three `rebuild.*` keys, 5,305 in all) come from
+the offline rebuild. Main at 669d2f4 shows the same 5,305.

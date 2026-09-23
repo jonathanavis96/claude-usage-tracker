@@ -1830,13 +1830,56 @@ class SameAccountChangeTests(unittest.TestCase):
     A3 = flat(range(15, 20), 55.0, hour=18)
     NOW = datetime(2026, 9, 20, 6, tzinfo=timezone.utc)
 
-    def _note(self, **by_label):
+    def _publish(self, a1=None, **by_label):
         from tracker.publish import ACCOUNT_LABELS
         names = {label: name for name, label in ACCOUNT_LABELS}
-        passive = dict(PASSIVE, weekly_windows={"current": None, "history": [], "by_window": self.A1})
-        j = build_public_json([], passive, EFFORT, PRICES, self.NOW,
-                              gs_passive=gs_weekly(**{names[k]: v for k, v in by_label.items()}))
-        return j["last_change"]["windows_per_week_ratio"]
+        passive = dict(PASSIVE, weekly_windows={"current": None, "history": [],
+                                                "by_window": self.A1 if a1 is None else a1})
+        return build_public_json([], passive, EFFORT, PRICES, self.NOW,
+                                 gs_passive=gs_weekly(**{names[k]: v for k, v in by_label.items()}))
+
+    def _note(self, **by_label):
+        return self._publish(**by_label)["last_change"]["windows_per_week_ratio"]
+
+    def test_the_event_percent_label_and_chart_step_are_the_paired_change(self):
+        paired = self._publish(a2=self.A2)
+        joined = self._publish(a2=self.A2, a3=self.A3)
+        for j in (paired, joined):
+            event = next(e for e in j["events"] if e["scope"] == "weekly")
+            self.assertEqual(event["percent"], 25)
+            self.assertIn("fell about 25%", event["label"])
+            self.assertEqual(j["last_change"]["percent"], 25)
+        # The chart's step is the same with or without a3; the level now is not.
+        for key in ("regimes",):
+            self.assertEqual(joined["weekly_windows"]["max20"][key], paired["weekly_windows"]["max20"][key])
+        before, after = joined["weekly_windows"]["max20"]["regimes"][-2:]
+        self.assertEqual((before["windows"], after["windows"]), (6.0, 4.5))
+        self.assertEqual(after["accounts"], ["a1", "a2"])
+        event = joined["last_change"]
+        self.assertEqual((event["rounding_interval_before"], event["rounding_interval_after"]),
+                         (before["rounding_interval"], after["rounding_interval"]))
+        # `current` stays pooled over every account measuring now, a3 included.
+        self.assertGreater(joined["weekly_windows"]["max20"]["current"], 4.5)
+        pooled = joined["weekly_windows"]["max20"]["regimes_pooled_all_accounts"]
+        self.assertGreater(pooled[-1]["windows"], 4.5)
+        # The weekly-cap cross-check divides by the same paired levels.
+        cross = joined["credits"]["window_credits_from_weekly"]
+        self.assertEqual((cross["before"]["windows_per_week_measured"],
+                          cross["after"]["windows_per_week_measured"]), (6.0, 4.5))
+
+    def test_the_before_level_leaves_out_an_accounts_windows_after_its_own_step(self):
+        # a1 steps 6.0 -> 5.0 on 09-12. a2 carries twice as many windows and holds 6.0
+        # until 09-16, so the pooled split lands on 09-16 and the pooled before regime
+        # takes a1's 5.0 windows from 09-12 on. The drawn before level must not.
+        a1 = flat(range(4, 12), 60.0) + flat(range(12, 18), 50.0)
+        a2 = (flat(range(4, 16), 60.0, hour=8) + flat(range(4, 16), 60.0, hour=14)
+              + flat(range(16, 20), 36.0, hour=8) + flat(range(16, 20), 36.0, hour=14))
+        j = self._publish(a1=a1, a2=a2)
+        max20 = j["weekly_windows"]["max20"]
+        before = max20["regimes"][-2]
+        self.assertEqual(before["windows"], 6.0)
+        self.assertLess(before["per_account"]["a1"]["end"], "2026-09-12")
+        self.assertLess(max20["regimes_pooled_all_accounts"][-2]["windows"], 6.0)
 
     def test_an_account_present_only_after_the_cut_does_not_move_the_change(self):
         paired = self._note(a2=self.A2)

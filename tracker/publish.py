@@ -1124,7 +1124,9 @@ def _window_credits_from_weekly(weekly: dict, weekly_events: list) -> dict:
 
     A cross-check, not the measurement. The announced weekly cap is policy (the
     January baseline times the multiplier in force), and how many five-hour windows a
-    week holds is ours -- the pooled ratio of five-hour to seven-day meter movement.
+    week holds is ours -- the pooled ratio of five-hour to seven-day meter movement, on
+    either side over the accounts with readings on both sides of their own step
+    (`_paired_step`), so an account that joined after the cut does not move it.
     Dividing one by the other gives a window in credits that shares no input with the
     pure-Opus cluster, which is the only reason it is worth publishing beside it.
 
@@ -1157,7 +1159,8 @@ def _window_credits_from_weekly(weekly: dict, weekly_events: list) -> dict:
         "weekly_cap_baseline_source": {"url": CREDITS_TABLE_URL, "as_of": CREDITS_TABLE_AS_OF},
         "method": ("the announced weekly cap -- the January baseline times the multiplier in force "
                    "(x1.5 from May, x1.25 from 14 September) -- divided by this tracker's own "
-                   "measured windows per week for the regime either side of the certified change. "
+                   "measured windows per week for the regime either side of the certified change, "
+                   "each taken over the accounts with readings on both sides of their own step. "
                    "It shares no input with window_credits, which is why it is a cross-check."),
     }
 
@@ -1550,6 +1553,40 @@ def _account_dated(events: list, by_account: dict) -> list:
     return sorted([*events[:-1], dated], key=lambda ev: ev.date)
 
 
+def _paired_step(pooled_regimes: list[dict], by_window: list[dict], by_account: dict,
+                 events: list) -> tuple[list[dict], list]:
+    """(the max20 regimes the chart draws, the weekly events), stated on the paired accounts.
+
+    The pooled regimes put every account's windows either side of one pooled split: an
+    account whose log starts after the cut (a3, a4) lands on the after side only and
+    moves that level through account mix, and an account that stepped before the split
+    (a1, on 11 September) puts post-step windows on the before side. So the last two
+    regimes are replaced by the levels of the accounts with readings on both sides of
+    their own step, each on its own sides (`credit_model.paired_levels`), and the newest
+    event states the paired accounts' combined change (`windows_per_week_ratio_note`)
+    as its percent, with the paired levels' rounding intervals. The pooled regimes stay
+    published as `regimes_pooled_all_accounts`, the record. `current` is not touched: a
+    current level belongs to every account measuring now, a3 and a4 included.
+
+    Unchanged when fewer than two regimes exist or no account pairs.
+    """
+    weekly = {"max20": {"regimes": pooled_regimes, "by_window": by_window, "by_account": by_account}}
+    note = credit_model.windows_per_week_ratio_note(weekly)
+    levels = credit_model.paired_levels(note, by_window)
+    if levels is None or note["ratio_fell_pct"] is None:
+        return pooled_regimes, events
+    before, after = levels
+    regimes = [*pooled_regimes[:-2], before, after]
+    if events:
+        fall = note["ratio_fell_pct"]
+        e = replace(events[-1], percent=round(abs(fall)),
+                    direction="decreased" if fall > 0 else "increased",
+                    before_interval=tuple(before["rounding_interval"]),
+                    after_interval=tuple(after["rounding_interval"]))
+        events = [*events[:-1], e]
+    return regimes, events
+
+
 def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime,
                   gs_passive: dict | None = None) -> tuple[dict, list]:
     """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
@@ -1604,6 +1641,8 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     max5_points = _max5_window_points(points)
     events = _account_dated(detect_weighted_changes(max20_points), by_account)
     estimate = _regime_current(max20_points, now)
+    pooled_regimes = _regimes(max20_points)
+    regimes, events = _paired_step(pooled_regimes, max20_by_window, by_account, events)
 
     if estimate is not None:
         max20_availability = {"status": "measured", "reason": "evidence_stale" if estimate["stale"] else None}
@@ -1635,7 +1674,8 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                   "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max20"],
                   "weekly": _pooled_weeks(max20_points, now), "by_window": max20_by_window,
                   "by_account": by_account,
-                  "regimes": _regimes(max20_points), "assumed": False,
+                  "regimes": regimes, "regimes_pooled_all_accounts": pooled_regimes,
+                  "assumed": False,
                   "availability": max20_availability},
         "max5": {**inferred("max5"), "history": max5_history, "regimes": _regimes(max5_points),
                  "plan_change": {"date": PLAN_CHANGE.isoformat(), "source": "the meter's own step",
