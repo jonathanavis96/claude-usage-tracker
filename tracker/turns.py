@@ -13,9 +13,11 @@ from statistics import median
 #: can be valued; a turn on anything else makes its stretch unpriced and the whole
 #: stretch unpublishable (tracker/capture.py, audit finding 9).
 #:
-#: The five older ids joined the three current ones on 2026-09-23 (issue #63). Between
-#: them they appeared in 166 of masterrig's 250 stretches and 54 of gs's, and every one
-#: of those stretches was thrown away whole for want of a price. All five are on
+#: Five more ids joined the three current ones on 2026-09-23 (issue #63): Opus 5.5, which
+#: is the newest Opus (Claude Code 2.1.280 resolves the `opus` alias to it), and the four
+#: older models Opus 4.8, Opus 4.7, Sonnet 4.6 and Haiku 4.5. Between them they appeared
+#: in 166 of masterrig's 250 stretches and 54 of gs's, and every one of those stretches
+#: was thrown away whole for want of a price. All five are on
 #: docs.anthropic.com/en/docs/about-claude/pricing with their own row, so none of them
 #: needed a guess: Opus 4.7 and 4.8 list at Opus 5's prices exactly, Opus 5.5 at 0.8x
 #: them, Sonnet 4.6 at 1.5x Sonnet 5 and Haiku 4.5 at half Sonnet 5.

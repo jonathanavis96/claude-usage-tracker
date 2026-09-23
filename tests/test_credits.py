@@ -75,6 +75,29 @@ class RateTableTests(unittest.TestCase):
         for model in ("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7"):
             self.assertEqual(C.family(model, CREDITS), "opus")
 
+    def test_opus_5_5_is_its_own_family_by_the_most_specific_match(self):
+        """`opus` is a substring of claude-opus-5-5 too; the longer `opus-5-5` must win."""
+        self.assertEqual(C.family("claude-opus-5-5", CREDITS), "opus-5-5")
+        self.assertEqual(C.family("claude-opus-5-5-20260922", CREDITS), "opus-5-5")
+        self.assertEqual(C.family("claude-opus-5", CREDITS), "opus")
+
+    def test_the_most_specific_match_does_not_depend_on_the_table_order(self):
+        rows = dict(CREDITS["per_family"])
+        reordered = dict(CREDITS, per_family={"opus-5-5": rows.pop("opus-5-5"), **rows})
+        backwards = dict(CREDITS, per_family=dict(reversed(list(reordered["per_family"].items()))))
+        for table in (reordered, backwards):
+            self.assertEqual(C.family("claude-opus-5-5", table), "opus-5-5")
+            for model in ("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7"):
+                self.assertEqual(C.family(model, table), "opus")
+
+    def test_opus_5_5_has_no_reference_rate_and_is_not_the_anchor(self):
+        row = CREDITS["per_family"]["opus-5-5"]
+        self.assertIsNone(C.rates("opus-5-5", CREDITS))
+        self.assertEqual(row["role"], "reference")
+        self.assertFalse(row.get("anchor"))
+        self.assertIn("no reference rate", row["measured"])
+        self.assertTrue(CREDITS["per_family"]["opus"]["anchor"])
+
     def test_rates_are_the_exact_fifteenths_the_table_stores(self):
         self.assertEqual(C.rates("haiku", CREDITS), (2 / 15, 10 / 15))
         self.assertEqual(C.rates("sonnet", CREDITS), (6 / 15, 30 / 15))
@@ -544,7 +567,7 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertEqual(sources["opus"], "reference")
         self.assertTrue(self.credits["per_model"]["opus"]["anchor"])
         self.assertEqual({fam for fam, v in sources.items() if v == "measured"},
-                         {"sonnet", "haiku", "fable"})
+                         {"sonnet", "haiku", "fable", "opus-5-5"})
 
     def test_the_sonnet_row_divides_by_the_measured_rate_not_the_tables(self):
         rate = C.family_rate("sonnet", CREDITS, C.load_model_rates())
@@ -1846,8 +1869,8 @@ class PricedModelsTests(unittest.TestCase):
                 with self.subTest(model=model):
                     self.assertEqual(normalize_model(model), model)
 
-    def test_the_older_models_land_in_the_right_family(self):
-        for model, fam in (("claude-opus-5-5", "opus"), ("claude-opus-4-8", "opus"),
+    def test_the_added_models_land_in_the_right_family(self):
+        for model, fam in (("claude-opus-5-5", "opus-5-5"), ("claude-opus-4-8", "opus"),
                            ("claude-opus-4-7", "opus"), ("claude-sonnet-4-6", "sonnet"),
                            ("claude-haiku-4-5", "haiku")):
             with self.subTest(model=model):

@@ -157,14 +157,20 @@ def _rate(value) -> float | None:
 def family(model: str, credits: dict) -> str | None:
     """The credit family a model id belongs to, matched on `matches` as a substring.
 
-    Every Opus version prices as Opus, which is why the table is keyed by family
-    rather than by model id.
+    The table is keyed by family rather than by model id, so Opus 5, 4.8 and 4.7 all
+    price as Opus. Where more than one `matches` is a substring of the id, the longest
+    wins: `claude-opus-5-5` holds both `opus` and `opus-5-5`, and Opus 5.5 is its own
+    family, measured on its own rather than credited at Opus 5's rate. Taking the most
+    specific match rather than the first makes the answer independent of the table's
+    key order.
     """
     lowered = model.lower()
+    best, best_len = None, -1
     for name, row in credits["per_family"].items():
-        if row.get("matches", name) in lowered:
-            return name
-    return None
+        needle = row.get("matches", name)
+        if needle in lowered and len(needle) > best_len:
+            best, best_len = name, len(needle)
+    return best
 
 
 def rates(fam: str, credits: dict) -> tuple[float, float] | None:
