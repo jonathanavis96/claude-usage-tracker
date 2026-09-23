@@ -221,7 +221,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(r["spread"]["stretch"]["n"], 8)
         self.assertTrue(r["weekly_by_window"])
 
-    def test_fast_mode_requests_are_left_out_of_their_stretch_and_recorded(self):
+    def test_fast_session_requests_stay_in_their_stretch_and_are_recorded(self):
         def opus_session(start_min, n, rate, prefix):
             lines, t = [], T0 + timedelta(minutes=start_min)
             for i in range(n):
@@ -242,12 +242,12 @@ class ReportTests(unittest.TestCase):
             (projects / "std.jsonl").write_text(opus_session(101, 40, 70, "s"))
             r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1))["accounts"]["dave"]
         first, fifth = r["stretches"][0], r["stretches"][4]
-        self.assertEqual(first["fast_mode_tokens"], {"claude-opus-5": {"input": 60, "output": 12_000,
-                                                                       "cache_read": 0, "cache_write": 0}})
-        self.assertEqual(first["fast_mode_turns"], 20)
-        self.assertEqual(list(first["tokens"]), ["claude-sonnet-5"])
-        self.assertAlmostEqual(first["usd_per_pct"], 0.5)
-        self.assertEqual((fifth["fast_mode_tokens"], fifth["fast_mode_turns"]), ({}, 0))
+        self.assertEqual(first["fast_session_tokens"], {"claude-opus-5": {"input": 60, "output": 12_000,
+                                                                          "cache_read": 0, "cache_write": 0}})
+        self.assertEqual(first["fast_session_turns"], 20)
+        self.assertEqual(first["tokens"]["claude-opus-5"], first["fast_session_tokens"]["claude-opus-5"])
+        self.assertGreater(first["usd_per_pct"], 0.5)
+        self.assertEqual((fifth["fast_session_tokens"], fifth["fast_session_turns"]), ({}, 0))
         self.assertEqual(fifth["tokens"]["claude-opus-5"]["output"], 40 * 600)
 
     def test_with_the_gate_off_a_stretch_the_transcripts_leave_empty_is_still_not_published(self):

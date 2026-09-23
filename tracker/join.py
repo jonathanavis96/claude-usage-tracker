@@ -164,11 +164,11 @@ class Stretch:
     `tokens` keeps canonical model -> class -> count, so a consumer can revalue
     the stretch at later prices, as the publisher revalues probe rows.
 
-    Opus fast mode is billed to usage credits and never reaches the subscription meter
-    (code.claude.com/docs/en/fast-mode), so a fast-mode request's tokens, which the
-    transcripts hold all the same, are kept out of `tokens` and `usd` and recorded in
-    `fast_mode_tokens` (model -> class -> count, `tokens`' shape) and `fast_mode_turns`
-    instead. Which requests ran fast is tracker/speed.py's `fast_mode`.
+    A fast-session request (tracker/speed.py `fast_sessions`: an Opus session running at
+    FAST_FACTOR times the model's median speed or more) counts in `tokens`, `usd` and
+    `turns` like any other, and is also recorded in `fast_session_tokens` (model -> class
+    -> count, `tokens`' shape) and `fast_session_turns`, for diagnosis only. Why those
+    sessions run faster is not known.
     """
     start: datetime
     end: datetime
@@ -180,8 +180,8 @@ class Stretch:
     unpriced: dict = field(default_factory=dict)
     turns: int = 0
     reset_verified: bool = True
-    fast_mode_tokens: dict = field(default_factory=dict)
-    fast_mode_turns: int = 0
+    fast_session_tokens: dict = field(default_factory=dict)
+    fast_session_turns: int = 0
 
     @property
     def usd_per_pct(self) -> float:
@@ -202,13 +202,12 @@ class Stretch:
 
     def add(self, turn: Turn, prices: dict, fast: bool = False) -> None:
         if fast:
-            self.fast_mode_turns += 1
-            by_class = self.fast_mode_tokens.setdefault(normalized_raw_model(turn.model), {c: 0 for c in CLASSES})
+            self.fast_session_turns += 1
+            by_class = self.fast_session_tokens.setdefault(normalized_raw_model(turn.model), {c: 0 for c in CLASSES})
             for c in CLASSES:
                 by_class[c] += getattr(turn, c)
             if turn.cache_write_1h:
                 by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
-            return
         self.turns += 1
         usd = turn_meter_usd(turn, prices)
         if usd is None:
@@ -234,8 +233,8 @@ def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stre
     A turn belongs to the pair whose [earlier, later) readings contain its
     timestamp, as in build_intervals. The stretch still open at the end of the
     samples is not returned: it has not moved far enough to be read. A turn whose
-    message id is in `fast` ran in Opus fast mode, which the meter never counts
-    (Stretch), so its tokens go to `fast_mode_tokens`, not `tokens`.
+    message id is in `fast` belongs to a fast session: it counts like any other and is
+    also recorded in `fast_session_tokens` (Stretch).
     """
     samples = sorted(samples, key=lambda s: s.ts)
     turns = sorted(turns, key=lambda t: t.ts)

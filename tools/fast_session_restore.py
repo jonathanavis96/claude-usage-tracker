@@ -1,33 +1,38 @@
-"""Take Opus fast-mode tokens out of the committed masterrig stretches, once (issue #106).
+"""Put the fast-session tokens back into the committed masterrig stretches, once.
 
-Opus fast mode is billed "via usage credits only and not included in the subscription rate
-limits" (code.claude.com/docs/en/fast-mode), so its tokens are in the transcripts and never on
-the meter. From this change tracker/join.py keeps them out of every stretch it builds, and
-bin/passive.sh does that on masterrig from its own transcripts. The stretches already committed
-in history/masterrig-passive.json were built before it, and masterrig's transcripts are only on
-masterrig, so this tool corrects that file on gs, once, from:
+PR #88 took the tokens of Opus sessions running at about 2.5x the usual speed out of every
+passive stretch, as Opus fast mode billed to usage credits and never metered. That was
+wrong: Jonathan never used fast mode, the account is not eligible for usage credits, and
+#88's own table shows the meter counted those tokens, at least in part
+(docs/findings-2026-09-23-fast-mode-stretches.md, correction). tracker/join.py now counts
+them like any other; this tool undoes #88's one-off subtraction on
+history/masterrig-passive.json, which only masterrig's transcripts could rebuild. It reads
+the same inputs #88's correction did, on gs:
 
 - a text-free extract of masterrig's transcript lines (timestamps, message ids, model and
   usage, no text; each line's `file` names its transcript), never committed;
 - masterrig's two meter logs, copied into a scratch home (`.moonlighter/usage_log.jsonl`
   and `.paperclip/ops/mis-usage-ceiling-systemd.log`), never committed.
 
-Which requests ran fast is tracker/speed.py's `fast_mode`, over the whole extract. Their turns
-are joined against the meter exactly as tracker/join.py `build_stretches` joins, fast set and
-all, so a fast turn lands in the stretch, and the sample pair, the committed build put it in,
-and a turn in a pair that straddled a gap or a reset counts for nothing, as there. The
-stretches this rebuild closes must be the committed ones, start and end, or nothing is written.
+1. The committed file is rebuilt from its own records by tracker/gs_passive.py `summarise`
+   and must come back identical: the records, prices and probe rows here are the ones it
+   was written from.
+2. The fast-session turns (tracker/speed.py `fast_sessions`, over the whole extract) are
+   joined against the meter as tracker/join.py `build_stretches` joins, and each stretch's
+   rebuilt fast-session tokens and turns must equal the `fast_mode_tokens` and
+   `fast_mode_turns` #88 recorded as subtracted: that is the proof the amounts added back
+   are the amounts taken out.
+3. Each stretch gets those tokens back in `tokens` and those turns back in `turns`, is
+   revalued at the price table, and keeps them as `fast_session_tokens` and
+   `fast_session_turns`, for diagnosis only.
+4. The stretches go through the same `summarise`, which re-runs the capture check and
+   every figure read off it.
 
-Each committed stretch then loses its fast-mode tokens from `tokens` and its fast turns from
-`turns`, gains `fast_mode_tokens` and `fast_mode_turns`, and is revalued at the price table.
-Before anything is corrected, the committed file is rebuilt from its own records by
-tracker/gs_passive.py `summarise` and must come back identical: that is the proof that the
-records, prices and probe rows here are the ones it was written from. The corrected stretches
-then go through the same `summarise`, which re-runs the capture check and every figure read
-off it. A file that already carries `fast_mode_correction` is left alone, so a second run
-changes nothing.
+#88's `fast_mode_correction` record is replaced by `fast_session_restore`, whose `undid` keeps
+when #88 applied it and how many stretches and turns it changed. A file
+that carries `fast_session_restore` is left alone, so a second run changes nothing.
 
-    python3 tools/fast_mode_correction.py --extract ~/wf-data/masterrig-timing.jsonl.gz \\
+    python3 tools/fast_session_restore.py --extract ~/wf-data/masterrig-timing.jsonl.gz \\
         --meter-home <scratch>/mr
 """
 from __future__ import annotations
@@ -73,7 +78,7 @@ def _extract_files(path: Path) -> Iterator[tuple[str, list[dict]]]:
 
 
 def fast_turns(extract: Path) -> tuple[list[Turn], dict]:
-    """The turns of every fast-mode request in the extract, and counts for the record.
+    """The turns of every fast-session request in the extract, and counts for the record.
 
     Read in the extract's own order, a transcript at a time. Order only decides which copy
     of a message id is kept when a resumed session copied it into a second transcript, and
@@ -91,7 +96,7 @@ def fast_turns(extract: Path) -> tuple[list[Turn], dict]:
                 seen_req.add(r.id)
                 reqs.append(r)
         turns.extend(turns_in(lines, seen_turn))
-    fast = speed.fast_mode(reqs, every=True)
+    fast = speed.fast_sessions(reqs, every=True)
     out = [t for t in turns if t.id in fast]
     return out, {"files": files, "requests": len(reqs), "fast_requests": len(fast)}
 
@@ -118,29 +123,25 @@ def to_stretch(rec: dict, prices: dict) -> Stretch:
                    delta_pct=rec["delta_pct"], windows=rec["windows"], usd=usd,
                    tokens=copy.deepcopy(tokens), unpriced_tokens=rec["unpriced_tokens"],
                    unpriced=copy.deepcopy(rec["unpriced"]), turns=rec["turns"],
-                   reset_verified=rec["reset_verified"],
-                   fast_mode_tokens=copy.deepcopy(rec.get("fast_mode_tokens") or {}),
-                   fast_mode_turns=rec.get("fast_mode_turns", 0))
+                   reset_verified=rec["reset_verified"])
 
 
-def subtract(s: Stretch, fast: Stretch, prices: dict) -> None:
-    """Move `fast`'s fast-mode tokens and turns out of `s`, and revalue `s`."""
-    for model, by_class in fast.fast_mode_tokens.items():
-        bucket = s.tokens if model in s.tokens else s.unpriced
-        have = bucket.get(model)
-        if have is None:
-            raise ValueError(f"stretch {s.start.isoformat()}: fast-mode {model} tokens but none recorded")
+def add_back(s: Stretch, taken: dict, turns: int, prices: dict) -> None:
+    """Put `taken` (model -> class -> count) and `turns` back into `s`, record them as its
+    fast-session tokens, and revalue it. A model goes where tracker/join.py would put it:
+    `tokens` when it has a price, `unpriced` when not."""
+    for model, by_class in taken.items():
+        key = normalize_model(model)
+        priced = key is not None and bundle_meter_usd(model, by_class, prices) is not None
+        bucket = s.tokens if priced else s.unpriced
+        have = bucket.setdefault(key if priced else model, {c: 0 for c in CLASSES})
         for c, n in by_class.items():
-            if have.get(c, 0) < n:
-                raise ValueError(f"stretch {s.start.isoformat()}: {model} {c} {have.get(c, 0)} < fast {n}")
-            have[c] -= n
-        if all(v == 0 for v in have.values()):
-            del bucket[model]
-        if bucket is s.unpriced:
-            s.unpriced_tokens -= sum(by_class.get(c, 0) for c in CLASSES)
-    s.turns -= fast.fast_mode_turns
-    s.fast_mode_tokens = copy.deepcopy(fast.fast_mode_tokens)
-    s.fast_mode_turns = fast.fast_mode_turns
+            have[c] = have.get(c, 0) + n
+        if not priced:
+            s.unpriced_tokens += sum(by_class.get(c, 0) for c in CLASSES)
+    s.turns += turns
+    s.fast_session_tokens = copy.deepcopy(taken)
+    s.fast_session_turns = turns
     s.usd = _usd(s.tokens, prices)
 
 
@@ -167,40 +168,57 @@ def same(a, b) -> bool:
     return a == b
 
 
-def _without_fast_fields(body: dict) -> dict:
+def without_fast_fields(body: dict) -> dict:
+    """`body` with no per-stretch fast-session or fast-mode fields and neither top-level record."""
     body = copy.deepcopy(body)
+    body.pop("fast_mode_correction", None)
+    body.pop("fast_session_restore", None)
     for rec in body["accounts"][ACCOUNT]["stretches"]:
-        rec.pop("fast_mode_tokens", None)
-        rec.pop("fast_mode_turns", None)
+        for k in ("fast_mode_tokens", "fast_mode_turns", "fast_session_tokens", "fast_session_turns"):
+            rec.pop(k, None)
     return body
 
 
-def correct(body: dict, fast: list[Turn], samples: list, prices: dict, probe_rows: list[dict],
+def _undid(correction: dict) -> dict:
+    """What #88's record said it did, in this file's terms."""
+    return {"pr": 88, "applied_at": correction.get("applied_at"),
+            "stretches_changed": correction.get("stretches_changed"),
+            "turns": correction.get("fast_mode_turns")}
+
+
+def restore(body: dict, fast: list[Turn], samples: list, prices: dict, probe_rows: list[dict],
             note: dict) -> dict | None:
-    """The corrected stretch file, or None when `body` is already corrected."""
-    if body.get("fast_mode_correction"):
+    """The restored stretch file, or None when `body` is already restored."""
+    if body.get("fast_session_restore"):
         return None
+    if not body.get("fast_mode_correction"):
+        raise ValueError("the file carries no fast_mode_correction; there is nothing to restore")
     recs = body["accounts"][ACCOUNT]["stretches"]
     generated = datetime.fromisoformat(body["generated_at"])
     probe_rows = [r for r in probe_rows if datetime.fromisoformat(r["ts"]) <= generated]
     stretches = [to_stretch(rec, prices) for rec in recs]
-    again = _without_fast_fields(_summarise(body, stretches, probe_rows, prices))
-    if not same(json.loads(json.dumps(again)), body):
-        raise ValueError("the committed file does not rebuild from its own records; not correcting it")
+    again = _summarise(body, stretches, probe_rows, prices)
+    if not same(json.loads(json.dumps(without_fast_fields(again))), without_fast_fields(body)):
+        raise ValueError("the committed file does not rebuild from its own records; not restoring it")
     ids = {t.id for t in fast}
     rebuilt = {s.start: s for s in build_stretches(samples, fast, prices, fast=ids)}
-    for s in stretches:
+    for s, rec in zip(stretches, recs):
+        taken, turns = rec.get("fast_mode_tokens") or {}, rec.get("fast_mode_turns", 0)
         f = rebuilt.get(s.start)
         if f is None or f.end != s.end:
-            raise ValueError(f"stretch {s.start.isoformat()} does not rebuild from the meter logs")
-        subtract(s, f, prices)
+            if taken or turns:
+                raise ValueError(f"stretch {s.start.isoformat()} does not rebuild from the meter logs")
+            f = Stretch(s.start, s.end)
+        if (f.fast_session_tokens, f.fast_session_turns) != (taken, turns):
+            raise ValueError(f"stretch {s.start.isoformat()}: the extract's fast-session tokens are not "
+                             "the ones #88 recorded as taken out")
+        add_back(s, taken, turns, prices)
     out = _summarise(body, stretches, probe_rows, prices)
-    changed = sum(1 for s in stretches if s.fast_mode_turns)
-    out["fast_mode_correction"] = {
-        **note, "stretches_changed": changed,
-        "fast_mode_turns": sum(s.fast_mode_turns for s in stretches),
-        "rule": "tracker/speed.py fast_mode over the extract; tokens joined as tracker/join.py build_stretches",
-        "tool": "tools/fast_mode_correction.py"}
+    out["fast_session_restore"] = {
+        **note, "stretches_changed": sum(1 for s in stretches if s.fast_session_turns),
+        "fast_session_turns": sum(s.fast_session_turns for s in stretches),
+        "rule": "tracker/speed.py fast_sessions over the extract; tokens joined as tracker/join.py build_stretches",
+        "tool": "tools/fast_session_restore.py", "undid": _undid(body["fast_mode_correction"])}
     return out
 
 
@@ -214,8 +232,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--probes", type=Path, default=Path("history/probes.jsonl"))
     a = ap.parse_args(argv)
     body = json.loads(a.stretches.read_text(encoding="utf-8"))
-    if body.get("fast_mode_correction"):
-        print(f"{a.stretches} is already corrected ({body['fast_mode_correction']['applied_at']}); nothing to do")
+    if body.get("fast_session_restore"):
+        print(f"{a.stretches} is already restored ({body['fast_session_restore']['applied_at']}); nothing to do")
         return 0
     prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
     rows = [json.loads(line) for line in a.probes.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -223,14 +241,14 @@ def main(argv: list[str] | None = None) -> int:
     samples = load_samples(masterrig_account(a.meter_home), datetime.fromisoformat(body["generated_at"]))
     note = {"applied_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "extract": a.extract.name, **counts}
-    out = correct(body, turns, samples, prices, rows, note)
-    assert out is not None  # already-corrected files returned above
+    out = restore(body, turns, samples, prices, rows, note)
+    assert out is not None  # already-restored files returned above
     tmp = a.stretches.with_suffix(".tmp")
     tmp.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
     tmp.replace(a.stretches)
-    c = out["fast_mode_correction"]
-    print(f"wrote {a.stretches}: {c['stretches_changed']} stretches lost {c['fast_mode_turns']} fast-mode turns "
-          f"({c['fast_requests']} fast requests of {c['requests']} timed)")
+    c = out["fast_session_restore"]
+    print(f"wrote {a.stretches}: {c['stretches_changed']} stretches got back {c['fast_session_turns']} "
+          f"fast-session turns ({c['fast_requests']} fast requests of {c['requests']} timed)")
     return 0
 
 

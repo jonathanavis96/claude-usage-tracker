@@ -1,5 +1,24 @@
 # Model speed from the transcripts, and why one machine's Opus 5 ran at 170 tokens a second
 
+> **Correction, 2026-09-23.** This document explains the fast sessions below as Claude
+> Code's Opus fast mode. That explanation is withdrawn. Jonathan has never used fast mode.
+> masterrig's Claude Code settings carry no fast-mode setting, and the account is not
+> eligible for usage credits (`overageCreditGrantCache` reads `eligible: false, available:
+> false`), which fast mode needs ("Until they're on, /fast reports 'Fast mode requires usage
+> credits'", code.claude.com/docs/en/fast-mode). And PR #88's own before and after table
+> (docs/findings-2026-09-23-fast-mode-stretches.md) shows the meter counted those sessions'
+> tokens, at least in part: taking them out turned some surplus stretches accepted, but
+> turned others unaccounted (19 Sep 22:20-23:36 capture 1.99 to 0.68; 21 Sep 10:54-13:26
+> 1.62 to 0.43; 21 Sep 13:26-19:26 1.63 to 0.25; 20 Sep 00:16-01:07 1.12 to 0.59).
+>
+> What was measured stands: some Opus sessions run about 2.5 times faster than others on the
+> same model, account and settings, with nothing between, mostly on a1 and a little on a2.
+> What causes it is not known. The code now calls them fast sessions: a session whose
+> running median speed is at least FAST_FACTOR (1.6) times the model's median. Their
+> requests are still kept out of the main speed figures, and are now published as a series
+> of their own (`fast_sessions`, counted in `fast_session_requests`). The rest of this
+> document is kept as written.
+
 Issue #105. Written 2026-09-23. Sources: a text-free extract of every masterrig transcript
 line from 20 August to 23 September (305,185 lines: timestamps, message ids, model, usage,
 block types and sizes, no message text), and gs's own transcripts for Max accounts a2, a3

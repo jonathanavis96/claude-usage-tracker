@@ -13,16 +13,15 @@ Both include queueing and processing the input, and a block is written when it e
 MIN_OUTPUT output tokens, MIN_SECONDS < duration < MAX_SECONDS, and `usage.speed` of
 "standard" (or absent, on versions that predate the field).
 
-Fast mode. Opus has a fast mode "up to 2.5x faster", billed "via usage credits only and
-not included in the subscription rate limits" (code.claude.com/docs/en/fast-mode), and
-Claude Code writes `"speed": "standard"` on every line of it all the same:
-docs/findings-2026-09-23-model-speed.md has the working. So the label cannot keep it
-out and the timing has to. On an Opus model, a request whose session's running median
-speed (FAST_WINDOW requests around it) is at least FAST_FACTOR times the model's median
-over the whole scan is counted as fast mode, left out of the speed figures and counted
-in `fast_excluded`. Fast and standard sessions sit about 2.5x apart with nothing
-between, and the window lets a session that falls back mid-way (fast mode's own rate
-limit does that) keep its standard stretch.
+Fast sessions. Some Opus sessions run at about 2.5x the model's usual speed, on the same
+account and settings, with nothing between: a session is fast or it is not. Their lines
+say `"speed": "standard"` like the rest. Why they run faster is not known
+(docs/findings-2026-09-23-model-speed.md, and its correction). On an Opus model, a
+request whose session's running median speed (FAST_WINDOW requests around it) is at
+least FAST_FACTOR times the model's median over the whole scan is a fast-session
+request. It is kept out of the main speed figures, counted in `fast_session_requests`
+and binned on its own, so the publisher shows fast sessions as a series of their own
+(`fast_sessions`). The window lets a session that slows mid-way keep its normal stretch.
 
 Rows. Each machine turns its own transcripts into daily rows, one per UTC day of the
 response's end, model (tracker/turns.py `normalize_model`, the page's ids), account label
@@ -68,11 +67,13 @@ MAX_SECONDS = 900.0
 MIN_REQUESTS = 30
 FAST_FACTOR = 1.6
 FAST_WINDOW = 9
-#: Fast mode exists only on Opus (code.claude.com/docs/en/fast-mode).
+#: Fast sessions have been seen only on Opus, so only Opus is classified.
 FAST_MODEL_PREFIX = "claude-opus"
+#: A day's fast-session figures are published with at least this many fast requests.
+MIN_FAST_REQUESTS = 10
 BIN_STEP = 1.02
 RECOMPUTE_DAYS = 2
-SCHEMA = 1
+SCHEMA = 2
 
 
 @dataclass(frozen=True)
@@ -205,15 +206,15 @@ def kept(r: Request) -> bool:
             and r.speed in (None, "standard"))
 
 
-def fast_mode(reqs: Iterable[Request], every: bool = False) -> set[str]:
-    """Ids of the kept Opus requests that ran in fast mode by their timing (module docstring).
+def fast_sessions(reqs: Iterable[Request], every: bool = False) -> set[str]:
+    """Ids of the kept Opus requests in a fast session, by their timing (module docstring).
 
     With `every`, also the Opus requests too short or too long to be kept whose session's
     running median, over the FAST_WINDOW kept requests nearest them in time, is fast: the
     same rule, read where the request sits in its session rather than from its own speed.
-    Speed figures need only the kept ones; a stretch's tokens need all of them, since a fast
-    session's short tool-call requests are billed to usage credits like its long ones. A
-    request in a session with no kept request of its model is never counted as fast.
+    Speed figures need only the kept ones; a stretch's `fast_session_tokens` takes all of
+    them, a fast session's short tool-call requests included. A request in a session with
+    no kept request of its model is never counted as fast.
     """
     reqs = list(reqs)
     timed = [r for r in reqs if kept(r)]
@@ -255,29 +256,34 @@ def _bin(x: float) -> str:
 
 
 def daily_rows(reqs: Iterable[Request], label: str, since_day: str | None = None) -> list[dict]:
-    """One row per (day, model, entrypoint) of this account's kept requests, fast mode out.
+    """One row per (day, model, entrypoint) of this account's kept requests.
 
-    `since_day` drops requests that ended before it, so a run over recent transcripts
-    never writes a partial row for a day the history already holds.
+    Fast-session requests are counted in `fast_session_requests` and binned in
+    `fast_output_hist` and `fast_ttfb_hist`, apart from the rest. `since_day` drops
+    requests that ended before it, so a run over recent transcripts never writes a
+    partial row for a day the history already holds.
     """
     reqs = list(reqs)
-    fast = fast_mode(reqs)
+    fast = fast_sessions(reqs)
     rows: dict[tuple, dict] = {}
     for r in reqs:
         if not kept(r) or (since_day is not None and r.day < since_day):
             continue
         row = rows.setdefault((r.day, r.model, r.entrypoint), {
             "day": r.day, "model": r.model, "account": label, "entrypoint": r.entrypoint,
-            "n": 0, "fast_excluded": 0, "output_hist": {}, "ttfb_hist": {}})
+            "n": 0, "fast_session_requests": 0, "output_hist": {}, "ttfb_hist": {},
+            "fast_output_hist": {}, "fast_ttfb_hist": {}})
         if r.id in fast:
-            row["fast_excluded"] += 1
-            continue
-        row["n"] += 1
+            row["fast_session_requests"] += 1
+            out_hist, ttfb_hist = row["fast_output_hist"], row["fast_ttfb_hist"]
+        else:
+            row["n"] += 1
+            out_hist, ttfb_hist = row["output_hist"], row["ttfb_hist"]
         b = _bin(r.output_rate)
-        row["output_hist"][b] = row["output_hist"].get(b, 0) + 1
+        out_hist[b] = out_hist.get(b, 0) + 1
         if r.ttfb > 0:
             b = _bin(r.ttfb)
-            row["ttfb_hist"][b] = row["ttfb_hist"].get(b, 0) + 1
+            ttfb_hist[b] = ttfb_hist.get(b, 0) + 1
     return sorted(rows.values(), key=_row_key)
 
 
@@ -331,7 +337,7 @@ def _quantile(hist: dict[str, int], q: float) -> float:
 def _pool(rows: list[dict], field: str) -> dict[str, int]:
     out: dict[str, int] = {}
     for r in rows:
-        for b, c in r[field].items():
+        for b, c in (r.get(field) or {}).items():
             out[b] = out.get(b, 0) + c
     return out
 
@@ -348,10 +354,34 @@ def _days(rows: list[dict]) -> list[dict]:
         if n < MIN_REQUESTS:
             continue
         ttfb = _pool(rs, "ttfb_hist")
-        out.append({"day": day, "n": n, "fast_excluded": sum(r["fast_excluded"] for r in rs),
+        fast = sum(_fast_count(r) for r in rs)
+        out.append({"day": day, "n": n, "fast_session_requests": fast,
+                    # A copy of fast_session_requests under its old name, so the live page
+                    # keeps working for one release. To be removed after that release.
+                    "fast_excluded": fast,
                     "output_tokens_per_s": _stat(_pool(rs, "output_hist"), 1),
-                    "time_to_first_block_s": _stat(ttfb, 2) if ttfb else None})
+                    "time_to_first_block_s": _stat(ttfb, 2) if ttfb else None,
+                    "fast_sessions": _fast_series(rs)})
     return out
+
+
+def _fast_count(row: dict) -> int:
+    """A row's fast-session requests; rows written before schema 2 call them `fast_excluded`."""
+    return row.get("fast_session_requests", row.get("fast_excluded", 0))
+
+
+def _fast_series(rows: list[dict]) -> dict | None:
+    """The fast-session requests' own figures, or None under MIN_FAST_REQUESTS of them.
+
+    `n` counts the binned ones: a row from before schema 2 counted its fast requests
+    without binning them, and they cannot be read back.
+    """
+    hist = _pool(rows, "fast_output_hist")
+    n = sum(hist.values())
+    if n < MIN_FAST_REQUESTS:
+        return None
+    ttfb = _pool(rows, "fast_ttfb_hist")
+    return {"n": n, "output_tokens_per_s": _stat(hist, 1), "time_to_first_block_s": _stat(ttfb, 2) if ttfb else None}
 
 
 METHOD = (
@@ -373,10 +403,11 @@ METHOD = (
 )
 
 CAVEATS = [
-    ("Opus fast mode is recorded in the transcripts as standard speed. Requests in a session "
-     f"running at {FAST_FACTOR:g} times the model's usual speed or more are counted as fast mode "
-     "and left out (fast_excluded counts them). Fast mode is about 2.5 times standard in these "
-     "data, so the two do not overlap, but a real speed-up of that size would be left out too."),
+    ("Some Opus sessions run at about 2.5 times the model's usual speed, with nothing in between. "
+     f"A request in a session whose running median speed is {FAST_FACTOR:g} times the model's "
+     "median or more is a fast-session request. The main figures leave those requests out; "
+     "fast_session_requests counts them, and fast_sessions gives their own figures on days "
+     f"with at least {MIN_FAST_REQUESTS} of them. Why these sessions run faster is not known."),
     ("a1 is one machine's transcripts; a2 to a4 are another machine's. Compare accounts and "
      "entrypoints (cli is interactive Claude Code, sdk-cli is claude -p, sdk-ts and sdk-py are "
      "the Agent SDK) with like, using by_account_entrypoint."),

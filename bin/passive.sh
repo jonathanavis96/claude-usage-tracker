@@ -9,9 +9,9 @@
 # -- so masterrig's longest-in-the-tracker meter history keeps the detail the daily
 # number throws away. It is written whatever the capture check says about it; that
 # meter counts web, phone and other machines, so the stretches carry usage this host's
-# transcripts cannot see, and each one's `capture` is how a reader tells. Opus fast-mode
-# requests are left out of every stretch's tokens (billed to usage credits, never to the
-# meter) and recorded per stretch as `fast_mode_tokens` (tracker/join.py).
+# transcripts cannot see, and each one's `capture` is how a reader tells. Fast-session
+# requests (tracker/speed.py) count in every stretch's tokens like any other, and are also
+# recorded per stretch as `fast_session_tokens` (tracker/join.py), for diagnosis only.
 set -euo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.."
