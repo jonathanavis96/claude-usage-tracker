@@ -375,9 +375,25 @@ def verdict(num: str, den: str, free: str, value: float, iv: list[float]) -> dic
             "interval_width": hi / lo if lo else None}
 
 
+#: masterrig enters the fits from this instant and not before. From 2 to 5 September the
+#: takeoff pipeline on gs ran on the personal account, so its meter moved on work masterrig's
+#: transcripts never saw -- all 18 of its zero-token stretches that moved the meter fall in
+#: those four days -- and from June to August its transcripts had been cleaned up, so those
+#: stretches hold nothing. From 6 September the account is Claude Code on masterrig alone:
+#: none of its stretches is zero-token (docs/findings-2026-09-23-masterrig-admitted.md).
+MASTERRIG_FROM = P("2026-09-06T00:00:00+00:00")
+
+
 def clean(by_account: dict[str, list[dict]], runs: list) -> dict[str, list[dict]]:
-    """The reconciliation's own selection: capture-accepted, harness-clean, masterrig exempt."""
-    return C.clean_stretches(by_account, runs, require="capture_status", exempt=("masterrig",))
+    """The reconciliation's own selection: capture-accepted, harness-clean, masterrig exempt.
+
+    masterrig is exempt from the capture test (its committed stretch file carries no capture,
+    see tracker/capture.py's bootstrap) and admitted only from MASTERRIG_FROM.
+    """
+    kept = C.clean_stretches(by_account, runs, require="capture_status", exempt=("masterrig",))
+    if "masterrig" in kept:
+        kept["masterrig"] = [s for s in kept["masterrig"] if P(s["start"]) >= MASTERRIG_FROM]
+    return kept
 
 
 def probes_only_runs() -> list:
@@ -571,10 +587,12 @@ def section4(data: dict[str, list[dict]], s3: dict, seed: int, resamples: int) -
     return out
 
 
-#: The accounts whose fits are poolable. masterrig's residual |rel| median is 0.455 against
-#: 0.055 to 0.065 on these two -- the phantom meter movement showing up as fit error -- so its
-#: fit is reported for completeness and never adopted.
-FIT_ACCOUNTS = ("jwork", "dave")
+#: The accounts whose fits are poolable. masterrig was kept out on the belief that its meter
+#: also counts claude.ai web and phone use; it does not -- the account is used only for Claude
+#: Code on masterrig -- and the phantom meter movement that made its residuals large was the
+#: takeoff pipeline of 2 to 5 September, which MASTERRIG_FROM leaves out. It pools under the
+#: same dominance rule as the other two.
+FIT_ACCOUNTS = ("jwork", "dave", "masterrig")
 #: A family's rate is one rate only if every fit's interval for it holds a value every other
 #: fit's interval holds too. Fable's two jwork regimes fail this, and that failure is the
 #: finding, not a reason to average them.
@@ -605,7 +623,7 @@ def group_fits(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict[st
 
 
 def adopt(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
-    """Pool the gs fits into one rate per family, whether or not the fits agree.
+    """Pool the FIT_ACCOUNTS fits into one rate per family, whether or not the fits agree.
 
     A family's point estimate is the median of the fits' point estimates and its interval is
     the union of theirs. `agree` is still recorded (every fit's interval for the family
@@ -916,9 +934,9 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
             print(f"   {key:16} {f:7} n={q5['n']:3} out5x median={q5['median']:11,.0f} "
                   f"IQR={q5['p25']:11,.0f}-{q5['p75']:11,.0f} | out3x median={q3['median']:11,.0f}{tag}")
 
-    print("   masterrig prices nothing absolute: its meter counts web and phone usage the transcripts "
-          "never see,\n   so its stretches are bimodal and the spread above is that phantom cluster "
-          "(docs/findings-2026-09-20-masterrig-stretches.md).")
+    print(f"   masterrig counts only from {MASTERRIG_FROM:%Y-%m-%d}: before it the takeoff pipeline on gs "
+          "moved its meter\n   and its transcripts had been cleaned up "
+          "(docs/findings-2026-09-23-masterrig-admitted.md).")
 
     print("\n2. The meter's model ratios, from the single-model stretches above")
     for key, per in s2.items():
@@ -964,7 +982,11 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
                 if not r["measurable"]:
                     print(f"      {pair:13} NOT MEASURABLE (the fit put one of the two rates at zero)")
                     continue
-                wide = f"  interval spans x{r['interval_width']:.1f}" if r["interval_width"] > 3 else ""
+                # A ratio whose interval starts at zero has no width to print (verdict() sets
+                # it to None rather than dividing by zero).
+                w = r["interval_width"]
+                wide = ("  interval reaches zero" if w is None
+                        else f"  interval spans x{w:.1f}" if w > 3 else "")
                 print(f"      {pair:13} {r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}] "
                       f"prior={r['prior']:.3f} {r['verdict'].upper()}; {r['free']} row moves "
                       f"{pct(r['row_move'])}{wide}")
@@ -1101,7 +1123,8 @@ def main(argv: list[str] | None = None) -> int:
                            "history/probes.jsonl", "data/effort_matrix.json", "data/prices.json"],
                 "findings": ["docs/findings-2026-09-20-measured-rates.md",
                              "docs/findings-2026-09-23-sonnet-rate.md",
-                             "docs/findings-2026-09-23-opus-5-5-and-dominance.md"],
+                             "docs/findings-2026-09-23-opus-5-5-and-dominance.md",
+                             "docs/findings-2026-09-23-masterrig-admitted.md"],
                 "no_traffic": "read-only arithmetic over committed files; no account was driven",
             },
             "measured_rates": mr,
@@ -1110,6 +1133,7 @@ def main(argv: list[str] | None = None) -> int:
             "variant": a.variant,
             "dominance": DOMINANCE, "min_n": MIN_N,
             "pool_dominance_share": DOMINANCE_SHARE, "pool_dominance_min_n": DOMINANCE_MIN_N,
+            "fit_accounts": list(FIT_ACCOUNTS), "masterrig_from": MASTERRIG_FROM.isoformat(),
             "interval_percentiles": INTERVAL, "shellac_rates": SHELLAC, "fable_point": FABLE_POINT,
             "fable_interval": FABLE_INTERVAL, "exclusion": excl, "window_check": win,
             "section1": s1, "section2": s2, "section3": s3, "section4": s4, "section5": s5,

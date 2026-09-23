@@ -140,19 +140,16 @@ class CheckTests(unittest.TestCase):
 class NoReferenceTests(unittest.TestCase):
     """A run whose stretches had nothing to be judged against (issue #52, masterrig data).
 
-    Where an account's own bootstrap stretches spent nothing -- masterrig's meter moves on
-    web, phone and other machines this host never sees -- the reference is zero, so no
-    stretch judged against it has a capture, and the run's median had no data:
-    `statistics.StatisticsError: no median for empty data`. The run is `unknown` now.
+    Where an account's own bootstrap stretches spent nothing -- masterrig's July and August
+    transcripts were cleaned up before collection began -- the reference used to be zero, so
+    no stretch judged against it had a capture, and the run's median had no data:
+    `statistics.StatisticsError: no median for empty data`. judge() no longer produces a zero
+    reference (see LeadingZeroTests), but a run is still read defensively: with no reference
+    it is `unknown`, never a guessed capture or step.
     """
 
     def _runs(self):
-        # Five stretches the transcripts leave empty, then five real ones. The median of
-        # the empty bootstrap is 0, and every later stretch reads as surplus against it.
-        empty = [st(i, 0.0) for i in range(BOOTSTRAP)]
-        for s in empty:
-            s.tokens = {}
-        return runs(judge(empty + [st(BOOTSTRAP + i, 1.0) for i in range(5)]), "masterrig")
+        return runs([Verdict(st(i, 1.0), "surplus", 0.0) for i in range(5)], "masterrig")
 
     def test_the_run_is_unknown_and_neither_capture_nor_step_is_invented(self):
         rs = self._runs()
@@ -164,8 +161,7 @@ class NoReferenceTests(unittest.TestCase):
         run = self._runs()[0]
         self.assertFalse(_agrees(None, run))     # nothing measured on the other side
         self.assertFalse(_agrees(-0.30, run))    # this run has no step of its own to match
-        res = check({"masterrig": [st(i, 0.0) for i in range(BOOTSTRAP)] + [st(BOOTSTRAP + i, 1.0) for i in range(5)]})
-        self.assertEqual(res.changes, [])
+        self.assertEqual(check({"masterrig": leading_zeros()}).changes, [])
 
     def test_a_zero_reference_among_real_ones_still_gives_a_step(self):
         # median() of the non-zero references, not of all of them: one zero reference in a
@@ -173,3 +169,34 @@ class NoReferenceTests(unittest.TestCase):
         run = Run([Verdict(st(0, 0.7), UNACCOUNTED, 1.0), Verdict(st(1, 0.7), UNACCOUNTED, 0.0),
                    Verdict(st(2, 0.7), UNACCOUNTED, 1.0)], "x")
         self.assertAlmostEqual(run.step, -0.3)
+
+
+def leading_zeros(n=BOOTSTRAP + 2):
+    """`n` stretches whose transcripts hold nothing, then steady real ones: masterrig's shape."""
+    empty = [st(i, 0.0) for i in range(n)]
+    for s in empty:
+        s.tokens = {}
+    return empty + [st(n + i, r) for i, r in enumerate(STEADY)]
+
+
+class LeadingZeroTests(unittest.TestCase):
+    """The bootstrap reads only the stretches that spent something (masterrig, 2026-09-23)."""
+
+    def test_leading_zero_token_stretches_do_not_zero_the_reference(self):
+        vs = judge(leading_zeros())
+        self.assertEqual(statuses(vs), ["unaccounted"] * (BOOTSTRAP + 2) + ["accepted"] * len(STEADY))
+        self.assertTrue(all(v.reference and v.reference > 0 for v in vs))
+        self.assertEqual([v.capture for v in vs[:BOOTSTRAP + 2]], [0.0] * (BOOTSTRAP + 2))
+        self.assertAlmostEqual(vs[-1].capture, 1.0, delta=0.02)
+
+    def test_the_empty_stretches_read_as_a_collection_gap(self):
+        self.assertEqual([r.kind for r in runs(judge(leading_zeros()), "masterrig")], ["collection_gap"])
+
+    def test_too_few_stretches_that_spent_anything_are_unjudged(self):
+        vs = judge(leading_zeros()[:BOOTSTRAP + 2 + BOOTSTRAP - 1])
+        self.assertEqual(set(statuses(vs)), {"unjudged"})
+
+    def test_a_series_with_no_zero_stretch_bootstraps_exactly_as_before(self):
+        vs = judge(series(*STEADY, 0.6))
+        self.assertAlmostEqual(vs[0].reference, 1.0)
+        self.assertEqual(statuses(vs), ["accepted"] * 6 + ["unaccounted"])
