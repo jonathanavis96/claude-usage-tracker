@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
@@ -12,6 +12,7 @@ from . import credits as credit_model
 from .capture import ACCEPTED
 from .detect import (
     MIN_POOL_D7,
+    SMOOTH_MIN_POINTS,
     ChangeEvent,
     current_regime_points,
     detect_smoothed_changes,
@@ -73,6 +74,10 @@ WEEKLY_WINDOW_RATIOS_BASIS = {
 # are history/gs-passive.json's `accounts.<name>.weekly_by_window`, the same point shape.
 ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"))
 MAX_SAMPLE_AGE_DAYS = 10
+#: How far apart two accounts' onsets may sit and still be read as one dollar-series
+#: change (_agreeing_dollar_events). A limit change reaches each account on its own
+#: reading cadence, and a day's pooled readings are dated at the day.
+DOLLAR_AGREEMENT_DAYS = timedelta(days=3)
 WEEKLY_CURRENT_DAYS = 14
 FIVE_HOURS = timedelta(hours=5)
 PLAN_SOURCE_URL = "https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan"
@@ -240,6 +245,109 @@ def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_u
     return out
 
 
+def _account_dollar_readings(gs_passive: dict | None, prices: dict) -> dict[str, list[tuple]]:
+    """Each watched account's own verified daily dollar readings, keyed by account name.
+
+    `passive_dollar_readings` pools every account into one series and drops which account
+    a reading came from, and one pooled series cannot tell a change from two accounts
+    moving in opposite directions: on 20 September 2026 one account's readings rose and
+    the other's fell, and the pooled medians read -23%. The same function is asked for one
+    account at a time instead, so the acceptance rule stays in one place.
+    """
+    accounts = ((gs_passive or {}).get("accounts") or {})
+    return {name: passive_dollar_readings({"accounts": {name: account}}, prices, by="day")
+            for name, account in accounts.items()}
+
+
+def _merged_dollar_event(cluster: list[tuple]) -> ChangeEvent:
+    """One change from the agreeing accounts' own events, dated at the earliest onset.
+
+    The mirror of _account_dated on the weekly series: a change reaches each account at
+    its own pace, so the bounds are the earliest and the latest onset the agreeing
+    accounts saw and the date is the earliest of them; it is confirmed only once the last
+    of them confirmed, and it carries every account's readings as its evidence count. The
+    percent here is the detector's own -- _percent_from_held_levels restates it as the
+    step the published history draws (so the headline and the chart read one number).
+    """
+    events = [e for _, _, e in cluster]
+    onsets = sorted(e.date for e in events)
+    earliest = [e.onset_earliest for e in events if e.onset_earliest]
+    confirmed = [e.confirmed_at for e in events if e.confirmed_at]
+    return ChangeEvent(
+        date=onsets[0], direction=events[0].direction,
+        percent=round(median([e.percent for e in events])),
+        onset_earliest=min(earliest) if earliest else onsets[0],
+        onset_latest=onsets[-1],
+        confirmed_at=max(confirmed) if confirmed else None,
+        evidence_points=sum(e.evidence_points or 0 for e in events),
+    )
+
+
+def _agreeing_dollar_events(account_readings: dict[str, list[tuple]],
+                            min_points: int = SMOOTH_MIN_POINTS,
+                            within: timedelta = DOLLAR_AGREEMENT_DAYS) -> list[ChangeEvent]:
+    """Dollar-series changes two accounts saw in the same direction within days of each other.
+
+    The detector runs on each account's own verified daily series, never on the pooled
+    one. A pooled series is not a measurement of a shared limit: it mixes accounts whose
+    levels differ by more than any step in either of them, so a busy day on one account
+    and a quiet day on the other move the pooled median on their own. That is what the
+    published 20 September -23% was -- one account's readings went up across it and the
+    other's went down (and the one that went down spent those days on a model the list
+    price values low), and neither account's own series steps there.
+
+    A change is published only when at least two accounts each detect a step in the same
+    direction with onsets no more than `within` apart. An account needs 2 x `min_points`
+    readings before the detector can split it at all, so an account with fewer is not
+    testable, and with fewer than two testable accounts nothing is published: one account
+    stepping alone is that account's own workload until a second one agrees. The events
+    are provisional either way -- the readings carry no rounding bounds (_event_record).
+    """
+    testable = {name: sorted(readings) for name, readings in account_readings.items()
+                if len(readings) >= 2 * min_points}
+    if len(testable) < 2:
+        return []
+    found = [(e.date, name, e) for name, readings in testable.items()
+             for e in detect_smoothed_changes(readings, min_points=min_points)]
+    clusters: list[list[tuple]] = []
+    for candidate in sorted(found, key=lambda f: (f[0], f[1])):
+        day, _name, event = candidate
+        for cluster in clusters:
+            if cluster[0][2].direction == event.direction and day - cluster[0][0] <= within:
+                cluster.append(candidate)
+                break
+        else:
+            clusters.append([candidate])
+    return sorted((_merged_dollar_event(c) for c in clusters
+                   if len({name for _, name, _ in c}) >= 2),
+                  key=lambda e: e.date)
+
+
+def _percent_from_held_levels(events: list[ChangeEvent], regime_starts: list[date],
+                              regime_values: dict[int, list[float]]) -> list[ChangeEvent]:
+    """Each dollar event's percent restated as the step between the held levels around it.
+
+    `history` holds every regime flat at the median of the readings inside it, and the
+    page draws that step. The detector's own percent is taken over a different pool -- the
+    verified series alone, where the history pools a measured day's legacy readings in too
+    -- so the headline said 23% beside a chart that stepped 18.6%. The percent and the
+    direction are taken from the two held values the history publishes either side of the
+    event, so there is one number. An event with no readings on one side keeps the
+    detector's own percent, which cannot happen on a series the events came from.
+    """
+    out = []
+    for e in events:
+        idx = regime_starts.index(e.date) + 1
+        before, after = regime_values.get(idx - 1), regime_values.get(idx)
+        if not before or not after or not median(before):
+            out.append(e)
+            continue
+        ratio = median(after) / median(before) - 1
+        out.append(replace(e, direction="increased" if ratio > 0 else "decreased",
+                           percent=round(abs(ratio) * 100)))
+    return out
+
+
 def _reference_tokens(budget: float | None, meter_usd_per_token: float) -> int | None:
     """Tokens of the reference mix a meter budget buys; None when there is no budget or no price."""
     return round(budget / meter_usd_per_token) if budget is not None and meter_usd_per_token > 0 else None
@@ -329,7 +437,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     verified_readings = passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else []
     evidence_status = "measured" if verified_readings else ("conditional" if all_readings else "unavailable")
     series = sorted(verified_readings if verified_readings else all_readings)
-    events = detect_smoothed_changes(series) if evidence_status == "measured" else []
+    # Detection runs per account and publishes only what two accounts agree on
+    # (_agreeing_dollar_events); the pooled series is still what the levels are held at.
+    account_readings = _account_dollar_readings(gs_passive, prices)
+    events = _agreeing_dollar_events(account_readings) if evidence_status == "measured" else []
     regime_start = max((e.date for e in events), default=None)
 
     measured_at = series[-1][0] if series else None
@@ -415,6 +526,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         regime_dates.setdefault(idx, []).append(ts.date())
     regime_quality = {idx: ("measured" if any(dd in verified_days for dd in dates) else "legacy_reset_unverified")
                       for idx, dates in regime_dates.items()}
+    # The event's percent is the step between the levels the history holds either side of
+    # it, so the headline and the chart cannot state two different numbers for one step.
+    events = _percent_from_held_levels(events, regime_starts, regime_values)
 
     last_day = now.date()
     # Days before the first reading are held at the first regime's value: passive.json's
@@ -1113,8 +1227,13 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     clean = credit_model.clean_stretches(by_account, runs, require="capture_status")
     priceable = credit_model.clean_stretches(by_account, runs, require="capture_status",
                                              exempt=("masterrig",))
-    window = credit_model.window_credits(clean, credits, labels)
+    # The five-hour change across the cut is read first: the pure-family cluster is mostly
+    # pre-cut, so the current window is the after cluster where there is one and the before
+    # cluster scaled by this change where there is not (credits.current_cluster_rule).
     cut = credit_model.across_cut(priceable, credits, labels)
+    five_hour = credit_model.five_hour_window_change(cut)
+    five_hour_pct = five_hour["pct"] if five_hour else None
+    window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct)
     fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels)
     windows_per_week = weekly["max20"]["current"]
     # The date under every credit figure. The block had none, so the page printed a
@@ -1143,7 +1262,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
             windows_per_week=windows_per_week,
             windows_per_week_interval=(weekly["max20"].get("current_estimate")
                                        or {}).get("rounding_interval"),
-            fam=window["pure_family"]),
+            fam=window["pure_family"], five_hour_pct=five_hour_pct),
         "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
         "per_model": _credits_per_model(window, credits, prices, model_rates, labels,
                                         window_as_of, fits_as_of),
@@ -1182,15 +1301,22 @@ def _plan_for_week(week_ending: str) -> str | None:
     """Which plan a passive weekly-window bucket belongs to, or None if it straddles PLAN_CHANGE.
 
     A week's bucket spans (week_ending - 7 days, week_ending]. It is max5 only if
-    it ends on or before PLAN_CHANGE, max20 only if it starts on or after
-    PLAN_CHANGE; a week whose span contains PLAN_CHANGE mixes days from both
+    it ends on or before PLAN_CHANGE, max20 only if it starts AFTER PLAN_CHANGE; a
+    week whose span contains PLAN_CHANGE, the day included, mixes days from both
     plans and is dropped from both.
+
+    Starting ON PLAN_CHANGE day is not starting on Max 20x: the plan moved partway
+    through that day (PLAN_CHANGE_AT, 17:00 UTC, the seam the per-window rule in
+    _account_window_dicts splits on), so a week whose span opens that morning holds
+    the last Max 5x window and the one straddling the change. The week ending
+    2026-08-21 published 7.24 windows with those two inside it against about 6.6
+    without them, which is the plan move being drawn as the live plan's history.
     """
     we = date.fromisoformat(week_ending)
     start = we - timedelta(days=7)
     if we <= PLAN_CHANGE:
         return "max5"
-    if start >= PLAN_CHANGE:
+    if start > PLAN_CHANGE:
         return "max20"
     return None
 
@@ -1544,13 +1670,64 @@ def _latest_change_with_scope(window_events: list, weekly_events: list,
     and a staggered cut can certify more than one pooled split inside that span.
     Without this the account-dated event lost `last_change` to an older split of
     the same transition.
+
+    A provisional change is never taken (_provisional): the page states `last_change`
+    as "Anthropic last decreased Claude's limits by N%", and a window-scope event has
+    no uncertainty model behind it at all. With no certified change there is no
+    `last_change` -- the provisional ones stay in `events`, where their own
+    `evidence_quality` travels with them.
     """
-    candidates = [(e, "window") for e in window_events] + [(e, "weekly") for e in weekly_events]
+    candidates = [(e, scope) for events, scope in ((window_events, "window"), (weekly_events, "weekly"))
+                  for e in events if not _provisional(scope)]
     if not candidates:
         return None
     e, scope = max(candidates,
                    key=lambda c: getattr(c[0], "window_onset_latest", None) or c[0].date)
     return _event_record(e, scope, across_cut, weekly_windows)
+
+
+def _provisional(scope: str) -> bool:
+    """Which scopes publish as provisional: the smoothed dollar series, whose readings
+    carry no rounding bounds. The weekly series certifies against both levels' intervals
+    (tracker/detect.py), so its events are not provisional."""
+    return scope == "window"
+
+
+def _tokens_per_week_change(ratio_note: dict | None, across_cut: dict | None) -> dict | None:
+    """How much the tokens a week holds moved, from the two measured changes at the cut.
+
+    The weekly series measures windows per week -- five-hour meter movement over
+    seven-day meter movement -- and that fell 21.8% across 14 September. It is not the
+    change in what a week buys, because the five-hour window itself grew at the same
+    date: the accounts' own credits per 1% read +8.6% across it
+    (`credit_model.five_hour_window_change`, the accounts whose capture column can carry
+    the reading). A week holds fewer windows, each bigger, so tokens per week fell by
+    about 15% where windows per week fell by 22%, and the page states the tokens figure
+    in the headline while the windows-per-week chart keeps its own.
+
+    Both inputs are the published, rounded ones, so a reader can redo the arithmetic
+    from the page. None when no account qualifies to state a five-hour change, or when
+    there are not two regimes to take a windows-per-week change from: with either
+    missing the compound is not measured, and no number is published in its place.
+    """
+    five_hour = credit_model.five_hour_window_change(across_cut)
+    if ratio_note is None or five_hour is None:
+        return None
+    windows_pct = round(-ratio_note["ratio_fell_pct"], 1)
+    five_hour_pct = five_hour["pct"]
+    signed = round(((1 + windows_pct / 100) * (1 + five_hour_pct / 100) - 1) * 100, 1)
+    return {
+        "percent": round(abs(signed)),
+        "direction": "decreased" if signed < 0 else "increased",
+        "signed_pct": signed,
+        "windows_per_week_pct": windows_pct,
+        "five_hour_window_pct": five_hour_pct,
+        "five_hour_accounts": five_hour["accounts"],
+        "method": ("the event's own before-to-after change in windows per week compounded with "
+                   "the median measured change in the five-hour window across the same cut, "
+                   "(1 + windows_per_week_pct / 100) x (1 + five_hour_window_pct / 100) - 1: a "
+                   "week holds fewer windows, each of them bigger."),
+    }
 
 
 def _event_record(e, scope: str, across_cut: dict | None = None,
@@ -1585,8 +1762,15 @@ def _event_record(e, scope: str, across_cut: dict | None = None,
     of the cross-account spread, so the spread was never evidence). `meter_attribution`
     stays "unresolved" for the same reason. Neither fact is folded into `percent`,
     which stays the measured quantity alone.
+
+    `tokens_per_week_change` compounds the two measured changes -- windows per week and
+    the five-hour window -- into what a week's tokens did across the cut, which is the
+    figure the page states in the headline; `percent` and the windows-per-week chart keep
+    the ratio's own fall. It is null where either measurement is missing.
     """
-    provisional = scope == "window"
+    provisional = _provisional(scope)
+    ratio_note = (credit_model.windows_per_week_ratio_note(weekly_windows)
+                  if weekly_windows and not provisional else None)
     # A pooled weekly event re-dated from the accounts' own onsets (_account_dated)
     # says so in `attribution`, and keeps the detector's own window bounds under
     # `onset.from_windows` so the re-dating never loses them.
@@ -1615,9 +1799,12 @@ def _event_record(e, scope: str, across_cut: dict | None = None,
         **({} if provisional else {"meter_attribution": "unresolved",
                                    "announced": dict(credit_model.ANNOUNCEMENT),
                                    "five_hour_window_credits": across_cut,
-                                   "windows_per_week_ratio": (
-                                       credit_model.windows_per_week_ratio_note(weekly_windows)
-                                       if weekly_windows else None)}),
+                                   "windows_per_week_ratio": ratio_note,
+                                   # What the same two measurements say about the tokens a
+                                   # week holds, which is not what its windows did
+                                   # (_tokens_per_week_change).
+                                   "tokens_per_week_change": _tokens_per_week_change(
+                                       ratio_note, across_cut)}),
     }
 
 

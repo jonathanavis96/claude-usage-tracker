@@ -1243,11 +1243,17 @@ class WindowTokensTests(unittest.TestCase):
         self.assertEqual(block["all"]["interval"], [116_000, 564_000])
 
     def test_each_token_class_has_its_own_median_and_spread(self):
+        # Each class also carries its own two sides of the cut; the median and the spread
+        # here are the whole cluster's, which is the mix the conversions hold their shape
+        # from (see the cut tests below).
         per_class = self.block()["per_class"]
-        self.assertEqual(per_class["input"], {"value": 2_500, "interval": [1_000, 4_000]})
-        self.assertEqual(per_class["cache_write"], {"value": 25_000, "interval": [10_000, 40_000]})
-        self.assertEqual(per_class["cache_read"], {"value": 250_000, "interval": [100_000, 500_000]})
-        self.assertEqual(per_class["output"], {"value": 12_500, "interval": [5_000, 20_000]})
+        for cls, value, interval in (("input", 2_500, [1_000, 4_000]),
+                                     ("cache_write", 25_000, [10_000, 40_000]),
+                                     ("cache_read", 250_000, [100_000, 500_000]),
+                                     ("output", 12_500, [5_000, 20_000])):
+            with self.subTest(cls=cls):
+                self.assertEqual(per_class[cls]["value"], value)
+                self.assertEqual(per_class[cls]["interval"], interval)
 
     def test_an_account_gets_its_own_per_class_medians_too(self):
         a2 = self.block()["accounts"]["a2"]
@@ -1584,6 +1590,213 @@ class EventRecordWeeklyRatioWiringTests(unittest.TestCase):
         from tracker.publish import _event_record
         out = _event_record(self._event(), "window", across_cut=None, weekly_windows=None)
         self.assertNotIn("windows_per_week_ratio", out)
+
+
+class FiveHourWindowChangeTests(unittest.TestCase):
+    """Which accounts' across-the-cut readings are allowed to state a five-hour change."""
+
+    @staticmethod
+    def across(**per_account):
+        return {"per_account": {label: {"change_pct": pct, "n_with_capture": capture,
+                                        "n_before": before, "n_after": after}
+                                for label, (pct, capture, before, after) in per_account.items()}}
+
+    def test_the_account_with_a_usable_capture_column_and_both_sides_carries_it(self):
+        out = C.five_hour_window_change(self.across(a2=(8.6, 56, 40, 15)))
+        self.assertEqual(out, {"pct": 8.6, "accounts": ["a2"]})
+
+    def test_an_account_with_no_capture_column_is_not_read(self):
+        # a1's meter counts machines its transcripts never saw, so its two medians are
+        # not a reading of its own window however far apart they are.
+        self.assertIsNone(C.five_hour_window_change(self.across(a1=(17.2, 0, 166, 32))))
+
+    def test_a_thin_side_is_not_read(self):
+        for sides in ((9, 15), (40, 9)):
+            with self.subTest(sides=sides):
+                self.assertIsNone(C.five_hour_window_change(
+                    self.across(a2=(8.6, 56, sides[0], sides[1]))))
+
+    def test_two_qualifying_accounts_give_the_median_of_their_own_changes(self):
+        out = C.five_hour_window_change(self.across(a2=(8.6, 56, 40, 15), a3=(12.6, 19, 20, 20)))
+        self.assertEqual(out, {"pct": 10.6, "accounts": ["a2", "a3"]})
+
+    def test_nothing_at_all_is_None_rather_than_zero(self):
+        for across in (None, {}, {"per_account": {}},
+                       self.across(a3=(None, 19, 0, 18))):
+            with self.subTest(across=across):
+                self.assertIsNone(C.five_hour_window_change(across))
+
+
+class WindowClusterCutTests(unittest.TestCase):
+    """The pure-Opus cluster split on 14 September, and which side states the window NOW.
+
+    The live cluster is ten stretches from one account before the cut and two from another
+    after it, so a median over the whole of it is a pre-cut reading published as the
+    current window. The split is on each stretch's own start against C.CUT_AT.
+    """
+
+    BEFORE: ClassVar[list] = [opus_stretch(f"2026-09-{d:02d}T00:00:00+00:00", level)
+                              for d, level in ((10, 100_000), (11, 110_000),
+                                               (12, 120_000), (13, 130_000))]
+    AFTER: ClassVar[list] = [opus_stretch(f"2026-09-{d:02d}T00:00:00+00:00", level)
+                             for d, level in ((16, 200_000), (17, 220_000))]
+
+    def window(self, before=None, after=None, five_hour_pct=None):
+        clean = C.clean_stretches({"jwork": (self.BEFORE if before is None else before),
+                                   "dave": (self.AFTER if after is None else after)}, [])
+        return C.window_credits(clean, CREDITS, LABELS, five_hour_pct=five_hour_pct)
+
+    def test_each_side_publishes_its_own_median_spread_and_count(self):
+        window = self.window()
+        self.assertEqual(window["cut_at"], C.CUT_AT.isoformat())
+        self.assertEqual(window["before"], {"value": 11_500_000,
+                                            "interval": [10_000_000, 13_000_000], "n": 4})
+        self.assertEqual(window["after"], {"value": 21_000_000,
+                                           "interval": [20_000_000, 22_000_000], "n": 2})
+        self.assertEqual(window["n"], 6)
+
+    def test_a_thin_after_cluster_leaves_the_before_cluster_scaled_to_now(self):
+        window = self.window(five_hour_pct=8.6)
+        self.assertEqual(window["current_source"], "before_cluster_scaled_by_five_hour_change")
+        self.assertEqual(window["value"], round(11_500_000 * 1.086))
+        self.assertEqual(window["credits_per_pct"], round(115_000 * 1.086))
+        self.assertEqual(window["interval"], [round(10_000_000 * 1.086), round(13_000_000 * 1.086)])
+        self.assertEqual(window["five_hour_window_pct"], 8.6)
+
+    def test_a_thick_after_cluster_states_the_window_itself(self):
+        after = [opus_stretch(f"2026-09-{d:02d}T00:00:00+00:00", level)
+                 for d, level in ((15, 180_000), (16, 190_000), (17, 200_000),
+                                  (18, 210_000), (19, 220_000))]
+        window = self.window(after=after, five_hour_pct=8.6)
+        self.assertEqual(window["current_source"], "after_cluster")
+        self.assertEqual((window["value"], window["interval"]),
+                         (20_000_000, [18_000_000, 22_000_000]))
+
+    def test_with_no_measured_five_hour_change_the_before_cluster_goes_out_unscaled(self):
+        window = self.window()
+        self.assertEqual(window["current_source"], "before_cluster_unscaled")
+        self.assertEqual(window["value"], 11_500_000)
+        self.assertIsNone(window["five_hour_window_pct"])
+
+    def test_the_value_always_sits_inside_its_own_interval(self):
+        for pct in (None, 8.6, -20.0):
+            with self.subTest(pct=pct):
+                window = self.window(five_hour_pct=pct)
+                self.assertLessEqual(window["interval"][0], window["value"])
+                self.assertLessEqual(window["value"], window["interval"][1])
+
+    def test_a_cluster_with_nothing_placeable_publishes_the_whole_of_it(self):
+        # A fixture whose stretches carry no start stamp: neither side can claim them,
+        # and the figure is the whole cluster with `current_source` saying so.
+        undated = [dict(st, start=None) for st in self.BEFORE]
+        window = self.window(before=undated, after=[], five_hour_pct=8.6)
+        self.assertEqual((window["current_source"], window["value"]),
+                         ("whole_cluster_unsplit", 11_500_000))
+        self.assertEqual((window["before"]["n"], window["after"]["n"]), (0, 0))
+
+    def test_an_empty_cluster_states_no_current_source_at_all(self):
+        window = self.window(before=[], after=[])
+        self.assertIsNone(window["value"])
+        self.assertIsNone(window["current_source"])
+
+
+class WindowTokensCutTests(unittest.TestCase):
+    """The same split on the token figures: `all` is now, `per_class` carries both sides."""
+
+    #: 10% stretches, so a window is ten times the stretch's own counts. Before: 116,000
+    #: and 232,000 tokens a window; after: 500,000 and 600,000.
+    BEFORE: ClassVar[list] = [classed_stretch("2026-09-10T00:00:00+00:00", 100, 1_000, 10_000, 500),
+                              classed_stretch("2026-09-11T00:00:00+00:00", 200, 2_000, 20_000, 1_000)]
+    AFTER: ClassVar[list] = [classed_stretch("2026-09-16T00:00:00+00:00", 500, 5_000, 43_000, 1_500),
+                             classed_stretch("2026-09-17T00:00:00+00:00", 600, 6_000, 51_500, 1_900)]
+
+    def block(self, before=None, after=None, five_hour_pct=None, **kw):
+        clean = C.clean_stretches({"jwork": (self.BEFORE if before is None else before),
+                                   "dave": (self.AFTER if after is None else after)}, [])
+        return C.window_tokens(clean, CREDITS, LABELS, None, five_hour_pct=five_hour_pct, **kw)
+
+    def test_the_all_classes_figure_carries_both_sides_at_the_top_level(self):
+        block = self.block()
+        self.assertEqual(block["cut_at"], C.CUT_AT.isoformat())
+        self.assertEqual(block["before"], {"value": 174_000, "interval": [116_000, 232_000], "n": 2})
+        self.assertEqual(block["after"], {"value": 550_000, "interval": [500_000, 600_000], "n": 2})
+
+    def test_each_class_carries_its_own_two_sides(self):
+        per_class = self.block()["per_class"]
+        self.assertEqual(per_class["cache_read"]["before"],
+                         {"value": 150_000, "interval": [100_000, 200_000], "n": 2})
+        self.assertEqual(per_class["cache_read"]["after"],
+                         {"value": 472_500, "interval": [430_000, 515_000], "n": 2})
+        # The class median itself stays the whole cluster's: it is the mix the per-family
+        # conversions hold their shape from, and each side is published beside it.
+        self.assertEqual(per_class["cache_read"]["value"], 315_000)
+
+    def test_all_is_the_before_cluster_scaled_while_the_after_cluster_is_thin(self):
+        block = self.block(five_hour_pct=8.6)
+        self.assertEqual(block["current_source"], "before_cluster_scaled_by_five_hour_change")
+        self.assertEqual(block["all"]["value"], round(174_000 * 1.086))
+        self.assertEqual(block["all"]["interval"],
+                         [round(116_000 * 1.086), round(232_000 * 1.086)])
+
+    def test_a_thick_after_cluster_states_the_tokens_itself(self):
+        after = [classed_stretch(f"2026-09-{d:02d}T00:00:00+00:00", 500, 5_000, 43_000, 1_500)
+                 for d in range(15, 20)]
+        block = self.block(after=after, five_hour_pct=8.6)
+        self.assertEqual((block["current_source"], block["all"]["value"]), ("after_cluster", 500_000))
+
+    def test_the_week_and_every_family_follow_the_current_figure(self):
+        block = self.block(five_hour_pct=8.6, windows_per_week=5.07)
+        current = block["all"]["value"]
+        self.assertEqual(block["per_week"]["all"]["value"], round(current * 5.07))
+        self.assertEqual(block["per_family"]["opus"]["all"]["value"], current)
+
+
+class CurrentWindowDownstreamTests(unittest.TestCase):
+    """Everything the page divides by the window follows the current figure, with no
+    second rule: the per-model rows, the session counts and the week."""
+
+    #: Ten pure-Opus stretches before the cut at exactly 200,000 credits per 1%.
+    BEFORE: ClassVar[list] = [opus_stretch(f"2026-09-{d:02d}T00:00:00+00:00", 200_000)
+                              for d in range(4, 14)]
+    #: Ten after it, each one mixed (a token of Sonnet in it), so they price into the
+    #: across-the-cut comparison but never into the pure-Opus cluster. 220,000 credits
+    #: per 1% is a +10% five-hour window across the cut.
+    AFTER: ClassVar[list] = [
+        stretch(f"2026-09-{d:02d}T{h:02d}:00:00+00:00",
+                {"claude-opus-5": tok(input=round(220_000 * 10 / OPUS_IN)),
+                 "claude-sonnet-5": tok(input=1)})
+        for d in range(15, 20) for h in (5, 20)]
+
+    def setUp(self):
+        self.j = _published(gs=report("jwork", [*self.BEFORE, *self.AFTER]))
+        self.credits = self.j["credits"]
+        self.window = self.credits["window_credits"]
+
+    def test_the_five_hour_change_comes_from_the_account_that_can_state_one(self):
+        cut = self.credits["five_hour_window_across_cut"]["per_account"]["a2"]
+        self.assertEqual((cut["n_before"], cut["n_after"], cut["change_pct"]), (10, 10, 10.0))
+        self.assertEqual(self.window["five_hour_window_pct"], 10.0)
+
+    def test_the_published_window_is_the_pre_cut_cluster_scaled_by_that_change(self):
+        self.assertEqual((self.window["before"]["n"], self.window["after"]["n"]), (10, 0))
+        self.assertEqual(self.window["current_source"], "before_cluster_scaled_by_five_hour_change")
+        self.assertEqual(self.window["value"], 22_000_000)
+
+    def test_every_per_model_row_divides_the_current_window(self):
+        opus = self.credits["per_model"]["opus"]["tokens_per_window"]
+        self.assertEqual(opus["input"]["value"], round(22_000_000 / OPUS_IN))
+        self.assertEqual(opus["output"]["value"], round(22_000_000 / OPUS_OUT))
+
+    def test_the_session_counts_divide_the_current_window(self):
+        sessions = self.credits["sessions"]["claude-opus-5"]
+        # The fixture's split is pure cache_write, which rides the input rate.
+        self.assertEqual(sessions["per_window"]["value"],
+                         round(22_000_000 / OPUS_IN / 1_000_000, 1))
+
+    def test_the_token_figure_moves_with_it_too(self):
+        tokens = self.credits["window_tokens"]
+        self.assertEqual(tokens["current_source"], "before_cluster_scaled_by_five_hour_change")
+        self.assertEqual(tokens["all"]["value"], round(tokens["before"]["value"] * 1.10))
 
 
 if __name__ == "__main__":

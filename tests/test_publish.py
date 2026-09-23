@@ -1,6 +1,6 @@
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 from typing import ClassVar
@@ -100,6 +100,26 @@ def daily_report(budgets, *, start_day=1, account="dave", reset_verified=True):
                           "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0,
                                                          "cache_write": round(budget / 10 / 3.75e-6)}}})
     return {"accounts": {account: {"account": account, "stretches": stretches}}}
+
+
+def agreeing_report(budgets, *, start_day=1, reset_verified=True, accounts=("dave", "jwork")):
+    """The same daily series on two accounts, which is what a dollar-series change needs.
+
+    A step one account alone saw is that account's own workload until a second account
+    steps the same way within DOLLAR_AGREEMENT_DAYS (tracker/publish.py
+    _agreeing_dollar_events), so every fixture that expects an event carries two.
+    """
+    report = {"accounts": {}}
+    for account in accounts:
+        report["accounts"].update(daily_report(budgets, start_day=start_day, account=account,
+                                               reset_verified=reset_verified)["accounts"])
+    return report
+
+
+def window_event(j):
+    """The newest dollar-series (window-scope) event of a published document, or None."""
+    events = [e for e in j["events"] if e.get("scope") == "window"]
+    return events[-1] if events else None
 
 
 def tokens_for(budget, price):
@@ -252,8 +272,8 @@ class BuildTests(unittest.TestCase):
         # alone does not distinguish them -- see test_history_is_flat_within_a_regime_even_with_noisy_daily_readings.
         budgets = [15.0] * 10 + [10.5] * 5
         now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
-        j = build_public_json([], PASSIVE, EFFORT, CACHE_READ_FREE, now, gs_passive=daily_report(budgets))
-        event_date = j["last_change"]["date"]
+        j = build_public_json([], PASSIVE, EFFORT, CACHE_READ_FREE, now, gs_passive=agreeing_report(budgets))
+        event_date = window_event(j)["date"]
         sonnet, opus = j["history"]["claude-sonnet-5"], j["history"]["claude-opus-5"]
         self.assertEqual([h["meter_budget_per_window"] for h in sonnet], [h["meter_budget_per_window"] for h in opus])
         self.assertEqual({h["meter_budget_per_window"] for h in sonnet if h["date"] < event_date}, {15.0})
@@ -409,15 +429,17 @@ class BuildTests(unittest.TestCase):
 
     def test_change_event_surfaces(self):
         j = build_public_json([], PASSIVE, EFFORT, PRICES, datetime(2026, 9, 15, 12, tzinfo=timezone.utc),
-                              gs_passive=daily_report([15.0] * 10 + [10.5] * 5))
-        c = j["last_change"]
+                              gs_passive=agreeing_report([15.0] * 10 + [10.5] * 5))
+        c = window_event(j)
         self.assertEqual((c["direction"], c["model"], c["scope"], c["metric"]),
                          ("decreased", "all", "window", "meter_budget_per_window"))
         self.assertIn(c["percent"], range(20, 40))
         # An observed change in this account's metric, provisional: the daily readings
-        # carry no uncertainty model (findings 4 and 5).
+        # carry no uncertainty model (findings 4 and 5). A provisional change is published
+        # in `events` and never as `last_change`.
         self.assertEqual((c["attribution"], c["observation_scope"], c["provisional"]),
                          ("observed_account_metric_change", "account", True))
+        self.assertIsNone(j["last_change"])
         self.assertEqual(c["onset"], {"earliest": "2026-09-10", "latest": "2026-09-11"})
 
     def test_a_reset_less_series_publishes_no_change_event(self):
@@ -466,9 +488,9 @@ class BuildTests(unittest.TestCase):
         # is two flat levels meeting on the event date. (History is the readings, not held
         # regime levels, since finding 5; flat inputs are what make it flat here.)
         now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 10 + [10.5] * 5))
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=agreeing_report([15.0] * 10 + [10.5] * 5))
         hist = j["history"]["claude-sonnet-5"]
-        event_date = j["last_change"]["date"]
+        event_date = window_event(j)["date"]
         before = [h["tokens_per_window"] for h in hist if h["date"] < event_date]
         on_and_after = [h["tokens_per_window"] for h in hist if h["date"] >= event_date]
         self.assertTrue(before and on_and_after)
@@ -479,12 +501,12 @@ class BuildTests(unittest.TestCase):
 
     def test_events_includes_every_detected_change(self):
         now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 10 + [10.5] * 5))
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=agreeing_report([15.0] * 10 + [10.5] * 5))
         change_events = [e for e in j["events"] if e["kind"] == "change"]
         self.assertTrue(change_events)
-        self.assertEqual(change_events[-1]["date"], j["last_change"]["date"])
+        self.assertEqual(change_events[-1]["date"], window_event(j)["date"])
         self.assertEqual(change_events[-1]["label"],
-                          f"Observed window budget changed -{j['last_change']['percent']}%")
+                          f"Observed window budget changed -{window_event(j)['percent']}%")
 
 
 class GsPassiveTests(unittest.TestCase):
@@ -623,21 +645,21 @@ class GsPassiveTests(unittest.TestCase):
     def test_a_passive_series_uses_the_smoothed_detector(self):
         # Nine passive days scattering +-20% around one level fire nothing (detect_changes
         # would have fired on the 4th and 5th); a sustained week 40% higher does.
-        def rpt(values, start_day=1):
-            return {"accounts": {"dave": {"stretches": [
+        def rpt(values, start_day=1, accounts=("dave", "jwork")):
+            return {"accounts": {account: {"stretches": [
                 {"status": "accepted", "end": f"2026-09-{start_day + i:02d}T08:00:00+00:00", "delta_pct": 10,
                  "reset_verified": True,
                  "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": int(v)}}}
-                for i, v in enumerate(values)]}}}
+                for i, v in enumerate(values)]} for account in accounts}}
         noisy = [400_000, 380_000, 320_000, 470_000, 480_000, 420_000, 400_000, 360_000, 300_000]
         now = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
         j = build_public_json([], {"split": {"cache_write": 1.0}}, EFFORT, PRICES, now, gs_passive=rpt(noisy))
-        self.assertIsNone(j["last_change"])
+        self.assertEqual(j["events"], [])
         stepped = [400_000] * 8 + [560_000] * 8
         now = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
         j = build_public_json([], {"split": {"cache_write": 1.0}}, EFFORT, PRICES, now, gs_passive=rpt(stepped))
-        self.assertIsNotNone(j["last_change"])
-        self.assertEqual(j["last_change"]["date"], "2026-09-09")
+        self.assertIsNotNone(window_event(j))
+        self.assertEqual(window_event(j)["date"], "2026-09-09")
 
     def test_passive_account_count_only_counts_accounts_with_an_accepted_stretch(self):
         report = {"accounts": {
@@ -859,8 +881,10 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         j = build_public_json(rows, passive, EFFORT, PRICES, now)
         ww = j["weekly_windows"]
         self.assertEqual([h["week_ending"] for h in ww["max5"]["history"]], ["2026-08-14"])
+        # The week ending 2026-08-21 starts ON the plan-change day, so it holds the last
+        # Max 5x window and the straddling one and belongs to neither plan (_plan_for_week).
         self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]],
-                         ["2026-08-21", "2026-08-28", "2026-09-04"])
+                         ["2026-08-28", "2026-09-04"])
         self.assertEqual(ww["passive"]["history"], [dict(h, partial=False) for h in self.PASSIVE_WEEKLY["history"]])
         self.assertEqual(ww["probe"], {"current": None, "history": [], "by_window": []})
         # passive.json's own two-weeks median is not a current value (audit finding 6) and
@@ -919,7 +943,7 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         self.assertEqual(len(ww["probe"]["history"]), 3)
         self.assertEqual({h["source"] for h in ww["probe"]["history"]}, {"probe_paired_deltas"})
         self.assertEqual([h["week_ending"] for h in ww["max20"]["history"]],
-                         ["2026-08-21", "2026-08-28", "2026-09-04"])
+                         ["2026-08-28", "2026-09-04"])
         self.assertEqual({h["source"] for h in ww["max20"]["history"]}, {"passive_paired_deltas"})
         self.assertIsNone(ww["max20"]["current"])
         # max5 is untouched by any of this -- it is frozen passive-era history.
@@ -945,7 +969,7 @@ class WeeklyWindowsPassthroughTests(unittest.TestCase):
         by_week = {h["week_ending"]: h["partial"] for h in j["weekly_windows"]["probe"]["history"]}
         self.assertEqual(by_week, {"2026-08-28": False, "2026-09-04": False, "2026-09-11": True})
         self.assertEqual({h["week_ending"]: h["partial"] for h in j["weekly_windows"]["max20"]["history"]},
-                         {"2026-08-21": False, "2026-08-28": False, "2026-09-04": False})
+                         {"2026-08-28": False, "2026-09-04": False})
 
     def test_passive_partial_flags_are_recomputed_from_the_publish_time(self):
         # A lagging passive.json from before the flag existed: the open week is
@@ -1408,26 +1432,37 @@ class LastChangeScopeTests(unittest.TestCase):
         # weekly event is dated 2026-09-14, later, so it must win last_change.
         passive = dict(PASSIVE, weekly_windows=self.WEEKLY_MAX20)
         now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
-        j = build_public_json([], passive, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 5 + [10.5] * 5))
-        window_events = [e for e in j["events"] if e.get("scope") == "window"]
-        self.assertTrue(window_events)
-        self.assertLess(window_events[-1]["date"], "2026-09-14")
+        j = build_public_json([], passive, EFFORT, PRICES, now,
+                              gs_passive=agreeing_report([15.0] * 5 + [10.5] * 5))
+        self.assertIsNotNone(window_event(j))
+        self.assertLess(window_event(j)["date"], "2026-09-14")
         self.assertEqual(j["last_change"]["scope"], "weekly")
         self.assertEqual(j["last_change"]["date"], "2026-09-14")
 
-    def test_older_weekly_event_loses_to_a_newer_window_event(self):
-        # Same weekly step (dated 2026-09-14), but now the window event is
-        # pushed later than it, past 2026-09-14, so the window event must win.
+    def test_a_newer_window_event_never_takes_last_change_from_a_certified_one(self):
+        # Same weekly step (dated 2026-09-14) with the window event pushed later than it.
+        # The window event is provisional -- the daily readings carry no uncertainty model
+        # at all -- and the page states last_change as "Anthropic last decreased Claude's
+        # limits by N%", so a provisional event never takes it however new it is.
         passive = dict(PASSIVE, weekly_windows=self.WEEKLY_MAX20)
         now = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
-        j = build_public_json([], passive, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 20 + [10.5] * 5))
-        window_events = [e for e in j["events"] if e.get("scope") == "window"]
+        j = build_public_json([], passive, EFFORT, PRICES, now,
+                              gs_passive=agreeing_report([15.0] * 20 + [10.5] * 5))
         weekly_events = [e for e in j["events"] if e.get("scope") == "weekly"]
-        self.assertTrue(window_events)
         self.assertTrue(weekly_events)
-        self.assertGreater(window_events[-1]["date"], weekly_events[-1]["date"])
-        self.assertEqual(j["last_change"]["scope"], "window")
-        self.assertEqual(j["last_change"]["date"], window_events[-1]["date"])
+        self.assertGreater(window_event(j)["date"], weekly_events[-1]["date"])
+        self.assertTrue(window_event(j)["provisional"])
+        self.assertEqual(j["last_change"]["scope"], "weekly")
+        self.assertEqual(j["last_change"]["date"], weekly_events[-1]["date"])
+
+    def test_with_only_a_provisional_change_there_is_no_last_change(self):
+        # The provisional event stays in `events` with its own evidence_quality; the
+        # headline has nothing certified to state, so last_change is null.
+        now = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now,
+                              gs_passive=agreeing_report([15.0] * 10 + [10.5] * 5))
+        self.assertIsNone(j["last_change"])
+        self.assertEqual([e["evidence_quality"] for e in j["events"]], ["provisional"])
 
 
 class ContributedBlockTests(unittest.TestCase):
@@ -1638,3 +1673,179 @@ class ShortfallTests(unittest.TestCase):
                      if c["scope"] == "weekly" and c.get("until") == "2026-09-13"]
         self.assertEqual([c["multiplier"] for c in five_hour], [PRE_CUT_MULTIPLIERS["five_hour_window"]])
         self.assertEqual([c["multiplier"] for c in promotion], [PRE_CUT_MULTIPLIERS["weekly"]])
+
+
+class DollarSeriesAgreementTests(unittest.TestCase):
+    """A dollar-series change is what two accounts saw, never what one pooled series did.
+
+    The published 2026-09-20 "-23%" was an artefact of pooling: the detector ran on one
+    series holding every account's verified daily readings, and the accounts sit at
+    different levels, so which account happened to be busy moved the pooled median on its
+    own. Across that date one account's own readings went UP and the other's went DOWN.
+    Detection now runs per account and publishes only what two of them agree on.
+    """
+
+    NOW = datetime(2026, 9, 21, 12, tzinfo=timezone.utc)
+
+    def published(self, **accounts):
+        report = {"accounts": {}}
+        for account, budgets in accounts.items():
+            start_day = 1
+            if isinstance(budgets, tuple):
+                budgets, start_day = budgets
+            report["accounts"].update(
+                daily_report(budgets, start_day=start_day, account=account)["accounts"])
+        return build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+
+    def test_one_account_stepping_alone_publishes_no_change(self):
+        j = self.published(dave=[15.0] * 10 + [10.5] * 5)
+        self.assertEqual(j["events"], [])
+        self.assertIsNone(j["last_change"])
+
+    def test_two_accounts_stepping_in_opposite_directions_publish_no_change(self):
+        j = self.published(dave=[15.0] * 10 + [10.5] * 5, jwork=[15.0] * 10 + [21.0] * 5)
+        self.assertEqual(j["events"], [])
+
+    def test_a_step_only_the_pooled_series_has_publishes_no_change(self):
+        # The 20 September shape: each account is flat on its own, the two sit at
+        # different levels, and which of them has readings on a day moves the pooled
+        # median. The pooled series steps; neither account does.
+        j = self.published(dave=[15.0] * 10, jwork=([30.0] * 10, 11))
+        self.assertEqual(j["events"], [])
+
+    def test_two_accounts_stepping_together_publish_one_change(self):
+        j = self.published(dave=[15.0] * 10 + [10.5] * 5, jwork=[20.0] * 10 + [12.0] * 5)
+        events = [e for e in j["events"] if e["scope"] == "window"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual((events[0]["date"], events[0]["direction"]), ("2026-09-11", "decreased"))
+        # Dated at the earliest onset, bounded by the last reading at the old level.
+        self.assertEqual(events[0]["onset"], {"earliest": "2026-09-10", "latest": "2026-09-11"})
+
+    def test_the_percent_is_the_step_the_published_history_draws(self):
+        # The two accounts' own detectors see -30% and -40%; the levels the page holds
+        # pool both accounts, 17.5 then 11.25, which is -36%. The event must state the
+        # step the chart draws, not a percent from a different pool.
+        j = self.published(dave=[15.0] * 10 + [10.5] * 5, jwork=[20.0] * 10 + [12.0] * 5)
+        event = [e for e in j["events"] if e["scope"] == "window"][0]
+        hist = j["history"]["claude-sonnet-5"]
+        before = [h["meter_budget_per_window"] for h in hist if h["date"] < event["date"]][-1]
+        after = [h["meter_budget_per_window"] for h in hist if h["date"] >= event["date"]][0]
+        self.assertEqual((before, after), (17.5, 11.25))
+        self.assertEqual(event["percent"], round(abs(after / before - 1) * 100))
+        self.assertEqual(event["percent"], 36)
+
+    def test_onsets_more_than_three_days_apart_are_not_one_change(self):
+        j = self.published(dave=[15.0] * 10 + [10.5] * 10, jwork=[15.0] * 15 + [10.5] * 5)
+        self.assertEqual(j["events"], [])
+
+    def test_an_account_with_too_few_readings_to_split_is_not_a_second_account(self):
+        # The detector needs 2 x SMOOTH_MIN_POINTS readings before it can split an
+        # account at all, so an account below that cannot agree with anything.
+        stepped = [15.0] * 8 + [10.5] * 8
+        short = self.published(dave=stepped, jwork=([15.0] * 4 + [10.5] * 3, 5))
+        self.assertEqual(short["events"], [])
+        testable = self.published(dave=stepped, jwork=([15.0] * 4 + [10.5] * 4, 5))
+        self.assertEqual([e["date"] for e in testable["events"]], ["2026-09-09"])
+
+    def test_the_agreement_rule_is_the_one_the_constant_states(self):
+        from tracker.publish import DOLLAR_AGREEMENT_DAYS
+        self.assertEqual(DOLLAR_AGREEMENT_DAYS.days, 3)
+
+
+class PlanSeamTests(unittest.TestCase):
+    """_plan_for_week: a week that opens on plan-change day belongs to neither plan."""
+
+    def test_a_week_starting_on_plan_change_day_is_not_max20(self):
+        from tracker.publish import PLAN_CHANGE, _plan_for_week
+        seam = (PLAN_CHANGE + timedelta(days=7)).isoformat()
+        self.assertIsNone(_plan_for_week(seam))
+        self.assertEqual(_plan_for_week((PLAN_CHANGE + timedelta(days=8)).isoformat()), "max20")
+        self.assertEqual(_plan_for_week(PLAN_CHANGE.isoformat()), "max5")
+
+    def test_the_seam_week_is_published_by_neither_plan(self):
+        from tracker.publish import PLAN_CHANGE
+        weeks = [{"week_ending": (PLAN_CHANGE + timedelta(days=d)).isoformat(),
+                  "windows": 7.24, "five_hour_pct": 100.0, "seven_day_pct": 14.0, "pieces": 3}
+                 for d in (0, 7, 14)]
+        passive = dict(PASSIVE, weekly_windows={"current": None, "history": weeks, "by_window": []})
+        now = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+        ww = build_public_json([], passive, EFFORT, PRICES, now)["weekly_windows"]
+        published = {h["week_ending"] for plan in ("max5", "max20") for h in ww[plan]["history"]}
+        self.assertNotIn((PLAN_CHANGE + timedelta(days=7)).isoformat(), published)
+        self.assertEqual(published, {PLAN_CHANGE.isoformat(),
+                                     (PLAN_CHANGE + timedelta(days=14)).isoformat()})
+
+
+class TokensPerWeekChangeTests(unittest.TestCase):
+    """What a week's tokens did across the cut: windows per week compounded with the
+    five-hour window, because the window grew while the week held fewer of them."""
+
+    RATIO_NOTE: ClassVar[dict] = {"ratio_fell_pct": 21.8}
+    ACROSS: ClassVar[dict] = {"per_account": {
+        "a1": {"change_pct": 17.2, "n_with_capture": 0, "n_before": 166, "n_after": 32},
+        "a2": {"change_pct": 8.6, "n_with_capture": 56, "n_before": 40, "n_after": 15},
+        "a3": {"change_pct": None, "n_with_capture": 19, "n_before": 0, "n_after": 18}}}
+
+    UNSET: ClassVar[object] = object()
+
+    def change(self, note=UNSET, across=UNSET):
+        from tracker.publish import _tokens_per_week_change
+        return _tokens_per_week_change(self.RATIO_NOTE if note is self.UNSET else note,
+                                       self.ACROSS if across is self.UNSET else across)
+
+    def test_the_two_measured_changes_compound(self):
+        self.assertEqual(self.change(), {
+            "percent": 15, "direction": "decreased", "signed_pct": -15.1,
+            "windows_per_week_pct": -21.8, "five_hour_window_pct": 8.6,
+            "five_hour_accounts": ["a2"], "method": self.change()["method"]})
+        self.assertIn("windows_per_week_pct", self.change()["method"])
+
+    def test_the_arithmetic_is_the_published_numbers_own(self):
+        out = self.change()
+        expected = ((1 + out["windows_per_week_pct"] / 100)
+                    * (1 + out["five_hour_window_pct"] / 100) - 1) * 100
+        self.assertEqual(out["signed_pct"], round(expected, 1))
+        self.assertEqual(out["percent"], round(abs(out["signed_pct"])))
+
+    def test_a_rise_reads_as_a_rise(self):
+        out = self.change(note={"ratio_fell_pct": -10.0},
+                          across={"per_account": {"a2": {"change_pct": 5.0, "n_with_capture": 4,
+                                                         "n_before": 10, "n_after": 10}}})
+        self.assertEqual((out["direction"], out["signed_pct"], out["percent"]),
+                         ("increased", 15.5, 16))
+
+    def test_with_no_account_able_to_state_a_five_hour_change_there_is_no_figure(self):
+        blind = {"per_account": {"a1": {"change_pct": 17.2, "n_with_capture": 0,
+                                        "n_before": 166, "n_after": 32}}}
+        self.assertIsNone(self.change(across=blind))
+        for empty in (None, {}, {"per_account": {}}):
+            with self.subTest(across=empty):
+                self.assertIsNone(self.change(across=empty))
+
+    def test_with_no_windows_per_week_change_there_is_no_figure(self):
+        # Two regimes are what a before-and-after change is taken from; with one there
+        # is no note, and nothing is published in its place.
+        self.assertIsNone(self.change(note=None))
+
+    def test_last_change_carries_the_same_object_as_the_event(self):
+        from tracker.detect import ChangeEvent
+        from tracker.publish import _build_events, _latest_change_with_scope
+        weekly = {"max20": {
+            "regimes": [{"start": "2026-09-01T00:00:00+00:00", "end": "2026-09-05T00:00:00+00:00"},
+                        {"start": "2026-09-06T00:00:00+00:00", "end": "2026-09-10T00:00:00+00:00"}],
+            "by_window": [{"window_ending": "2026-09-02T00:00:00+00:00", "five_hour_pct": 20.0,
+                           "seven_day_pct": 10.0},
+                          {"window_ending": "2026-09-07T00:00:00+00:00", "five_hour_pct": 10.0,
+                           "seven_day_pct": 10.0}]}}
+        event = ChangeEvent(date(2026, 9, 6), "decreased", 50)
+        published = _build_events([], [event], self.ACROSS, weekly)
+        last = _latest_change_with_scope([], [event], self.ACROSS, weekly)
+        self.assertIsNotNone(published[0]["tokens_per_week_change"])
+        self.assertEqual(last["tokens_per_week_change"], published[0]["tokens_per_week_change"])
+
+    def test_a_provisional_event_carries_no_tokens_per_week_change_at_all(self):
+        from tracker.detect import ChangeEvent
+        from tracker.publish import _event_record
+        out = _event_record(ChangeEvent(date(2026, 9, 6), "decreased", 50), "window",
+                            self.ACROSS, None)
+        self.assertNotIn("tokens_per_week_change", out)
