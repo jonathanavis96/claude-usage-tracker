@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-23T14:30:13.904428+00:00",
+ "generated_at": "2026-09-23T15:30:14.764608+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 1623,
+    "reset_verified_samples": 1645,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 4798,
+    "samples": 4820,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-23T14:26:47+00:00"
+    "last": "2026-09-23T15:26:27+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,18 +32,18 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 1806,
-    "turns": 52568,
+    "files": 1816,
+    "turns": 52812,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1806,
-     "dropped": 1899,
+     "kept": 1816,
+     "dropped": 1940,
      "subagent_files": 700,
      "dropped_to": {
       ".claude": 1,
-      ".claude-avis": 481
+      ".claude-avis": 521
      },
-     "unclaimed": 1417
+     "unclaimed": 1418
     }
    },
    "stretches": [
@@ -5658,6 +5658,57 @@
      "capture_status": "accepted",
      "reference": 1.6991,
      "capture": 0.8533
+    },
+    {
+     "start": "2026-09-23T08:11:09+00:00",
+     "end": "2026-09-23T15:16:52+00:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 22.0528,
+     "usd_per_pct": 2.2053,
+     "bounds": [
+      1.8377,
+      2.7566
+     ],
+     "tokens": {
+      "claude-opus-5": {
+       "input": 114,
+       "output": 54590,
+       "cache_read": 12355624,
+       "cache_write": 80857,
+       "cache_write_1h": 80857
+      },
+      "claude-sonnet-5": {
+       "input": 566,
+       "output": 128082,
+       "cache_read": 19231832,
+       "cache_write": 1170995,
+       "cache_write_1h": 1170995
+      },
+      "claude-haiku-4-5": {
+       "input": 9,
+       "output": 453,
+       "cache_read": 13689,
+       "cache_write": 18613,
+       "cache_write_1h": 18613
+      },
+      "claude-opus-5-5": {
+       "input": 684,
+       "output": 265712,
+       "cache_read": 35077757,
+       "cache_write": 1069566,
+       "cache_write_1h": 1069566
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 683,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.6534,
+     "capture": 1.3338
     }
    ],
    "runs": [
@@ -6186,44 +6237,44 @@
     },
     {
      "date": "2026-09-23",
-     "usd_per_pct": 1.4499,
-     "delta_pct": 10.0,
-     "stretches": 1,
-     "rounding": 0.6,
+     "usd_per_pct": 1.8276,
+     "delta_pct": 20.0,
+     "stretches": 2,
+     "rounding": 0.35,
      "bounds": [
-      0.9062,
-      3.6248
+      1.3538,
+      2.8117
      ],
-     "pieces": 6,
+     "pieces": 7,
      "reset_verified": false,
      "capture_diagnosed": 0
     }
    ],
    "split": {
     "input": 2.8e-05,
-    "output": 0.003071,
-    "cache_read": 0.972689,
-    "cache_write": 0.024213,
-    "cache_write_1h": 0.012385
+    "output": 0.0031,
+    "cache_read": 0.972576,
+    "cache_write": 0.024296,
+    "cache_write_1h": 0.012574
    },
-   "last_usable_at": "2026-09-23T08:11:09+00:00",
+   "last_usable_at": "2026-09-23T15:16:52+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 133,
-     "median": 1.6742,
-     "half_range": 0.8527,
-     "mad": 0.3121,
-     "cv": 0.3393
+     "n": 134,
+     "median": 1.6842,
+     "half_range": 0.8476,
+     "mad": 0.3114,
+     "cv": 0.3386
     },
     "daily": {
      "n": 16,
-     "median": 1.5842,
-     "half_range": 0.3583,
-     "mad": 0.1423,
-     "cv": 0.1836
+     "median": 1.6628,
+     "half_range": 0.3414,
+     "mad": 0.1606,
+     "cv": 0.1835
     }
    },
    "weekly_by_window": [
@@ -7141,12 +7192,12 @@
     },
     {
      "window_ending": "2026-09-23T16:29:59.664984+00:00",
-     "windows": 5.0,
-     "five_hour_pct": 5.0,
-     "seven_day_pct": 1.0,
+     "windows": 3.5,
+     "five_hour_pct": 7.0,
+     "seven_day_pct": 2.0,
      "rounding_interval": [
-      1.3341,
-      null
+      1.5206,
+      19.9576
      ],
      "pieces": 1,
      "reset_verified": true
@@ -7163,9 +7214,9 @@
     "note": null,
     "reset_verified_samples": 952,
     "since": null,
-    "samples": 2053,
+    "samples": 2077,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-23T14:28:55+00:00"
+    "last": "2026-09-23T15:28:37+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -9830,11 +9881,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 127,
+    "reset_verified_samples": 152,
     "since": null,
-    "samples": 127,
+    "samples": 152,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-09-23T14:28:55+00:00"
+    "last": "2026-09-23T15:29:42+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -9844,17 +9895,17 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 51,
-    "turns": 1581,
+    "files": 89,
+    "turns": 2427,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 51,
-     "dropped": 25,
-     "subagent_files": 36,
+     "kept": 89,
+     "dropped": 36,
+     "subagent_files": 57,
      "dropped_to": {
-      ".claude-javiswork": 17
+      ".claude-javiswork": 27
      },
-     "unclaimed": 8
+     "unclaimed": 9
     }
    },
    "stretches": [
@@ -9906,47 +9957,83 @@
      "capture_status": "unjudged",
      "reference": null,
      "capture": null
+    },
+    {
+     "start": "2026-09-23T14:14:52+00:00",
+     "end": "2026-09-23T14:44:47+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 15.1587,
+     "usd_per_pct": 1.5159,
+     "bounds": [
+      1.3781,
+      1.6843
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 680,
+       "output": 65474,
+       "cache_read": 76701277,
+       "cache_write": 1713079,
+       "cache_write_1h": 73168
+      },
+      "claude-sonnet-5": {
+       "input": 842,
+       "output": 45346,
+       "cache_read": 57417096,
+       "cache_write": 1842579
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 740,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "unjudged",
+     "reference": null,
+     "capture": null
     }
    ],
    "runs": [],
    "daily": [
     {
      "date": "2026-09-23",
-     "usd_per_pct": 2.2106,
-     "delta_pct": 10.0,
-     "stretches": 1,
-     "rounding": 0.3,
+     "usd_per_pct": 1.8632,
+     "delta_pct": 20.0,
+     "stretches": 2,
+     "rounding": 0.15,
      "bounds": [
-      1.7005,
-      3.158
+      1.6202,
+      2.192
      ],
      "pieces": 3,
      "reset_verified": true,
-     "capture_diagnosed": 1
+     "capture_diagnosed": 2
     }
    ],
    "split": {
-    "input": 1.5e-05,
-    "output": 0.002083,
-    "cache_read": 0.975018,
-    "cache_write": 0.022884,
-    "cache_write_1h": 0.003875
+    "input": 1.3e-05,
+    "output": 0.001486,
+    "cache_read": 0.974253,
+    "cache_write": 0.024247,
+    "cache_write_1h": 0.002314
    },
-   "last_usable_at": "2026-09-23T14:14:52+00:00",
+   "last_usable_at": "2026-09-23T14:44:47+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 1,
-     "median": 2.2106,
-     "half_range": 0.0,
-     "mad": 0.0,
-     "cv": null
+     "n": 2,
+     "median": 1.8632,
+     "half_range": 0.1864,
+     "mad": 0.2764,
+     "cv": 0.2637
     },
     "daily": {
      "n": 1,
-     "median": 2.2106,
+     "median": 1.8632,
      "half_range": 0.0,
      "mad": 0.0,
      "cv": null
@@ -9967,12 +10054,12 @@
     },
     {
      "window_ending": "2026-09-23T16:40:00.299923+00:00",
-     "windows": 3.33,
-     "five_hour_pct": 10.0,
-     "seven_day_pct": 3.0,
+     "windows": 4.0,
+     "five_hour_pct": 20.0,
+     "seven_day_pct": 5.0,
      "rounding_interval": [
-      1.4899,
-      15.6904
+      2.4621,
+      7.9964
      ],
      "pieces": 2,
      "reset_verified": true
