@@ -1,10 +1,10 @@
 [Unit]
-Description=Sample Jwork's Claude usage meter every five minutes
+Description=Sample Jwork's Claude usage meter every minute
 
 [Timer]
 OnBootSec=4min
-OnUnitActiveSec=5min
-AccuracySec=30s
+OnUnitActiveSec=1min
+AccuracySec=5s
 Unit=claude-usage-meter-jwork.service
 
 [Install]
