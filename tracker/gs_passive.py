@@ -83,7 +83,7 @@ import json
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from fnmatch import fnmatch
 from itertools import pairwise
 from pathlib import Path
@@ -873,6 +873,29 @@ def _summary(name: str, a: dict) -> str:
             f"daily median ${sp.get('median')}/1% cv {sp.get('cv')} (n={sp['n']})")
 
 
+def _speed_history(out: Path, accounts: dict[str, Account], home: Path, refresh: bool) -> dict | None:
+    """The gs accounts' model speed rows (tracker/speed.py): what `out` already holds under
+    `speed`, with the recent days recomputed from the transcripts when `refresh`. Only the
+    full gs run refreshes, so a replay or a one-account run carries the stored history
+    through untouched. A failure keeps the stored rows: the speed rows must never cost the
+    day's passive join."""
+    from . import speed
+    from .publish import ACCOUNT_LABELS
+    stored = (speed.load_history(out) or {}).get("speed")
+    if not refresh:
+        return stored
+    now = datetime.now(timezone.utc)
+    try:
+        since_day, mtime_since = speed.recompute_from(stored, now)
+        labels = dict(ACCOUNT_LABELS)
+        rows = speed.scan_accounts([(labels[name], transcript_files(acct, mtime_since, home=home)[0])
+                                    for name, acct in accounts.items()], since_day)
+        return speed.update(stored, rows, since_day or date.min.isoformat(), now)
+    except (OSError, ValueError, KeyError) as e:
+        print(f"warning: speed rows not updated, keeping the stored ones: {e}", file=sys.stderr)
+        return stored
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Passive join per account; the capture check is advisory (CAPTURE_GATE)")
@@ -921,6 +944,11 @@ def main(argv: list[str] | None = None) -> int:
         print(_summary(name, acct))
     for c in r["changes"]:
         print(f"change: {c['account']} at {c['at']}, step {c['step']:+.1%}, corroborated by {', '.join(c['corroborated_by'])}")
+    if a.out:
+        speed_rows = _speed_history(a.out, accounts, a.home,
+                                    refresh=not (a.masterrig or a.account or a.until or a.withhold))
+        if speed_rows is not None:
+            r["speed"] = speed_rows
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         tmp = a.out.with_suffix(".tmp")

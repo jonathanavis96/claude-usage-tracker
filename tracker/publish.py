@@ -25,6 +25,8 @@ from .gs_passive import credit_rate_sources, passive_credit_points, passive_doll
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
+from .speed import load_history as load_speed_history
+from .speed import speed_block
 from .weekly import _iso_week_ending, probe_weekly_windows
 
 # The credits table (she-llac.com/claude-limits) gives each plan's credits per
@@ -398,7 +400,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                       effort_usd: dict | None = None, gs_passive: dict | None = None,
                       reference_mix: dict | None = None, *, masterrig_passive: dict | None = None,
                       effort_meta: dict | None = None, credits: dict | None = None,
-                      model_rates: dict | None = None) -> dict:
+                      model_rates: dict | None = None, masterrig_speed: dict | None = None) -> dict:
     """The public JSON, schema_version 2 (the 2026-09-16 audit's implementation contract).
 
     Rates. The measured quantity is the meter budget: the meter dollars (list
@@ -741,6 +743,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         # frozen reference mix above -- it feeds the page's "about N sessions" line,
         # not a token-figure conversion.
         "session_tokens": passive.get("session_tokens", {}),
+        # Model speed (tracker/speed.py): gs's daily rows ride in gs-passive.json's `speed`,
+        # masterrig's (`masterrig_speed`) in their own history file. Nothing above reads them.
+        "speed": speed_block((gs_passive or {}).get("speed"), masterrig_speed),
     }
 
 
@@ -2010,7 +2015,8 @@ def load_gs_passive(path: Path | None) -> dict | None:
 
 def rebuild_public_json(now: datetime, *, probes: Path, passive: Path, effort: Path, prices: Path,
                         gs_passive: Path | None = None, masterrig_passive: Path | None = None,
-                        model_rates: Path | None = None, contributed: Path | None = None) -> dict:
+                        model_rates: Path | None = None, contributed: Path | None = None,
+                        masterrig_speed: Path | None = None) -> dict:
     """The whole public JSON, read off the files on disk and built at `now`.
 
     The one place the publish's inputs are turned into the published document, so that
@@ -2046,7 +2052,8 @@ def rebuild_public_json(now: datetime, *, probes: Path, passive: Path, effort: P
         gs_passive=load_gs_passive(gs_passive), masterrig_passive=load_gs_passive(masterrig_passive),
         effort_meta=effort_raw.get("_meta"),
         credits=credit_model.load_credits(prices_raw, default=CREDITS),
-        model_rates=None if model_rates is None else credit_model.load_model_rates(model_rates))
+        model_rates=None if model_rates is None else credit_model.load_model_rates(model_rates),
+        masterrig_speed=load_speed_history(masterrig_speed))
     # Contributed figures sit beside the probe and passive ones; nothing above reads
     # them, so no existing field changes whether or not the block is present.
     block = load_contributed(contributed)
@@ -2083,6 +2090,10 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
                     dest="masterrig_passive",
                     help="history/masterrig-passive.json, the third watched account's stretches; read only "
                          "for the credits block. Missing or unreadable is a warning, like --gs-passive")
+    ap.add_argument("--masterrig-speed", type=Path, default=Path("history/masterrig-speed.json"),
+                    dest="masterrig_speed",
+                    help="history/masterrig-speed.json (bin/passive.sh), masterrig's daily model speed rows; "
+                         "missing or unreadable is a warning, like --gs-passive")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     now = now or datetime.now(timezone.utc)
@@ -2101,7 +2112,8 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         # the published dollar series is the gs accounts' and is not touched by that file.
         j = rebuild_public_json(now, probes=a.probes, passive=a.passive, effort=a.effort,
                                 prices=a.prices, gs_passive=a.gs_passive,
-                                masterrig_passive=a.masterrig_passive, contributed=a.contributed)
+                                masterrig_passive=a.masterrig_passive, contributed=a.contributed,
+                                masterrig_speed=a.masterrig_speed)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
