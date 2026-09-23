@@ -612,6 +612,10 @@ class GsPassiveTests(unittest.TestCase):
         j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=empty)
         self.assertEqual(j["instrument"], "unavailable")
         self.assertEqual(j["passive_account_count"], 0)
+        # account_feeds is not a figure: the file names jwork, so a2 is listed, and with no
+        # stamp to show its feed is running it reads as stopped.
+        self.assertEqual(j.pop("account_feeds"), {"a2": {"feed_at": None, "newest_stretch_end": None, "state": "stopped"}})
+        self.assertEqual(without.pop("account_feeds"), {})
         self.assertEqual(j, without)
 
     def test_freshness_follows_a_fresh_passive_reading_when_probes_are_stale(self):
@@ -1993,3 +1997,97 @@ class CreditValuedDetectionTests(unittest.TestCase):
         self.assertEqual(block["min_meter_pct_per_side"], MIN_STRETCH_PCT)
         self.assertEqual(block["testable_accounts"], 2)
         self.assertEqual(set(block["rate_sources"]), {"anchor", "measured"})
+
+
+class AccountFeedsTests(unittest.TestCase):
+    """`account_feeds` (issues #32, #33): an idle account against a stopped collector."""
+
+    NOW = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+
+    def _stretch(self, end, capture_status="accepted"):
+        return {"status": "accepted", "capture_status": capture_status, "start": end, "end": end,
+                "delta_pct": 10, "windows": 1,
+                "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 400000}}}
+
+    def _ago(self, hours):
+        return (self.NOW - timedelta(hours=hours)).isoformat()
+
+    def _inputs(self):
+        # masterrig's stretch reads capture_status "surplus": exempt from the capture test,
+        # as in the fits. Its file was written 20 h ago, inside the daily schedule's 36 h.
+        masterrig = {"generated_at": self._ago(20),
+                     "accounts": {"masterrig": {"stretches": [self._stretch(self._ago(22), "surplus")]}}}
+        gs = {"generated_at": self._ago(1), "accounts": {
+            # Meter read an hour ago, newest clean stretch four days old: idle.
+            "jwork": {"meter": {"last": self._ago(1)}, "stretches": [self._stretch(self._ago(96))]},
+            # Meter last read seven hours ago while the file is fresh: this account's poller stopped.
+            "dave": {"meter": {"last": self._ago(7)}, "stretches": [self._stretch(self._ago(8))]},
+        }}
+        return masterrig, gs
+
+    def _feeds(self, masterrig, gs):
+        return build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=gs,
+                                 masterrig_passive=masterrig)["account_feeds"]
+
+    def test_fresh_idle_and_stopped_per_label_and_a_missing_account_is_omitted(self):
+        feeds = self._feeds(*self._inputs())
+        self.assertEqual({label: f["state"] for label, f in feeds.items()},
+                         {"a1": "fresh", "a2": "idle", "a3": "stopped"})
+        self.assertEqual(feeds["a1"], {"feed_at": self._ago(20), "newest_stretch_end": self._ago(22), "state": "fresh"})
+        self.assertEqual(feeds["a2"]["feed_at"], self._ago(1))
+        self.assertEqual(feeds["a2"]["newest_stretch_end"], self._ago(96))
+        self.assertNotIn("a4", feeds)
+        self.assertNotIn("jwork", json.dumps(feeds))
+
+    def test_feed_limits_are_the_named_schedules(self):
+        from tracker.publish import GS_FEED_MAX_AGE, IDLE_AFTER, MASTERRIG_FEED_MAX_AGE
+        self.assertEqual((MASTERRIG_FEED_MAX_AGE, GS_FEED_MAX_AGE, IDLE_AFTER),
+                         (timedelta(hours=36), timedelta(hours=6), timedelta(hours=72)))
+        masterrig, gs = self._inputs()
+        masterrig["generated_at"] = self._ago(37)
+        gs["accounts"]["dave"]["meter"]["last"] = self._ago(5)
+        feeds = self._feeds(masterrig, gs)
+        self.assertEqual((feeds["a1"]["state"], feeds["a3"]["state"]), ("stopped", "fresh"))
+
+    def test_a_gs_account_without_a_meter_reading_falls_back_to_the_files_generated_at(self):
+        masterrig, gs = self._inputs()
+        del gs["accounts"]["dave"]["meter"]
+        self.assertEqual(self._feeds(masterrig, gs)["a3"],
+                         {"feed_at": self._ago(1), "newest_stretch_end": self._ago(8), "state": "fresh"})
+
+    def test_only_capture_accepted_stretches_date_a_gs_account(self):
+        masterrig, gs = self._inputs()
+        gs["accounts"]["jwork"]["stretches"] = [self._stretch(self._ago(2), "unaccounted")]
+        self.assertEqual(self._feeds(masterrig, gs)["a2"],
+                         {"feed_at": self._ago(1), "newest_stretch_end": None, "state": "idle"})
+
+    def test_no_files_publish_an_empty_block(self):
+        self.assertEqual(self._feeds(None, None), {})
+
+    def test_a_stopped_feed_is_one_warning_line_and_the_publish_succeeds(self):
+        import io
+        import tempfile
+        from unittest import mock
+
+        from tracker.publish import main
+        masterrig, gs = self._inputs()
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            (d / "probes.jsonl").write_text("")
+            (d / "passive.json").write_text(json.dumps(PASSIVE))
+            (d / "effort.json").write_text(json.dumps(EFFORT))
+            (d / "prices.json").write_text(json.dumps(PRICES))
+            (d / "gs.json").write_text(json.dumps(gs))
+            (d / "mr.json").write_text(json.dumps(masterrig))
+            err = io.StringIO()
+            with mock.patch("sys.stderr", err):
+                rc = main(["--probes", str(d / "probes.jsonl"), "--passive", str(d / "passive.json"),
+                           "--effort", str(d / "effort.json"), "--prices", str(d / "prices.json"),
+                           "--gs-passive", str(d / "gs.json"), "--masterrig-passive", str(d / "mr.json"),
+                           "--out", str(d / "out.json")], now=self.NOW)
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads((d / "out.json").read_text())["account_feeds"]["a3"]["state"], "stopped")
+            lines = [ln for ln in err.getvalue().splitlines() if "account feed stopped" in ln]
+            self.assertEqual(len(lines), 1)
+            self.assertIn("a3", lines[0])
+            self.assertNotIn("a1", lines[0])

@@ -1,4 +1,5 @@
 """The review command must not mutate inputs or enter live publishing paths."""
+import io
 import json
 import tempfile
 import unittest
@@ -51,6 +52,20 @@ class OfflineRebuildTests(unittest.TestCase):
         if mix is not None:
             (root / "data/reference_mix.json").write_text(json.dumps(mix))
         return root
+
+    def test_a_reference_mix_that_is_not_an_object_is_a_clean_error_naming_the_file(self):
+        # Issue 58, item 2.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._archive(tmp, mix=None)
+            (root / "data/reference_mix.json").write_text("[1, 2]")
+            with self.assertRaisesRegex(ValueError, "data/reference_mix.json must contain a JSON object"):
+                rebuild_offline.rebuild(root, datetime(2026, 9, 16, 12, tzinfo=timezone.utc))
+            out = Path(tmp) / "review.json"
+            with patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit) as raised:
+                rebuild_offline.main(["--root", str(root), "--now", "2026-09-16T12:00:00Z", "--out", str(out)])
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn(f"offline rebuild failed: {root / 'data/reference_mix.json'}", err.getvalue())
+            self.assertFalse(out.exists())
 
     def test_rates_are_derived_on_the_archives_reference_mix(self):
         # Review of PR 57, round 2, finding 3: rates used the running checkout's mix

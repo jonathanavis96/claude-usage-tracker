@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -232,19 +233,24 @@ def _utilization(row: dict) -> float | None:
 
 
 def _model_tokens(row: dict, field: str = "tokens_since_five_hour_reset") -> dict[str, dict]:
+    """Per-model token counts, keyed by the normalised id `_price` values them at, so a
+    `[1m]` or dated id and the plain id land in one bucket with their counts summed."""
     t = row.get(field)
     if not isinstance(t, dict):
         return {}
-    out = {}
+    out: dict[str, dict] = {}
     for model, counts in t.items():
         if not isinstance(counts, dict):
             continue
         try:
-            out[model] = {c: int(counts.get(c) or 0) for c in CLASSES}
+            parsed = {c: int(counts.get(c) or 0) for c in CLASSES}
             if counts.get("cache_write_1h") is not None:
-                out[model]["cache_write_1h"] = int(counts["cache_write_1h"])
+                parsed["cache_write_1h"] = int(counts["cache_write_1h"])
         except (TypeError, ValueError):
             continue
+        merged = out.setdefault(_normalize_model(model), {c: 0 for c in CLASSES})
+        for c, n in parsed.items():
+            merged[c] = merged.get(c, 0) + n
     return out
 
 
@@ -273,9 +279,25 @@ def _weighted_median(pairs: list[tuple[float, float]]) -> float:
     return pairs[-1][0]
 
 
+# Mirrors `contrib/sample.py` `normalize_model` (that script is standalone and imports
+# nothing from the tracker), so an id stored by another client prices the way the
+# official sampler and the personal page price it.
+_DATE_SUFFIX = re.compile(r"-\d{8}$")
+_1M_MARKER = re.compile(r"\s*\[1m\]$")
+
+
+def _normalize_model(model: str) -> str:
+    """`claude-opus-5-5[1m]` -> `claude-opus-5-5`, `claude-haiku-4-5-20251001` -> `claude-haiku-4-5`."""
+    return _DATE_SUFFIX.sub("", _1M_MARKER.sub("", model))
+
+
 def _price(model: str, prices: dict) -> dict | None:
-    """The price row a model id is valued at. The old Fable id is priced as Fable 5.1
-    (an alias for pricing only: the row keeps the id it was observed under)."""
+    """The price row a model id is valued at, after stripping the `[1m]` marker and a
+    trailing 8-digit date. The old Fable id is priced as Fable 5.1 (an alias for
+    pricing only: the row keeps the id it was observed under)."""
+    if model in prices:
+        return prices[model]
+    model = _normalize_model(model)
     if model in prices:
         return prices[model]
     return prices.get("claude-fable-5-1") if model == "claude-fable-5" else None

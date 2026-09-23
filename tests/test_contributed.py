@@ -14,8 +14,9 @@ import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import ClassVar
 
-from tracker.contributed import _weighted_median, aggregate, fetch, main, merge
+from tracker.contributed import _price, _weighted_median, aggregate, fetch, main, merge
 
 NOW = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
 # Both windows are already closed at NOW, so every paired week is complete.
@@ -338,6 +339,43 @@ class WeeklyWindowsTests(unittest.TestCase):
         self.assertEqual(_weighted_median([(1, 1), (2, 1), (3, 1), (4, 1)]), 2.5)
         self.assertEqual(_weighted_median([(3, 1), (1, 1), (2, 1)]), 2)
         self.assertEqual(_weighted_median([(10, 3), (30, 1)]), 10)
+
+
+class PriceTests(unittest.TestCase):
+    # Issue 58, item 1: _price took an id exactly, so an id stored by another client
+    # with the [1m] marker or a dated suffix was skipped here but priced on the
+    # personal page, which mirrors contrib/sample.py normalize_model.
+    ROWS: ClassVar[dict] = {"claude-opus-5-5": {"input": 5}, "claude-haiku-4-5": {"input": 1}, "claude-fable-5-1": {"input": 9}}
+
+    def test_strips_the_1m_marker_and_a_trailing_date_before_pricing(self):
+        self.assertIs(_price("claude-opus-5-5[1m]", self.ROWS), self.ROWS["claude-opus-5-5"])
+        self.assertIs(_price("claude-haiku-4-5-20251001", self.ROWS), self.ROWS["claude-haiku-4-5"])
+
+    def test_exact_ids_and_the_fable_alias_still_price(self):
+        self.assertIs(_price("claude-opus-5-5", self.ROWS), self.ROWS["claude-opus-5-5"])
+        self.assertIs(_price("claude-fable-5[1m]", self.ROWS), self.ROWS["claude-fable-5-1"])
+        self.assertIsNone(_price("claude-opus-9", self.ROWS))
+
+    def test_a_sample_under_a_marked_id_is_counted_in_the_aggregate(self):
+        rows = [sample(A, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0,
+                       {"claude-sonnet-5[1m]": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 400_000}})]
+        self.assertEqual(aggregate(rows, NOW, PRICES)["max20"]["usd_per_pct"]["median"], 0.02)
+
+    def test_a_marked_sample_and_a_plain_sample_share_one_model_bucket(self):
+        # PR 85 review: normalising only in _price left the per-model figures keyed by the
+        # raw id, so claude-sonnet-5[1m] and claude-sonnet-5 were published as two models.
+        marked = {"claude-sonnet-5[1m]": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 400_000}}
+        dated = {"claude-sonnet-5-20260901": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 200_000},
+                 "claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 200_000}}
+        rows = [sample(A, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0, marked),
+                sample(B, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0, sonnet(400_000)),
+                sample(C, "max20", "2026-09-09T10:00:00Z", 50.0, 10.0, dated)]
+        j = aggregate(rows, NOW, PRICES)["max20"]
+        self.assertEqual(list(j["tokens_per_pct"]), ["claude-sonnet-5"])
+        self.assertEqual(j["tokens_per_pct"]["claude-sonnet-5"]["samples"], 3)
+        self.assertEqual(j["tokens_per_pct"]["claude-sonnet-5"]["median"], 8000)
+        by_model = [p["tokens_per_pct_by_model"] for p in j["points"]]
+        self.assertEqual(by_model, [{"claude-sonnet-5": 8000}] * 3)
 
 
 class PointsTests(unittest.TestCase):

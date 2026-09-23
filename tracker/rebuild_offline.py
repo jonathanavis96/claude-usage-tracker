@@ -44,7 +44,8 @@ def rebuild(root: Path, now: datetime) -> dict:
     effort_usd = {k: v for k, v in matrix.get("usd", {}).items() if not k.startswith("_")}
     mix = read("data/reference_mix.json")
     if mix is not None and not isinstance(mix, dict):
-        raise TypeError("data/reference_mix.json must contain a reference mix")
+        raise ValueError(f"{root / 'data/reference_mix.json'} must contain a JSON object "
+                         f"(a reference mix), not {type(mix).__name__}")
     probes = root / "history/probes.jsonl"
     result = build_public_json(
         load_probes(probes) if probes.exists() else [],
