@@ -50,15 +50,30 @@ class NormalizeModelTests(unittest.TestCase):
         for m in ("claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"):
             self.assertEqual(normalize_model(m), m)
 
+    def test_older_priced_ids_pass_through(self):
+        # Priced from their own rows on the pricing page (issue #63).  Before this they
+        # returned None, and any stretch that touched one of them was dropped whole.
+        for m in ("claude-opus-5-5", "claude-opus-4-8", "claude-opus-4-7",
+                  "claude-sonnet-4-6", "claude-haiku-4-5"):
+            self.assertEqual(normalize_model(m), m)
+
+    def test_older_priced_ids_keep_their_own_identity(self):
+        # Opus 4.7 and 4.8 list at exactly Opus 5's prices but are not aliased onto it:
+        # a stretch's tokens must still say which model spent them.
+        self.assertEqual(normalize_model("claude-opus-4-7[1m]"), "claude-opus-4-7")
+        self.assertEqual(normalize_model("claude-haiku-4-5-20251001"), "claude-haiku-4-5")
+
     def test_date_suffix_stripped(self):
         self.assertEqual(normalize_model("claude-sonnet-5-20250929"), "claude-sonnet-5")
 
     def test_1m_marker_stripped(self):
         self.assertEqual(normalize_model("claude-sonnet-5[1m]"), "claude-sonnet-5")
 
-    def test_other_versions_dropped(self):
-        for m in ("claude-opus-4-7", "claude-haiku-4-5-20251001",
-                  "claude-sonnet-4-6", "<synthetic>"):
+    def test_unpriced_ids_still_dropped(self):
+        # `<synthetic>` has no row on the pricing page and never gets one; it costs
+        # nothing because every `<synthetic>` turn carries zero tokens.  A model id
+        # newer than the table is the case this guard exists for.
+        for m in ("<synthetic>", "unknown", "claude-opus-9"):
             self.assertIsNone(normalize_model(m))
 
     def test_fable_5_is_priced_as_fable_5_1(self):
@@ -100,7 +115,7 @@ class SessionTokensByModelTests(unittest.TestCase):
             recent = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
             a = Path(d, "a.jsonl")
             a.write_text("\n".join([
-                rec("m1", ts=recent, model="claude-haiku-4-5-20251001", output_tokens=900, cache_creation_input_tokens=0, cache_read_input_tokens=0, input_tokens=900),
+                rec("m1", ts=recent, model="<synthetic>", output_tokens=900, cache_creation_input_tokens=0, cache_read_input_tokens=0, input_tokens=900),
                 rec("m2", ts=recent, model="claude-sonnet-5", output_tokens=1, cache_creation_input_tokens=0, cache_read_input_tokens=0, input_tokens=1),
             ]) + "\n")
             result = session_tokens_by_model([a], now=now)

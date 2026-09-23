@@ -29,7 +29,10 @@ from tools.credits_report import (
     recompute_credits_block,
 )
 from tracker import credits as C
+from tracker.credits import family, load_credits
+from tracker.join import bundle_meter_usd
 from tracker.publish import ACCOUNT_LABELS, build_public_json, rebuild_public_json
+from tracker.turns import CANONICAL_MODELS, normalize_model
 
 NOW = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
 LABELS = dict(ACCOUNT_LABELS)
@@ -895,7 +898,10 @@ class PriceTableRoundTripTests(unittest.TestCase):
         raw = json.loads(Path("data/prices.json").read_text())
         priced = {k: v for k, v in raw.items() if not k.startswith("_")}
         self.assertNotIn("_credits", priced)
-        self.assertEqual(sorted(priced), ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"])
+        self.assertEqual(sorted(priced),
+                         ["claude-fable-5-1", "claude-haiku-4-5", "claude-opus-4-7",
+                          "claude-opus-4-8", "claude-opus-5", "claude-opus-5-5",
+                          "claude-sonnet-4-6", "claude-sonnet-5"])
 
 
 class PublishCheckScopeTests(unittest.TestCase):
@@ -1797,6 +1803,79 @@ class CurrentWindowDownstreamTests(unittest.TestCase):
         tokens = self.credits["window_tokens"]
         self.assertEqual(tokens["current_source"], "before_cluster_scaled_by_five_hour_change")
         self.assertEqual(tokens["all"]["value"], round(tokens["before"]["value"] * 1.10))
+
+
+class PricedModelsTests(unittest.TestCase):
+    """Every id normalize_model will hand on must be priceable, and land in a family.
+
+    The five older models joined the table on 2026-09-23 (issue #63).  A row that is
+    priced but has no credit family, or a family whose `list_price_model` names a row
+    that is not there, would put a hole straight into the published per-model figures.
+    """
+    prices: ClassVar[dict]
+    credits: ClassVar[dict]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prices = json.loads(
+            (Path(__file__).resolve().parent.parent / "data/prices.json").read_text(encoding="utf-8"))
+        cls.credits = load_credits(cls.prices)
+
+    def test_every_canonical_model_has_a_complete_row(self):
+        for model in CANONICAL_MODELS:
+            with self.subTest(model=model):
+                row = self.prices.get(model)
+                self.assertIsNotNone(row, f"{model} normalizes but has no price row")
+                for field in ("input", "output", "cache_read", "cache_write",
+                              "cache_write_1h", "meter_weight", "class_weight"):
+                    self.assertIn(field, row)
+                self.assertEqual(set(row["class_weight"]),
+                                 {"input", "output", "cache_read", "cache_write"})
+
+    def test_every_priced_row_normalizes_to_itself(self):
+        for model in self.prices:
+            if not model.startswith("_"):
+                with self.subTest(model=model):
+                    self.assertEqual(normalize_model(model), model)
+
+    def test_the_older_models_land_in_the_right_family(self):
+        for model, fam in (("claude-opus-5-5", "opus"), ("claude-opus-4-8", "opus"),
+                           ("claude-opus-4-7", "opus"), ("claude-sonnet-4-6", "sonnet"),
+                           ("claude-haiku-4-5", "haiku")):
+            with self.subTest(model=model):
+                self.assertEqual(family(model, self.credits), fam)
+
+    def test_opus_4_7_and_4_8_list_at_opus_5_prices(self):
+        # Taken from the pricing page, not assumed: $5 / $6.25 / $10 / $0.50 / $25.
+        opus5 = self.prices["claude-opus-5"]
+        for model in ("claude-opus-4-8", "claude-opus-4-7"):
+            with self.subTest(model=model):
+                self.assertEqual({k: self.prices[model][k] for k in
+                                  ("input", "output", "cache_read", "cache_write", "cache_write_1h")},
+                                 {k: opus5[k] for k in
+                                  ("input", "output", "cache_read", "cache_write", "cache_write_1h")})
+
+    def test_every_family_list_price_model_is_in_the_table(self):
+        for fam, model in (self.credits.get("list_price_model") or {}).items():
+            with self.subTest(family=fam):
+                self.assertIn(model, self.prices)
+                self.assertEqual(family(model, self.credits), fam)
+
+    def test_the_new_rows_say_their_meter_weight_is_assumed(self):
+        for model in ("claude-opus-5-5", "claude-opus-4-8", "claude-opus-4-7",
+                      "claude-sonnet-4-6", "claude-haiku-4-5"):
+            with self.subTest(model=model):
+                self.assertIn("assumed", self.prices[model]["meter_weight_source"])
+
+    def test_a_bundle_on_a_new_model_is_valued_rather_than_dropped(self):
+        priced = {k: v for k, v in self.prices.items() if not k.startswith("_")}
+        # 1M cache_write on Haiku 4.5 at $1.25/MTok, class weight 1.0, meter weight 1.0.
+        self.assertAlmostEqual(
+            bundle_meter_usd("claude-haiku-4-5", {"cache_write": 1_000_000}, priced), 1.25)
+        # cache_read is weighted 0.0 on every row, new ones included.
+        self.assertEqual(
+            bundle_meter_usd("claude-sonnet-4-6", {"cache_read": 1_000_000}, priced), 0.0)
+        self.assertIsNone(bundle_meter_usd("<synthetic>", {"input": 10}, priced))
 
 
 if __name__ == "__main__":
