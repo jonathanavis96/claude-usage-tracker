@@ -1,5 +1,6 @@
 import random
 import unittest
+from typing import ClassVar
 
 import numpy as np
 
@@ -431,10 +432,10 @@ class PoolingTests(unittest.TestCase):
 class PooledFitTests(unittest.TestCase):
     """One set of rates for every group, one scale per group, recovered from built stretches."""
 
-    TIMES_OPUS = {"opus": 1.0, "sonnet": 0.6, "fable": 2.0}
+    TIMES_OPUS: ClassVar[dict[str, float]] = {"opus": 1.0, "sonnet": 0.6, "fable": 2.0}
     WEIGHT = 0.01
     #: Two accounts' meters a third apart: the scale is the group's, the rates are shared.
-    SCALE = {"jwork": 200_000.0, "dave": 150_000.0}
+    SCALE: ClassVar[dict[str, float]] = {"jwork": 200_000.0, "dave": 150_000.0}
 
     def _data(self):
         mixes = [(9, 1, 0), (1, 9, 0), (0, 1, 9), (5, 4, 1), (2, 2, 6), (7, 2, 1), (3, 6, 1),
@@ -485,7 +486,7 @@ class PooledFitTests(unittest.TestCase):
         self.assertNotIn("opus-5-5", out["times_opus"])
 
     def test_the_simplex_finds_a_known_minimum(self):
-        x, v = nelder_mead(lambda p: float(((p - np.array([1.0, -2.0])) ** 2).sum()),
+        x, _ = nelder_mead(lambda p: float(((p - np.array([1.0, -2.0])) ** 2).sum()),
                            np.zeros(2))
         self.assertAlmostEqual(x[0], 1.0, places=5)
         self.assertAlmostEqual(x[1], -2.0, places=5)
