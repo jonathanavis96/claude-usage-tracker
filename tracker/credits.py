@@ -16,16 +16,15 @@ one place, and there are two such places, for two different jobs:
   measured elsewhere rather than taken from the article. The rest of it is drawn beside
   the measurement and divided by nowhere.
 
-One exception, stated where it happens: the stretch-level instruments below
-(`window_credits`, `across_cut`, `fable_interval`) price a stretch's tokens with
-`price_tokens` at the reference table. `window_credits` is pure-Opus, so it touches
-only the anchor. The other two price mixed stretches, and they keep the reference
-table because the measured rates are outputs of a fit over these same stretches and
-because Haiku has no measured rate at all -- pricing a stretch with a missing rate
-would drop it from the selection rather than publish its absence. The comparison
-holds one table on both sides of the cut on purpose (see `across_cut`), and the level
-it prints is not a figure the page states. docs/findings-2026-09-20-measured-rates.md
-records this as the one place a reference rate is still in an arithmetic.
+The stretch-level instruments below price a stretch's tokens directly. `window_credits`
+is pure-Opus, so it touches only the anchor. `across_cut` prices mixed stretches at the
+pooled fit's whole coefficient vector (`pooled_fit_prices`) -- every family, Haiku's
+unpublished point estimate included, and the fitted cache-read weight -- because a
+before-and-after ratio needs the fit's own model on both sides, and the fit was measured on
+the same stretches (`rate_fit_stretches`). It falls back to the reference table with one
+held Fable rate only where no pooled fit exists. `fable_interval` states the pooled fit's
+Fable rate and keeps the per-stretch solve against the reference table as working
+(docs/findings-2026-09-23-pooled-rates.md).
 
 Three callers import this module rather than each keeping their own copy of the
 selection rule: `tracker/publish.py` (the published `credits` block),
@@ -478,6 +477,43 @@ def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *
             rows.append(st)
         kept[account] = rows
     return kept
+
+
+#: masterrig enters the rate fits, and the before-and-after comparison, from this instant
+#: and not before. From 2 to 5 September the takeoff pipeline on gs ran on the personal
+#: account, so its meter moved on work masterrig's transcripts never saw -- all 18 of its
+#: zero-token stretches that moved the meter fall in those four days -- and from June to
+#: August its transcripts had been cleaned up, so those stretches hold nothing. From 6
+#: September the account is Claude Code on masterrig alone
+#: (docs/findings-2026-09-23-masterrig-admitted.md).
+MASTERRIG_FROM = datetime(2026, 9, 6, tzinfo=timezone.utc)
+
+
+def spans_cut(st: dict) -> bool:
+    """True when a stretch starts before CUT_AT and ends after it.
+
+    Such a stretch belongs to neither side of the change: its meter movement is part one
+    regime and part the other, so it is dropped from both rather than filed by its start.
+    """
+    start, end = st.get("start"), st.get("end")
+    return bool(start and end and datetime.fromisoformat(start) < CUT_AT < datetime.fromisoformat(end))
+
+
+def rate_fit_stretches(by_account: dict[str, list[dict]],
+                       runs: list[HarnessRun]) -> dict[str, list[dict]]:
+    """The selection the rate fits run over, and the before-and-after comparison with them.
+
+    `clean_stretches` with the capture test on every account (masterrig included, now that
+    its capture column is filled), masterrig only from MASTERRIG_FROM, and no stretch that
+    spans the cut. tools/model_rates.py builds its fits from exactly this, and `across_cut`
+    reads the same stretches, so the five-hour change across the cut is measured on the
+    stretches the rates it prices with were measured on (docs/findings-2026-09-23-pooled-rates.md).
+    """
+    kept = clean_stretches(by_account, runs, require="capture_status")
+    if "masterrig" in kept:
+        kept["masterrig"] = [st for st in kept["masterrig"]
+                             if datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+    return {account: [st for st in rows if not spans_cut(st)] for account, rows in kept.items()}
 
 
 def pure_family_rows(clean: dict[str, list[dict]], credits: dict, fam: str,
@@ -1059,7 +1095,40 @@ def _p25(values: list[float]) -> float | None:
 
 
 def fable_interval(clean: dict[str, list[dict]], credits: dict, window_per_pct: float | None,
-                   labels: dict[str, str], weight: float | None = None) -> dict:
+                   labels: dict[str, str], weight: float | None = None,
+                   model_rates: dict | None = None) -> dict:
+    """Fable's input rate as the page states it: the pooled fit's where it has one.
+
+    Where `model_rates` publishes a measured Fable rate with an interval (the pooled fit,
+    tools/model_rates.py), that is the figure: `input_low` and `input_high` are its bootstrap
+    interval, `input` its point, and the per-stretch solve below is carried under `solved` as
+    working, not stated. Otherwise the solve is the figure, as before (`_solved_fable_interval`).
+    """
+    solved = _solved_fable_interval(clean, credits, window_per_pct, labels, weight)
+    row = ((model_rates or {}).get("per_family") or {}).get("fable") or {}
+    if row.get("input") is None or not row.get("interval"):
+        return solved
+    lo, hi = row["interval"]
+    opus_in = ((model_rates or {}).get("anchor") or {}).get("input")
+    return {
+        "input": round(row["input"], 4),
+        "input_low": round(lo, 4),
+        "input_high": round(hi, 4),
+        "output_ratio": [row.get("output_multiplier") or 5],
+        "status": "measured by one fit pooled across every account",
+        "times_opus": ([round(lo / opus_in, 2), round(hi / opus_in, 2)] if opus_in else None),
+        "method": ("one set of per-token rates shared by every account and side of 14 September, "
+                   "with one credits-per-1% scale per account and side, fitted over the clean "
+                   "stretches (history/model-rates.json measured_rates.pooled_fit); the interval "
+                   "is its 80% bootstrap interval, resampling stretches within each group."),
+        "unresolved": None,
+        "solved": solved,
+    }
+
+
+def _solved_fable_interval(clean: dict[str, list[dict]], credits: dict,
+                           window_per_pct: float | None, labels: dict[str, str],
+                           weight: float | None = None) -> dict:
     """Fable's input rate as an interval, solved from the stretches, never typed in.
 
     Both edges are a p25 rather than a median, because the solve is inflated on any
@@ -1123,16 +1192,65 @@ ACROSS_CUT_UNRESOLVED = (
     "the event for what these same accounts' meters do identify.")
 
 
+def pooled_fit_prices(model_rates: dict | None) -> dict | None:
+    """The pooled fit's whole coefficient vector, in credits, or None when there is none.
+
+    `measured_rates.pooled_fit` in history/model-rates.json is one set of per-token rates
+    shared by every account and side of the cut (tools/model_rates.py `pooled_fit`), with
+    Opus as the unit. It carries a coefficient for every family the fit priced -- including
+    one the page withholds as not measurable, whose point estimate is still the fit's --
+    and the cache-read weight fitted with them. The published per-family rates are the
+    measurable subset of this; `across_cut` prices with all of it, because a before-and-after
+    ratio of the fit's own group scales needs the fit's own model on both sides.
+    """
+    pooled = (model_rates or {}).get("pooled_fit") or {}
+    times_opus = pooled.get("times_opus")
+    anchor = (model_rates or {}).get("anchor") or {}
+    if not isinstance(times_opus, dict) or not times_opus or not anchor.get("input"):
+        return None
+    opus_in = float(anchor["input"])
+    return {"input": {fam: float(v) * opus_in for fam, v in times_opus.items()},
+            "output_multiplier": float(pooled.get("output_multiplier") or 5),
+            "cache_read_rate": float(pooled.get("cache_read_weight") or 0.0) * opus_in,
+            "times_opus": dict(times_opus),
+            "cache_read_weight": float(pooled.get("cache_read_weight") or 0.0)}
+
+
+def _pooled_stretch_credits(tokens: dict, credits: dict, fit: dict) -> float | None:
+    """One stretch's credits at the pooled fit's rates, or None if a family has none there.
+
+    Input-equivalent tokens exactly as the fit's design matrix counts them -- input plus
+    cache write, plus `output_multiplier` times output, at the family's rate -- and every
+    cache read at the one fitted cache-read rate, whichever family it came from.
+    """
+    total = 0.0
+    for model, tok in tokens.items():
+        if not isinstance(tok, dict):
+            continue
+        fam = family(model, credits)
+        rate = fit["input"].get(fam) if fam else None
+        if rate is None:
+            return None
+        total += (input_side(tok, 0.0) + fit["output_multiplier"] * tok.get("output", 0)) * rate
+        total += tok.get("cache_read", 0) * fit["cache_read_rate"]
+    return total
+
+
 def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
-               weight: float | None = None) -> dict:
+               weight: float | None = None, model_rates: dict | None = None) -> dict:
     """Each account's five-hour window in credits before and after the announced change.
 
     Every clean stretch is priced, not only the pure ones, so there is enough on both
-    sides of 14 September to compare -- which means Fable's tokens need a rate, and
-    Fable has only an interval. One rate is held constant on both sides
-    (`across_cut_fable_rate` in data/prices.json): the comparison is of the two sides
-    against each other, and a rate that is the same in both medians cannot move their
-    ratio much. The level itself is not a claim; `window_credits` is the claim.
+    sides of 14 September to compare. Where `model_rates` carries the pooled fit
+    (`pooled_fit_prices`), every family is priced at the fit's measured rate and cache reads
+    at its fitted weight -- one table on both sides of the cut, and the one the rates were
+    measured with, on the same selection (`rate_fit_stretches`). That fit found no change in
+    Fable's rate at the cut (docs/findings-2026-09-23-pooled-rates.md), so holding it on both
+    sides is a measurement rather than an assumption. Without a pooled fit (a fixture, an
+    archive from before it existed) the reference table prices the known families and one
+    Fable rate is held constant on both sides (`across_cut_fable_rate` in data/prices.json),
+    which is what this block did before. The level itself is not a claim;
+    `window_credits` is the claim.
 
     **This does not resolve whether the five-hour window moved, and the block says so.**
     An earlier version of this block compared the accounts' post-change levels to each
@@ -1152,6 +1270,7 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
     `status` instead of `capture_status`, which let 42 unaccounted stretches into the
     comparison, and the gate on PR #64 caught it.
     """
+    fit = pooled_fit_prices(model_rates)
     weight = cache_read_weight(credits) if weight is None else weight
     held = credits.get("across_cut_fable_rate") or {}
     fable_in, fable_out = _rate(held.get("input")), _rate(held.get("output"))
@@ -1159,12 +1278,18 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
     for name, label in labels.items():
         sides: dict[str, list[float]] = {"before": [], "after": []}
         for st in clean.get(name, []):
-            priced = price_tokens(st["tokens"], credits, weight)
-            if not priced.priced:
-                continue
-            if (priced.fable_input or priced.fable_output) and fable_out is None:
-                continue
-            total = priced.known + priced.fable_input * (fable_in or 0) + priced.fable_output * (fable_out or 0)
+            if fit is not None:
+                total = _pooled_stretch_credits(st["tokens"], credits, fit)
+                if total is None:
+                    continue
+            else:
+                priced = price_tokens(st["tokens"], credits, weight)
+                if not priced.priced:
+                    continue
+                if (priced.fable_input or priced.fable_output) and fable_out is None:
+                    continue
+                total = (priced.known + priced.fable_input * (fable_in or 0)
+                         + priced.fable_output * (fable_out or 0))
             if not st.get("start"):
                 continue  # unplaceable: no stamp to put it on one side of the change
             side = "before" if datetime.fromisoformat(st["start"]) < CUT_AT else "after"
@@ -1181,20 +1306,41 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
             # other machine included -- by only what this host's transcripts saw.
             "n_with_capture": sum(1 for st in clean.get(name, []) if st.get("capture") is not None),
         }
+    if fit is not None:
+        rates_used = {
+            "source": "pooled_fit",
+            "times_opus": {fam: round(v, 4) for fam, v in sorted(fit["times_opus"].items())},
+            "cache_read_weight": round(fit["cache_read_weight"], 6),
+            "output_multiplier": fit["output_multiplier"],
+            "why": ("every family at the pooled fit's own rate, Opus the unit, and every cache "
+                    "read at its fitted weight: the same rates on both sides of the cut, "
+                    "measured on the same stretches. The fit separates Fable's rate either "
+                    "side of the cut and finds no change in it."),
+        }
+        method = ("median credits per 1% over the stretches the rate fits run over (capture test "
+                  "on every account, the personal account from 6 September, no stretch that "
+                  "spans the cut), split on the announced change, every stretch priced at the "
+                  "pooled fit's rates so the two medians are comparable to each other. An "
+                  "account whose n_with_capture is 0 has no usable capture column, so its meter "
+                  "movement includes work this host never saw and its level reads low.")
+    else:
+        rates_used = None
+        method = ("median credits per 1% over every clean stretch of the account, split on the "
+                  "announced change; one Fable rate held constant on both sides so the two "
+                  "medians are comparable to each other. An account whose n_with_capture is 0 "
+                  "has no usable capture column, so its meter movement includes work this host "
+                  "never saw and its level reads low; the comparison of its own two sides is "
+                  "still its own.")
     return {
         "per_account": out,
         "resolved": False,
         "unresolved": ACROSS_CUT_UNRESOLVED,
         "unit": "credits per 1% of the five-hour meter",
         "cut_at": CUT_AT.isoformat(),
+        "rates_used": rates_used,
         "fable_rate_held": {"input": fable_in, "output": fable_out,
-                            "why": held.get("why")} if fable_out is not None else None,
-        "method": ("median credits per 1% over every clean stretch of the account, split on the "
-                   "announced change; one Fable rate held constant on both sides so the two "
-                   "medians are comparable to each other. An account whose n_with_capture is 0 "
-                   "has no usable capture column, so its meter movement includes work this host "
-                   "never saw and its level reads low; the comparison of its own two sides is "
-                   "still its own."),
+                            "why": held.get("why")} if fit is None and fable_out is not None else None,
+        "method": method,
     }
 
 

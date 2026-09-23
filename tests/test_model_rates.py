@@ -1,11 +1,14 @@
 import random
 import unittest
 
+import numpy as np
+
 from tools.model_rates import (DOMINANCE, DOMINANCE_MIN_N, DOMINANCE_SHARE, FIT_ACCOUNTS,
-                               MASTERRIG_FROM, MIN_N, SHELLAC, adopt, agree, clean, fit,
-                               fit_bootstrap, group_fits, measured_rates, prepare,
-                               ratio_bootstrap, section1, section2, section3, section4,
-                               single_model)
+                               MASTERRIG_FROM, MAX_INTERVAL_RATIO, MIN_N, SHELLAC, adopt, agree,
+                               clean, fit, fit_bootstrap, group_fits, measurable,
+                               measured_rates, nelder_mead, pooled_fit, pooled_records,
+                               pooled_section, prepare, ratio_bootstrap, section1, section2,
+                               section3, section4, single_model)
 
 PRE, POST = "2026-09-10T00:00:00+00:00", "2026-09-16T00:00:00+00:00"
 
@@ -160,7 +163,7 @@ class OpusFiveFiveTests(unittest.TestCase):
         self.assertNotIn("opus-5-5", fitted["rates"])
         self.assertEqual(fitted["dominant_n"]["opus-5-5"], 0)
         s1 = section1({"jwork": rows})
-        mr = measured_rates(s1, s3)
+        mr = measured_rates(s1, s3, pooled_section({"jwork": rows}, 1, 30))
         row = mr["per_family"]["opus-5-5"]
         self.assertIsNone(row["input"])
         self.assertIsNone(row["interval"])
@@ -291,45 +294,65 @@ class PoolingTests(unittest.TestCase):
         self.assertAlmostEqual(row["measured"], 0.70)
         self.assertEqual(row["interval"], [0.48, 0.92])
 
-    def test_a_family_no_fit_carries_is_not_measurable_and_a_disagreeing_one_still_publishes(self):
+    def _pooled(self, **intervals):
+        """A pooled fit's record: Sonnet at 0.6x Opus [0.55, 0.65] unless told otherwise."""
+        iv = {"sonnet": [0.55, 0.65], **intervals}
+        return {"n": 40, "groups": ["jwork/post", "jwork/pre"], "free": sorted(iv), "held": [],
+                "times_opus": {"opus": 1.0, "sonnet": 0.6,
+                               **{f: (v[0] + v[1]) / 2 for f, v in intervals.items()}},
+                "interval": iv, "cache_read_weight": 0.01, "cache_read_weight_interval": [0.008, 0.011],
+                "sse": 1.0, "resamples": 30, "credits_per_pct": {"jwork/pre": 1.0, "jwork/post": 1.0},
+                "n_nonzero": {f: 20 for f in iv}, "groups_carrying": {f: ["jwork/post", "jwork/pre"] for f in iv},
+                "leave_one_out": {}}
+
+    def test_a_family_the_pooled_fit_does_not_carry_is_not_measurable(self):
         s1 = {"jwork/pre": {"max_share": {"opus": 1.0, "sonnet": 0.7, "haiku": 0.0, "fable": 0.8}}}
-        mr = measured_rates(s1, self._s3(0.50, 0.90))
+        mr = measured_rates(s1, self._s3(0.50, 0.90), self._pooled())
         self.assertEqual(mr["per_family"]["haiku"]["status"],
                          "not measurable, no clean stretch is Haiku-heavy")
         self.assertIsNone(mr["per_family"]["haiku"]["interval"])
-        # Disagreeing fits are no longer a status sentence: a value is published (the median of
-        # the per-fit rates), the interval is the union, status is null and agree is False.
-        self.assertIsNone(mr["per_family"]["sonnet"]["status"])
-        self.assertFalse(mr["per_family"]["sonnet"]["agree"])
-        self.assertAlmostEqual(mr["per_family"]["sonnet"]["input"], 0.70)
-        self.assertEqual(mr["per_family"]["sonnet"]["interval"], [0.48, 0.92])
-        self.assertIn("disagree", mr["per_family"]["sonnet"]["why"])
+        # Sonnet comes from the pooled fit, not from the per-group fits' median (0.70 here).
+        sonnet = mr["per_family"]["sonnet"]
+        self.assertIsNone(sonnet["status"])
+        self.assertAlmostEqual(sonnet["input"], 0.6 * SHELLAC["opus"])
+        self.assertAlmostEqual(sonnet["times_opus"], 0.6)
+        self.assertEqual(sonnet["times_opus_interval"], [0.55, 0.65])
+        self.assertIn("one fit pooled over", sonnet["why"])
+        # The per-group fits stay on the record as diagnostics.
+        self.assertEqual(sorted(sonnet["per_fit"]), ["jwork/post", "jwork/pre"])
 
-    def test_a_pooled_interval_that_reaches_zero_publishes_no_value_and_no_interval(self):
+    def test_an_interval_that_reaches_zero_or_is_too_wide_publishes_no_value_and_no_interval(self):
         """The fit returning a coefficient is not the same as the fit measuring a rate.
 
-        Haiku after 2026-09-23: it is priced, so its tokens reach the design matrix, but it
-        carries at most a quarter of any clean stretch and the bootstrap draws include ones
-        where the other columns absorb it whole. The interval then reaches zero, and the
-        midpoint of such an interval is what tracker/gs_passive.py would price a stretch at
-        if it were published -- so neither the point estimate nor the interval is.
+        Haiku today: its tokens reach the pooled fit, but it carries at most a quarter of any
+        clean stretch and the resamples include ones where the other columns absorb it whole.
+        The interval reaches zero, and the midpoint of such an interval is what
+        tracker/gs_passive.py would price a stretch at if it were published -- so neither the
+        point estimate nor the interval is. Both stay on the record in `pooled`.
         """
         s1 = {"jwork/pre": {"max_share": {"opus": 1.0, "sonnet": 0.7, "haiku": 0.26, "fable": 0.8}}}
-        s3 = self._s3(0.50, 0.54)
-        for row in s3.values():
-            for side in (row, row["joint"]):
-                side["rates"]["haiku"] = 2.0
-                side["interval"]["haiku"] = [0.0, 13.0]
-        haiku = measured_rates(s1, s3)["per_family"]["haiku"]
-        self.assertIsNone(haiku["input"])
-        self.assertIsNone(haiku["interval"])
-        self.assertIsNone(haiku["times_opus_interval"])
-        self.assertIn("cannot separate Haiku from free", haiku["status"])
-        # The fits' own coefficients stay on the record, and the sentence quotes the interval.
-        self.assertEqual(sorted(haiku["per_fit"]), ["jwork/post", "jwork/pre"])
-        self.assertIn("reaches zero", haiku["why"])
-        # A family the same fits do pin down is untouched by the rule.
-        self.assertAlmostEqual(measured_rates(s1, s3)["per_family"]["sonnet"]["input"], 0.52)
+        mr = measured_rates(s1, self._s3(0.50, 0.54),
+                            self._pooled(haiku=[0.0, 2.5], fable=[1.5, 2.4]))
+        for fam in ("haiku", "fable"):
+            row = mr["per_family"][fam]
+            self.assertIsNone(row["input"], fam)
+            self.assertIsNone(row["interval"], fam)
+            self.assertIsNone(row["times_opus_interval"], fam)
+            self.assertIn(f"cannot pin {fam.capitalize()} down", row["status"])
+            self.assertIsNotNone(row["pooled"]["times_opus"])
+        self.assertIn("over 100x", mr["per_family"]["haiku"]["status"])
+        self.assertIn("1.60x", mr["per_family"]["fable"]["status"])
+        # The whole coefficient vector stays in pooled_fit for the before-and-after comparison.
+        self.assertAlmostEqual(mr["pooled_fit"]["times_opus"]["haiku"], 1.25)
+        self.assertAlmostEqual(mr["per_family"]["sonnet"]["times_opus"], 0.6)
+
+    def test_the_measurability_rule(self):
+        self.assertEqual(MAX_INTERVAL_RATIO, 1.5)
+        self.assertTrue(measurable([2.0, 2.2]))
+        self.assertFalse(measurable([1.0, 1.5]))
+        self.assertFalse(measurable([0.0, 0.1]))
+        self.assertFalse(measurable([1.0, float("inf")]))
+        self.assertFalse(measurable(None))
 
     def _dominance(self, s3, fam, counts):
         for (key, row), k in zip(sorted(s3.items()), counts):
@@ -350,26 +373,17 @@ class PoolingTests(unittest.TestCase):
         self.assertEqual(row["per_fit"]["jwork/pre"]["dominant_n"], DOMINANCE_MIN_N - 1)
         self.assertAlmostEqual(row["per_fit"]["jwork/pre"]["rate"], 0.50)
         self.assertIn(f"{DOMINANCE_SHARE:.0%}", row["per_fit"]["jwork/pre"]["qualification"])
-        mr = measured_rates({}, s3)
-        self.assertIn("jwork/pre (2 of 20)", mr["per_family"]["sonnet"]["why"])
 
-    def test_a_family_no_fit_dominates_is_withheld_with_its_coefficients_on_record(self):
+    def test_a_family_no_fit_dominates_is_kept_in_the_diagnostics_unqualified(self):
         s3 = self._dominance(self._s3(0.50, 0.54), "fable", [0, 2])
         for row in s3.values():
             for side in (row, row["joint"]):
                 side["rates"]["fable"] = 1.4
                 side["interval"]["fable"] = [1.2, 1.6]
-        s1 = {"jwork/pre": {"max_share": {"opus": 1.0, "sonnet": 0.7, "haiku": 0.0,
-                                          "fable": 0.46, "opus-5-5": 0.0}}}
-        fable = measured_rates(s1, s3)["per_family"]["fable"]
-        self.assertIsNone(fable["input"])
-        self.assertIsNone(fable["interval"])
+        fable = adopt(s3)["fable"]
         self.assertEqual(fable["n_fits"], 0)
-        self.assertEqual(fable["status"],
-                         "not measurable, no fit has 3 clean stretches that are 60% or more Fable")
         self.assertEqual(sorted(fable["per_fit"]), ["jwork/post", "jwork/pre"])
         self.assertFalse(any(v["qualified"] for v in fable["per_fit"].values()))
-        self.assertIn("0.460", fable["why"])
 
     def test_the_anchor_is_exempt_from_the_dominance_rule(self):
         s3 = self._dominance(self._s3(0.50, 0.54), "opus", [0, 0])
@@ -378,7 +392,7 @@ class PoolingTests(unittest.TestCase):
         self.assertTrue(all(v["qualified"] for v in opus["per_fit"].values()))
 
     def test_the_opus_row_is_the_anchor_and_says_it_came_from_the_reference(self):
-        mr = measured_rates({}, self._s3(0.50, 0.54))
+        mr = measured_rates({}, self._s3(0.50, 0.54), self._pooled())
         opus = mr["per_family"]["opus"]
         self.assertEqual(opus["input"], SHELLAC["opus"])
         self.assertEqual(opus["rate_source"], "reference")
@@ -386,12 +400,16 @@ class PoolingTests(unittest.TestCase):
         self.assertIsNone(opus["interval"])
         self.assertEqual(mr["per_family"]["sonnet"]["rate_source"], "measured")
 
-    def test_the_cache_read_weight_is_pooled_the_same_way(self):
-        w = measured_rates({}, self._s3(0.50, 0.54))["cache_read_weight"]
-        self.assertTrue(w["agree"])
+    def test_the_cache_read_weight_is_the_pooled_fits_under_the_same_rule(self):
+        w = measured_rates({}, self._s3(0.50, 0.54), self._pooled())["cache_read_weight"]
+        self.assertTrue(w["measurable"])
         self.assertAlmostEqual(w["value"], 0.01)
-        self.assertEqual(w["interval"], [0.005, 0.015])
+        self.assertEqual(w["interval"], [0.008, 0.011])
         self.assertEqual(w["reference"], 0.0)
+        wide = dict(self._pooled(), cache_read_weight_interval=[0.0, 0.005])
+        w = measured_rates({}, self._s3(0.50, 0.54), wide)["cache_read_weight"]
+        self.assertIsNone(w["value"])
+        self.assertAlmostEqual(w["fit_point"], 0.01)
 
     def test_the_section_three_shape_carries_both_fits(self):
         rows = JointCacheReadFitTests()._rows()
@@ -399,6 +417,68 @@ class PoolingTests(unittest.TestCase):
         self.assertEqual(out["cache_read_weight"], 0.0)
         self.assertAlmostEqual(out["joint"]["cache_read_weight"],
                                JointCacheReadFitTests.WEIGHT, places=6)
+
+
+class PooledFitTests(unittest.TestCase):
+    """One set of rates for every group, one scale per group, recovered from built stretches."""
+
+    TIMES_OPUS = {"opus": 1.0, "sonnet": 0.6, "fable": 2.0}
+    WEIGHT = 0.01
+    #: Two accounts' meters a third apart: the scale is the group's, the rates are shared.
+    SCALE = {"jwork": 200_000.0, "dave": 150_000.0}
+
+    def _data(self):
+        mixes = [(9, 1, 0), (1, 9, 0), (0, 1, 9), (5, 4, 1), (2, 2, 6), (7, 2, 1), (3, 6, 1),
+                 (4, 1, 5), (6, 3, 1), (1, 1, 8)]
+        data = {}
+        for account, scale in self.SCALE.items():
+            rows = []
+            for i, (o, s_, f) in enumerate(mixes):
+                reads = (i + 1) * 3_000_000
+                tokens = _tokens(reads, opus=(o * 1_000_000, 0), sonnet=(s_ * 1_000_000, 0),
+                                 fable=(f * 1_000_000, 0))
+                credits = SHELLAC["opus"] * (
+                    sum(n * 1_000_000 * self.TIMES_OPUS[k]
+                        for n, k in ((o, "opus"), (s_, "sonnet"), (f, "fable")))
+                    + self.WEIGHT * reads * 3)
+                rows.append(_kept(PRE if i % 2 else POST, credits / scale, tokens))
+            data[account] = prepare(account, rows)
+        return data
+
+    def test_the_fit_recovers_the_shared_rates_and_each_groups_own_scale(self):
+        out = pooled_fit(pooled_records(self._data()))
+        for fam, v in self.TIMES_OPUS.items():
+            self.assertAlmostEqual(out["times_opus"][fam], v, places=4, msg=fam)
+        self.assertAlmostEqual(out["cache_read_weight"], self.WEIGHT, places=5)
+        self.assertLess(out["sse"], 1e-10)
+        # Each group's credits per 1% is its own meter's scale.
+        for group, v in out["credits_per_pct"].items():
+            self.assertAlmostEqual(v / self.SCALE[group.split("/")[0]], 1.0, places=4, msg=group)
+
+    def test_the_section_is_deterministic_and_brackets_the_rates_it_was_built_with(self):
+        data = self._data()
+        one, two = pooled_section(data, 7, 20), pooled_section(data, 7, 20)
+        self.assertEqual(one["interval"], two["interval"])
+        lo, hi = one["interval"]["fable"]
+        self.assertLessEqual(lo, 2.0 + 1e-4)
+        self.assertGreaterEqual(hi, 2.0 - 1e-4)
+        self.assertEqual(sorted(one["leave_one_out"]), ["dave", "jwork"])
+        self.assertAlmostEqual(one["fable_by_era"]["post_over_pre"], 1.0, places=3)
+
+    def test_a_family_in_too_few_stretches_is_held_at_the_anchor(self):
+        data = self._data()
+        extra = prepare("jwork", [_kept(PRE, 10.0, _tokens(opus=(1_000_000, 0),
+                                                           opus_5_5=(100_000, 0)))])
+        data["jwork"] = data["jwork"] + extra
+        out = pooled_section(data, 7, 5)
+        self.assertEqual(out["held"], ["opus-5-5"])
+        self.assertNotIn("opus-5-5", out["times_opus"])
+
+    def test_the_simplex_finds_a_known_minimum(self):
+        x, v = nelder_mead(lambda p: float(((p - np.array([1.0, -2.0])) ** 2).sum()),
+                           np.zeros(2))
+        self.assertAlmostEqual(x[0], 1.0, places=5)
+        self.assertAlmostEqual(x[1], -2.0, places=5)
 
 
 class MasterrigAdmissionTests(unittest.TestCase):

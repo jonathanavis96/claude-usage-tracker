@@ -375,27 +375,25 @@ def verdict(num: str, den: str, free: str, value: float, iv: list[float]) -> dic
             "interval_width": hi / lo if lo else None}
 
 
-#: masterrig enters the fits from this instant and not before. From 2 to 5 September the
-#: takeoff pipeline on gs ran on the personal account, so its meter moved on work masterrig's
-#: transcripts never saw -- all 18 of its zero-token stretches that moved the meter fall in
-#: those four days -- and from June to August its transcripts had been cleaned up, so those
-#: stretches hold nothing. From 6 September the account is Claude Code on masterrig alone:
-#: none of its stretches is zero-token (docs/findings-2026-09-23-masterrig-admitted.md).
-MASTERRIG_FROM = P("2026-09-06T00:00:00+00:00")
+#: masterrig enters the fits from this instant and not before; the rule and its reason live
+#: with the selection in tracker/credits.py (`rate_fit_stretches`), which the publisher's
+#: before-and-after comparison reads too.
+MASTERRIG_FROM = C.MASTERRIG_FROM
 
 
 def clean(by_account: dict[str, list[dict]], runs: list) -> dict[str, list[dict]]:
-    """The reconciliation's own selection: capture-accepted and harness-clean, on every account.
+    """The fits' selection: tracker.credits.rate_fit_stretches, one rule in one place.
 
-    masterrig takes the same capture test as jwork and dave, now that the bootstrap fix fills
-    its capture column, and is admitted only from MASTERRIG_FROM. Without the test its
-    post-cut Sonnet coefficient read 1.15x Opus against 0.65x from its own Sonnet-heavy
-    stretches read directly (docs/findings-2026-09-23-masterrig-admitted.md).
+    Capture-accepted and harness-clean on every account, masterrig only from MASTERRIG_FROM,
+    and no stretch that spans the cut. masterrig takes the same capture test as jwork and
+    dave, now that the bootstrap fix fills its capture column; without it its post-cut
+    Sonnet coefficient read 1.15x Opus against 0.65x from its own Sonnet-heavy stretches
+    (docs/findings-2026-09-23-masterrig-admitted.md). A stretch that starts before 14
+    September and ends after it is half one regime and half the other, and filing it by its
+    start put one masterrig stretch of 12 to 18 September into the "pre" group
+    (docs/findings-2026-09-23-pooled-rates.md).
     """
-    kept = C.clean_stretches(by_account, runs, require="capture_status")
-    if "masterrig" in kept:
-        kept["masterrig"] = [s for s in kept["masterrig"] if P(s["start"]) >= MASTERRIG_FROM]
-    return kept
+    return C.rate_fit_stretches(by_account, runs)
 
 
 def probes_only_runs() -> list:
@@ -695,77 +693,315 @@ def weight_pool(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
     return row
 
 
+#: The adopted method. One set of per-token rates shared by every account and side of the
+#: cut, and one credits-per-1% scale per group (account x era), fitted together. The scale
+#: is never a parameter: minimising the spread of log(credits / delta_pct) about each group's
+#: own mean is the same as fitting a free scale per group, because the best log-scale for a
+#: group is that mean. This is the "stable account-specific scale cancels" point in
+#: tracker/credits.py used as the model instead of an obstacle: what differs between the
+#: accounts' meters is absorbed by their scales, and what the rates must explain is only how
+#: each group's credits per 1% moves from stretch to stretch with its model mix. Every group
+#: carries every family it has tokens of, so a family no single group is dominated by is
+#: still measured from all of them at once -- which is what the per-group fits and the
+#: dominance rule could not do (docs/findings-2026-09-23-pooled-rates.md).
+#:
+#: A family is measurable when its bootstrap interval is finite, starts above zero and its
+#: high end over its low end is under this ratio. Wider than that, the fit is not pinning
+#: the family down and the page publishes a status sentence instead of a number.
+MAX_INTERVAL_RATIO = 1.5
+#: The output multiplier the pooled fit counts input-equivalent tokens at. Its cache-read
+#: column counts millions of tokens, like the family columns, and the fitted weight
+#: multiplies the Opus input rate, so it reads directly as data/prices.json's
+#: `cache_read_weight`.
+POOLED_OUT_MULT = 5
+#: Nelder-Mead's starting point in times-Opus: each free family at its reference ratio where
+#: the January table has one and at the anchor where it does not, and the cache-read weight
+#: at 1%. The fit restarts from its own optimum until the loss stops moving, so the start
+#: decides only how long it takes.
+POOLED_START_WEIGHT = 0.01
+
+
+def nelder_mead(f, x0: np.ndarray, step: float = 0.1, xatol: float = 1e-7, fatol: float = 1e-10,
+                maxiter: int = 20000) -> tuple[np.ndarray, float]:
+    """Minimise `f` from `x0` by Nelder-Mead (standard coefficients). numpy only, deterministic.
+
+    scipy is not a dependency of this repository and is not installed on the host that
+    publishes, so the simplex is written out here. It stops when every vertex is within
+    `xatol` of the best one and the spread of the losses is within `fatol`.
+    """
+    n = len(x0)
+    pts = [np.asarray(x0, dtype=float)]
+    for i in range(n):
+        x = np.array(x0, dtype=float)
+        x[i] += step
+        pts.append(x)
+    vals = [f(x) for x in pts]
+    for _ in range(maxiter):
+        order = np.argsort(vals, kind="stable")
+        pts = [pts[i] for i in order]
+        vals = [vals[i] for i in order]
+        if (max(float(np.max(np.abs(x - pts[0]))) for x in pts[1:]) <= xatol
+                and vals[-1] - vals[0] <= fatol):
+            break
+        centre = np.mean(pts[:-1], axis=0)
+        xr = centre + (centre - pts[-1])
+        fr = f(xr)
+        if fr < vals[0]:
+            xe = centre + 2.0 * (centre - pts[-1])
+            fe = f(xe)
+            pts[-1], vals[-1] = (xe, fe) if fe < fr else (xr, fr)
+        elif fr < vals[-2]:
+            pts[-1], vals[-1] = xr, fr
+        else:
+            outside = fr < vals[-1]
+            xc = centre + 0.5 * ((xr if outside else pts[-1]) - centre)
+            fc = f(xc)
+            if (fc <= fr) if outside else (fc < vals[-1]):
+                pts[-1], vals[-1] = xc, fc
+            else:
+                pts = [pts[0]] + [pts[0] + 0.5 * (x - pts[0]) for x in pts[1:]]
+                vals = [vals[0]] + [f(x) for x in pts[1:]]
+    i = int(np.argmin(vals))
+    return pts[i], float(vals[i])
+
+
+def pooled_records(data: dict[str, list[dict]]) -> list[dict]:
+    """The stretches the pooled fit runs over: every priceable one that moved the meter."""
+    return [r for a in sorted(data) for r in data[a] if r["ok"] and r["delta"] > 0]
+
+
+def group_key(r: dict) -> str:
+    return f"{r['account']}/{r['era']}"
+
+
+def pooled_families(recs: list[dict]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(free families, held families): which families the fit estimates and which it holds.
+
+    A non-anchor family is free when at least MIN_NONZERO stretches carry its tokens. One
+    carried by fewer is held at the anchor's rate rather than dropped with the stretches
+    that carry it: on today's data that is Opus 5.5, in one masterrig stretch at a fifth of
+    its tokens, an Opus model that lists at 0.8x Opus 5, and holding it at Opus is what the
+    2026-09-23 analysis did.
+    """
+    present = [f for f in FAMILIES if f != ANCHOR and any(r["raw"][f] > 0 for r in recs)]
+    free = tuple(f for f in present if sum(1 for r in recs if r["raw"][f] > 0) >= MIN_NONZERO)
+    return free, tuple(f for f in present if f not in free)
+
+
+class _Pooled:
+    """The pooled fit's arrays for one set of records, and its loss."""
+
+    def __init__(self, recs: list[dict], free: tuple[str, ...], split: str | None = None):
+        self.free, self.split = free, split
+        groups = sorted({group_key(r) for r in recs})
+        self.groups = groups
+        at = {g: i for i, g in enumerate(groups)}
+        self.g = np.array([at[group_key(r)] for r in recs])
+        self.counts = np.bincount(self.g, minlength=len(groups)).astype(float)
+        # Columns: the anchor plus every held family at a rate of 1, then each free family.
+        self.fixed = np.array([sum(r["ie"][POOLED_OUT_MULT][f] for f in FAMILIES
+                                   if f == ANCHOR or f not in free) / 1e6 for r in recs])
+        self.X = np.array([[r["ie"][POOLED_OUT_MULT][f] / 1e6 for f in free] for r in recs]
+                          ).reshape(len(recs), len(free))
+        self.reads = np.array([r["total_reads"] / 1e6 for r in recs])
+        self.post = np.array([r["era"] == "post" for r in recs])
+        self.ly = np.log(np.array([r["delta"] for r in recs], dtype=float))
+        self.split_at = free.index(split) if split in free else None
+
+    def n_params(self) -> int:
+        return len(self.free) + (1 if self.split_at is not None else 0) + 1
+
+    def credits(self, p: np.ndarray) -> np.ndarray:
+        """Credits of every stretch, in Opus-input-token millions, at log-parameters `p`."""
+        k = len(self.free)
+        rates = np.exp(p[:k])
+        cols = self.X * rates
+        if self.split_at is not None:
+            post_rate = np.exp(p[k])
+            j = self.split_at
+            cols[:, j] = np.where(self.post, self.X[:, j] * post_rate, cols[:, j])
+        return self.fixed + cols.sum(axis=1) + np.exp(p[-1]) * self.reads
+
+    def loss(self, p: np.ndarray) -> float:
+        lc = np.log(self.credits(p)) - self.ly
+        means = np.bincount(self.g, weights=lc, minlength=len(self.groups)) / self.counts
+        return float(((lc - means[self.g]) ** 2).sum())
+
+    def scales(self, p: np.ndarray) -> dict[str, float]:
+        """Each group's credits per 1%, in credits: the geometric mean the loss centres on."""
+        lc = np.log(self.credits(p)) - self.ly
+        means = np.bincount(self.g, weights=lc, minlength=len(self.groups)) / self.counts
+        return {g: float(np.exp(m) * 1e6 * SHELLAC[ANCHOR]) for g, m in zip(self.groups, means)}
+
+
+def _start(free: tuple[str, ...], split: str | None) -> np.ndarray:
+    ref = [SHELLAC[f] / SHELLAC[ANCHOR] if SHELLAC.get(f) else 1.0 for f in free]
+    extra = [ref[free.index(split)]] if split in free else []
+    return np.log(np.array(ref + extra + [POOLED_START_WEIGHT]))
+
+
+def _minimise(model: _Pooled, x0: np.ndarray) -> tuple[np.ndarray, float]:
+    """Nelder-Mead from `x0`, restarted from its own optimum until the loss stops moving."""
+    p, v = nelder_mead(model.loss, x0)
+    for _ in range(4):
+        q, w = nelder_mead(model.loss, p)
+        if v - w < 1e-12:
+            return (q, w) if w < v else (p, v)
+        p, v = q, w
+    return p, v
+
+
+def pooled_fit(recs: list[dict], free: tuple[str, ...] | None = None, split: str | None = None,
+               x0: np.ndarray | None = None) -> dict | None:
+    """One pooled fit: the shared rates in times-Opus, the cache-read weight, the group scales.
+
+    With `split`, that family gets one rate before 14 September and another after, and
+    `times_opus` carries the pre-cut one with `post_rate` beside it.
+    """
+    if len(recs) < MIN_FIT_N:
+        return None
+    if free is None:
+        free, _ = pooled_families(recs)
+    model = _Pooled(recs, free, split)
+    p, sse = _minimise(model, _start(free, split) if x0 is None else x0)
+    k = len(free)
+    out = {"n": len(recs), "groups": model.groups, "free": list(free), "params": p,
+           "times_opus": {ANCHOR: 1.0, **{f: float(np.exp(v)) for f, v in zip(free, p[:k])}},
+           "cache_read_weight": float(np.exp(p[-1])), "sse": sse,
+           "credits_per_pct": model.scales(p)}
+    if model.split_at is not None:
+        out["post_rate"] = float(np.exp(p[k]))
+    return out
+
+
+def _bootstrap_draw(recs: list[dict], rng: random.Random) -> list[dict]:
+    """One resample, stratified by group: each group redrawn to its own size."""
+    by: dict[str, list[dict]] = {}
+    for r in recs:
+        by.setdefault(group_key(r), []).append(r)
+    return [by[g][rng.randrange(len(by[g]))] for g in sorted(by) for _ in by[g]]
+
+
+def _held_out(recs: list[dict], account: str) -> list[dict]:
+    return [r for r in recs if r["account"] != account]
+
+
+def pooled_section(data: dict[str, list[dict]], seed: int, resamples: int) -> dict | None:
+    """The adopted fit, its bootstrap, Fable either side of the cut, and each account left out."""
+    recs = pooled_records(data)
+    free, held = pooled_families(recs)
+    base = pooled_fit(recs, free)
+    if base is None:
+        return None
+    rng = random.Random(f"{seed}/pooled")
+    draws: dict[str, list[float]] = {f: [] for f in free}
+    weights: list[float] = []
+    for _ in range(resamples):
+        b = pooled_fit(_bootstrap_draw(recs, rng), free, x0=base["params"])
+        for f in free:
+            draws[f].append(b["times_opus"][f])
+        weights.append(b["cache_read_weight"])
+    out = {"n": base["n"], "groups": base["groups"], "free": list(free), "held": list(held),
+           "held_rate": "the anchor's", "output_multiplier": POOLED_OUT_MULT,
+           "times_opus": base["times_opus"], "cache_read_weight": base["cache_read_weight"],
+           "sse": base["sse"], "credits_per_pct": base["credits_per_pct"],
+           "resamples": resamples,
+           "interval": {f: list(interval(v)) for f, v in draws.items()},
+           "median": {f: st.median(v) for f, v in draws.items()},
+           "cache_read_weight_interval": list(interval(weights)),
+           "n_nonzero": {f: sum(1 for r in recs if r["raw"][f] > 0) for f in FAMILIES},
+           "groups_carrying": {f: sorted({group_key(r) for r in recs if r["raw"][f] > 0})
+                               for f in FAMILIES}}
+    # Fable's rate either side of the cut, from the same stretches and the same resamples'
+    # seeds, so the question "did Fable's rate move at 14 September" has a measured answer.
+    if "fable" in free:
+        split = pooled_fit(recs, free, split="fable")
+        rng = random.Random(f"{seed}/pooled-fable-by-era")
+        pre, post, ratio = [], [], []
+        x0 = split["params"]
+        for _ in range(resamples):
+            b = pooled_fit(_bootstrap_draw(recs, rng), free, split="fable", x0=x0)
+            pre.append(b["times_opus"]["fable"])
+            post.append(b["post_rate"])
+            ratio.append(b["post_rate"] / b["times_opus"]["fable"])
+        out["fable_by_era"] = {
+            "pre": split["times_opus"]["fable"], "pre_interval": list(interval(pre)),
+            "post": split["post_rate"], "post_interval": list(interval(post)),
+            "post_over_pre": split["post_rate"] / split["times_opus"]["fable"],
+            "post_over_pre_interval": list(interval(ratio)), "sse": split["sse"]}
+    out["leave_one_out"] = {}
+    for account in sorted({r["account"] for r in recs}):
+        sub = _held_out(recs, account)
+        f_sub = pooled_fit(sub, free, x0=base["params"]) if sub else None
+        out["leave_one_out"][account] = (
+            {"n": f_sub["n"], "times_opus": f_sub["times_opus"],
+             "cache_read_weight": f_sub["cache_read_weight"]} if f_sub else None)
+    return out
+
+
+def measurable(iv: list[float] | None) -> bool:
+    """A bootstrap interval that pins a rate down: finite, above zero, and narrow enough."""
+    if not iv:
+        return False
+    lo, hi = iv
+    return bool(np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi / lo < MAX_INTERVAL_RATIO)
+
+
 #: Why a family has no measured rate at all, in the words the published row carries. The
 #: publisher prints this instead of a number, and the page shows the reference figure beside
-#: it: it is used in no arithmetic. A family whose fits disagree is not this case any more --
-#: it gets a value (the median) and an interval (the union) and `status: null`, with `agree:
-#: false` on the record and a `why` sentence saying so; see `adopt`.
+#: it: it is used in no arithmetic that the page states.
 NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
-#: The same, for a family the fits do carry but cannot separate from free. A bootstrap
-#: interval whose lower end is zero says the resampled data contain draws in which the
-#: family's whole contribution is explained by the other columns, so the point estimate is
-#: whatever the collinearity happened to leave there and not a measurement. Haiku is the
-#: case that made this rule: once 2026-09-23 priced Haiku 4.5 its tokens entered the fits,
-#: but it carries at most 0.257 of any clean stretch's raw tokens and none at all in three
-#: quarters of them, and the pooled rate came out at 3.3 times Opus with the interval
-#: [0.000, 13.841] -- a figure the page would have printed beside a five-hour window of
-#: nine million Haiku tokens with no upper bound on it.
-NOT_IDENTIFIED = ("not measurable, the fits cannot separate {family} from free: its pooled "
-                  "interval reaches zero")
-#: The same, for a family the fits carry but none of them dominates: no fit has
-#: DOMINANCE_MIN_N stretches in which the family carries DOMINANCE_SHARE of the raw tokens,
-#: so every coefficient for it is extrapolated from a minority column (see `adopt`).
-NOT_DOMINANT = ("not measurable, no fit has {min_n} clean stretches that are {share:.0%} or "
-                "more {family}")
+#: The same, for a family the pooled fit does carry but cannot pin down: its bootstrap
+#: interval reaches zero, or its high end is MAX_INTERVAL_RATIO or more times its low end.
+#: Haiku is the case today: it carries at most a quarter of any clean stretch, and the
+#: resamples include ones where the other columns absorb it whole. Neither the value nor
+#: the interval is published -- an interval is priced at its midpoint where a family has no
+#: value (tracker/gs_passive.py) -- and both stay on the record in `pooled`.
+NOT_PINNED = ("not measurable, the pooled fit cannot pin {family} down: its 80% interval is "
+              "{ratio} wide end to end, and a published rate needs under {limit:g}x")
 
 
-def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
+def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "joint",
+                   mult: str = "out5x") -> dict:
     """The rates the publisher adopts, per family, with Opus as the unit anchor.
 
-    This is the block `tracker/credits.py` reads out of history/model-rates.json. Every family
-    carries one of two things and never both: a value with an interval (whether or not its
-    fits agreed -- `agree` and `why` say which, and `status` is null either way), or no value
-    at all and the sentence saying the rate is not measurable. `reference_input` is the January
-    table's figure, carried so the page can draw it beside the measurement; nothing here
-    divides by it.
+    This is the block `tracker/credits.py` reads out of history/model-rates.json. Every
+    non-anchor family's rate comes from the pooled fit (`pooled_section`): one set of rates
+    shared by every account and side of the cut, one scale per group. A family carries one
+    of two things and never both: a value with its bootstrap interval, when that interval
+    is `measurable`; or no value and a sentence saying why not. The per-group least-squares
+    fits of section 3 stay on the record in `per_fit` as diagnostics and enter no rate.
+    `pooled_fit` carries the fit's whole coefficient vector, the withheld families' point
+    estimates included, because tracker/credits.py `across_cut` prices with the fit's own
+    model on both sides of the cut. `reference_input` is the January table's figure, carried
+    so the page can draw it beside the measurement; nothing here divides by it.
     """
-    pooled = adopt(s3, variant, mult)
-    out_mult = int(mult.removeprefix("out").removesuffix("x"))
-    opus_in = SHELLAC["opus"]
+    diagnostics = adopt(s3, variant, mult)
+    opus_in = SHELLAC[ANCHOR]
     max_share = {f: max((row["max_share"].get(f, 0.0) for key, row in s1.items()
                          if key.split("/")[0] in FIT_ACCOUNTS), default=0.0) for f in FAMILIES}
+    pooled = pooled or {}
+    free = pooled.get("free") or []
     per_family = {}
     for f in FAMILIES:
-        row = pooled[f]
         anchor = f == ANCHOR
-        value = opus_in if anchor else row["measured"]
-        # A pooled interval that reaches zero is not a measurement of the family, whatever
-        # the point estimate is: withhold the value and the interval both, and say so
-        # (NOT_IDENTIFIED). Withholding the interval as well is deliberate. An interval is not
-        # inert here -- tracker/gs_passive.py prices a stretch at the midpoint of one where a
-        # family has no single value ("interval_midpoint"), which for Haiku's [0.000, 13.841]
-        # would charge 6.92 credits a token, ten times Opus and fifty times the reference,
-        # on the third of gs's stretches that carry any Haiku. The fits' own coefficients stay
-        # on the record in `per_fit`, and `why` quotes the interval in words.
-        identified = bool(row["interval"]) and row["interval"][0] > 0
-        if not anchor and value is not None and not identified:
-            value = None
-        pooled_interval = None if anchor or not identified else row["interval"]
-        if anchor:
+        iv = (pooled.get("interval") or {}).get(f)
+        point = (pooled.get("times_opus") or {}).get(f) if f in free else None
+        ok = anchor or (point is not None and measurable(iv))
+        value = opus_in if anchor else (point * opus_in if ok else None)
+        rate_iv = [iv[0] * opus_in, iv[1] * opus_in] if ok and not anchor else None
+        if ok:
             status = None
-        elif value is not None:
-            status = None
-        elif row["n_fits"]:
-            status = NOT_IDENTIFIED.format(family=name(f))
-        elif row["n_fits_fitted"]:
-            status = NOT_DOMINANT.format(family=name(f), min_n=DOMINANCE_MIN_N,
-                                         share=DOMINANCE_SHARE)
+        elif f in free:
+            wide = None if not iv or iv[0] <= 0 else iv[1] / iv[0]
+            ratio = "over 100x" if wide is None or wide >= 100 else f"{wide:.2f}x"
+            status = NOT_PINNED.format(family=name(f), ratio=ratio, limit=MAX_INTERVAL_RATIO)
         else:
             status = NOT_MEASURABLE.format(family=name(f))
         per_family[f] = {
             "input": value,
-            "interval": pooled_interval,
-            "output_multiplier": out_mult,
+            "interval": rate_iv,
+            "output_multiplier": POOLED_OUT_MULT,
             "status": status,
             # The anchor is the reference table's own Opus row: this work measures every other
             # family against it and cannot test it, so the row says `reference` rather than
@@ -774,104 +1010,115 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             "anchor": anchor,
             "reference_input": SHELLAC.get(f),
             "times_opus": (value / opus_in if value else None),
-            "times_opus_interval": ([pooled_interval[0] / opus_in, pooled_interval[1] / opus_in]
-                                    if pooled_interval else None),
-            "n_fits": row["n_fits"], "points": row["points"], "per_fit": row["per_fit"],
-            "n_fits_fitted": row["n_fits_fitted"],
-            "agree": row["agree"],
+            "times_opus_interval": ([iv[0], iv[1]] if rate_iv else None),
+            "pooled": ({"times_opus": point, "interval": iv,
+                        "n_stretches_carrying": (pooled.get("n_nonzero") or {}).get(f),
+                        "groups_carrying": (pooled.get("groups_carrying") or {}).get(f)}
+                       if f in free else None),
+            # How many groups' stretches carry the family's tokens into the pooled fit.
+            "n_fits": len((pooled.get("groups_carrying") or {}).get(f) or []) if f in free else 0,
+            "agree": None,
+            "per_fit": diagnostics[f]["per_fit"],
             "max_share_of_a_clean_stretch": max_share[f],
         }
-    per_family["opus"]["why"] = (
-        f"the unit anchor: {opus_in:.4f} credits per input token ({out_mult}x that per output "
-        "token), which is what a credit means in this repository. The fit rescales its Opus "
-        "coefficient to this figure, so every rate beside it is measured relative to it and "
-        "none of them tests it. If this row is wrong every credit figure scales with it and "
-        "nothing in our stretches would show it.")
+    groups = ", ".join(pooled.get("groups") or [])
+    per_family[ANCHOR]["why"] = (
+        f"the unit anchor: {opus_in:.4f} credits per input token ({POOLED_OUT_MULT}x that per "
+        "output token), which is what a credit means in this repository. The pooled fit holds "
+        "it at 1 and measures every other rate relative to it, so none of them tests it. If "
+        "this row is wrong every credit figure scales with it and nothing in our stretches "
+        "would show it.")
     for f in FAMILIES:
         row = per_family[f]
-        if f == "opus" or row["agree"] is not False or row["input"] is None:
-            continue
-        sides = ", ".join(f"{label} {v['rate'] / opus_in:.3f}x Opus "
-                          f"[{v['interval'][0] / opus_in:.3f}, {v['interval'][1] / opus_in:.3f}]"
-                          for label, v in row["per_fit"].items() if v["qualified"])
-        row["why"] = (
-            f"the fits disagree within their intervals ({sides}), so the published rate is the "
-            f"median of the per-fit rates ({row['input']:.4f} credits per input token, "
-            f"{row['times_opus']:.3f}x Opus) and the interval is the union of the per-fit "
-            "intervals rather than a single fit's. The data cannot say whether the family's "
-            "rate moved or the five-hour window did: the window fitted on the same stretches "
-            "moves the same way.")
-    for f in FAMILIES:
-        row = per_family[f]
-        if f == ANCHOR or row["input"] is None or row["agree"] is False:
-            continue
-        pooled_from = [label for label, v in row["per_fit"].items() if v["qualified"]]
-        left_out = [f"{label} ({v['dominant_n']} of {v['n']})"
-                    for label, v in row["per_fit"].items() if not v["qualified"]]
-        if not left_out:
-            continue
-        row["why"] = (
-            f"pooled from {', '.join(pooled_from)} only. A fit contributes to a family's rate "
-            f"only if at least {DOMINANCE_MIN_N} of its stretches carry {DOMINANCE_SHARE:.0%} or "
-            f"more of their raw tokens on it, and {', '.join(left_out)} fall short, so their "
-            f"coefficients for {name(f)} are extrapolated from a minority column and stay on "
-            "the record in per_fit without entering the rate.")
-    for f in FAMILIES:
-        row = per_family[f]
-        if not row["status"]:
+        if f == ANCHOR:
             continue
         reference = ("The reference figure stands beside this row, untested by our data and "
-                     "used in no arithmetic." if SHELLAC.get(f) is not None else
+                     "used in no arithmetic the page states." if SHELLAC.get(f) is not None else
                      f"There is no reference figure for {name(f)} either: the January table "
                      "predates it.")
-        share = (f"the highest {name(f)} share of any clean stretch on a fitted account "
-                 f"is {max_share[f]:.3f}")
-        if not row["n_fits"] and row["n_fits_fitted"]:
-            counts = ", ".join(f"{label} {v['dominant_n']} of {v['n']}"
-                               for label, v in row["per_fit"].items())
+        pooled_row = row["pooled"]
+        if row["input"] is not None:
+            iv = pooled_row["interval"]
             row["why"] = (
-                f"{share}. {row['n_fits_fitted']} fits return a coefficient for it, but a fit "
-                f"contributes to a family's rate only if at least {DOMINANCE_MIN_N} of its "
-                f"stretches carry {DOMINANCE_SHARE:.0%} or more of their raw tokens on that "
-                f"family, and none does ({counts}). A coefficient fitted from a minority column "
-                "is whatever the majority columns leave, so neither a value nor an interval is "
-                f"published. The per-fit coefficients are on this record. {reference}")
-        elif row["n_fits"]:
-            iv = pooled[f]["interval"]
+                f"one fit pooled over {groups}: rates shared by every group, one credits-per-1% "
+                f"scale per group. {name(f)} {pooled_row['times_opus']:.3f}x Opus, 80% bootstrap "
+                f"interval [{iv[0]:.3f}, {iv[1]:.3f}] from {pooled.get('resamples')} resamples "
+                f"stratified by group; {pooled_row['n_stretches_carrying']} of the fit's "
+                f"{pooled.get('n')} stretches carry its tokens. The per-group fits are on this "
+                "record as diagnostics and enter no rate.")
+        elif pooled_row is not None:
+            iv = pooled_row["interval"]
             row["why"] = (
-                f"{share}, so no fit has a stretch in which this family carries the meter "
-                f"movement, and none can separate its rate from the other columns'. "
-                f"{row['n_fits']} of them do return a coefficient for it, but their pooled "
-                f"interval runs [{iv[0] / opus_in:.2f}x, {iv[1] / opus_in:.2f}x] Opus and "
-                "reaches zero -- the fit saying the family's whole contribution can be "
-                "explained without it. Neither the value nor that interval is published, "
-                "because a published interval is priced at its midpoint where there is no "
-                "value (tracker/gs_passive.py) and this one's midpoint is not a rate anything "
-                f"measured. The per-fit coefficients are on this record. {reference}")
+                f"the highest {name(f)} share of any clean stretch on a fitted account is "
+                f"{max_share[f]:.3f}. The pooled fit carries it and puts it at "
+                f"{pooled_row['times_opus']:.3f}x Opus, but its 80% interval runs "
+                f"[{iv[0]:.3f}x, {iv[1]:.3f}x], so the data do not pin it down, and neither the "
+                "value nor the interval is published: an interval is priced at its midpoint where "
+                "a family has no value (tracker/gs_passive.py), and this one's midpoint is not a "
+                "rate anything measured. The fit's point estimate still prices this family's "
+                "tokens inside the before-and-after comparison (pooled_fit), where the fit's own "
+                f"model is used whole. {reference}")
+        elif f in (pooled.get("held") or []):
+            row["why"] = (
+                f"the highest {name(f)} share of any clean stretch on a fitted account is "
+                f"{max_share[f]:.3f}, and only {(pooled.get('n_nonzero') or {}).get(f, 0)} of the "
+                f"fit's stretches carry it at all, under the {MIN_NONZERO} a fitted family needs. "
+                f"The pooled fit holds its tokens at the anchor's rate rather than dropping the "
+                f"stretches that carry them, and measures nothing about it. {reference}")
         else:
             row["why"] = (
-                f"{share}, and no fit includes {name(f)} at all, so there is nothing "
-                f"to measure a rate from. {reference}")
+                f"the highest {name(f)} share of any clean stretch on a fitted account is "
+                f"{max_share[f]:.3f}, and no stretch the fit runs over carries it at all, so "
+                f"there is nothing to measure a rate from. {reference}")
+    weight = {"value": None, "interval": None, "measurable": False,
+              "reference": C.cache_read_weight(CREDITS),
+              "reference_range": CREDITS.get("cache_read_weight_range"),
+              "per_fit": weight_pool(s3, variant, mult)["per_fit"]}
+    if pooled:
+        wiv = pooled["cache_read_weight_interval"]
+        weight.update({"fit_point": pooled["cache_read_weight"], "interval": wiv,
+                       "measurable": measurable(wiv)})
+        weight["value"] = pooled["cache_read_weight"] if weight["measurable"] else None
+        weight["why"] = (
+            f"the pooled fit puts a cache read at {pooled['cache_read_weight']:.4f} of the Opus "
+            f"input rate, 80% interval [{wiv[0]:.4f}, {wiv[1]:.4f}]"
+            + ("." if weight["measurable"] else
+               ", which reaches zero or is too wide to publish as a value; the point estimate "
+               "is used only inside the before-and-after comparison, with the rest of the fit."))
     return {
         "unit": "credits per input token; the output rate is output_multiplier times it",
-        "variant": variant, "output_multiplier": out_mult,
-        "fits_pooled": sorted(group_fits(s3, variant, mult)),
-        "anchor": {"family": "opus", "input": opus_in, "output": opus_in * out_mult},
+        "variant": "pooled", "output_multiplier": POOLED_OUT_MULT,
+        "fits_pooled": list(pooled.get("groups") or []),
+        "anchor": {"family": ANCHOR, "input": opus_in, "output": opus_in * POOLED_OUT_MULT},
         "per_family": per_family,
-        "cache_read_weight": weight_pool(s3, variant, mult),
+        "cache_read_weight": weight,
+        "max_interval_ratio": MAX_INTERVAL_RATIO,
+        "pooled_fit": ({
+            "times_opus": pooled["times_opus"],
+            "held_at_anchor": pooled["held"],
+            "cache_read_weight": pooled["cache_read_weight"],
+            "output_multiplier": POOLED_OUT_MULT,
+            "n": pooled["n"], "groups": pooled["groups"],
+            "credits_per_pct": pooled["credits_per_pct"],
+            "sse": pooled["sse"], "resamples": pooled["resamples"],
+            "interval": pooled["interval"],
+            "cache_read_weight_interval": pooled["cache_read_weight_interval"],
+            "fable_by_era": pooled.get("fable_by_era"),
+            "leave_one_out": pooled["leave_one_out"],
+        } if pooled else None),
         "method": (
-            f"delta_pct = sum over families of (input + cache_write + {out_mult}x output) x rate, "
-            "plus a cache-read column, by non-negative least squares over every clean stretch of "
-            "the account and side of 2026-09-14, with the Opus coefficient rescaled afterwards to "
-            f"{opus_in:.4f} credits per token so the fit reads in credits. Intervals are 80% "
-            "bootstrap intervals over resampled stretches. A family's rate is the median of the "
-            "per-fit point estimates and its interval is the union of theirs, whether or not the "
-            "fits agree (`agree` records that, and `why` says what the disagreement is). Only fits "
-            f"with at least {DOMINANCE_MIN_N} stretches carrying {DOMINANCE_SHARE:.0%} or more of "
-            "their raw tokens on the family are pooled (the anchor is exempt); the others stay "
-            "in per_fit with `qualified: false`, and a family no fit qualifies for is withheld "
-            "with a status sentence. A family whose pooled interval reaches zero is withheld "
-            "too, value and interval both: the fit cannot separate it from free."),
+            f"credits_s = sum over families of rate_f x (input + cache_write + {POOLED_OUT_MULT}x "
+            "output)_f,s + w x cache_reads_s, with Opus at 1 and every other rate and w free and "
+            "positive; one set of rates for every account and side of 2026-09-14, and one "
+            "credits-per-1% scale per account and side. Minimises, over the rates, the sum over "
+            "groups and their stretches of (log(credits_s / delta_pct_s) minus that group's mean "
+            "of it) squared: the group's scale is the mean, so it is never a parameter. "
+            "Nelder-Mead in log space, numpy only. The rates are then read in credits against "
+            f"the Opus anchor, {opus_in:.4f} credits per token. Intervals are 80% bootstrap "
+            "intervals over stretches resampled within each group. A family is published when "
+            f"its interval starts above zero and its high end is under {MAX_INTERVAL_RATIO:g}x its "
+            f"low end; a family in fewer than {MIN_NONZERO} of the stretches is held at the "
+            "anchor's rate and not measured. Stretches that span the cut are in neither group."),
     }
 
 
@@ -1050,31 +1297,51 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
             measured = row["status"] or "measured rate=NOT MEASURABLE"
         print(f"   {f:7} {shellac:52} {measured}")
 
-    print(f"\n6. The rates the publisher adopts ({mr['variant']} fit at output "
-          f"{mr['output_multiplier']}x, pooled over {', '.join(mr['fits_pooled'])})")
+    pf = mr.get("pooled_fit")
+    print(f"\n6. The rates the publisher adopts: one fit pooled over "
+          f"{', '.join(mr['fits_pooled']) or 'nothing'}, output {mr['output_multiplier']}x")
+    if pf:
+        print(f"   n={pf['n']} stretches, SSE={pf['sse']:.3f}, {pf['resamples']} resamples "
+              f"stratified by group; held at the anchor: {', '.join(pf['held_at_anchor']) or 'none'}")
+        print("   credits per 1% per group: " + ", ".join(
+            f"{g} {v:,.0f}" for g, v in pf["credits_per_pct"].items()))
     for f, row in mr["per_family"].items():
         ref = f"reference={row['reference_input']:.3f}" if row["reference_input"] else "reference=absent"
-        if row["input"] is not None:
-            iv = (f" [{row['interval'][0]:.3f}, {row['interval'][1]:.3f}]" if row["interval"] else "")
-            what = f"input={row['input']:.4f}{iv} ({row['times_opus']:.3f}x Opus)"
-        elif row["interval"]:
-            what = (f"no value, interval [{row['interval'][0]:.3f}, {row['interval'][1]:.3f}]"
-                    f" ({row['times_opus_interval'][0]:.2f}x to "
-                    f"{row['times_opus_interval'][1]:.2f}x Opus): {row['status']}")
+        if row["input"] is not None and row["interval"]:
+            lo, hi = row["times_opus_interval"]
+            what = f"input={row['input']:.4f} ({row['times_opus']:.3f}x Opus [{lo:.3f}, {hi:.3f}])"
+        elif row["input"] is not None:
+            what = f"input={row['input']:.4f} (the anchor)"
         else:
-            what = row["status"] or "no rate"
-        print(f"   {f:7} {row['rate_source']:9} n_fits={row['n_fits']} agree={row['agree']!s:5} "
-              f"{ref:18} {what}")
+            what = row["status"]
+            if row.get("pooled"):
+                iv = row["pooled"]["interval"]
+                what += (f" (fit point {row['pooled']['times_opus']:.3f}x Opus "
+                         f"[{iv[0]:.3f}, {iv[1]:.3f}])")
+        print(f"   {f:8} {row['rate_source']:9} {ref:18} {what}")
     w = mr["cache_read_weight"]
-    if w["interval"]:
-        value = f"{w['value']:.4f}" if w["value"] is not None else "no value (the fits disagree)"
-        print(f"   cache-read weight {value} [{w['interval'][0]:.4f}, {w['interval'][1]:.4f}] of the "
-              f"Opus input rate, n_fits={w['n_fits']} agree={w['agree']}; "
+    if w.get("interval"):
+        value = f"{w['value']:.4f}" if w["value"] is not None else "no value"
+        print(f"   cache-read weight {value} (fit point {w['fit_point']:.4f}) "
+              f"[{w['interval'][0]:.4f}, {w['interval'][1]:.4f}] of the Opus input rate; "
               f"data/prices.json holds {w['reference']:g} with the range {w['reference_range']}")
-    for label, v in group_fits(s3, mr["variant"], f"out{mr['output_multiplier']}x").items():
+    if pf and pf.get("fable_by_era"):
+        e = pf["fable_by_era"]
+        print(f"   Fable by era: pre {e['pre']:.3f}x [{e['pre_interval'][0]:.3f}, "
+              f"{e['pre_interval'][1]:.3f}], post {e['post']:.3f}x [{e['post_interval'][0]:.3f}, "
+              f"{e['post_interval'][1]:.3f}], post/pre {e['post_over_pre']:.3f} "
+              f"[{e['post_over_pre_interval'][0]:.3f}, {e['post_over_pre_interval'][1]:.3f}]")
+    if pf:
+        for account, v in pf["leave_one_out"].items():
+            if v:
+                print(f"   without {account:9} n={v['n']:3} " + " ".join(
+                    f"{f}={x:.3f}" for f, x in v["times_opus"].items() if f != ANCHOR)
+                      + f" w={v['cache_read_weight']:.4f}")
+    print("   per-group fits (diagnostics only, section 3):")
+    for label, v in group_fits(s3, "joint", "out5x").items():
         r = v["ratios"].get("opus:sonnet")
         if r and r.get("measurable"):
-            print(f"   opus:sonnet {label:11} {r['ratio']:.3f} "
+            print(f"   opus:sonnet {label:15} {r['ratio']:.3f} "
                   f"[{r['interval'][0]:.3f}, {r['interval'][1]:.3f}] against the table's "
                   f"{r['prior']:.3f}: {'EXCLUDED' if r['verdict'] == 'disagrees' else 'inside'} "
                   f"the interval")
@@ -1087,7 +1354,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--exclusions", choices=("harness-runs", "probes-only"), default="harness-runs",
                     help="which list of the tracker's own runs to exclude stretches by")
     ap.add_argument("--variant", choices=("joint", "zero"), default="joint",
-                    help="the fit the adopted rates come from: `joint` fits the cache-read weight "
+                    help="the per-group diagnostic fits kept beside the pooled rates: `joint` fits the cache-read weight "
                          "with the rates, `zero` holds it at 0 as the reference table reads")
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
@@ -1105,7 +1372,8 @@ def main(argv: list[str] | None = None) -> int:
     s2 = section2(data, a.seed, a.resamples)
     s3 = section3(data, a.seed, a.resamples)
     s4 = section4(data, s3, a.seed, a.resamples)
-    mr = measured_rates(s1, s3, a.variant)
+    pooled = pooled_section(data, a.seed, a.resamples)
+    mr = measured_rates(s1, s3, pooled, a.variant)
     s5 = section5(win, mr)
     show(excl, win, s1, s2, s3, s4, s5, mr, lists, a.exclusions)
     if a.json:
@@ -1126,7 +1394,8 @@ def main(argv: list[str] | None = None) -> int:
                 "findings": ["docs/findings-2026-09-20-measured-rates.md",
                              "docs/findings-2026-09-23-sonnet-rate.md",
                              "docs/findings-2026-09-23-opus-5-5-and-dominance.md",
-                             "docs/findings-2026-09-23-masterrig-admitted.md"],
+                             "docs/findings-2026-09-23-masterrig-admitted.md",
+                             "docs/findings-2026-09-23-pooled-rates.md"],
                 "no_traffic": "read-only arithmetic over committed files; no account was driven",
             },
             "measured_rates": mr,
@@ -1135,6 +1404,7 @@ def main(argv: list[str] | None = None) -> int:
             "variant": a.variant,
             "dominance": DOMINANCE, "min_n": MIN_N,
             "pool_dominance_share": DOMINANCE_SHARE, "pool_dominance_min_n": DOMINANCE_MIN_N,
+            "max_interval_ratio": MAX_INTERVAL_RATIO,
             "fit_accounts": list(FIT_ACCOUNTS), "masterrig_from": MASTERRIG_FROM.isoformat(),
             "interval_percentiles": INTERVAL, "shellac_rates": SHELLAC, "fable_point": FABLE_POINT,
             "fable_interval": FABLE_INTERVAL, "exclusion": excl, "window_check": win,

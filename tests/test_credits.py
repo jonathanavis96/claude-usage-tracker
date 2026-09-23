@@ -322,9 +322,16 @@ class SolvedFableCarryThroughTests(unittest.TestCase):
         self.assertEqual(self.credits["window_credits"]["value"], 20_000_000)
         self.assertEqual(self.credits["window_credits"]["n"], 1)
 
-    def test_the_solved_interval_reaches_the_published_block(self):
+    def test_the_pooled_rate_is_the_stated_figure_and_the_solve_is_kept_as_working(self):
         fable = self.credits["fable_interval"]
-        self.assertEqual((fable["input_low"], fable["input_high"]), (1.0, 2.5))
+        row = C.load_model_rates()["per_family"]["fable"]
+        self.assertEqual((fable["input_low"], fable["input_high"]),
+                         (round(row["interval"][0], 4), round(row["interval"][1], 4)))
+        self.assertEqual(fable["input"], round(row["input"], 4))
+        self.assertEqual(fable["status"], "measured by one fit pooled across every account")
+        # The page prints "solved against a window of ..." only when this key holds a number.
+        self.assertNotIn("window_credits_per_pct", fable)
+        self.assertEqual((fable["solved"]["input_low"], fable["solved"]["input_high"]), (1.0, 2.5))
         self.assertEqual(self.credits["rates"]["per_family"]["fable"]["interval"], fable)
 
     def test_tokens_per_window_carries_the_measured_value_and_interval(self):
@@ -346,8 +353,8 @@ class SolvedFableCarryThroughTests(unittest.TestCase):
         # Cheapest rate against the top of the window's range, dearest against the bottom.
         self.assertEqual(figure["interval"], [round(20_000_000 / rate.input_interval[1]),
                                               round(20_000_000 / rate.input_interval[0])])
-        self.assertEqual((self.credits["fable_interval"]["input_low"],
-                          self.credits["fable_interval"]["input_high"]), (1.0, 2.5))
+        self.assertEqual((self.credits["fable_interval"]["solved"]["input_low"],
+                          self.credits["fable_interval"]["solved"]["input_high"]), (1.0, 2.5))
 
     def test_the_api_value_and_the_session_count_are_values_too(self):
         rate = C.family_rate("fable", CREDITS, C.load_model_rates())
@@ -422,6 +429,93 @@ class AcrossCutTests(unittest.TestCase):
                       capture=None)]
         out = C.across_cut({"masterrig": blind}, CREDITS, LABELS)
         self.assertEqual(out["per_account"]["a1"]["n_with_capture"], 0)
+
+
+#: A pooled fit in the shape history/model-rates.json carries it: Opus the unit, Fable at 2x,
+#: Sonnet at half, a cache read at 1% of the Opus input rate.
+POOLED = {"anchor": {"family": "opus", "input": 10 / 15, "output": 50 / 15},
+          "pooled_fit": {"times_opus": {"opus": 1.0, "sonnet": 0.5, "fable": 2.0},
+                         "cache_read_weight": 0.01, "output_multiplier": 5},
+          "per_family": {"fable": {"input": 2.0 * 10 / 15, "interval": [1.8 * 10 / 15, 2.2 * 10 / 15],
+                                   "output_multiplier": 5}}}
+
+
+class PooledAcrossCutTests(unittest.TestCase):
+    """With a pooled fit on record, every family is priced at the fit's rate on both sides."""
+
+    def test_every_family_and_every_cache_read_is_priced_at_the_pooled_fit(self):
+        # 1,000,000 Opus input + 100,000 Fable output + 1,000,000 Sonnet input + 10,000,000
+        # cache reads: (1.0 x 1e6 + 2.0 x 5 x 1e5 + 0.5 x 1e6 + 0.01 x 1e7) x 10/15 credits.
+        tokens = {"claude-opus-5": tok(input=1_000_000, cache_read=10_000_000),
+                  "claude-fable-5-1": tok(output=100_000),
+                  "claude-sonnet-5": tok(input=1_000_000)}
+        rows = {"jwork": [stretch("2026-09-10T00:00:00+00:00", tokens, 10.0),
+                          stretch("2026-09-16T00:00:00+00:00", tokens, 8.0)]}
+        out = C.across_cut(rows, CREDITS, LABELS, model_rates=POOLED)
+        credits = (1_000_000 + 2.0 * 5 * 100_000 + 0.5 * 1_000_000 + 0.01 * 10_000_000) * 10 / 15
+        a2 = out["per_account"]["a2"]
+        self.assertEqual(a2["before"], round(credits / 10))
+        self.assertEqual(a2["after"], round(credits / 8))
+        self.assertEqual(out["rates_used"]["source"], "pooled_fit")
+        self.assertEqual(out["rates_used"]["times_opus"]["fable"], 2.0)
+        self.assertIsNone(out["fable_rate_held"])
+        self.assertIn("n_with_capture", out["method"])
+
+    def test_a_family_the_fit_has_no_rate_for_leaves_its_stretch_out(self):
+        tokens = {"claude-opus-5": tok(input=1_000_000), "claude-haiku-4-5": tok(input=10)}
+        out = C.across_cut({"jwork": [stretch("2026-09-10T00:00:00+00:00", tokens)]},
+                           CREDITS, LABELS, model_rates=POOLED)
+        self.assertEqual(out["per_account"]["a2"]["n_before"], 0)
+
+    def test_without_a_pooled_fit_the_held_fable_rate_still_prices(self):
+        out = C.across_cut({"jwork": [stretch("2026-09-10T00:00:00+00:00",
+                                              {"claude-opus-5": tok(input=3_000_000)})]},
+                           CREDITS, LABELS, model_rates={})
+        self.assertIsNone(out["rates_used"])
+        self.assertEqual(out["fable_rate_held"]["input"], 1.667)
+
+
+class PooledFableIntervalTests(unittest.TestCase):
+    def test_the_pooled_rate_replaces_the_solve_as_the_stated_figure(self):
+        clean = C.clean_stretches({"jwork": [fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)]}, [])
+        out = C.fable_interval(clean, CREDITS, 200_000, LABELS, model_rates=POOLED)
+        self.assertEqual((out["input_low"], out["input_high"]), (1.2, 1.4667))
+        self.assertEqual(out["input"], 1.3333)
+        self.assertEqual(out["times_opus"], [1.8, 2.2])
+        self.assertEqual(out["solved"]["per_account"]["a2"]["output_5x"]["p25"], 1.0)
+        self.assertNotIn("window_credits_per_pct", out)
+
+    def test_a_fable_row_without_a_value_leaves_the_solve_as_the_figure(self):
+        clean = C.clean_stretches({"jwork": [fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)]}, [])
+        rates = {**POOLED, "per_family": {"fable": {"input": None, "interval": None}}}
+        out = C.fable_interval(clean, CREDITS, 200_000, LABELS, model_rates=rates)
+        self.assertEqual(out["status"], "interval, not yet separable")
+        self.assertNotIn("solved", out)
+
+
+class RateFitSelectionTests(unittest.TestCase):
+    """The one selection the rate fits and the before-and-after comparison share."""
+
+    def _s(self, start, end, **fields):
+        return dict(stretch(start, {"claude-opus-5": tok(input=1_000_000)}), end=end, **fields)
+
+    def test_a_stretch_that_spans_the_cut_is_in_neither_side_on_any_account(self):
+        spans = self._s("2026-09-12T22:51:00+00:00", "2026-09-18T02:52:00+00:00")
+        before = self._s("2026-09-12T00:00:00+00:00", "2026-09-12T05:00:00+00:00")
+        after = self._s("2026-09-15T00:00:00+00:00", "2026-09-15T05:00:00+00:00")
+        kept = C.rate_fit_stretches({"jwork": [spans, before, after],
+                                     "masterrig": [spans, before, after]}, [])
+        for account in ("jwork", "masterrig"):
+            self.assertEqual([s["start"] for s in kept[account]], [before["start"], after["start"]])
+
+    def test_masterrig_counts_from_six_september_and_takes_the_capture_test(self):
+        early = self._s("2026-09-04T00:00:00+00:00", "2026-09-04T05:00:00+00:00")
+        late = self._s("2026-09-07T00:00:00+00:00", "2026-09-07T05:00:00+00:00")
+        unaccounted = dict(late, capture_status="unaccounted")
+        kept = C.rate_fit_stretches({"masterrig": [early, late, unaccounted],
+                                     "jwork": [early]}, [])
+        self.assertEqual(kept["masterrig"], [late])
+        self.assertEqual(kept["jwork"], [early])
 
 
 def _published(gs=None, masterrig=None, passive=None, effort_meta=None, prices=None):
@@ -611,22 +705,22 @@ class PublishedBlockTests(unittest.TestCase):
 
         The solve and the fit are two instruments. The solve has nothing to work on here and
         says so; the row's rate comes from the committed fit, which is measured over other
-        stretches and does not depend on this fixture. Under the dominance rule only one of the
-        committed per-account fits has three Fable-dominant stretches, so the row carries that
-        fit's value and interval with `status` null, and `why` names the fits left out of the
-        pool -- not a status sentence in place of a number.
+        stretches and does not depend on this fixture. The committed pooled fit measures Fable
+        from every group at once, so the row and `fable_interval` both carry its value and
+        interval, and the empty solve is kept beside them as working.
         """
         fable = self.credits["fable_interval"]
-        self.assertIsNone(fable["input_low"])
-        self.assertIsNone(fable["input_high"])
-        self.assertEqual(fable["unresolved"], "no Fable-heavy stretch to solve a rate from")
+        self.assertIsNone(fable["solved"]["input_low"])
+        self.assertIsNone(fable["solved"]["input_high"])
+        self.assertEqual(fable["solved"]["unresolved"], "no Fable-heavy stretch to solve a rate from")
+        self.assertIsNone(fable["unresolved"])
         row = self.credits["per_model"]["fable"]
         self.assertIsNotNone(row["tokens_per_window"]["input"]["value"])
         self.assertIsNone(row["status"])
         rate = C.family_rate("fable", CREDITS, C.load_model_rates())
-        self.assertEqual(rate.detail["n_fits"], 1)
-        self.assertIn("pooled from", rate.detail["why"])
-        self.assertTrue(any(not v["qualified"] for v in rate.detail["per_fit"].values()))
+        self.assertGreaterEqual(rate.detail["n_fits"], 2)
+        self.assertIn("one fit pooled over", rate.detail["why"])
+        self.assertTrue(rate.detail["per_fit"])
 
     def test_the_fable_session_count_is_an_interval_too(self):
         sessions = self.credits["sessions"].get("claude-fable-5-1")
