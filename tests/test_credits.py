@@ -205,7 +205,7 @@ class WindowTests(unittest.TestCase):
 
     def test_every_watched_account_is_reported_by_label_including_the_empty_ones(self):
         window = self.cluster()
-        self.assertEqual(sorted(window["accounts"]), ["a1", "a2", "a3"])
+        self.assertEqual(sorted(window["accounts"]), ["a1", "a2", "a3", "a4"])
         self.assertEqual(window["accounts"]["a2"]["n"], 5)
         self.assertEqual(window["accounts"]["a1"], {"n": 0, "value": None, "interval": None})
 
@@ -222,7 +222,7 @@ class WindowTests(unittest.TestCase):
         self.assertIn("no fitted parameter", method)
 
     def test_no_account_name_reaches_the_published_window(self):
-        for name in ("jwork", "dave", "masterrig"):
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, json.dumps(self.cluster()))
 
 
@@ -275,8 +275,8 @@ class FableIntervalTests(unittest.TestCase):
     def test_the_rule_names_no_account_and_publishes_none(self):
         out = self.solve(jwork=[fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)],
                          masterrig=[fable_stretch("2026-09-10T00:00:00+00:00", 800_000)])
-        self.assertEqual(sorted(out["per_account"]), ["a1", "a2", "a3"])
-        for name in ("jwork", "dave", "masterrig"):
+        self.assertEqual(sorted(out["per_account"]), ["a1", "a2", "a3", "a4"])
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, json.dumps(out))
 
     def test_with_no_measured_window_there_is_nothing_to_solve_against(self):
@@ -666,7 +666,7 @@ class PublishedBlockTests(unittest.TestCase):
     def test_no_account_name_reaches_the_public_json(self):
         masterrig = report("masterrig", [opus_stretch("2026-09-06T00:00:00+00:00", 150_000)])
         text = json.dumps(_published(gs=self.gs, masterrig=masterrig))
-        for name in ("jwork", "dave", "masterrig"):
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, text)
 
 
@@ -1431,8 +1431,8 @@ class WindowTokensPublishedTests(unittest.TestCase):
         self.assertEqual(self.block["all"]["interval"], [116_000, 348_000])
 
     def test_the_watched_accounts_are_published_by_label_and_never_by_name(self):
-        self.assertEqual(sorted(self.block["accounts"]), ["a1", "a2", "a3"])
-        for name in ("jwork", "dave", "masterrig"):
+        self.assertEqual(sorted(self.block["accounts"]), ["a1", "a2", "a3", "a4"])
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, json.dumps(self.block))
 
     def test_the_haiku_row_states_the_same_sentence_the_per_model_row_states(self):
