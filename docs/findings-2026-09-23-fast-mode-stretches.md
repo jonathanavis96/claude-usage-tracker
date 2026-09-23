@@ -1,5 +1,25 @@
 # Opus fast-mode requests taken out of the passive stretches, 2026-09-23
 
+> **Correction, 2026-09-23.** This document takes the fast sessions' tokens out of the
+> passive stretches on the grounds that they were Opus fast mode, billed to usage credits
+> and never metered. That explanation is withdrawn. Jonathan has never used fast mode.
+> masterrig's Claude Code settings carry no fast-mode setting, and the account is not
+> eligible for usage credits (`overageCreditGrantCache` reads `eligible: false, available:
+> false`), which fast mode needs ("Until they're on, /fast reports 'Fast mode requires usage
+> credits'", code.claude.com/docs/en/fast-mode). And this document's own before and after
+> table ("Stretches that changed", below) shows the meter counted those sessions' tokens, at
+> least in part: taking them out turned some surplus stretches accepted, but
+> turned others unaccounted (19 Sep 22:20-23:36 capture 1.99 to 0.68; 21 Sep 10:54-13:26
+> 1.62 to 0.43; 21 Sep 13:26-19:26 1.63 to 0.25; 20 Sep 00:16-01:07 1.12 to 0.59).
+>
+> What was measured stands: some Opus sessions run about 2.5 times faster than others on the
+> same model, account and settings, with nothing between, mostly on a1 and a little on a2.
+> What causes it is not known. The code now calls them fast sessions: a session whose
+> running median speed is at least FAST_FACTOR (1.6) times the model's median. Their tokens
+> are back in every passive stretch, on gs and masterrig (`tools/fast_session_restore.py`
+> undid the one-off correction below), and each stretch records them as
+> `fast_session_tokens`, for diagnosis only. The rest of this document is kept as written.
+
 Anthropic's fast-mode page (code.claude.com/docs/en/fast-mode) says "fast mode is available via
 usage credits only and not included in the subscription rate limits", and "Fast mode usage draws
 directly from usage credits, even if you have remaining usage on your plan." A fast-mode request's
