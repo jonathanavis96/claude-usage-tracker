@@ -64,8 +64,11 @@ published: CAPTURE_GATE is False. With its 15% tolerance on a quantity whose
 stretch-to-stretch spread is 15-20%, it withheld half of jwork's real
 stretches (49 of 99), and the half it withheld read low, so the published
 median was the median of the expensive half. Every priced stretch counts now
-(bar one the transcripts leave empty, see `publishable`), pooled per UTC day, and step detection smooths over a rolling week
-(tracker/detect.py detect_smoothed_changes) instead of gating stretch by stretch.
+(bar one the transcripts leave empty, see `publishable`), pooled per UTC day for
+the published rate, and step detection reads the stretches one by one in meter
+credits, weighted by the meter movement each one carries
+(`passive_credit_points`, tracker/detect.py `detect_credit_changes`), instead of
+gating stretch by stretch.
 
     python3 -m tracker.gs_passive --out history/passive-gs.json
     python3 -m tracker.gs_passive --account jwork --until 2026-09-13T00:00:00+00:00
@@ -86,6 +89,7 @@ from itertools import pairwise
 from pathlib import Path
 from statistics import mean, median, stdev
 
+from . import credits as credit_model
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
@@ -219,23 +223,52 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     return [s for s in samples if until is None or s.ts <= until]
 
 
-def transcript_files(account: Account, since: datetime | None,
-                     withhold: Iterable[str] = ()) -> tuple[list[Path], dict | None]:
-    """This account's transcripts, and (kept, dropped) if the pooled-projects filter applied.
+def _session_ids(config_dir: Path) -> set[str]:
+    """The sessions Claude Code has recorded under this config dir, by `session-env` entry."""
+    session_env = config_dir / "session-env"
+    if not session_env.is_dir():
+        return set()
+    return {p.name for p in session_env.iterdir() if p.is_dir()}
 
-    jwork's `projects/` is a symlink shared with the bare `~/.claude` and
-    `~/.claude-jono` config dirs (see the module docstring): a raw glob over it
-    would count those other logins' tokens as jwork's own. Claude Code writes a
+
+def transcript_files(account: Account, since: datetime | None, withhold: Iterable[str] = (),
+                     home: Path | None = None) -> tuple[list[Path], dict | None]:
+    """This account's transcripts, and how the pooled-projects filter split them, if it applied.
+
+    jwork's `projects/` is a symlink shared with the bare `~/.claude`,
+    `~/.claude-jono` and `~/.claude-avis` config dirs (see the module
+    docstring): a raw glob over it would count those other logins' tokens as
+    jwork's own -- `.claude-avis` alone holds 430 files and 3.09 billion tokens
+    of another account in jwork's meter window. Claude Code writes a
     per-config-dir `<config dir>/session-env/<sessionId>/` for every session it
     runs under that login, and a transcript's session id is its filename stem, or
     its parent session's for a sub-agent file (tracker/turns.py
     transcript_session_id) -- the same rule contrib/sample.py's `own_session_filter` applies for
-    the contributed export. Here it fires whenever `projects/` is itself a
-    symlink and the account has a `session-env` directory to filter by; with
-    no `session-env` the filter is a no-op even for a symlinked root, since
-    there is nothing to tell sessions apart with. The second return value is
-    `None` when the filter did not apply, or `{"kept": n, "dropped": m}` when
-    it did, for the account's `transcripts` meta.
+    the contributed export.
+
+    The filter fires whenever the transcripts root is *shared* -- another config
+    dir under `home` resolves to the same directory -- or is reached through a
+    symlink at all, and the account has a `session-env` directory to filter by.
+    Sharing is the condition that matters; the symlink test is kept beside it
+    because a pooled root can be reached without `projects/` itself being the
+    link (`~/.claude-javiswork` could be the link instead), and because a pooled
+    root whose other config dirs have since been removed is still not this
+    account's own. With no `session-env` the filter is a no-op even for a shared
+    root, since there is nothing to tell sessions apart with.
+
+    The second return value is `None` when the filter did not apply, and
+    otherwise counts what it did, for the account's `transcripts` meta:
+    `dropped_to` names the config dir that claims each dropped transcript, and
+    `unclaimed` counts the dropped transcripts *no* config dir under `home`
+    claims. That last number is the blind spot, and it is reported rather than
+    silently folded into `dropped`: a session that never wrote a `session-env`
+    entry -- a one-shot `claude -p` that starts no shell, which is what the
+    tracker's own retired probe, the airlock bench and the filing judge all are
+    -- cannot be attributed to any login, so it is dropped even when it was this
+    account's own spend. On 2026-09-23 that was 1,407 files, 1,518 turns and
+    39.7M tokens in jwork's meter window, against 1,782 files and 8,316M tokens
+    kept: 0.48%, and adding every one of them lifts no unaccounted stretch into
+    the accepted band. docs/findings-2026-09-23-unaccounted.md has the working.
     """
     root = account.config_dir / "projects"
     if not root.exists():
@@ -243,15 +276,29 @@ def transcript_files(account: Account, since: datetime | None,
     patterns = list(withhold)
     paths = [p for p in transcript_paths(root, since)
             if not any(fnmatch(str(p.relative_to(root)), pat) for pat in patterns)]
-    if not root.is_symlink():
+    home = Path(home) if home is not None else account.config_dir.parent
+    others = shared_with(account, home)
+    if not others and not root.is_symlink():
         return paths, None
-    session_env = account.config_dir / "session-env"
-    if not session_env.is_dir():
+    if not (account.config_dir / "session-env").is_dir():
         return paths, None
-    own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
+    own_ids = _session_ids(account.config_dir)
     kept = [p for p in paths if transcript_session_id(p) in own_ids]
+    claims = {name: _session_ids(home / name) for name in others}
+    dropped_to: dict[str, int] = {}
+    unclaimed = 0
+    for p in paths:
+        sid = transcript_session_id(p)
+        if sid in own_ids:
+            continue
+        claimed = [name for name, ids in claims.items() if sid in ids]
+        if claimed:
+            dropped_to[claimed[0]] = dropped_to.get(claimed[0], 0) + 1
+        else:
+            unclaimed += 1
     return kept, {"kept": len(kept), "dropped": len(paths) - len(kept),
-                  "subagent_files": sum(1 for p in kept if p.parent.name == "subagents")}
+                  "subagent_files": sum(1 for p in kept if p.parent.name == "subagents"),
+                  "dropped_to": dict(sorted(dropped_to.items())), "unclaimed": unclaimed}
 
 
 def shared_with(account: Account, home: Path) -> list[str]:
@@ -564,6 +611,140 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             usd = sum(v for _, v in ss)
             out.append((datetime.fromisoformat(ss[-1][0]["end"]), usd / sum(s["delta_pct"] for s, _ in ss) * 100))
     return sorted(out)
+
+
+#: How a stretch's credit value was priced, best first. A stretch takes the worst
+#: source any of its models needed, so one reference-table family marks the whole
+#: reading. `anchor` leads because Opus's rate is definitional rather than a fallback:
+#: it is what a credit means here, nothing in this repository measures it, and every
+#: measured rate is expressed against it. A stretch that reads `measured` therefore had
+#: at least one family whose rate was fitted; one that reads `anchor` was pure Opus.
+CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_table")
+
+
+def stretch_credits(tokens: dict, credits: dict,
+                    model_rates: dict | None) -> tuple[float | None, str]:
+    """A token bundle's value in meter credits, and which rate source it needed.
+
+    The meter does not charge list-price ratios. It charges a small rational rate
+    per token per family, measured in history/model-rates.json: Sonnet at about
+    0.78x Opus where the list price implies 0.4x. Valuing a stretch in credits
+    therefore takes the model mix out of the reading, which is the whole point --
+    in list dollars the same meter movement reads dearer or cheaper purely by which
+    model did the work (tracker/detect.py, "Credit stretches").
+
+    Each family's rate is taken in the order CREDIT_RATE_SOURCES names, falling back
+    the way tracker/credits.py already falls back rather than inventing a step:
+
+    - `family_rate` with a value: the measured rate ("measured"), or Opus's
+      definitional one ("anchor").
+    - `family_rate` with an interval and no single value -- Fable, whose input rate
+      the data bound only loosely -- the midpoint of the interval
+      ("interval_midpoint"). Dropping those stretches instead would throw away most
+      of both accounts' evidence; pricing them at the midpoint is the same choice
+      `fable_interval` publishes, with the reading's source recorded.
+    - no measurement at all: the January reference table's rate ("reference_table").
+    - no rate anywhere, or a model in no family: `(None, "unpriced")`, and the caller
+      drops the stretch whole, exactly as an unpriced model already does in dollars.
+
+    Cache writes join the input side at the plain input rate and cache reads at the
+    table's cache-read weight, which is `credits.price_tokens`' rule; this does the
+    same arithmetic per family so it can report the source and use the measured rate
+    rather than the reference one.
+    """
+    weight = credit_model.cache_read_weight(credits)
+    total, worst = 0.0, CREDIT_RATE_SOURCES[0]
+    for model, tok in tokens.items():
+        if not isinstance(tok, dict):
+            continue
+        fam = credit_model.family(model, credits)
+        if fam is None:
+            return None, "unpriced"
+        rate = credit_model.family_rate(fam, credits, model_rates)
+        if rate.input is not None and rate.output is not None:
+            rate_in, rate_out = rate.input, rate.output
+            source = "anchor" if rate.anchor else "measured"
+        elif rate.input_interval and rate.output_interval:
+            rate_in = sum(rate.input_interval) / 2
+            rate_out = sum(rate.output_interval) / 2
+            source = "interval_midpoint"
+        else:
+            pair = credit_model.rates(fam, credits)
+            if pair is None:
+                return None, "unpriced"
+            rate_in, rate_out = pair
+            source = "reference_table"
+        if CREDIT_RATE_SOURCES.index(source) > CREDIT_RATE_SOURCES.index(worst):
+            worst = source
+        total += credit_model.input_side(tok, weight) * rate_in + tok.get("output", 0) * rate_out
+    return total, worst
+
+
+def passive_credit_points(report: dict, prices: dict, credits: dict,
+                          model_rates: dict | None = None,
+                          allow_legacy_unverified: bool = False) -> list[tuple]:
+    """Accepted passive stretches as (end, credits, delta_pct, pieces) points, one per stretch.
+
+    The credit-valued twin of `passive_dollar_readings`, and the series change
+    detection runs on (`tracker.detect.detect_credit_changes`). Two differences,
+    both deliberate:
+
+    - No day pooling. A day is not a unit of evidence -- the meter is -- so each
+      stretch is its own point and carries its own `delta_pct` as its weight. Pooling
+      to one median per UTC day gave a 10% day and a 60% day the same vote and left
+      jwork with 15 points and dave with 4.
+    - Credits, not list dollars, so the reading does not move with the model mix.
+
+    Eligibility is unchanged from `passive_dollar_readings`, deliberately: `status`
+    accepted, `reset_verified` unless `allow_legacy_unverified`, no unpriced tokens,
+    some tokens, and every model priceable in `prices`. The dollar gate stays in place
+    so that widening it stays one decision in one place (agent A's price table), and a
+    stretch this cannot price in credits at all is dropped the same way.
+
+    `pieces` is the stretch's own `windows` count, which is what it concedes of
+    `delta_pct` to whole-percent rounding. Consecutive stretches are not telescoped
+    the way `_daily` telescopes them: the detector reorders and resplits the series,
+    so which stretches end up pooled together is not known here. That over-concedes
+    at most one point per join, which widens intervals and never narrows them.
+    """
+    out = []
+    for account in report.get("accounts", {}).values():
+        for s in account["stretches"]:
+            if s["status"] != ACCEPTED:
+                continue
+            if s.get("reset_verified") is not True and not allow_legacy_unverified:
+                continue
+            if s.get("unpriced_tokens", 0) > 0 or not s.get("tokens"):
+                continue
+            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()):
+                continue
+            value, _source = stretch_credits(s["tokens"], credits, model_rates)
+            if value is None or not s.get("delta_pct"):
+                continue
+            out.append((datetime.fromisoformat(s["end"]), value, float(s["delta_pct"]),
+                        int(s.get("windows") or 1)))
+    return sorted(out, key=lambda p: p[0])
+
+
+def credit_rate_sources(report: dict, prices: dict, credits: dict,
+                        model_rates: dict | None = None,
+                        allow_legacy_unverified: bool = False) -> dict[str, int]:
+    """How many of the points `passive_credit_points` returns needed each rate source."""
+    counts: dict[str, int] = {}
+    for account in report.get("accounts", {}).values():
+        for s in account["stretches"]:
+            if s["status"] != ACCEPTED or not s.get("tokens") or not s.get("delta_pct"):
+                continue
+            if s.get("reset_verified") is not True and not allow_legacy_unverified:
+                continue
+            if s.get("unpriced_tokens", 0) > 0:
+                continue
+            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()):
+                continue
+            value, source = stretch_credits(s["tokens"], credits, model_rates)
+            if value is not None:
+                counts[source] = counts.get(source, 0) + 1
+    return counts
 
 
 def calibrate(rpt: dict, probe_rows: list[dict], prices: dict, since: datetime, until: datetime) -> dict:

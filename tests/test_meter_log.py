@@ -108,6 +108,15 @@ class UnitFileTests(unittest.TestCase):
 
     def test_dave_timer_matches_the_jwork_cadence(self):
         timer = (UNITS / "claude-usage-meter-dave.timer").read_text()
-        self.assertIn("OnUnitActiveSec=5min", timer)
+        self.assertIn("OnUnitActiveSec=1min", timer)
         self.assertIn("Unit=claude-usage-meter-dave.service", timer)
+        self.assertIn("WantedBy=timers.target", timer)
+
+    def test_jwork_timer_samples_every_minute(self):
+        # 1-minute sampling (issue #66): shrinks each crossing's timing error bound (bounded
+        # by the sample gap) from ~5min to ~1min, at negligible extra log size (~150
+        # bytes/line, ~216KB/day/account against a 5x lower interval).
+        timer = (UNITS / "claude-usage-meter-jwork.timer").read_text()
+        self.assertIn("OnUnitActiveSec=1min", timer)
+        self.assertIn("Unit=claude-usage-meter-jwork.service", timer)
         self.assertIn("WantedBy=timers.target", timer)

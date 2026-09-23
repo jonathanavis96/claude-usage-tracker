@@ -1,9 +1,9 @@
+import dataclasses
 import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import mock
 
 from tracker import detect
 from tracker.capture import judge
@@ -51,8 +51,12 @@ class PairedMeterRepairTests(unittest.TestCase):
         self.assertEqual((sum(p[2] for p in points[:10]), sum(p[2] for p in points[10:])), (10, 16))
         self.assertLess(16, min(detect.MIN_BASE_D7, detect.MIN_POOL_D7))
         self.assertEqual(detect_weighted_changes(points), [])
-        with mock.patch.object(detect, "MIN_BASE_D7", 10.0), mock.patch.object(detect, "MIN_POOL_D7", 10.0):
-            self.assertEqual([(e.direction, e.percent) for e in detect_weighted_changes(points)], [("decreased", 47)])
+        # The floors now travel on the series' own WeightedSeries, since the credit
+        # series has its own pair in its own unit (tracker/detect.py); lowering them
+        # is lowering that record's.
+        lowered = dataclasses.replace(detect.WINDOWS, min_base=10.0, min_pool=10.0)
+        self.assertEqual([(e.direction, e.percent) for e in detect_weighted_changes(points, series=lowered)],
+                         [("decreased", 47)])
 
     def test_the_rounding_example_scaled_past_the_floor_certifies(self):
         # The same example with twenty (11, 1) windows and three (47, 8): 20 and 24
