@@ -174,35 +174,48 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(sum(row["fast_output_hist"].values()), 20)
         self.assertEqual(sum(row["fast_ttfb_hist"].values()), 20)
 
-    def test_fast_sessions_are_published_as_their_own_series(self):
+    def test_fast_session_requests_are_in_the_figures_and_counted(self):
         block_ = speed_block({"rows": self.rows()})
-        (day,) = block_["models"]["claude-opus-5"]["daily"]
-        # The normal-speed figures are the 40 normal requests alone, as before.
-        self.assertEqual(day["n"], 40)
-        self.assertAlmostEqual(day["output_tokens_per_s"]["median"], 70, delta=70 * 0.02)
-        self.assertEqual((day["fast_session_requests"], day["fast_excluded"]), (20, 20))
-        fast = day["fast_sessions"]
-        self.assertEqual(set(fast), {"n", "output_tokens_per_s", "time_to_first_block_s"})
-        self.assertEqual(fast["n"], 20)
-        self.assertAlmostEqual(fast["output_tokens_per_s"]["median"], 170, delta=170 * 0.02)
-        self.assertAlmostEqual(fast["time_to_first_block_s"]["median"], 600 / 170, delta=0.1)
-        self.assertEqual(set(fast["output_tokens_per_s"]), {"median", "q1", "q3"})
-        (split,) = block_["models"]["claude-opus-5"]["by_account"]["a2"]
-        self.assertEqual(split["fast_sessions"], fast)
-        self.assertEqual(block_["models"]["claude-opus-5"]["by_account_entrypoint"]["a2:cli"][0]["fast_sessions"], fast)
+        m = block_["models"]["claude-opus-5"]
+        for day in (m["daily"][0], m["by_account"]["a2"][0], m["by_entrypoint"]["cli"][0],
+                    m["by_account_entrypoint"]["a2:cli"][0]):
+            self.assertEqual(set(day), {"day", "n", "fast_session_requests", "output_tokens_per_s",
+                                        "time_to_first_block_s"})
+            self.assertEqual((day["n"], day["fast_session_requests"]), (60, 20))
+            # 40 at 70 and 20 at 170: the first quartile is normal speed, the third fast.
+            self.assertAlmostEqual(day["output_tokens_per_s"]["q1"], 70, delta=70 * 0.02)
+            self.assertGreater(day["output_tokens_per_s"]["q3"], 150)
 
-    def test_fast_sessions_is_null_under_ten(self):
-        reqs = requests_in(session(40, 70, prefix="s"), "a") + requests_in(session(9, 170, start=5000, prefix="f"), "b")
-        (day,) = speed_block({"rows": daily_rows(reqs, "a2")})["models"]["claude-opus-5"]["daily"]
-        self.assertEqual(day["fast_session_requests"], 9)
-        self.assertIsNone(day["fast_sessions"])
+    def test_a_days_median_includes_fast_session_requests(self):
+        # The day before sets the model's usual speed, so the fast sessions are fast.
+        reqs = (requests_in(session(100, 70, start=-86400, prefix="p"), "p")
+                + requests_in(session(20, 70, prefix="s"), "a") + requests_in(session(30, 170, start=5000, prefix="f"), "b"))
+        rows_ = [r for r in daily_rows(reqs, "a2") if r["day"] == "2026-09-20"]
+        (day,) = speed_block({"rows": rows_})["models"]["claude-opus-5"]["daily"]
+        self.assertEqual((day["n"], day["fast_session_requests"]), (50, 30))
+        self.assertAlmostEqual(day["output_tokens_per_s"]["median"], 170, delta=170 * 0.02)
+        self.assertAlmostEqual(day["time_to_first_block_s"]["median"], 600 / 170, delta=0.1)
 
-    def test_a_row_written_before_the_fast_series_still_counts_its_fast_requests(self):
+    def test_an_account_day_of_fast_sessions_alone_is_published(self):
+        # Fewer than MIN_REQUESTS normal requests, many fast: the row is kept by its whole count.
+        reqs = (requests_in(session(100, 70, prefix="s", entrypoint="sdk-cli"), "a")
+                + requests_in(session(40, 170, start=20000, prefix="f"), "b"))
+        rows_ = daily_rows(reqs, "a1")
+        for r in rows_:
+            if r["entrypoint"] == "sdk-cli":
+                r["account"] = "a2"
+        m = speed_block({"rows": rows_})["models"]["claude-opus-5"]
+        (a1,) = m["by_account"]["a1"]
+        self.assertEqual((a1["n"], a1["fast_session_requests"]), (40, 40))
+
+    def test_a_row_written_before_schema_2_still_counts_its_fast_requests(self):
         (old,) = self.rows()
         old["fast_excluded"] = old.pop("fast_session_requests")
         del old["fast_output_hist"], old["fast_ttfb_hist"]
         (day,) = speed_block({"rows": [old]})["models"]["claude-opus-5"]["daily"]
-        self.assertEqual((day["n"], day["fast_session_requests"], day["fast_sessions"]), (40, 20, None))
+        # Its fast requests were never binned, so the figures (and n) are the normal ones.
+        self.assertEqual((day["n"], day["fast_session_requests"]), (40, 20))
+        self.assertAlmostEqual(day["output_tokens_per_s"]["median"], 70, delta=70 * 0.02)
 
     def test_block_median_within_bin_and_min_requests(self):
         block_ = speed_block({"rows": self.rows()})
