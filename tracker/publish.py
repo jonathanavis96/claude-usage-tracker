@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
@@ -1123,7 +1124,9 @@ def _window_credits_from_weekly(weekly: dict, weekly_events: list) -> dict:
 
     A cross-check, not the measurement. The announced weekly cap is policy (the
     January baseline times the multiplier in force), and how many five-hour windows a
-    week holds is ours -- the pooled ratio of five-hour to seven-day meter movement.
+    week holds is ours -- the pooled ratio of five-hour to seven-day meter movement, on
+    either side over the accounts with readings on both sides of their own step
+    (`_paired_step`), so an account that joined after the cut does not move it.
     Dividing one by the other gives a window in credits that shares no input with the
     pure-Opus cluster, which is the only reason it is worth publishing beside it.
 
@@ -1156,7 +1159,8 @@ def _window_credits_from_weekly(weekly: dict, weekly_events: list) -> dict:
         "weekly_cap_baseline_source": {"url": CREDITS_TABLE_URL, "as_of": CREDITS_TABLE_AS_OF},
         "method": ("the announced weekly cap -- the January baseline times the multiplier in force "
                    "(x1.5 from May, x1.25 from 14 September) -- divided by this tracker's own "
-                   "measured windows per week for the regime either side of the certified change. "
+                   "measured windows per week for the regime either side of the certified change, "
+                   "each taken over the accounts with readings on both sides of their own step. "
                    "It shares no input with window_credits, which is why it is a cross-check."),
     }
 
@@ -1549,6 +1553,40 @@ def _account_dated(events: list, by_account: dict) -> list:
     return sorted([*events[:-1], dated], key=lambda ev: ev.date)
 
 
+def _paired_step(pooled_regimes: list[dict], by_window: list[dict], by_account: dict,
+                 events: list) -> tuple[list[dict], list]:
+    """(the max20 regimes the chart draws, the weekly events), stated on the paired accounts.
+
+    The pooled regimes put every account's windows either side of one pooled split: an
+    account whose log starts after the cut (a3, a4) lands on the after side only and
+    moves that level through account mix, and an account that stepped before the split
+    (a1, on 11 September) puts post-step windows on the before side. So the last two
+    regimes are replaced by the levels of the accounts with readings on both sides of
+    their own step, each on its own sides (`credit_model.paired_levels`), and the newest
+    event states the paired accounts' combined change (`windows_per_week_ratio_note`)
+    as its percent, with the paired levels' rounding intervals. The pooled regimes stay
+    published as `regimes_pooled_all_accounts`, the record. `current` is not touched: a
+    current level belongs to every account measuring now, a3 and a4 included.
+
+    Unchanged when fewer than two regimes exist or no account pairs.
+    """
+    weekly = {"max20": {"regimes": pooled_regimes, "by_window": by_window, "by_account": by_account}}
+    note = credit_model.windows_per_week_ratio_note(weekly)
+    levels = credit_model.paired_levels(note, by_window)
+    if levels is None or note["ratio_fell_pct"] is None:
+        return pooled_regimes, events
+    before, after = levels
+    regimes = [*pooled_regimes[:-2], before, after]
+    if events:
+        fall = note["ratio_fell_pct"]
+        e = replace(events[-1], percent=round(abs(fall)),
+                    direction="decreased" if fall > 0 else "increased",
+                    before_interval=tuple(before["rounding_interval"]),
+                    after_interval=tuple(after["rounding_interval"]))
+        events = [*events[:-1], e]
+    return regimes, events
+
+
 def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime,
                   gs_passive: dict | None = None) -> tuple[dict, list]:
     """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
@@ -1603,6 +1641,8 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     max5_points = _max5_window_points(points)
     events = _account_dated(detect_weighted_changes(max20_points), by_account)
     estimate = _regime_current(max20_points, now)
+    pooled_regimes = _regimes(max20_points)
+    regimes, events = _paired_step(pooled_regimes, max20_by_window, by_account, events)
 
     if estimate is not None:
         max20_availability = {"status": "measured", "reason": "evidence_stale" if estimate["stale"] else None}
@@ -1634,7 +1674,8 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                   "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max20"],
                   "weekly": _pooled_weeks(max20_points, now), "by_window": max20_by_window,
                   "by_account": by_account,
-                  "regimes": _regimes(max20_points), "assumed": False,
+                  "regimes": regimes, "regimes_pooled_all_accounts": pooled_regimes,
+                  "assumed": False,
                   "availability": max20_availability},
         "max5": {**inferred("max5"), "history": max5_history, "regimes": _regimes(max5_points),
                  "plan_change": {"date": PLAN_CHANGE.isoformat(), "source": "the meter's own step",
@@ -1826,36 +1867,74 @@ def _tokens_per_week_change(ratio_note: dict | None, across_cut: dict | None) ->
     """How much the tokens a week holds moved, from the two measured changes at the cut.
 
     The weekly series measures windows per week -- five-hour meter movement over
-    seven-day meter movement -- and that fell 21.8% across 14 September. It is not the
-    change in what a week buys, because the five-hour window itself grew at the same
-    date: the accounts' own credits per 1% read +8.6% across it
-    (`credit_model.five_hour_window_change`, the accounts whose capture column can carry
-    the reading). A week holds fewer windows, each bigger, so tokens per week fell by
-    about 15% where windows per week fell by 22%, and the page states the tokens figure
-    in the headline while the windows-per-week chart keeps its own.
+    seven-day meter movement. It is not the change in what a week buys, because the
+    five-hour window can move at the same date: the accounts' own credits per 1% either
+    side of 14 September (`credit_model.five_hour_window_changes`, the accounts whose
+    capture column can carry the reading). A week holding fewer windows, each of a
+    different size, holds tokens in proportion to both, so the page states the tokens
+    figure in the headline while the windows-per-week chart keeps its own.
 
-    Both inputs are the published, rounded ones, so a reader can redo the arithmetic
-    from the page. None when no account qualifies to state a five-hour change, or when
-    there are not two regimes to take a windows-per-week change from: with either
-    missing the compound is not measured, and no number is published in its place.
+    Both changes are taken per account, each account against itself: only an account
+    with its own windows-per-week change (`windows_per_week_ratio.per_account`, readings
+    on both sides) and its own five-hour change counts. Its tokens per week move by
+    its own windows-per-week ratio times its own five-hour ratio, and the accounts are
+    combined with the windows-per-week weights (`credit_model.combine_log_ratios`),
+    renormalised over the accounts that have both. `windows_per_week_pct` and
+    `five_hour_window_pct` are the same weighted means taken separately, so compounding
+    those two published figures reproduces `signed_pct`. The interval carries the
+    windows-per-week rounding interval only: the five-hour medians carry none.
+
+    None when no account has both changes: the compound is then not measured, and no
+    number is published in its place.
     """
-    five_hour = credit_model.five_hour_window_change(across_cut)
-    if ratio_note is None or five_hour is None:
+    five_hour = credit_model.five_hour_window_changes(across_cut)
+    per_wpw = (ratio_note or {}).get("per_account") or {}
+    accounts = sorted(label for label in per_wpw if label in five_hour)
+    if not accounts:
         return None
-    windows_pct = round(-ratio_note["ratio_fell_pct"], 1)
-    five_hour_pct = five_hour["pct"]
+    raw = {label: per_wpw[label].get("weight") or 0.0 for label in accounts}
+    if not sum(raw.values()):
+        raw = dict.fromkeys(accounts, 1.0)
+    weights = {label: w / sum(raw.values()) for label, w in raw.items()}
+
+    def mean(f) -> float:
+        return sum(weights[label] * f(label) for label in accounts)
+
+    log_windows = mean(lambda k: math.log(per_wpw[k]["ratio_after_over_before"]))
+    log_five = mean(lambda k: math.log(1 + five_hour[k] / 100))
+    log_lo = mean(lambda k: math.log(per_wpw[k]["ratio_interval"][0])) + log_five
+    log_hi = mean(lambda k: math.log(per_wpw[k]["ratio_interval"][1])) + log_five
+    windows_pct = round((math.exp(log_windows) - 1) * 100, 1)
+    five_hour_pct = round((math.exp(log_five) - 1) * 100, 1)
     signed = round(((1 + windows_pct / 100) * (1 + five_hour_pct / 100) - 1) * 100, 1)
+    per_account = {}
+    for label in accounts:
+        rho, (lo, hi) = per_wpw[label]["ratio_after_over_before"], per_wpw[label]["ratio_interval"]
+        f = 1 + five_hour[label] / 100
+        per_account[label] = {
+            "windows_per_week_pct": round((rho - 1) * 100, 1),
+            "five_hour_window_pct": five_hour[label] + 0.0,  # -0.0 publishes as 0.0
+            "signed_pct": round((rho * f - 1) * 100, 1),
+            "signed_interval_pct": [round((lo * f - 1) * 100, 1), round((hi * f - 1) * 100, 1)],
+            "weight": round(weights[label], 4)}
     return {
         "percent": round(abs(signed)),
         "direction": "decreased" if signed < 0 else "increased",
         "signed_pct": signed,
+        "signed_interval_pct": [round((math.exp(log_lo) - 1) * 100, 1),
+                                round((math.exp(log_hi) - 1) * 100, 1)],
         "windows_per_week_pct": windows_pct,
         "five_hour_window_pct": five_hour_pct,
-        "five_hour_accounts": five_hour["accounts"],
-        "method": ("the event's own before-to-after change in windows per week compounded with "
-                   "the median measured change in the five-hour window across the same cut, "
-                   "(1 + windows_per_week_pct / 100) x (1 + five_hour_window_pct / 100) - 1: a "
-                   "week holds fewer windows, each of them bigger."),
+        "five_hour_accounts": accounts,
+        "accounts": accounts,
+        "per_account": per_account,
+        "method": ("each account against itself: its own before-to-after ratio of windows per "
+                   "week times its own measured five-hour window ratio across the same cut (a week "
+                   "holds fewer windows, each of a different size), only for accounts with both; "
+                   "combined as a weighted mean of the accounts' log changes, weighted by their "
+                   "windows-per-week rounding intervals. (1 + windows_per_week_pct / 100) x "
+                   "(1 + five_hour_window_pct / 100) - 1 reproduces signed_pct. The interval is "
+                   "the windows-per-week rounding interval; the five-hour medians carry none."),
     }
 
 

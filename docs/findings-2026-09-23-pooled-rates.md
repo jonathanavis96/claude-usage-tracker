@@ -277,3 +277,146 @@ python3 -m tools.credits_report --publish-check /tmp/x.json
 The publish check reproduces every credits and weekly figure. The only 10 figures that do not
 reproduce (`contributed.*` timestamps one second apart, and three `rebuild.*` keys) come from
 running it on an offline rebuild, and `main` shows the same 10.
+
+## Same accounts either side: the 14 September change, 2026-09-23
+
+The weekly event's change used to come from the pooled regimes of `weekly_windows.max20`. The
+before regime held two accounts (a1, a2). The after regime held four (a1, a2, a3, a4), because
+a3's meter log starts on 15 September and a4's on 23 September. The accounts' windows per week
+differ (a2 about 4.5 after the cut, a1 5.0, a3 5.5), so adding a3 and a4 to the after side only
+moved the pooled figure through account mix. a3 pulls the pooled after level up, which makes
+the cut look smaller than it was.
+
+`windows_per_week_ratio` on the event now measures each account against itself. It uses the
+account's own last two certified regimes (`by_account.<label>.regimes`), because the cut
+reaches each account at its own seven-day reset. Only accounts with readings on both sides
+count. a3 and a4 are listed under `excluded` as `readings_only_after_the_change`. They still
+count towards every current-level figure.
+
+**How the accounts are combined.** Each account's ratio (after over before) has an interval
+built from both sides' rounding intervals at their far ends: lowest after over highest before,
+and highest after over lowest before. The combined figure is a weighted mean of the accounts'
+log ratios. Each weight is the inverse square of the half-width of that account's log interval,
+normalised to sum to one. The weights depend only on the intervals, not on the values. So the
+combined figure can sit no lower than the same weighted mean of each account's lowest ratio,
+and no higher than the weighted mean of each account's highest. That range is the published
+interval. It bounds rounding only. It does not bound how much the accounts disagree with each
+other; `per_account` shows that directly. Tokens per week uses the same weights, over the
+accounts that also have their own five-hour change. Its interval carries the windows-per-week
+rounding only, because the five-hour medians have no interval.
+
+### Before and after
+
+Old figures (all accounts in the pooled regimes):
+
+| | Windows | Accounts | Windows per week | Rounding interval |
+|---|---|---|---|---|
+| Before (2026-08-15 to 09-14) | 144 | a1, a2 | 6.4836 | [6.2214, 6.7656] |
+| After (2026-09-14 to 09-23) | 91 | a1, a2, a3, a4 | 4.9874 | [4.7166, 5.2852] |
+| Change | | | -23.08% | [-30.29%, -15.05%] (this interval was never published) |
+
+Old tokens per week: -26.2%. That is -23.1% windows per week compounded with -4.0%, the median
+five-hour change of a1 and a2.
+
+Each account against itself, with its own step:
+
+| Account | Before | After | Windows per week change | Weight | Five-hour window | Tokens per week |
+|---|---|---|---|---|---|---|
+| a1 | 6.5371 [6.2104, 6.8949], 102 windows, 08-15 to 09-11 | 5.032 [4.588, 5.5527], 40 windows, 09-11 to 09-22 | -23.02% [-33.46, -10.59] | 0.6118 | -8.0% | -29.2% [-38.8, -17.7] |
+| a2 | 6.4688 [6.0171, 6.9826], 43 windows, 09-05 to 09-15 | 4.5 [4.0428, 5.0483], 32 windows, 09-15 to 09-23 | -30.44% [-42.10, -16.10] | 0.3882 | 0.0% | -30.4% [-42.1, -16.1] |
+
+Combined over a1 and a2:
+
+- windows per week: **-26.0%**, interval [-37.0%, -12.8%] (ratio 0.7401, [0.6304, 0.8723])
+- five-hour window: -5.0%, the same weighted mean of a1's -8.0% and a2's 0.0%
+- tokens per week: **-29.7%**, interval [-40.1%, -17.1%]
+
+a3 (15 windows at 5.5) and a4 (3 windows at 3.75) contribute to neither side. a1's own step
+dates to 2026-09-11, before the announced date. That is its own detector's onset, and it stands
+as detected.
+
+### `consistent_with`, rechecked
+
+The three worked splits are recomputed from the combined ratio. Each now carries an interval:
+
+| Split | Old (pooled) | New (paired) |
+|---|---|---|
+| Weekly cap takes the whole fall | -23.08% | -25.99% [-36.96, -12.77] |
+| Five-hour window takes it all | +30.0% | +35.12% [+14.64, +58.62] |
+| Announced -17% weekly cut, rest is five-hour | +7.9% implied five-hour | +12.15% [-4.85, +31.66] |
+
+Checked against the accounts' own five-hour changes (a1 -8.0%, a2 0.0%, combined -5.0%):
+
+- The five-hour-only split needs a rise of at least 14.6%, so it is outside every measured
+  value.
+- The announced-17% split needs a five-hour change of at least -4.85%. a2's 0.0% is inside it.
+  a1's -8.0% is outside it, and the combined -5.0% sits just outside.
+- Taking the measured five-hour change as given, the weekly change it implies is the
+  tokens-per-week figure: -29.7% [-40.1, -17.1]. Its upper end sits just past the announced -17%.
+
+None of this resolves the attribution. The five-hour readings are credits per 1%, which
+measure rate over budget (`ACROSS_CUT_UNRESOLVED`). They read as a window change only if the
+per-token rates held across the cut. The pooled fit supports that for Fable (section 1). The
+five-hour medians also carry no interval, so "just outside" is not decisive. The code still
+publishes the splits as worked examples, not claims.
+
+### The chart levels have the same mixing
+
+`weekly_windows.max20.regimes` is what the charts draw, and it is still pooled. Over the same
+two regimes:
+
+| Level | All accounts | a1 and a2 only | a1 | a2 | a3 | a4 |
+|---|---|---|---|---|---|---|
+| Before | 6.484 | 6.484 | 6.517 | 6.409 | – | – |
+| After | 4.987 | 4.804 [4.461, 5.192] | 4.965 | 4.616 | 5.500 | 3.75 |
+
+The after level is 0.18 (3.8%) higher only because a3 and a4 joined. Over a1 and a2 only, the
+pooled regimes give -25.9%, close to the paired -26.0%. The before level has a smaller problem
+of its own. Its span runs to 09-14, so it also holds 7 of a1's windows from after a1's own
+09-11 step (a1 reads 6.517 in the pooled regime and 6.537 on its own).
+
+### Follow-up: the chart step, the event percent and the cross-check use the paired accounts
+
+The last two entries of `weekly_windows.max20.regimes`, which the chart draws as its step,
+are now the levels of the accounts with readings on both sides of their own step (a1 and a2).
+Each account contributes the windows of its own before and after regimes, so the before level
+no longer holds a1's windows from after its own 11 September step. a3 and a4 are not on
+either side.
+
+| Level | Old (pooled) | New (a1 + a2, own sides) |
+|---|---|---|
+| Before | 6.48 [6.2214, 6.7656], 144 windows, 08-15 to 09-14 | 6.52 [6.2470, 6.8051], 145 windows, 08-15 to 09-11 |
+| After | 4.99 [4.7166, 5.2852], 91 windows, 09-14 to 09-23 | 4.80 [4.4712, 5.1667], 72 windows, 09-11 to 09-23 |
+
+The step is drawn at a1's 09-11 onset, the event's own date. a2 steps on 09-15, and each level
+names both accounts' actual spans under `per_account`. The old pooled regimes stay published
+as `regimes_pooled_all_accounts`, as a record. `current` is still the pooled 4.99 over every
+account measuring now, a3 and a4 included.
+
+Other figures that change:
+
+- The event's `percent` is now 26 and its label says "fell about 26%", from the combined
+  -25.99%. Its rounding intervals are the paired levels'.
+- `credits.window_credits_from_weekly` divides by 6.52 and 4.80, which gives 19,171,771
+  credits before and 21,701,380 after (was 19,290,116 and 20,875,075).
+- The pre-cut regime behind `reference.shortfall` is the paired before level too: 6.52, ratio
+  0.8602 (was 6.48, 0.8549).
+
+The ratio of the two drawn levels, 4.80 / 6.52, is -26.4%. That differs from the published
+-26.0% because the levels pool windows while the percent weights each account's own change.
+Both round to 26%.
+
+After this, the only published 23s near the change are a1's own change (-23.0%, in
+`per_account` and `by_account.a1.step`) and the old pooled figure kept in
+`pooled_all_accounts` (23.08%).
+
+### Reproduce
+
+```
+python3 -m tracker.rebuild_offline --root . --now 2026-09-23T17:30:00+00:00 --out /tmp/x.json
+python3 -m tools.credits_report --publish-check /tmp/x.json
+```
+
+Every weekly, event and credits figure reproduces. The figures that do not reproduce (the
+`speed` block, `contributed.*` timestamps and three `rebuild.*` keys, 5,305 in all) come from
+the offline rebuild. Main at 669d2f4 shows the same 5,305.

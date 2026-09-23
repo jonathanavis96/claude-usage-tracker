@@ -1600,7 +1600,12 @@ class WindowsPerWeekRatioNoteTests(unittest.TestCase):
         return {"window_ending": ending, "five_hour_pct": d5, "seven_day_pct": d7, "account": account}
 
     def _weekly(self, regimes: list[dict], by_window: list[dict]) -> dict:
-        return {"max20": {"regimes": regimes, "by_window": by_window}}
+        # Every account in the rows steps on the pooled regimes' own boundary, so an
+        # account with rows on both sides is measured against itself on the same spans.
+        accounts = {r["account"] for r in by_window}
+        by_account = {a: {"regimes": regimes, "step": {"onset": "2026-09-06"} if len(regimes) > 1 else None}
+                      for a in accounts}
+        return {"max20": {"regimes": regimes, "by_window": by_window, "by_account": by_account}}
 
     def _regime(self, start: str, end: str) -> dict:
         return {"start": start, "end": end}
@@ -1629,12 +1634,12 @@ class WindowsPerWeekRatioNoteTests(unittest.TestCase):
             self._row("2026-09-11T00:00:00+00:00", 1.0, 1.0),  # after the last regime: excluded
         ]
         out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
-        self.assertEqual(out["before"]["n_windows"], 2)
-        self.assertEqual(out["before"]["sum_five_hour_pct"], 15.0)
-        self.assertEqual(out["before"]["sum_seven_day_pct"], 30.0)
-        self.assertEqual(out["after"]["n_windows"], 2)
-        self.assertEqual(out["after"]["sum_five_hour_pct"], 10.0)
-        self.assertEqual(out["after"]["sum_seven_day_pct"], 20.0)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["n_windows"], 2)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["sum_five_hour_pct"], 15.0)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["sum_seven_day_pct"], 30.0)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["n_windows"], 2)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["sum_five_hour_pct"], 10.0)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["sum_seven_day_pct"], 20.0)
 
     def test_a_window_at_a_shared_boundary_instant_lands_in_the_earlier_regime_only(self):
         # Two accounts' windows can share a window_ending instant that sits exactly on a
@@ -1649,13 +1654,13 @@ class WindowsPerWeekRatioNoteTests(unittest.TestCase):
             self._row("2026-09-08T00:00:00+00:00", 4.0, 10.0, account="a2"),
         ]
         out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
-        self.assertEqual(out["before"]["n_windows"], 2)
-        self.assertEqual(out["before"]["sum_seven_day_pct"], 30.0)
-        self.assertEqual(out["after"]["n_windows"], 1)
-        self.assertEqual(out["after"]["sum_seven_day_pct"], 10.0)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["n_windows"], 2)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["sum_seven_day_pct"], 30.0)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["n_windows"], 1)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["sum_seven_day_pct"], 10.0)
         # Total seven-day movement pooled is unchanged; the boundary row was not dropped
         # or duplicated, only assigned once.
-        self.assertEqual(out["before"]["sum_seven_day_pct"] + out["after"]["sum_seven_day_pct"], 40.0)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["sum_seven_day_pct"] + out["pooled_all_accounts"]["after"]["sum_seven_day_pct"], 40.0)
 
     def test_a_row_at_the_after_regimes_own_start_is_not_the_boundary_tie_and_is_kept(self):
         # The after regime's own first window sits at its own `start`, which is not the
@@ -1670,13 +1675,13 @@ class WindowsPerWeekRatioNoteTests(unittest.TestCase):
             self._row("2026-09-08T00:00:00+00:00", 6.0, 10.0, account="a2"),
         ]
         out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
-        self.assertEqual(out["before"]["n_windows"], 1)
-        self.assertEqual(out["before"]["sum_seven_day_pct"], 20.0)
-        self.assertEqual(out["after"]["n_windows"], 2)
-        self.assertEqual(out["after"]["sum_seven_day_pct"], 20.0)
-        self.assertEqual(out["after"]["sum_five_hour_pct"], 10.0)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["n_windows"], 1)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["sum_seven_day_pct"], 20.0)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["n_windows"], 2)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["sum_seven_day_pct"], 20.0)
+        self.assertEqual(out["pooled_all_accounts"]["after"]["sum_five_hour_pct"], 10.0)
         # Every row is accounted for exactly once.
-        self.assertEqual(out["before"]["sum_seven_day_pct"] + out["after"]["sum_seven_day_pct"], 40.0)
+        self.assertEqual(out["pooled_all_accounts"]["before"]["sum_seven_day_pct"] + out["pooled_all_accounts"]["after"]["sum_seven_day_pct"], 40.0)
 
     def test_rho_fall_pct_and_five_hour_only_pct(self):
         regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
@@ -1685,8 +1690,8 @@ class WindowsPerWeekRatioNoteTests(unittest.TestCase):
         by_window = [self._row("2026-09-02T00:00:00+00:00", 20.0, 10.0),
                     self._row("2026-09-07T00:00:00+00:00", 10.0, 10.0)]
         out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
-        self.assertAlmostEqual(out["before"]["ratio"], 2.0)
-        self.assertAlmostEqual(out["after"]["ratio"], 1.0)
+        self.assertAlmostEqual(out["per_account"]["a1"]["before"]["ratio"], 2.0)
+        self.assertAlmostEqual(out["per_account"]["a1"]["after"]["ratio"], 1.0)
         self.assertAlmostEqual(out["ratio_fell_pct"], 50.0)
         # five_hour_only_pct = (1/rho - 1) * 100 = (2.0 - 1) * 100 = 100.0
         five_hour_only = next(s for s in out["consistent_with"]
@@ -1730,10 +1735,12 @@ class EventRecordWeeklyRatioWiringTests(unittest.TestCase):
         regimes = [{"start": "2026-09-01T00:00:00+00:00", "end": "2026-09-05T00:00:00+00:00"},
                   {"start": "2026-09-06T00:00:00+00:00", "end": "2026-09-10T00:00:00+00:00"}]
         by_window = [{"window_ending": "2026-09-02T00:00:00+00:00", "five_hour_pct": 20.0,
-                     "seven_day_pct": 10.0},
+                     "seven_day_pct": 10.0, "account": "a1"},
                     {"window_ending": "2026-09-07T00:00:00+00:00", "five_hour_pct": 10.0,
-                     "seven_day_pct": 10.0}]
-        weekly_windows = {"max20": {"regimes": regimes, "by_window": by_window}}
+                     "seven_day_pct": 10.0, "account": "a1"}]
+        by_account = {"a1": {"regimes": regimes, "step": {"onset": "2026-09-06"}}}
+        weekly_windows = {"max20": {"regimes": regimes, "by_window": by_window,
+                                    "by_account": by_account}}
         out = _event_record(self._event(), "weekly", across_cut=None, weekly_windows=weekly_windows)
         self.assertIsNotNone(out["windows_per_week_ratio"])
         self.assertAlmostEqual(out["windows_per_week_ratio"]["ratio_fell_pct"], 50.0)

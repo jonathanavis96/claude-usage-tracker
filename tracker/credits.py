@@ -66,10 +66,13 @@ exactly those and nothing else.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
+
+from .detect import ratio_interval
 
 PRICES_PATH = Path(__file__).resolve().parent.parent / "data" / "prices.json"
 #: The meter's own per-model rates, fitted from the passive stretches by
@@ -572,6 +575,22 @@ def selection_sentence(min_delta_pct: float = MIN_DELTA_PCT) -> str:
             f"probe row or the effort-matrix run), and reads capture_status 'accepted'.")
 
 
+def five_hour_window_changes(across: dict | None) -> dict[str, float]:
+    """Each qualifying account's own measured change in the five-hour window, by label.
+
+    The accounts `five_hour_window_change` reads (a capture reading at all, and at least
+    FIVE_HOUR_MIN_SIDE stretches on each side of the cut), before it takes their median:
+    the tokens-per-week change pairs each of them with the same account's own change in
+    windows per week.
+    """
+    per_account = (across or {}).get("per_account") or {}
+    return {label: row["change_pct"] for label, row in per_account.items()
+            if row.get("change_pct") is not None
+            and (row.get("n_with_capture") or 0) > 0
+            and (row.get("n_before") or 0) >= FIVE_HOUR_MIN_SIDE
+            and (row.get("n_after") or 0) >= FIVE_HOUR_MIN_SIDE}
+
+
 def five_hour_window_change(across: dict | None) -> dict | None:
     """The measured change in the five-hour window across the cut, as one percent.
 
@@ -586,12 +605,7 @@ def five_hour_window_change(across: dict | None) -> dict | None:
     None when no account qualifies, and the publisher then states no tokens-per-week
     change and scales no window by it, rather than compounding a number nobody measured.
     """
-    per_account = (across or {}).get("per_account") or {}
-    qualifying = {label: row["change_pct"] for label, row in per_account.items()
-                  if row.get("change_pct") is not None
-                  and (row.get("n_with_capture") or 0) > 0
-                  and (row.get("n_before") or 0) >= FIVE_HOUR_MIN_SIDE
-                  and (row.get("n_after") or 0) >= FIVE_HOUR_MIN_SIDE}
+    qualifying = five_hour_window_changes(across)
     if not qualifying:
         return None
     return {"pct": round(median(list(qualifying.values())), 1), "accounts": sorted(qualifying)}
@@ -1360,78 +1374,268 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
     }
 
 
-def windows_per_week_ratio_note(weekly: dict) -> dict | None:
-    """What the pooled windows-per-week ratio (five-hour movement over seven-day movement)
-    actually identifies across the certified change, and nothing more.
+def _regime_rows(by_window: list[dict], regime: dict,
+                 exclude_at: datetime | None = None) -> list[dict]:
+    """The `by_window` rows inside one regime's own span, bounds inclusive.
 
-    A fall in this ratio is one equation in two unknowns: the weekly cap and the
-    five-hour window could each have moved, in any combination that reproduces the
-    observed fall. This reports the fall itself, from the exact rows behind the last
-    two certified regimes (`weekly['max20']['regimes']`), plus three of the many splits
-    that reproduce it -- the weekly cap absorbing all of it, the five-hour window
-    absorbing all of it, and the announced 17% weekly cut absorbing the rest as an
-    implied five-hour rise. None of the three is claimed; they are worked examples of
-    the same one-equation-two-unknowns fact, ported from the Codex review of commit
-    447b926 (2026-09-20), which also retracted the cross-account-spread argument this
-    replaces (see `ACROSS_CUT_UNRESOLVED`).
+    `by_window` is pooled across accounts, and each account keeps its own window
+    cadence, so two different accounts' rows can share a `window_ending` instant. A row
+    could sit exactly on the instant where one regime ends and the next begins, and each
+    regime's own inclusive bounds would then both claim it. `exclude_at` names that one
+    instant (the earlier regime's own `end`) so it is dropped from the later regime only
+    -- never a whole boundary side, which would also drop the later regime's own first
+    window whenever that window's own timestamp happens to equal its own `start`.
     """
-    regimes = weekly["max20"]["regimes"]
+    lo, hi = datetime.fromisoformat(regime["start"]), datetime.fromisoformat(regime["end"])
+    return [r for r in by_window
+            if lo <= datetime.fromisoformat(r["window_ending"]) <= hi
+            and datetime.fromisoformat(r["window_ending"]) != exclude_at]
+
+
+def _side(rows: list[dict], regime: dict) -> dict | None:
+    """One side of a before/after comparison: the rows' pooled sums, ratio and rounding interval."""
+    d5 = sum(r["five_hour_pct"] for r in rows)
+    d7 = sum(r["seven_day_pct"] for r in rows)
+    if not d7:
+        return None
+    lo, hi = ratio_interval(d5, d7, sum(r.get("pieces", 1) for r in rows))
+    return {"n_windows": len(rows), "sum_five_hour_pct": round(d5, 1),
+            "sum_seven_day_pct": round(d7, 1), "ratio": round(d5 / d7, 4),
+            "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
+            "accounts": sorted({r["account"] for r in rows if r.get("account")}),
+            "start": regime["start"], "end": regime["end"]}
+
+
+def _one_sided_reason(rows: list[dict], before: dict, after: dict) -> str:
+    """Why an account with readings has no before/after change of its own."""
+    endings = [datetime.fromisoformat(r["window_ending"]) for r in rows]
+    if min(endings) >= datetime.fromisoformat(after["start"]):
+        return "readings_only_after_the_change"
+    if max(endings) <= datetime.fromisoformat(before["end"]):
+        return "readings_only_before_the_change"
+    return "no_certified_step_of_its_own"
+
+
+def _paired_account(rows: list[dict], block: dict) -> dict | None:
+    """One account's own change across its own last certified step, or None if unbounded.
+
+    The two sides are the account's own last two regimes (`by_account.<label>.regimes`),
+    not the pooled ones: the cut reaches each account at that account's own seven-day
+    reset, so a pooled boundary would put one account's first post-cut windows on the
+    before side. The change's interval takes the rounding interval of both sides at
+    their far ends: the lowest after over the highest before, and the other way round.
+    """
+    regimes = block["regimes"]
+    before = _side(_regime_rows(rows, regimes[-2]), regimes[-2])
+    after = _side(_regime_rows(rows, regimes[-1],
+                               exclude_at=datetime.fromisoformat(regimes[-2]["end"])), regimes[-1])
+    if before is None or after is None:
+        return None
+    (b_lo, b_hi), (a_lo, a_hi) = before["rounding_interval"], after["rounding_interval"]
+    if not (b_lo and b_hi and a_lo and a_hi):
+        return None
+    for side in (before, after):
+        del side["accounts"]
+    rho = after["ratio"] / before["ratio"]
+    rho_lo, rho_hi = a_lo / b_hi, a_hi / b_lo
+    return {"before": before, "after": after, "ratio_after_over_before": round(rho, 4),
+            "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)],
+            "change_pct": round((rho - 1) * 100, 2),
+            "change_interval_pct": [round((rho_lo - 1) * 100, 2), round((rho_hi - 1) * 100, 2)]}
+
+
+def combine_log_ratios(per_account: dict[str, dict]) -> dict:
+    """The paired accounts' changes combined: a weighted mean of their own log ratios.
+
+    Each account's weight is the inverse square of the half-width of its own ratio
+    interval in log terms, normalised to sum to one, so an account whose own rounding
+    pins its change tightly counts for more than one whose readings are thin. The
+    weights depend on the intervals alone, never on the values, so with them fixed
+    the combined figure can sit no lower than the same weighted mean of every account's
+    lowest ratio and no higher than that of every highest: that is the published
+    interval. It bounds rounding, not the accounts' disagreement with each other, which
+    `per_account` shows directly. Worked from the published rounded values, so a reader
+    can redo it.
+    """
+    raw = {label: (math.log(a["ratio_interval"][1]) - math.log(a["ratio_interval"][0])) / 2
+           for label, a in per_account.items()}
+    inv = {label: 1 / h ** 2 if h > 0 else 0.0 for label, h in raw.items()}
+    if not any(inv.values()):  # every interval a point: weight the accounts equally
+        inv = dict.fromkeys(inv, 1.0)
+    total = sum(inv.values())
+    weights = {label: round(v / total, 4) for label, v in inv.items()}
+    norm = sum(weights.values())
+    log_mid = sum(w * math.log(per_account[k]["ratio_after_over_before"]) for k, w in weights.items()) / norm
+    log_lo = sum(w * math.log(per_account[k]["ratio_interval"][0]) for k, w in weights.items()) / norm
+    log_hi = sum(w * math.log(per_account[k]["ratio_interval"][1]) for k, w in weights.items()) / norm
+    return {"weights": weights, "ratio": math.exp(log_mid),
+            "interval": (math.exp(log_lo), math.exp(log_hi))}
+
+
+def paired_levels(note: dict | None, by_window: list[dict]) -> tuple[dict, dict] | None:
+    """The before and after levels over the paired accounts only, each on its own sides.
+
+    The chart draws these as the step across the change instead of the pooled regimes,
+    which hold an account on one side only (a3 and a4 joined after the cut) and put
+    an early-stepping account's post-step windows on the before side (a1 stepped on
+    11 September, the pooled split is 14 September). Each level pools the paired
+    accounts' windows from their own regime on that side (`note.per_account`): total
+    five-hour movement over total seven-day movement, with that pool's rounding
+    interval. The accounts step at their own seven-day resets, so the level's `start`
+    and `end` are drawn at the earliest step -- the event's own date -- and
+    `per_account` names each account's actual span. None when no account pairs.
+    """
+    per_account = (note or {}).get("per_account") or {}
+    if not per_account:
+        return None
+    rows = {"before": [], "after": []}
+    spans = {"before": {}, "after": {}}
+    for label, a in per_account.items():
+        mine = [r for r in by_window if r.get("account") == label]
+        rows["before"] += _regime_rows(mine, a["before"])
+        rows["after"] += _regime_rows(mine, a["after"],
+                                      exclude_at=datetime.fromisoformat(a["before"]["end"]))
+        for side in ("before", "after"):
+            spans[side][label] = {"start": a[side]["start"], "end": a[side]["end"],
+                                  "windows": a[side]["ratio"]}
+
+    def level(side: str, start: str, end: str) -> dict:
+        pool = rows[side]
+        d5 = sum(r["five_hour_pct"] for r in pool)
+        d7 = sum(r["seven_day_pct"] for r in pool)
+        pieces = sum(r.get("pieces", 1) for r in pool)
+        lo, hi = ratio_interval(d5, d7, pieces)
+        return {"start": start, "end": end, "windows": round(d5 / d7, 2) if d7 else None,
+                "seven_day_pct": round(d7, 1), "points": len(pool), "pieces": pieces,
+                "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
+                "quality": "bounded" if hi is not None else "insufficient_precision",
+                "accounts": sorted(per_account), "per_account": spans[side],
+                "source": "passive_paired_deltas_same_accounts", "assumed": False}
+
+    before_starts = [s["start"] for s in spans["before"].values()]
+    before_ends = [s["end"] for s in spans["before"].values()]
+    after_starts = [s["start"] for s in spans["after"].values()]
+    after_ends = [s["end"] for s in spans["after"].values()]
+    return (level("before", min(before_starts, key=datetime.fromisoformat),
+                  min(before_ends, key=datetime.fromisoformat)),
+            level("after", min(after_starts, key=datetime.fromisoformat),
+                  max(after_ends, key=datetime.fromisoformat)))
+
+
+def windows_per_week_ratio_note(weekly: dict) -> dict | None:
+    """What the windows-per-week ratio (five-hour movement over seven-day movement)
+    identifies across the certified change, measured on the same accounts either side.
+
+    The watched accounts differ in five-hour window size, and so in windows per week,
+    and they joined the pool at different times: a3's meter log starts 15 September and
+    a4's on 23 September, both after the cut. Pooling every account's windows either side
+    of the pooled regimes therefore changes the figure through which accounts are in the
+    pool, not only through the limit. So the change is measured account by account, each
+    against itself over its own last certified step (`_paired_account`), only for the
+    accounts with readings on both sides, and then combined (`combine_log_ratios`). An
+    account with readings on one side only is named under `excluded` with the reason; it
+    still counts towards every current-level figure elsewhere.
+
+    `ratio_fell_pct` is the combined fall, `ratio_fell_interval_pct` its rounding
+    interval, and `consistent_with` reworks the one-equation-two-unknowns algebra from
+    the combined figure: a fall in this ratio can come from the weekly cap, the
+    five-hour window, or both, and none of the splits is claimed. They are worked
+    examples ported from the Codex review of commit 447b926 (2026-09-20), which also
+    retracted the cross-account-spread argument this replaces (see
+    `ACROSS_CUT_UNRESOLVED`). `pooled_all_accounts` keeps the old figure -- every
+    account's windows in the last two pooled regimes -- for the record, since the charts
+    still draw those regimes (docs/findings-2026-09-23-pooled-rates.md, "Same accounts
+    either side").
+    """
+    max20 = weekly["max20"]
+    # The chart's own `regimes` are the paired levels (`paired_levels`) once there are any;
+    # the pooled record keeps the detector's regimes over every account.
+    regimes = max20.get("regimes_pooled_all_accounts") or max20["regimes"]
     if len(regimes) < 2:
         return None
-    by_window = weekly["max20"]["by_window"]
-
-    def sums(regime: dict, exclude_at: datetime | None = None) -> tuple[int, float, float] | None:
-        # `by_window` is pooled across accounts, and each account keeps its own window
-        # cadence, so two different accounts' rows can share a `window_ending` instant.
-        # Both bounds are inclusive so a row inside a regime's own span is never dropped,
-        # but a row could sit exactly on the instant where one regime ends and the next
-        # begins, and each regime's own inclusive bounds would then both claim it.
-        # `exclude_at` names that one instant (the earlier regime's own `end`) so it is
-        # dropped here, from the later regime only -- never a whole boundary side, which
-        # would also drop the later regime's own first window whenever that window's own
-        # timestamp happens to equal its own `start`.
-        lo, hi = datetime.fromisoformat(regime["start"]), datetime.fromisoformat(regime["end"])
-        rows = [r for r in by_window
-                if lo <= datetime.fromisoformat(r["window_ending"]) <= hi
-                and datetime.fromisoformat(r["window_ending"]) != exclude_at]
-        d7 = sum(r["seven_day_pct"] for r in rows)
-        return (len(rows), sum(r["five_hour_pct"] for r in rows), d7) if d7 else None
-
-    before = sums(regimes[-2])
-    after = sums(regimes[-1], exclude_at=datetime.fromisoformat(regimes[-2]["end"]))
-    if not before or not after:
+    by_window = max20["by_window"]
+    pooled_before = _side(_regime_rows(by_window, regimes[-2]), regimes[-2])
+    pooled_after = _side(_regime_rows(by_window, regimes[-1],
+                                      exclude_at=datetime.fromisoformat(regimes[-2]["end"])),
+                         regimes[-1])
+    if not pooled_before or not pooled_after:
         return None
-    n_before, d5_before, d7_before = before
-    n_after, d5_after, d7_after = after
-    ratio_before, ratio_after = d5_before / d7_before, d5_after / d7_after
-    rho = ratio_after / ratio_before  # (weekly_after/weekly_before) / (five_hour_after/five_hour_before)
+
+    per_account: dict[str, dict] = {}
+    excluded: dict[str, str] = {}
+    for label, block in sorted((max20.get("by_account") or {}).items()):
+        rows = [r for r in by_window if r.get("account") == label]
+        if not rows:
+            continue
+        if not block.get("step") or len(block.get("regimes") or []) < 2:
+            excluded[label] = _one_sided_reason(rows, regimes[-2], regimes[-1])
+            continue
+        paired = _paired_account(rows, block)
+        if paired is None:
+            reason = _one_sided_reason(rows, regimes[-2], regimes[-1])
+            excluded[label] = ("rounding_interval_unbounded"
+                               if reason == "no_certified_step_of_its_own" else reason)
+            continue
+        per_account[label] = paired
+    pooled = {
+        "before": pooled_before, "after": pooled_after,
+        "ratio_fell_pct": round((1 - pooled_after["ratio"] / pooled_before["ratio"]) * 100, 2),
+        "why_not_used": ("pools every account's windows in each of the last two pooled "
+                         "regimes, so an account that only has readings after the change "
+                         "moves the after side through account mix; kept for the record"),
+    }
+    if not per_account:
+        # No account has readings on both sides of its own step: nothing is measured
+        # against itself, so no change is stated -- not the pooled one in its place.
+        return {"accounts": [], "excluded": excluded, "per_account": {},
+                "ratio_after_over_before": None, "ratio_interval": None,
+                "ratio_fell_pct": None, "ratio_fell_interval_pct": None,
+                "pooled_all_accounts": pooled, "consistent_with": [], "unit": "percent",
+                "method": "no account has readings on both sides of its own certified step"}
+    combined = combine_log_ratios(per_account)
+    for label, w in combined["weights"].items():
+        per_account[label]["weight"] = w
+    rho = combined["ratio"]
+    rho_lo, rho_hi = combined["interval"]
     fall_pct = round((1 - rho) * 100, 2)
-    five_hour_only_pct = round((1 / rho - 1) * 100, 2)
     announced_weekly_pct = 17.0
-    announced_five_hour_pct = round(((1 - announced_weekly_pct / 100) / rho - 1) * 100, 2)
+
+    def pct(x: float) -> float:
+        return round(x * 100, 2)
+
     return {
-        "before": {"n_windows": n_before, "sum_five_hour_pct": round(d5_before, 1),
-                  "sum_seven_day_pct": round(d7_before, 1), "ratio": round(ratio_before, 4),
-                  "start": regimes[-2]["start"], "end": regimes[-2]["end"]},
-        "after": {"n_windows": n_after, "sum_five_hour_pct": round(d5_after, 1),
-                 "sum_seven_day_pct": round(d7_after, 1), "ratio": round(ratio_after, 4),
-                 "start": regimes[-1]["start"], "end": regimes[-1]["end"]},
+        "accounts": sorted(per_account),
+        "excluded": excluded,
+        "per_account": per_account,
+        "ratio_after_over_before": round(rho, 4),
+        "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)],
         "ratio_fell_pct": fall_pct,
+        "ratio_fell_interval_pct": [pct(1 - rho_hi), pct(1 - rho_lo)],
+        "pooled_all_accounts": pooled,
         "consistent_with": [
             {"description": "the weekly cap falls by the whole measured amount, the five-hour "
                             "window unchanged",
-             "weekly_cap_change_pct": -fall_pct, "five_hour_window_change_pct": 0.0},
+             "weekly_cap_change_pct": -fall_pct, "five_hour_window_change_pct": 0.0,
+             "weekly_cap_change_interval_pct": [pct(rho_lo - 1), pct(rho_hi - 1)]},
             {"description": "the five-hour window rises, the weekly cap unchanged",
-             "weekly_cap_change_pct": 0.0, "five_hour_window_change_pct": five_hour_only_pct},
+             "weekly_cap_change_pct": 0.0, "five_hour_window_change_pct": pct(1 / rho - 1),
+             "five_hour_window_change_interval_pct": [pct(1 / rho_hi - 1), pct(1 / rho_lo - 1)]},
             {"description": "the announced 17% weekly cut, with the rest of the measured fall "
-                            "an implied five-hour rise",
+                            "an implied five-hour change",
              "weekly_cap_change_pct": -announced_weekly_pct,
-             "five_hour_window_change_pct": announced_five_hour_pct},
+             "five_hour_window_change_pct": pct((1 - announced_weekly_pct / 100) / rho - 1),
+             "five_hour_window_change_interval_pct": [
+                 pct((1 - announced_weekly_pct / 100) / rho_hi - 1),
+                 pct((1 - announced_weekly_pct / 100) / rho_lo - 1)]},
         ],
         "unit": "percent",
-        "method": ("the pooled ratio of five-hour to seven-day meter movement over every window in "
-                   "each of the last two certified regimes (tracker/detect.py weighted_regimes), "
-                   "before divided by after. The fall is one equation in the ratio of the two "
-                   "meters' own budget changes; `consistent_with` lists example splits that "
-                   "reproduce it exactly, not measurements of which one moved."),
+        "method": ("each account with readings on both sides against itself: the pooled ratio of "
+                   "five-hour to seven-day meter movement over its own last two certified regimes "
+                   "(tracker/detect.py weighted_regimes), after over before, with an interval from "
+                   "both sides' rounding intervals at their far ends; then a weighted mean of the "
+                   "accounts' log ratios, each weighted by the inverse square of its own log "
+                   "interval's half-width, and the same weighted mean of their interval ends as "
+                   "the combined interval. The fall is one equation in the ratio of the two meters' "
+                   "own budget changes; `consistent_with` lists example splits that reproduce it "
+                   "exactly, not measurements of which one moved."),
     }
