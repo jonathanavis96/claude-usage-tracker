@@ -19,9 +19,11 @@ say `"speed": "standard"` like the rest. Why they run faster is not known
 (docs/findings-2026-09-23-model-speed.md, and its correction). On an Opus model, a
 request whose session's running median speed (FAST_WINDOW requests around it) is at
 least FAST_FACTOR times the model's median over the whole scan is a fast-session
-request. It is kept out of the main speed figures, counted in `fast_session_requests`
-and binned on its own, so the publisher shows fast sessions as a series of their own
-(`fast_sessions`). The window lets a session that slows mid-way keep its normal stretch.
+request. They are real measured speeds, so the published figures include them, and a day
+when answers came much faster shows as a jump in the ordinary line; each published row
+counts them in `fast_session_requests`. A history row still bins them apart
+(`fast_output_hist`, `fast_ttfb_hist`), and the publisher pools both. The window lets a
+session that slows mid-way keep its normal stretch.
 
 Rows. Each machine turns its own transcripts into daily rows, one per UTC day of the
 response's end, model (tracker/turns.py `normalize_model`, the page's ids), account label
@@ -69,8 +71,6 @@ FAST_FACTOR = 1.6
 FAST_WINDOW = 9
 #: Fast sessions have been seen only on Opus, so only Opus is classified.
 FAST_MODEL_PREFIX = "claude-opus"
-#: A day's fast-session figures are published with at least this many fast requests.
-MIN_FAST_REQUESTS = 10
 BIN_STEP = 1.02
 RECOMPUTE_DAYS = 2
 SCHEMA = 2
@@ -259,9 +259,10 @@ def daily_rows(reqs: Iterable[Request], label: str, since_day: str | None = None
     """One row per (day, model, entrypoint) of this account's kept requests.
 
     Fast-session requests are counted in `fast_session_requests` and binned in
-    `fast_output_hist` and `fast_ttfb_hist`, apart from the rest. `since_day` drops
-    requests that ended before it, so a run over recent transcripts never writes a
-    partial row for a day the history already holds.
+    `fast_output_hist` and `fast_ttfb_hist`, apart from the rest (`n`), so a row still
+    says which were which; the publisher pools the two. `since_day` drops requests that
+    ended before it, so a run over recent transcripts never writes a partial row for a day
+    the history already holds.
     """
     reqs = list(reqs)
     fast = fast_sessions(reqs)
@@ -334,11 +335,12 @@ def _quantile(hist: dict[str, int], q: float) -> float:
     return BIN_STEP ** (int(max(hist, key=int)) + 1)
 
 
-def _pool(rows: list[dict], field: str) -> dict[str, int]:
+def _pool(rows: list[dict], *fields: str) -> dict[str, int]:
     out: dict[str, int] = {}
     for r in rows:
-        for b, c in (r.get(field) or {}).items():
-            out[b] = out.get(b, 0) + c
+        for field in fields:
+            for b, c in (r.get(field) or {}).items():
+                out[b] = out.get(b, 0) + c
     return out
 
 
@@ -348,40 +350,28 @@ def _stat(hist: dict[str, int], digits: int) -> dict:
 
 
 def _days(rows: list[dict]) -> list[dict]:
+    """Per-day figures over every kept request, fast-session requests included.
+
+    A row bins its fast-session requests apart from the rest, so both histograms are
+    pooled here. `n` counts the binned requests: a row from before schema 2 counted its
+    fast requests without binning them, and they cannot be read back.
+    """
     out = []
     for day, rs in sorted(_group(rows, lambda r: r["day"], lambda r: r).items()):
-        n = sum(r["n"] for r in rs)
+        speed = _pool(rs, "output_hist", "fast_output_hist")
+        n = sum(speed.values())
         if n < MIN_REQUESTS:
             continue
-        ttfb = _pool(rs, "ttfb_hist")
-        fast = sum(_fast_count(r) for r in rs)
-        out.append({"day": day, "n": n, "fast_session_requests": fast,
-                    # A copy of fast_session_requests under its old name, so the live page
-                    # keeps working for one release. To be removed after that release.
-                    "fast_excluded": fast,
-                    "output_tokens_per_s": _stat(_pool(rs, "output_hist"), 1),
-                    "time_to_first_block_s": _stat(ttfb, 2) if ttfb else None,
-                    "fast_sessions": _fast_series(rs)})
+        ttfb = _pool(rs, "ttfb_hist", "fast_ttfb_hist")
+        out.append({"day": day, "n": n, "fast_session_requests": sum(_fast_count(r) for r in rs),
+                    "output_tokens_per_s": _stat(speed, 1),
+                    "time_to_first_block_s": _stat(ttfb, 2) if ttfb else None})
     return out
 
 
 def _fast_count(row: dict) -> int:
     """A row's fast-session requests; rows written before schema 2 call them `fast_excluded`."""
     return row.get("fast_session_requests", row.get("fast_excluded", 0))
-
-
-def _fast_series(rows: list[dict]) -> dict | None:
-    """The fast-session requests' own figures, or None under MIN_FAST_REQUESTS of them.
-
-    `n` counts the binned ones: a row from before schema 2 counted its fast requests
-    without binning them, and they cannot be read back.
-    """
-    hist = _pool(rows, "fast_output_hist")
-    n = sum(hist.values())
-    if n < MIN_FAST_REQUESTS:
-        return None
-    ttfb = _pool(rows, "fast_ttfb_hist")
-    return {"n": n, "output_tokens_per_s": _stat(hist, 1), "time_to_first_block_s": _stat(ttfb, 2) if ttfb else None}
 
 
 METHOD = (
@@ -405,9 +395,9 @@ METHOD = (
 CAVEATS = [
     ("Some Opus sessions run at about 2.5 times the model's usual speed, with nothing in between. "
      f"A request in a session whose running median speed is {FAST_FACTOR:g} times the model's "
-     "median or more is a fast-session request. The main figures leave those requests out; "
-     "fast_session_requests counts them, and fast_sessions gives their own figures on days "
-     f"with at least {MIN_FAST_REQUESTS} of them. Why these sessions run faster is not known."),
+     "median or more is a fast-session request. They are real measured speeds and are included "
+     "in every figure, so a day with many of them shows as a jump in the line; "
+     "fast_session_requests counts them. Why these sessions run faster is not known."),
     ("a1 is one machine's transcripts; a2 to a4 are another machine's. Compare accounts and "
      "entrypoints (cli is interactive Claude Code, sdk-cli is claude -p, sdk-ts and sdk-py are "
      "the Agent SDK) with like, using by_account_entrypoint."),
