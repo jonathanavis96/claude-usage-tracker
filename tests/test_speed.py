@@ -9,7 +9,7 @@ from tracker import speed
 from tracker.speed import (
     MIN_REQUESTS,
     daily_rows,
-    fast_mode,
+    fast_sessions,
     kept,
     merge,
     recompute_from,
@@ -132,17 +132,17 @@ class DedupeTest(unittest.TestCase):
             self.assertEqual((rs["a"].seconds, rs["b"].seconds), (5, 2))
 
 
-class FastModeTest(unittest.TestCase):
+class FastSessionTest(unittest.TestCase):
     def test_fast_session_flagged_standard_not(self):
         lines_std = session(40, 70, prefix="s")
         lines_fast = session(20, 170, start=5000, prefix="f")
         reqs = requests_in(lines_std, "std") + requests_in(lines_fast, "fast")
-        flagged = fast_mode(reqs)
+        flagged = fast_sessions(reqs)
         self.assertEqual(flagged, {f"f{i}" for i in range(20)})
 
     def test_mid_session_fallback_keeps_the_standard_stretch(self):
         lines = session(15, 170, prefix="f") + session(30, 70, start=5000, prefix="s")
-        flagged = fast_mode(requests_in(lines, "one"))
+        flagged = fast_sessions(requests_in(lines, "one"))
         self.assertTrue({f"f{i}" for i in range(11)} <= flagged)
         self.assertFalse({f"s{i}" for i in range(5, 30)} & flagged)
 
@@ -150,14 +150,14 @@ class FastModeTest(unittest.TestCase):
         lines = session(20, 170, prefix="f") + [user(1000), block(1001, "short", 40)]
         lines += session(40, 70, start=5000, prefix="s") + [user(9000), block(9001, "short-std", 40)]
         reqs = requests_in(lines[:42], "fast") + requests_in(lines[42:], "std")
-        self.assertNotIn("short", fast_mode(reqs))
-        flagged = fast_mode(reqs, every=True)
+        self.assertNotIn("short", fast_sessions(reqs))
+        flagged = fast_sessions(reqs, every=True)
         self.assertEqual(flagged, {f"f{i}" for i in range(20)} | {"short"})
 
     def test_only_opus_is_flagged(self):
         lines = session(40, 70, prefix="s", model="claude-sonnet-5") + \
             session(20, 170, start=5000, prefix="f", model="claude-sonnet-5")
-        self.assertEqual(fast_mode(requests_in(lines, "x")), set())
+        self.assertEqual(fast_sessions(requests_in(lines, "x")), set())
 
 
 class AggregateTest(unittest.TestCase):
@@ -169,8 +169,40 @@ class AggregateTest(unittest.TestCase):
         (row,) = self.rows()
         self.assertEqual((row["day"], row["model"], row["account"], row["entrypoint"]),
                          ("2026-09-20", "claude-opus-5", "a2", "cli"))
-        self.assertEqual((row["n"], row["fast_excluded"]), (40, 20))
+        self.assertEqual((row["n"], row["fast_session_requests"]), (40, 20))
         self.assertEqual(sum(row["output_hist"].values()), 40)
+        self.assertEqual(sum(row["fast_output_hist"].values()), 20)
+        self.assertEqual(sum(row["fast_ttfb_hist"].values()), 20)
+
+    def test_fast_sessions_are_published_as_their_own_series(self):
+        block_ = speed_block({"rows": self.rows()})
+        (day,) = block_["models"]["claude-opus-5"]["daily"]
+        # The normal-speed figures are the 40 normal requests alone, as before.
+        self.assertEqual(day["n"], 40)
+        self.assertAlmostEqual(day["output_tokens_per_s"]["median"], 70, delta=70 * 0.02)
+        self.assertEqual((day["fast_session_requests"], day["fast_excluded"]), (20, 20))
+        fast = day["fast_sessions"]
+        self.assertEqual(set(fast), {"n", "output_tokens_per_s", "time_to_first_block_s"})
+        self.assertEqual(fast["n"], 20)
+        self.assertAlmostEqual(fast["output_tokens_per_s"]["median"], 170, delta=170 * 0.02)
+        self.assertAlmostEqual(fast["time_to_first_block_s"]["median"], 600 / 170, delta=0.1)
+        self.assertEqual(set(fast["output_tokens_per_s"]), {"median", "q1", "q3"})
+        (split,) = block_["models"]["claude-opus-5"]["by_account"]["a2"]
+        self.assertEqual(split["fast_sessions"], fast)
+        self.assertEqual(block_["models"]["claude-opus-5"]["by_account_entrypoint"]["a2:cli"][0]["fast_sessions"], fast)
+
+    def test_fast_sessions_is_null_under_ten(self):
+        reqs = requests_in(session(40, 70, prefix="s"), "a") + requests_in(session(9, 170, start=5000, prefix="f"), "b")
+        (day,) = speed_block({"rows": daily_rows(reqs, "a2")})["models"]["claude-opus-5"]["daily"]
+        self.assertEqual(day["fast_session_requests"], 9)
+        self.assertIsNone(day["fast_sessions"])
+
+    def test_a_row_written_before_the_fast_series_still_counts_its_fast_requests(self):
+        (old,) = self.rows()
+        old["fast_excluded"] = old.pop("fast_session_requests")
+        del old["fast_output_hist"], old["fast_ttfb_hist"]
+        (day,) = speed_block({"rows": [old]})["models"]["claude-opus-5"]["daily"]
+        self.assertEqual((day["n"], day["fast_session_requests"], day["fast_sessions"]), (40, 20, None))
 
     def test_block_median_within_bin_and_min_requests(self):
         block_ = speed_block({"rows": self.rows()})
@@ -196,7 +228,8 @@ class AggregateTest(unittest.TestCase):
 
 def row(day, n=1, account="a1"):
     return {"day": day, "model": "claude-opus-5", "account": account, "entrypoint": "cli", "n": n,
-            "fast_excluded": 0, "output_hist": {"215": n}, "ttfb_hist": {}}
+            "fast_session_requests": 0, "output_hist": {"215": n}, "ttfb_hist": {},
+            "fast_output_hist": {}, "fast_ttfb_hist": {}}
 
 
 class HistoryTest(unittest.TestCase):

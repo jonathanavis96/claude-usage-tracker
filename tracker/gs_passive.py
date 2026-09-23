@@ -428,7 +428,7 @@ def _stretch_record(v: Verdict, reset_source: str = "logged") -> dict:
             "unpriced_tokens": s.unpriced_tokens, "unpriced": s.unpriced, "turns": s.turns,
             "reset_verified": reset_verified, "reset_source": reset_source, "status": status, "capture_status": v.status,
             "reference": _r(v.reference), "capture": _r(v.capture),
-            "fast_mode_tokens": s.fast_mode_tokens, "fast_mode_turns": s.fast_mode_turns}
+            "fast_session_tokens": s.fast_session_tokens, "fast_session_turns": s.fast_session_turns}
 
 
 def _pieces(stretches: list[Stretch]) -> int:
@@ -522,14 +522,15 @@ def _split(stretches: list[Stretch]) -> dict:
     return out
 
 
-def fast_mode_ids(files: Iterable[Path]) -> set[str]:
-    """Message ids of the requests in these transcripts that ran in Opus fast mode.
+def fast_session_ids(files: Iterable[Path]) -> set[str]:
+    """Message ids of the fast-session requests in these transcripts.
 
     tracker/speed.py's rule, over the same files the stretches are built from: an Opus
     request whose session's running median speed is at least FAST_FACTOR times the
-    model's median over the scan. The meter never counts them (tracker/join.py Stretch).
+    model's median over the scan. Their tokens stay in the stretch; each stretch also
+    records them as `fast_session_tokens` (tracker/join.py Stretch).
     """
-    return speed.fast_mode(speed.requests_from_files(files), every=True)
+    return speed.fast_sessions(speed.requests_from_files(files), every=True)
 
 
 def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict] = (), now: datetime | None = None,
@@ -549,7 +550,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         since = samples[0].ts if samples else None
         files, own_sessions = transcript_files(account, since, withhold.get(name, ())) if samples else ([], None)
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
-        stretches[name] = build_stretches(joined, turns, prices, fast=fast_mode_ids(files))
+        stretches[name] = build_stretches(joined, turns, prices, fast=fast_session_ids(files))
         reset_sources[name] = {s.start: _reset_source(s, samples) for s in stretches[name]}
         weekly[name] = window_points(joined)
         root = account.config_dir / "projects"
@@ -576,7 +577,7 @@ def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict
     """The capture check and everything read off it, from built stretches: `report`'s second half.
 
     Split out so a stretch file can be re-judged from its own records after they are
-    corrected (tools/fast_mode_correction.py), by the same code that wrote it.
+    corrected (tools/fast_session_restore.py), by the same code that wrote it.
     `reset_sources` is each account's `_reset_source` per stretch, keyed by its start.
     """
     checked = check(stretches, probe_readings(list(probe_rows), prices))

@@ -141,27 +141,27 @@ class StretchTests(unittest.TestCase):
         self.assertEqual(st[0].unpriced_tokens, 100_000)
         self.assertAlmostEqual(st[0].priced_share, DOLLAR / (DOLLAR + 100_000))
 
-    def test_a_fast_mode_turn_loses_exactly_its_tokens_and_is_recorded(self):
+    def test_a_fast_session_turn_still_counts_and_is_recorded(self):
         samples = [S(0, 0), S(5, 10)]
         turns = [D(1), D(2, "claude-opus-5", cw=300_000), D(3, "claude-opus-5", cw=50_000)]
         turns = [Turn(t.ts, t.model, t.input, t.output, t.cache_read, t.cache_write, id=f"m{i}")
                  for i, t in enumerate(turns)]
-        whole = build_stretches(samples, turns, PRICES, stretch_pct=10)[0]
+        (whole,) = build_stretches(samples, turns, PRICES, stretch_pct=10)
         (st,) = build_stretches(samples, turns, PRICES, stretch_pct=10, fast={"m1"})
-        self.assertEqual(st.tokens["claude-opus-5"]["cache_write"], 50_000)
-        self.assertEqual(st.tokens["claude-sonnet-5"], whole.tokens["claude-sonnet-5"])
-        self.assertEqual(st.fast_mode_tokens, {"claude-opus-5": {"input": 0, "output": 0, "cache_read": 0,
-                                                                 "cache_write": 300_000}})
-        self.assertEqual((st.turns, st.fast_mode_turns), (2, 1))
-        self.assertAlmostEqual(whole.usd - st.usd, turn_meter_usd(turns[1], PRICES))
+        self.assertEqual(st.tokens, whole.tokens)
+        self.assertEqual(st.tokens["claude-opus-5"]["cache_write"], 350_000)
+        self.assertEqual((st.usd, st.turns), (whole.usd, 3))
+        self.assertEqual(st.fast_session_tokens, {"claude-opus-5": {"input": 0, "output": 0, "cache_read": 0,
+                                                                    "cache_write": 300_000}})
+        self.assertEqual(st.fast_session_turns, 1)
 
-    def test_a_stretch_with_no_fast_mode_turn_is_unchanged(self):
+    def test_a_stretch_with_no_fast_session_turn_is_unchanged(self):
         samples = [S(0, 0), S(5, 10)]
         turns = [Turn(T0 + timedelta(minutes=1), "claude-opus-5", 10, 20, 30, 40, id="a")]
         (plain,) = build_stretches(samples, turns, PRICES, stretch_pct=10)
         (st,) = build_stretches(samples, turns, PRICES, stretch_pct=10, fast={"elsewhere"})
         self.assertEqual(st, plain)
-        self.assertEqual((st.fast_mode_tokens, st.fast_mode_turns), ({}, 0))
+        self.assertEqual((st.fast_session_tokens, st.fast_session_turns), ({}, 0))
 
     def test_bounds_allow_one_point_of_rounding_per_window_piece(self):
         st = Stretch(T0, T0, delta_pct=10.0, windows=2, usd=10.0)

@@ -53,7 +53,7 @@ class Turn:
     # added by total: cache_write already contains it.
     cache_write_1h: int = 0
     #: The response's `message.id`, which tracker/speed.py keys requests by: how a
-    #: stretch tells a fast-mode request's tokens from the rest (tracker/join.py).
+    #: stretch tells a fast-session request's tokens from the rest (tracker/join.py).
     id: str = ""
 
     @property
