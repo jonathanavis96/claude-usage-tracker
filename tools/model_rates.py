@@ -84,10 +84,18 @@ def family(model: str) -> str:
 
 
 def api_ratio(prices: dict, num: str, den: str) -> float | None:
-    """The API list-price ratio between two families, from data/prices.json, or None."""
+    """The API list-price ratio between two families, from data/prices.json, or None.
+
+    A family can have several rows in the dollar table -- Opus 5, 5.5, 4.8 and 4.7, or
+    Sonnet 5 and 4.6 -- and they do not all list at the same price, so the family's
+    price is the row `_credits.list_price_model` names rather than whichever row the
+    dict happens to yield first.
+    """
+    by_family = CREDITS.get("list_price_model") or {}
+
     def rate(f):
-        v = [b["input"] for m, b in prices.items() if not m.startswith("_") and family(m) == f]
-        return v[0] if v else None
+        row = prices.get(by_family.get(f) or "")
+        return row["input"] if row else None
     a, b = rate(num), rate(den)
     return a / b if a and b else None
 

@@ -9,12 +9,30 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
-CANONICAL_MODELS = {"claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"}
+#: Every model id data/prices.json carries a dollar row for. A turn on one of these
+#: can be valued; a turn on anything else makes its stretch unpriced and the whole
+#: stretch unpublishable (tracker/capture.py, audit finding 9).
+#:
+#: The five older ids joined the three current ones on 2026-09-23 (issue #63). Between
+#: them they appeared in 166 of masterrig's 250 stretches and 54 of gs's, and every one
+#: of those stretches was thrown away whole for want of a price. All five are on
+#: docs.anthropic.com/en/docs/about-claude/pricing with their own row, so none of them
+#: needed a guess: Opus 4.7 and 4.8 list at Opus 5's prices exactly, Opus 5.5 at 0.8x
+#: them, Sonnet 4.6 at 1.5x Sonnet 5 and Haiku 4.5 at half Sonnet 5.
+CANONICAL_MODELS = {
+    "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5",
+    "claude-opus-5-5", "claude-opus-4-8", "claude-opus-4-7",
+    "claude-sonnet-4-6", "claude-haiku-4-5",
+}
 #: Older ids priced as a current model. Fable 5 lists at Fable 5.1's prices for
 #: input, output and cache_write (its cache_read is $1 against $0.25, a class the
 #: meter weights at 0.0), so its meter value is Fable 5.1's. Sub-agents on gs
 #: still run it (799 turns in 2026-09-10..16), and unpriced it dropped whole
 #: stretches from the passive join.
+#:
+#: An alias is only for an id with no row of its own. Opus 4.7 and 4.8 list at exactly
+#: Opus 5's prices but keep their own rows rather than aliasing onto it, so a stretch's
+#: `tokens` still says which model spent them and a later measurement can separate them.
 MODEL_ALIASES = {"claude-fable-5": "claude-fable-5-1"}
 _DATE_SUFFIX = re.compile(r"-\d{8}$")
 _1M_MARKER = re.compile(r"\s*\[1m\]$")
@@ -75,9 +93,10 @@ def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
 
 def normalize_model(model_id: str) -> str | None:
     """Strip a date suffix (-YYYYMMDD) or a [1m] marker and map to one of the
-    three current model ids, via MODEL_ALIASES for an older id priced the same.
-    Anything that still doesn't match one of those three (a haiku variant,
-    `<synthetic>`) is dropped -- returns None.
+    priced model ids, via MODEL_ALIASES for an older id priced the same.
+    Anything that still doesn't match one of them -- `<synthetic>`, a retired model
+    with no row, an id from a model released after this table was last updated --
+    is dropped and returns None, which is what makes its stretch unpriced.
     """
     m = _1M_MARKER.sub("", model_id)
     m = _DATE_SUFFIX.sub("", m)
