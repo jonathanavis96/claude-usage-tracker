@@ -2,7 +2,7 @@
  "_meta": {
   "what": "the meter's own per-model credit rates, fitted from the passive stretches already in the repository. `measured_rates` is the block tracker/credits.py reads; everything else is the working the fits show.",
   "command": "python3 -m tools.model_rates history/masterrig-passive.json --json history/model-rates.json",
-  "generated_at": "2026-09-23T15:37:03+00:00",
+  "generated_at": "2026-09-23T15:40:20+00:00",
   "inputs": [
    "history/gs-passive.json",
    "history/masterrig-passive.json",
@@ -108,29 +108,30 @@
      }
     },
     "max_share_of_a_clean_stretch": 1.0,
+    "inferred": null,
     "why": "the unit anchor: 0.6667 credits per input token (5x that per output token), which is what a credit means in this repository. The pooled fit holds it at 1 and measures every other rate relative to it, so none of them tests it. If this row is wrong every credit figure scales with it and nothing in our stretches would show it."
    },
    "sonnet": {
-    "input": 0.36701274430354613,
+    "input": 0.36892519625359915,
     "interval": [
-     0.30006749998657245,
-     0.42723291702494876
+     0.3035290142456507,
+     0.42699606596492024
     ],
     "output_multiplier": 5,
     "status": null,
     "rate_source": "measured",
     "anchor": false,
     "reference_input": 0.4,
-    "times_opus": 0.5505191164553193,
+    "times_opus": 0.5533877943803988,
     "times_opus_interval": [
-     0.45010124997985873,
-     0.6408493755374232
+     0.4552935213684761,
+     0.6404940989473804
     ],
     "pooled": {
-     "times_opus": 0.5505191164553193,
+     "times_opus": 0.5533877943803988,
      "interval": [
-      0.45010124997985873,
-      0.6408493755374232
+      0.4552935213684761,
+      0.6404940989473804
      ],
      "n_stretches_carrying": 146,
      "groups_carrying": [
@@ -201,7 +202,8 @@
      }
     },
     "max_share_of_a_clean_stretch": 0.8395927200625468,
-    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Sonnet 0.551x Opus, 80% bootstrap interval [0.450, 0.641] from 600 resamples stratified by group; 146 of the fit's 175 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
+    "inferred": null,
+    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Sonnet 0.553x Opus, 80% bootstrap interval [0.455, 0.640] from 600 resamples stratified by group; 146 of the fit's 175 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
    },
    "haiku": {
     "input": null,
@@ -214,10 +216,10 @@
     "times_opus": null,
     "times_opus_interval": null,
     "pooled": {
-     "times_opus": 0.6470497467505131,
+     "times_opus": 0.6130619545963287,
      "interval": [
-      1.3699738698815797e-13,
-      2.3735745785696167
+      9.539053307120947e-14,
+      2.3268374606495605
      ],
      "n_stretches_carrying": 42,
      "groups_carrying": [
@@ -277,29 +279,36 @@
      }
     },
     "max_share_of_a_clean_stretch": 0.2567715124076586,
-    "why": "the highest Haiku share of any clean stretch on a fitted account is 0.257. The pooled fit carries it and puts it at 0.647x Opus, but its 80% interval runs [0.000x, 2.374x], so the data do not pin it down, and neither the value nor the interval is published: an interval is priced at its midpoint where a family has no value (tracker/gs_passive.py), and this one's midpoint is not a rate anything measured. The fit's point estimate still prices this family's tokens inside the before-and-after comparison (pooled_fit), where the fit's own model is used whole. The reference figure stands beside this row, untested by our data and used in no arithmetic the page states."
+    "inferred": {
+     "input": 0.13333333333333333,
+     "times_opus": 0.2,
+     "output_multiplier": 5,
+     "inferred_from": "reference_table",
+     "basis": "data/prices.json `_credits` reference table: Haiku at 0.1333 credits per input token"
+    },
+    "why": "the highest Haiku share of any clean stretch on a fitted account is 0.257. The pooled fit carries it and puts it at 0.613x Opus, but its 80% interval runs [0.000x, 2.327x], so the data do not pin it down, and neither the value nor the interval is published: an interval is priced at its midpoint where a family has no value (tracker/gs_passive.py), and this one's midpoint is not a rate anything measured. The fit's point estimate still prices this family's tokens inside the before-and-after comparison (pooled_fit), where the fit's own model is used whole. The reference figure stands beside this row, untested by our data and used in no arithmetic the page states."
    },
    "fable": {
-    "input": 1.417607632344332,
+    "input": 1.4074368672862163,
     "interval": [
-     1.3460261594244847,
-     1.516618410578812
+     1.3361867024881815,
+     1.4995191939574726
     ],
     "output_multiplier": 5,
     "status": null,
     "rate_source": "measured",
     "anchor": false,
     "reference_input": null,
-    "times_opus": 2.126411448516498,
+    "times_opus": 2.1111553009293247,
     "times_opus_interval": [
-     2.019039239136727,
-     2.274927615868218
+     2.0042800537322725,
+     2.249278790936209
     ],
     "pooled": {
-     "times_opus": 2.126411448516498,
+     "times_opus": 2.1111553009293247,
      "interval": [
-      2.019039239136727,
-      2.274927615868218
+      2.0042800537322725,
+      2.249278790936209
      ],
      "n_stretches_carrying": 149,
      "groups_carrying": [
@@ -370,7 +379,8 @@
      }
     },
     "max_share_of_a_clean_stretch": 1.0,
-    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Fable 2.126x Opus, 80% bootstrap interval [2.019, 2.275] from 600 resamples stratified by group; 149 of the fit's 175 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
+    "inferred": null,
+    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Fable 2.111x Opus, 80% bootstrap interval [2.004, 2.249] from 600 resamples stratified by group; 149 of the fit's 175 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
    },
    "opus-5-5": {
     "input": null,
@@ -387,14 +397,21 @@
     "agree": null,
     "per_fit": {},
     "max_share_of_a_clean_stretch": 0.4787980679805078,
-    "why": "the highest Opus 5.5 share of any clean stretch on a fitted account is 0.479, and only 2 of the fit's stretches carry it at all, under the 3 a fitted family needs. The pooled fit holds its tokens at the anchor's rate rather than dropping the stretches that carry them, and measures nothing about it. There is no reference figure for Opus 5.5 either: the January table predates it."
+    "inferred": {
+     "input": 0.5333333333333333,
+     "times_opus": 0.8,
+     "output_multiplier": 5,
+     "inferred_from": "list_price",
+     "basis": "data/prices.json list prices: claude-opus-5-5 $4/$20 against claude-opus-5 $5/$25 per million, 0.8x the Opus anchor"
+    },
+    "why": "the highest Opus 5.5 share of any clean stretch on a fitted account is 0.479, and only 2 of the fit's stretches carry it at all, under the 3 a fitted family needs. The pooled fit holds its tokens at its inferred rate rather than dropping the stretches that carry them, and measures nothing about it. There is no reference figure for Opus 5.5 either: the January table predates it."
    }
   },
   "cache_read_weight": {
    "value": null,
    "interval": [
-    9.822500640127492e-17,
-    0.005479029413004093
+    6.938189762375552e-17,
+    0.005176077937840377
    ],
    "measurable": false,
    "reference": 0.0,
@@ -444,21 +461,24 @@
      "n": 35
     }
    },
-   "fit_point": 0.0020183129522272796,
-   "why": "the pooled fit puts a cache read at 0.0020 of the Opus input rate, 80% interval [0.0000, 0.0055], which reaches zero or is too wide to publish as a value; the point estimate is used only inside the before-and-after comparison, with the rest of the fit."
+   "fit_point": 0.00180538119903037,
+   "why": "the pooled fit puts a cache read at 0.0018 of the Opus input rate, 80% interval [0.0000, 0.0052], which reaches zero or is too wide to publish as a value; the point estimate is used only inside the before-and-after comparison, with the rest of the fit."
   },
   "max_interval_ratio": 1.5,
   "pooled_fit": {
    "times_opus": {
     "opus": 1.0,
-    "sonnet": 0.5505191164553193,
-    "haiku": 0.6470497467505131,
-    "fable": 2.126411448516498
+    "sonnet": 0.5533877943803988,
+    "haiku": 0.6130619545963287,
+    "fable": 2.1111553009293247
    },
-   "held_at_anchor": [
+   "held": [
     "opus-5-5"
    ],
-   "cache_read_weight": 0.0020183129522272796,
+   "held_rate": {
+    "opus-5-5": 0.8
+   },
+   "cache_read_weight": 0.00180538119903037,
    "output_multiplier": 5,
    "n": 175,
    "groups": [
@@ -469,86 +489,86 @@
     "masterrig/pre"
    ],
    "credits_per_pct": {
-    "dave/post": 148537.0633568704,
-    "jwork/post": 188968.00408614142,
-    "jwork/pre": 191618.32011658838,
-    "masterrig/post": 155202.0001880695,
-    "masterrig/pre": 162461.60265572424
+    "dave/post": 147485.55298572095,
+    "jwork/post": 186585.43708480778,
+    "jwork/pre": 190605.64493931935,
+    "masterrig/post": 153951.14866624406,
+    "masterrig/pre": 161312.0225256813
    },
-   "sse": 3.629760308224706,
+   "sse": 3.5271069591602093,
    "resamples": 600,
    "interval": {
     "sonnet": [
-     0.45010124997985873,
-     0.6408493755374232
+     0.4552935213684761,
+     0.6404940989473804
     ],
     "haiku": [
-     1.3699738698815797e-13,
-     2.3735745785696167
+     9.539053307120947e-14,
+     2.3268374606495605
     ],
     "fable": [
-     2.019039239136727,
-     2.274927615868218
+     2.0042800537322725,
+     2.249278790936209
     ]
    },
    "cache_read_weight_interval": [
-    9.822500640127492e-17,
-    0.005479029413004093
+    6.938189762375552e-17,
+    0.005176077937840377
    ],
    "fable_by_era": {
-    "pre": 2.1245476752162165,
+    "pre": 2.1224062293545107,
     "pre_interval": [
-     2.034558143786857,
-     2.254220750651493
+     2.032104556110758,
+     2.2496533083185066
     ],
-    "post": 2.128948128186452,
+    "post": 2.095988504468927,
     "post_interval": [
-     1.935683122608914,
-     2.4231962977268333
+     1.906917477331297,
+     2.376747448944421
     ],
-    "post_over_pre": 1.002071242279742,
+    "post_over_pre": 0.9875529366055346,
     "post_over_pre_interval": [
-     0.8976105386587356,
-     1.1269303233650878
+     0.8893402269994779,
+     1.1031581349216157
     ],
-    "sse": 3.629747941330322
+    "sse": 3.526650626295875
    },
    "leave_one_out": {
     "dave": {
      "n": 143,
      "times_opus": {
       "opus": 1.0,
-      "sonnet": 0.4948226448982405,
-      "haiku": 3.1307628316663223,
-      "fable": 2.358973896961308
+      "sonnet": 0.5038144627832803,
+      "haiku": 3.0168236916078,
+      "fable": 2.3363279169375395
      },
-     "cache_read_weight": 0.009628157922619873
+     "cache_read_weight": 0.009112115854398918
     },
     "jwork": {
      "n": 97,
      "times_opus": {
       "opus": 1.0,
-      "sonnet": 0.5204192675561823,
-      "haiku": 0.3263594805836156,
-      "fable": 1.9937244187602245
+      "sonnet": 0.5174960867993392,
+      "haiku": 0.33366220061270124,
+      "fable": 1.9853333595385316
      },
-     "cache_read_weight": 3.279535891104558e-17
+     "cache_read_weight": 5.4331131385834495e-17
     },
     "masterrig": {
      "n": 110,
      "times_opus": {
       "opus": 1.0,
-      "sonnet": 0.5809113478004265,
-      "haiku": 0.5263496933400881,
-      "fable": 2.0757779556046945
+      "sonnet": 0.5870485559794488,
+      "haiku": 0.48131883851215995,
+      "fable": 2.059720458567407
      },
-     "cache_read_weight": 0.0027630483669361635
+     "cache_read_weight": 0.002512106684616114
     }
    }
   },
-  "method": "credits_s = sum over families of rate_f x (input + cache_write + 5x output)_f,s + w x cache_reads_s, with Opus at 1 and every other rate and w free and positive; one set of rates for every account and side of 2026-09-14, and one credits-per-1% scale per account and side. Minimises, over the rates, the sum over groups and their stretches of (log(credits_s / delta_pct_s) minus that group's mean of it) squared: the group's scale is the mean, so it is never a parameter. Nelder-Mead in log space, numpy only. The rates are then read in credits against the Opus anchor, 0.6667 credits per token. Intervals are 80% bootstrap intervals over stretches resampled within each group. A family is published when its interval starts above zero and its high end is under 1.5x its low end; a family in fewer than 3 of the stretches is held at the anchor's rate and not measured. Stretches that span the cut are in neither group."
+  "method": "credits_s = sum over families of rate_f x (input + cache_write + 5x output)_f,s + w x cache_reads_s, with Opus at 1 and every other rate and w free and positive; one set of rates for every account and side of 2026-09-14, and one credits-per-1% scale per account and side. Minimises, over the rates, the sum over groups and their stretches of (log(credits_s / delta_pct_s) minus that group's mean of it) squared: the group's scale is the mean, so it is never a parameter. Nelder-Mead in log space, numpy only. The rates are then read in credits against the Opus anchor, 0.6667 credits per token. Intervals are 80% bootstrap intervals over stretches resampled within each group. A family is published when its interval starts above zero and its high end is under 1.5x its low end; a family in fewer than 3 of the stretches is held at its inferred rate and not measured. A family that is not measurable carries an `inferred` rate -- the reference table's, or its list-price ratio to Opus where the table has no row -- which the page shows marked as inferred. Stretches that span the cut are in neither group."
  },
- "generated_at": "2026-09-23T15:37:03+00:00",
+ "generated_at": "2026-09-23T15:40:20+00:00",
  "seed": 20260920,
  "resamples": 600,
  "exclusions": "harness-runs",
@@ -3035,18 +3055,18 @@
    },
    "sonnet": {
     "shellac_rate": 0.4,
-    "measured_rate": 0.36701274430354613,
+    "measured_rate": 0.36892519625359915,
     "rate_interval": [
-     0.30006749998657245,
-     0.42723291702494876
+     0.3035290142456507,
+     0.42699606596492024
     ],
     "status": null,
     "rate_source": "measured",
     "shellac_tokens": 49247291.66666666,
-    "measured_tokens": 53673658.401284926,
+    "measured_tokens": 53395422.342272416,
     "measured_tokens_interval": [
-     46108143.54811599,
-     65648284.694437616
+     46133719.340367466,
+     64899616.64990625
     ]
    },
    "haiku": {
@@ -3061,18 +3081,18 @@
    },
    "fable": {
     "shellac_rate": null,
-    "measured_rate": 1.417607632344332,
+    "measured_rate": 1.4074368672862163,
     "rate_interval": [
-     1.3460261594244847,
-     1.516618410578812
+     1.3361867024881815,
+     1.4995191939574726
     ],
     "status": null,
     "rate_source": "measured",
     "shellac_tokens": null,
-    "measured_tokens": 13895887.8445724,
+    "measured_tokens": 13996305.713271253,
     "measured_tokens_interval": [
-     12988709.96768966,
-     14634869.113605678
+     13136821.953360965,
+     14742637.858904228
     ]
    },
    "opus-5-5": {

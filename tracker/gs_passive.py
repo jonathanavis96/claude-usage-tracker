@@ -671,6 +671,11 @@ def stretch_credits(tokens: dict, credits: dict,
         if fam is None:
             return None, "unpriced"
         rate = credit_model.family_rate(fam, credits, model_rates)
+        if rate.rate_source == "inferred":
+            # An inferred rate is shown on the page, never used to value a stretch: the credit
+            # series must not move because a family was shown before it was measured. Falls
+            # through to the reference table, as it did before the inference existed.
+            rate = replace(rate, input=None, output=None)
         if rate.input is not None and rate.output is not None:
             rate_in, rate_out = rate.input, rate.output
             source = "anchor" if rate.anchor else "measured"

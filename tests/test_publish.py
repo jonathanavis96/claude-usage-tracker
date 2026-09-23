@@ -1946,10 +1946,11 @@ class CreditValuedDetectionTests(unittest.TestCase):
         # How hard it steps depends on the measured Sonnet rate, because `mixed_report`
         # sizes the Sonnet days by it: the cheaper Sonnet is measured to be, the more
         # Sonnet tokens buy the same credits and the smaller the dollar step. The refit of
-        # 2026-09-23 moved it from 1.55 to 1.49. The claim under test is that the dollar
-        # series steps hard while the credit series below does not move at all, so the
-        # bound is well clear of flat rather than tight against whatever the rate is today.
-        self.assertGreater(after / before, 1.4)
+        # 2026-09-23 moved it from 1.55 to 1.49, and the pooled fit of the same day (Sonnet
+        # 0.55x Opus) to about 1.38. The claim under test is that the dollar series steps
+        # hard while the credit series below does not move at all, so the bound is well
+        # clear of flat rather than tight against whatever the rate is today.
+        self.assertGreater(after / before, 1.3)
         # The credit series does not move, so nothing is published.
         j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
         self.assertIsNone(window_event(j))

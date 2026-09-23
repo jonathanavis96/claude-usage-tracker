@@ -280,6 +280,22 @@ def family_rate(fam: str, credits: dict, model_rates: dict | None) -> FamilyRate
     mult = row.get("output_multiplier") or 5
     value_in = row.get("input")
     interval_in = tuple(row["interval"]) if row.get("interval") else None
+    inferred = row.get("inferred") if value_in is None and not interval_in and not anchor else None
+    if inferred and inferred.get("input") is not None:
+        # The fit cannot measure this family yet, and the page shows it anyway at an inferred
+        # rate, marked as such: the reference table's row, or the list-price ratio to Opus
+        # where the table has none (tools/model_rates.py `inferred_rate`). No interval, no
+        # status; what the fit did say stays in the detail under `measured_status`.
+        mult = inferred.get("output_multiplier") or mult
+        detail = {k: row[k] for k in ("n_fits", "per_fit", "why", "pooled",
+                                      "max_share_of_a_clean_stretch") if k in row}
+        detail.update({"measured_status": row.get("status"),
+                       "inferred_from": inferred.get("inferred_from"),
+                       "inferred_basis": inferred.get("basis"),
+                       "times_opus": inferred.get("times_opus"),
+                       "output_multiplier": mult})
+        return FamilyRate(fam, inferred["input"], inferred["input"] * mult, None, None, None,
+                          "inferred", False, ref_in, ref_out, detail)
     # The anchor's output rate is the table's own 50/15 rather than 5 x 10/15, so the exact
     # fifteenth the table stores is the one published.
     value_out = (ref_out if anchor and ref_out is not None else
@@ -766,7 +782,7 @@ def _rate_source(rate: FamilyRate) -> str:
     if rate.anchor:
         return "anchor"
     if rate.input is not None:
-        return "measured"
+        return "inferred" if rate.rate_source == "inferred" else "measured"
     if rate.input_interval:
         return "envelope"
     return "none"
@@ -776,9 +792,9 @@ def _conversion_sentence(anchor_fam: str, fam: str, source: str) -> str | None:
     """How one family's window tokens were got from the anchor's, or None where it was not."""
     if source == "anchor" or source == "none":
         return None
-    over = (f"the measured {fam.capitalize()} input rate" if source == "measured"
+    over = (f"the {source} {fam.capitalize()} input rate" if source in ("measured", "inferred")
             else f"the {fam.capitalize()} input-rate envelope")
-    tail = ("" if source == "measured" else
+    tail = ("" if source in ("measured", "inferred") else
             " The envelope has no single rate, so there is no value, only the interval.")
     return (f"the {anchor_fam.capitalize()} window tokens times the {anchor_fam.capitalize()} input "
             f"rate over {over}, at the same token-class mix (`per_class` above, cache reads at the "

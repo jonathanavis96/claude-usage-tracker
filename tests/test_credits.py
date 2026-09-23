@@ -518,13 +518,14 @@ class RateFitSelectionTests(unittest.TestCase):
         self.assertEqual(kept["jwork"], [early])
 
 
-def _published(gs=None, masterrig=None, passive=None, effort_meta=None, prices=None):
+def _published(gs=None, masterrig=None, passive=None, effort_meta=None, prices=None,
+               model_rates=None):
     """A public JSON built over planted stretches, with everything else minimal."""
     passive = passive or {"split": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 1.0},
                           "session_tokens": {"claude-opus-5": 1_000_000}}
     return build_public_json([], passive, {}, prices or PRICES, NOW,
                              gs_passive=gs, masterrig_passive=masterrig,
-                             effort_meta=effort_meta, credits=CREDITS)
+                             effort_meta=effort_meta, credits=CREDITS, model_rates=model_rates)
 
 
 class HarnessRunFileTests(unittest.TestCase):
@@ -625,43 +626,54 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertIsNone(haiku["api_value_per_window_usd"]["input"]["value"])
         self.assertIn("no row in the dollar table", haiku["api_value_per_window_usd"]["input"]["status"])
 
-    def test_a_family_with_no_measurable_rate_publishes_a_status_sentence_and_no_number(self):
-        """Haiku: no clean stretch anywhere carries enough Haiku to fit a rate.
+    def test_a_family_the_fit_cannot_measure_is_shown_at_an_inferred_rate(self):
+        """Haiku is not measurable, and the page shows it anyway, marked as inferred.
 
-        The reference table has a Haiku row and the page draws it, but nothing divides by it,
-        so the row publishes the sentence saying so and no token figure at all.
-
-        The sentence itself is whatever history/model-rates.json holds -- the reason has
-        already changed once, when 2026-09-23 priced Haiku 4.5 and its tokens started
-        reaching the fits without ever carrying a stretch -- so this reads it from there
-        rather than pinning the wording. What must not change is the shape: a status
-        sentence, no value, no interval, and the reference figure still carried.
+        The row carries exactly the figures a measured row does, computed from the reference
+        table's Haiku rate, with `rate_source` "inferred", no interval and no status. What the
+        fit said -- the not-measurable sentence and its own point estimate -- stays under
+        `measured_rate`, so a reader sees both.
         """
         haiku = self.credits["per_model"]["haiku"]
-        expected = C.load_model_rates()["per_family"]["haiku"]["status"]
-        self.assertTrue(expected.startswith("not measurable"), expected)
-        self.assertEqual(haiku["status"], expected)
-        self.assertEqual(haiku["rate_source"], "measured")
-        self.assertIsNone(haiku["credits_per_token"]["input"])
+        mr = C.load_model_rates()["per_family"]["haiku"]
+        self.assertTrue(mr["status"].startswith("not measurable"), mr["status"])
+        self.assertEqual(haiku["rate_source"], "inferred")
+        self.assertEqual(haiku["measured_rate"]["inferred_from"], "reference_table")
+        self.assertEqual(haiku["measured_rate"]["measured_status"], mr["status"])
+        self.assertIsNone(haiku["status"])
+        self.assertEqual(haiku["credits_per_token"]["input"], 2 / 15)
+        self.assertAlmostEqual(haiku["credits_per_token"]["output"], 10 / 15)
         self.assertIsNone(haiku["credits_per_token_interval"])
         for side in ("input", "output"):
-            figure = haiku["tokens_per_window"][side]
-            self.assertIsNone(figure["value"])
-            self.assertIsNone(figure["interval"])
-            self.assertEqual(figure["status"], expected)
-        # The reference figure is still carried, for the page to draw beside the sentence.
+            self.assertIsNotNone(haiku["tokens_per_window"][side]["value"])
+        if "claude-haiku-4-5" in PRICES:  # the fixture's dollar table may carry no Haiku row
+            self.assertIsNotNone(haiku["api_value_per_window_usd"]["input"]["value"])
         self.assertEqual(haiku["reference_rate"]["input"], 2 / 15)
+
+    def test_opus_5_5_is_inferred_from_its_list_price_ratio(self):
+        row = self.credits["per_model"]["opus-5-5"]
+        self.assertEqual(row["rate_source"], "inferred")
+        self.assertEqual(row["measured_rate"]["inferred_from"], "list_price")
+        self.assertAlmostEqual(row["credits_per_token"]["input"], 0.8 * 10 / 15)
+        self.assertAlmostEqual(row["credits_per_token"]["output"], 0.8 * 50 / 15)
+
+    def test_a_family_that_passes_the_rule_is_measured_by_itself(self):
+        rates = C.load_model_rates()
+        row = dict(rates["per_family"]["haiku"], input=0.1, interval=[0.09, 0.11], status=None)
+        rate = C.family_rate("haiku", CREDITS, {**rates, "per_family": {"haiku": row}})
+        self.assertEqual(rate.rate_source, "measured")
+        self.assertEqual(rate.input, 0.1)
 
     def test_every_per_model_row_says_where_its_rate_came_from(self):
         for fam, row in self.credits["per_model"].items():
-            self.assertIn(row["rate_source"], ("measured", "reference"), fam)
+            self.assertIn(row["rate_source"], ("measured", "reference", "inferred"), fam)
             self.assertIn("reference_rate", row, fam)
         # Opus alone reads `reference`: it is the unit anchor, and nothing here tests it.
         sources = {fam: row["rate_source"] for fam, row in self.credits["per_model"].items()}
         self.assertEqual(sources["opus"], "reference")
         self.assertTrue(self.credits["per_model"]["opus"]["anchor"])
-        self.assertEqual({fam for fam, v in sources.items() if v == "measured"},
-                         {"sonnet", "haiku", "fable", "opus-5-5"})
+        self.assertEqual({fam for fam, v in sources.items() if v == "measured"}, {"sonnet", "fable"})
+        self.assertEqual({fam for fam, v in sources.items() if v == "inferred"}, {"haiku", "opus-5-5"})
 
     def test_the_sonnet_row_divides_by_the_measured_rate_not_the_tables(self):
         rate = C.family_rate("sonnet", CREDITS, C.load_model_rates())
@@ -1238,7 +1250,11 @@ class CreditsAsOfTests(unittest.TestCase):
             self.assertEqual(per_model[fam]["as_of"], "2026-09-08T00:00:00+00:00", fam)
 
     def test_a_row_with_no_figure_publishes_no_date_either(self):
-        haiku = self.credits["per_model"]["haiku"]
+        rates = C.load_model_rates()
+        bare = dict(rates["per_family"]["haiku"], inferred=None)
+        credits = _published(gs=self.GS, model_rates={**rates, "per_family": {
+            **rates["per_family"], "haiku": bare}})["credits"]
+        haiku = credits["per_model"]["haiku"]
         self.assertIsNone(haiku["credits_per_token"]["input"])
         self.assertIsNone(haiku["as_of"])
         self.assertIn("not measurable", haiku["status"])

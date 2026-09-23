@@ -346,6 +346,15 @@ class PoolingTests(unittest.TestCase):
         self.assertAlmostEqual(mr["pooled_fit"]["times_opus"]["haiku"], 1.25)
         self.assertAlmostEqual(mr["per_family"]["sonnet"]["times_opus"], 0.6)
 
+    def test_a_family_that_fails_the_rule_carries_its_inferred_rate_and_one_that_passes_none(self):
+        mr = measured_rates({}, self._s3(0.50, 0.54), self._pooled(haiku=[0.0, 2.5]))
+        self.assertEqual(mr["per_family"]["haiku"]["inferred"]["inferred_from"], "reference_table")
+        self.assertAlmostEqual(mr["per_family"]["haiku"]["inferred"]["times_opus"], 0.2)
+        self.assertEqual(mr["per_family"]["opus-5-5"]["inferred"]["inferred_from"], "list_price")
+        self.assertAlmostEqual(mr["per_family"]["opus-5-5"]["inferred"]["times_opus"], 0.8)
+        self.assertIsNone(mr["per_family"]["sonnet"]["inferred"])
+        self.assertIsNone(mr["per_family"]["opus"]["inferred"])
+
     def test_the_measurability_rule(self):
         self.assertEqual(MAX_INTERVAL_RATIO, 1.5)
         self.assertTrue(measurable([2.0, 2.2]))
@@ -465,13 +474,14 @@ class PooledFitTests(unittest.TestCase):
         self.assertEqual(sorted(one["leave_one_out"]), ["dave", "jwork"])
         self.assertAlmostEqual(one["fable_by_era"]["post_over_pre"], 1.0, places=3)
 
-    def test_a_family_in_too_few_stretches_is_held_at_the_anchor(self):
+    def test_a_family_in_too_few_stretches_is_held_at_its_inferred_rate(self):
         data = self._data()
         extra = prepare("jwork", [_kept(PRE, 10.0, _tokens(opus=(1_000_000, 0),
                                                            opus_5_5=(100_000, 0)))])
         data["jwork"] = data["jwork"] + extra
         out = pooled_section(data, 7, 5)
         self.assertEqual(out["held"], ["opus-5-5"])
+        self.assertAlmostEqual(out["held_rate"]["opus-5-5"], 0.8)
         self.assertNotIn("opus-5-5", out["times_opus"])
 
     def test_the_simplex_finds_a_known_minimum(self):

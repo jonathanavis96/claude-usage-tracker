@@ -117,6 +117,40 @@ def api_ratio(prices: dict, num: str, den: str) -> float | None:
     return a / b if a and b else None
 
 
+#: The list prices data/prices.json carries beside the credit table, for `inferred_rate`.
+LIST_PRICES = {k: v for k, v in json.loads(C.PRICES_PATH.read_text(encoding="utf-8")).items()
+               if not k.startswith("_")}
+
+
+def inferred_rate(f: str) -> dict | None:
+    """The rate a family is shown at while the pooled fit cannot measure it, or None.
+
+    The reference table's own row where it has one (Haiku, 2/15 per input token, which is
+    also its list-price ratio to Opus 5); otherwise the family's list-price ratio to Opus,
+    from data/prices.json (Opus 5.5 lists at $4/$20 against Opus 5's $5/$25, 0.8x). Both
+    are inferences, not measurements: list price is not always the meter -- Fable measures
+    about 2.1x Opus against a list 2.0x, Sonnet about 0.55x against a list 0.4x and a table
+    0.6x (docs/findings-2026-09-23-pooled-rates.md). The anchor needs none.
+    """
+    if f == ANCHOR:
+        return None
+    if SHELLAC.get(f):
+        return {"input": SHELLAC[f], "times_opus": SHELLAC[f] / SHELLAC[ANCHOR],
+                "output_multiplier": POOLED_OUT_MULT, "inferred_from": "reference_table",
+                "basis": (f"data/prices.json `_credits` reference table: {name(f)} at "
+                          f"{SHELLAC[f]:.4f} credits per input token")}
+    ratio = api_ratio(LIST_PRICES, f, ANCHOR)
+    if ratio is None:
+        return None
+    by_family = CREDITS.get("list_price_model") or {}
+    num, den = LIST_PRICES[by_family[f]], LIST_PRICES[by_family[ANCHOR]]
+    return {"input": ratio * SHELLAC[ANCHOR], "times_opus": ratio,
+            "output_multiplier": POOLED_OUT_MULT, "inferred_from": "list_price",
+            "basis": (f"data/prices.json list prices: {by_family[f]} ${num['input']:g}/${num['output']:g} "
+                      f"against {by_family[ANCHOR]} ${den['input']:g}/${den['output']:g} per million, "
+                      f"{ratio:g}x the Opus anchor")}
+
+
 def prepare(account: str, kept: list[dict]) -> list[dict]:
     """One record per clean stretch: its era, its per-family token counts and its meter movement."""
     out = []
@@ -778,14 +812,21 @@ def pooled_families(recs: list[dict]) -> tuple[tuple[str, ...], tuple[str, ...]]
     """(free families, held families): which families the fit estimates and which it holds.
 
     A non-anchor family is free when at least MIN_NONZERO stretches carry its tokens. One
-    carried by fewer is held at the anchor's rate rather than dropped with the stretches
-    that carry it: on today's data that is Opus 5.5, in one masterrig stretch at a fifth of
-    its tokens, an Opus model that lists at 0.8x Opus 5, and holding it at Opus is what the
-    2026-09-23 analysis did.
+    carried by fewer is held at its inferred rate (`inferred_rate`) rather than dropped with
+    the stretches that carry it: on today's data that is Opus 5.5, in two stretches, held at
+    its list-price 0.8x Opus -- the rate the page shows it at.
     """
     present = [f for f in FAMILIES if f != ANCHOR and any(r["raw"][f] > 0 for r in recs)]
     free = tuple(f for f in present if sum(1 for r in recs if r["raw"][f] > 0) >= MIN_NONZERO)
     return free, tuple(f for f in present if f not in free)
+
+
+def held_rate(f: str) -> float:
+    """A family's rate in times-Opus when the pooled fit holds it rather than fitting it."""
+    if f == ANCHOR:
+        return 1.0
+    inferred = inferred_rate(f)
+    return inferred["times_opus"] if inferred else 1.0
 
 
 class _Pooled:
@@ -798,8 +839,9 @@ class _Pooled:
         at = {g: i for i, g in enumerate(groups)}
         self.g = np.array([at[group_key(r)] for r in recs])
         self.counts = np.bincount(self.g, minlength=len(groups)).astype(float)
-        # Columns: the anchor plus every held family at a rate of 1, then each free family.
-        self.fixed = np.array([sum(r["ie"][POOLED_OUT_MULT][f] for f in FAMILIES
+        # Columns: the anchor at 1 plus every held family at its inferred rate, then each free
+        # family. A family with tokens and no inferred rate either is held at the anchor's.
+        self.fixed = np.array([sum(r["ie"][POOLED_OUT_MULT][f] * held_rate(f) for f in FAMILIES
                                    if f == ANCHOR or f not in free) / 1e6 for r in recs])
         self.X = np.array([[r["ie"][POOLED_OUT_MULT][f] / 1e6 for f in free] for r in recs]
                           ).reshape(len(recs), len(free))
@@ -902,7 +944,7 @@ def pooled_section(data: dict[str, list[dict]], seed: int, resamples: int) -> di
             draws[f].append(b["times_opus"][f])
         weights.append(b["cache_read_weight"])
     out = {"n": base["n"], "groups": base["groups"], "free": list(free), "held": list(held),
-           "held_rate": "the anchor's", "output_multiplier": POOLED_OUT_MULT,
+           "held_rate": {f: held_rate(f) for f in held}, "output_multiplier": POOLED_OUT_MULT,
            "times_opus": base["times_opus"], "cache_read_weight": base["cache_read_weight"],
            "sse": base["sse"], "credits_per_pct": base["credits_per_pct"],
            "resamples": resamples,
@@ -1020,6 +1062,10 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             "agree": None,
             "per_fit": diagnostics[f]["per_fit"],
             "max_share_of_a_clean_stretch": max_share[f],
+            # What the page shows while the fit cannot measure the family: tracker/credits.py
+            # family_rate publishes it with rate_source "inferred". Gone the moment the family
+            # passes the measurable rule.
+            "inferred": None if ok else inferred_rate(f),
         }
     groups = ", ".join(pooled.get("groups") or [])
     per_family[ANCHOR]["why"] = (
@@ -1063,7 +1109,7 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
                 f"the highest {name(f)} share of any clean stretch on a fitted account is "
                 f"{max_share[f]:.3f}, and only {(pooled.get('n_nonzero') or {}).get(f, 0)} of the "
                 f"fit's stretches carry it at all, under the {MIN_NONZERO} a fitted family needs. "
-                f"The pooled fit holds its tokens at the anchor's rate rather than dropping the "
+                f"The pooled fit holds its tokens at its inferred rate rather than dropping the "
                 f"stretches that carry them, and measures nothing about it. {reference}")
         else:
             row["why"] = (
@@ -1095,7 +1141,7 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
         "max_interval_ratio": MAX_INTERVAL_RATIO,
         "pooled_fit": ({
             "times_opus": pooled["times_opus"],
-            "held_at_anchor": pooled["held"],
+            "held": pooled.get("held", []), "held_rate": pooled.get("held_rate", {}),
             "cache_read_weight": pooled["cache_read_weight"],
             "output_multiplier": POOLED_OUT_MULT,
             "n": pooled["n"], "groups": pooled["groups"],
@@ -1117,8 +1163,11 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             f"the Opus anchor, {opus_in:.4f} credits per token. Intervals are 80% bootstrap "
             "intervals over stretches resampled within each group. A family is published when "
             f"its interval starts above zero and its high end is under {MAX_INTERVAL_RATIO:g}x its "
-            f"low end; a family in fewer than {MIN_NONZERO} of the stretches is held at the "
-            "anchor's rate and not measured. Stretches that span the cut are in neither group."),
+            f"low end; a family in fewer than {MIN_NONZERO} of the stretches is held at its "
+            "inferred rate and not measured. A family that is not measurable carries an "
+            "`inferred` rate -- the reference table's, or its list-price ratio to Opus where the "
+            "table has no row -- which the page shows marked as inferred. Stretches that span the "
+            "cut are in neither group."),
     }
 
 
@@ -1302,7 +1351,8 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
           f"{', '.join(mr['fits_pooled']) or 'nothing'}, output {mr['output_multiplier']}x")
     if pf:
         print(f"   n={pf['n']} stretches, SSE={pf['sse']:.3f}, {pf['resamples']} resamples "
-              f"stratified by group; held at the anchor: {', '.join(pf['held_at_anchor']) or 'none'}")
+              f"stratified by group; held: " + (", ".join(f"{f} at {v:.3f}x" for f, v in
+                                                          pf["held_rate"].items()) or "none"))
         print("   credits per 1% per group: " + ", ".join(
             f"{g} {v:,.0f}" for g, v in pf["credits_per_pct"].items()))
     for f, row in mr["per_family"].items():
@@ -1314,6 +1364,9 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
             what = f"input={row['input']:.4f} (the anchor)"
         else:
             what = row["status"]
+            if row.get("inferred"):
+                what += (f"; shown INFERRED at {row['inferred']['times_opus']:.3f}x Opus "
+                         f"({row['inferred']['inferred_from']})")
             if row.get("pooled"):
                 iv = row["pooled"]["interval"]
                 what += (f" (fit point {row['pooled']['times_opus']:.3f}x Opus "
