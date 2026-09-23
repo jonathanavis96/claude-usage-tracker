@@ -2,7 +2,7 @@
  "_meta": {
   "what": "the meter's own per-model credit rates, fitted from the passive stretches already in the repository. `measured_rates` is the block tracker/credits.py reads; everything else is the working the fits show.",
   "command": "python3 -m tools.model_rates history/masterrig-passive.json --json history/model-rates.json",
-  "generated_at": "2026-09-23T15:31:02+00:00",
+  "generated_at": "2026-09-23T15:37:03+00:00",
   "inputs": [
    "history/gs-passive.json",
    "history/masterrig-passive.json",
@@ -68,7 +68,7 @@
        0.6666666666666666,
        0.6666666666666666
       ],
-      "n": 26,
+      "n": 27,
       "dominant_n": 10,
       "qualified": true,
       "qualification": "the anchor is exempt from the dominance rule"
@@ -111,28 +111,28 @@
     "why": "the unit anchor: 0.6667 credits per input token (5x that per output token), which is what a credit means in this repository. The pooled fit holds it at 1 and measures every other rate relative to it, so none of them tests it. If this row is wrong every credit figure scales with it and nothing in our stretches would show it."
    },
    "sonnet": {
-    "input": 0.3779051736390796,
+    "input": 0.36701274430354613,
     "interval": [
-     0.31367137047275995,
-     0.4342276664997037
+     0.30006749998657245,
+     0.42723291702494876
     ],
     "output_multiplier": 5,
     "status": null,
     "rate_source": "measured",
     "anchor": false,
     "reference_input": 0.4,
-    "times_opus": 0.5668577604586195,
+    "times_opus": 0.5505191164553193,
     "times_opus_interval": [
-     0.47050705570914,
-     0.6513414997495556
+     0.45010124997985873,
+     0.6408493755374232
     ],
     "pooled": {
-     "times_opus": 0.5668577604586195,
+     "times_opus": 0.5505191164553193,
      "interval": [
-      0.47050705570914,
-      0.6513414997495556
+      0.45010124997985873,
+      0.6408493755374232
      ],
-     "n_stretches_carrying": 145,
+     "n_stretches_carrying": 146,
      "groups_carrying": [
       "dave/post",
       "jwork/post",
@@ -156,15 +156,15 @@
       "qualification": "9 of its 32 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
      },
      "jwork/post": {
-      "rate": 0.3526465737654649,
+      "rate": 0.681049675458639,
       "interval": [
-       0.1446665447627764,
-       0.7649669267008938
+       0.258065918574325,
+       1.4301813761855826
       ],
-      "n": 26,
+      "n": 27,
       "dominant_n": 1,
       "qualified": false,
-      "qualification": "1 of its 26 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
+      "qualification": "1 of its 27 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
      },
      "jwork/pre": {
       "rate": 0.540413109951884,
@@ -201,7 +201,7 @@
      }
     },
     "max_share_of_a_clean_stretch": 0.8395927200625468,
-    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Sonnet 0.567x Opus, 80% bootstrap interval [0.471, 0.651] from 600 resamples stratified by group; 145 of the fit's 174 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
+    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Sonnet 0.551x Opus, 80% bootstrap interval [0.450, 0.641] from 600 resamples stratified by group; 146 of the fit's 175 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
    },
    "haiku": {
     "input": null,
@@ -214,12 +214,12 @@
     "times_opus": null,
     "times_opus_interval": null,
     "pooled": {
-     "times_opus": 0.5471875835290736,
+     "times_opus": 0.6470497467505131,
      "interval": [
-      8.757801354915451e-14,
-      2.500938877135257
+      1.3699738698815797e-13,
+      2.3735745785696167
      ],
-     "n_stretches_carrying": 41,
+     "n_stretches_carrying": 42,
      "groups_carrying": [
       "dave/post",
       "jwork/post",
@@ -232,15 +232,15 @@
     "agree": null,
     "per_fit": {
      "jwork/post": {
-      "rate": 3.1545132152305517,
+      "rate": 3.514838100822913,
       "interval": [
-       0.6250219236352379,
-       13.840966559710697
+       0.28661746081016803,
+       17.468920343621633
       ],
-      "n": 26,
+      "n": 27,
       "dominant_n": 0,
       "qualified": false,
-      "qualification": "0 of its 26 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
+      "qualification": "0 of its 27 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
      },
      "jwork/pre": {
       "rate": 1.2123591486909937,
@@ -277,29 +277,29 @@
      }
     },
     "max_share_of_a_clean_stretch": 0.2567715124076586,
-    "why": "the highest Haiku share of any clean stretch on a fitted account is 0.257. The pooled fit carries it and puts it at 0.547x Opus, but its 80% interval runs [0.000x, 2.501x], so the data do not pin it down, and neither the value nor the interval is published: an interval is priced at its midpoint where a family has no value (tracker/gs_passive.py), and this one's midpoint is not a rate anything measured. The fit's point estimate still prices this family's tokens inside the before-and-after comparison (pooled_fit), where the fit's own model is used whole. The reference figure stands beside this row, untested by our data and used in no arithmetic the page states."
+    "why": "the highest Haiku share of any clean stretch on a fitted account is 0.257. The pooled fit carries it and puts it at 0.647x Opus, but its 80% interval runs [0.000x, 2.374x], so the data do not pin it down, and neither the value nor the interval is published: an interval is priced at its midpoint where a family has no value (tracker/gs_passive.py), and this one's midpoint is not a rate anything measured. The fit's point estimate still prices this family's tokens inside the before-and-after comparison (pooled_fit), where the fit's own model is used whole. The reference figure stands beside this row, untested by our data and used in no arithmetic the page states."
    },
    "fable": {
-    "input": 1.4004528098294537,
+    "input": 1.417607632344332,
     "interval": [
-     1.3328454139763415,
-     1.4846410301750486
+     1.3460261594244847,
+     1.516618410578812
     ],
     "output_multiplier": 5,
     "status": null,
     "rate_source": "measured",
     "anchor": false,
     "reference_input": null,
-    "times_opus": 2.1006792147441806,
+    "times_opus": 2.126411448516498,
     "times_opus_interval": [
-     1.9992681209645125,
-     2.226961545262573
+     2.019039239136727,
+     2.274927615868218
     ],
     "pooled": {
-     "times_opus": 2.1006792147441806,
+     "times_opus": 2.126411448516498,
      "interval": [
-      1.9992681209645125,
-      2.226961545262573
+      2.019039239136727,
+      2.274927615868218
      ],
      "n_stretches_carrying": 149,
      "groups_carrying": [
@@ -325,15 +325,15 @@
       "qualification": "0 of its 32 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
      },
      "jwork/post": {
-      "rate": 2.099078938615216,
+      "rate": 2.2912978287923185,
       "interval": [
-       1.6567934558129007,
-       3.167171662732603
+       1.7754132478449969,
+       3.9761200305984947
       ],
-      "n": 26,
+      "n": 27,
       "dominant_n": 3,
       "qualified": true,
-      "qualification": "3 of its 26 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
+      "qualification": "3 of its 27 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
      },
      "jwork/pre": {
       "rate": 1.4013724486986614,
@@ -370,7 +370,7 @@
      }
     },
     "max_share_of_a_clean_stretch": 1.0,
-    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Fable 2.101x Opus, 80% bootstrap interval [1.999, 2.227] from 600 resamples stratified by group; 149 of the fit's 174 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
+    "why": "one fit pooled over dave/post, jwork/post, jwork/pre, masterrig/post, masterrig/pre: rates shared by every group, one credits-per-1% scale per group. Fable 2.126x Opus, 80% bootstrap interval [2.019, 2.275] from 600 resamples stratified by group; 149 of the fit's 175 stretches carry its tokens. The per-group fits are on this record as diagnostics and enter no rate."
    },
    "opus-5-5": {
     "input": null,
@@ -386,15 +386,15 @@
     "n_fits": 0,
     "agree": null,
     "per_fit": {},
-    "max_share_of_a_clean_stretch": 0.19746534343117725,
-    "why": "the highest Opus 5.5 share of any clean stretch on a fitted account is 0.197, and only 1 of the fit's stretches carry it at all, under the 3 a fitted family needs. The pooled fit holds its tokens at the anchor's rate rather than dropping the stretches that carry them, and measures nothing about it. There is no reference figure for Opus 5.5 either: the January table predates it."
+    "max_share_of_a_clean_stretch": 0.4787980679805078,
+    "why": "the highest Opus 5.5 share of any clean stretch on a fitted account is 0.479, and only 2 of the fit's stretches carry it at all, under the 3 a fitted family needs. The pooled fit holds its tokens at the anchor's rate rather than dropping the stretches that carry them, and measures nothing about it. There is no reference figure for Opus 5.5 either: the January table predates it."
    }
   },
   "cache_read_weight": {
    "value": null,
    "interval": [
-    7.482147518715491e-17,
-    0.004878182463446655
+    9.822500640127492e-17,
+    0.005479029413004093
    ],
    "measurable": false,
    "reference": 0.0,
@@ -412,12 +412,12 @@
      "n": 32
     },
     "jwork/post": {
-     "weight": 0.020873735632300428,
+     "weight": 0.02503135855513799,
      "interval": [
-      0.012427110212529026,
-      0.04730006858813225
+      0.013594799311353085,
+      0.0656087064260179
      ],
-     "n": 26
+     "n": 27
     },
     "jwork/pre": {
      "weight": 0.011365456153596899,
@@ -444,23 +444,23 @@
      "n": 35
     }
    },
-   "fit_point": 0.0015641825642791528,
-   "why": "the pooled fit puts a cache read at 0.0016 of the Opus input rate, 80% interval [0.0000, 0.0049], which reaches zero or is too wide to publish as a value; the point estimate is used only inside the before-and-after comparison, with the rest of the fit."
+   "fit_point": 0.0020183129522272796,
+   "why": "the pooled fit puts a cache read at 0.0020 of the Opus input rate, 80% interval [0.0000, 0.0055], which reaches zero or is too wide to publish as a value; the point estimate is used only inside the before-and-after comparison, with the rest of the fit."
   },
   "max_interval_ratio": 1.5,
   "pooled_fit": {
    "times_opus": {
     "opus": 1.0,
-    "sonnet": 0.5668577604586195,
-    "haiku": 0.5471875835290736,
-    "fable": 2.1006792147441806
+    "sonnet": 0.5505191164553193,
+    "haiku": 0.6470497467505131,
+    "fable": 2.126411448516498
    },
    "held_at_anchor": [
     "opus-5-5"
    ],
-   "cache_read_weight": 0.0015641825642791528,
+   "cache_read_weight": 0.0020183129522272796,
    "output_multiplier": 5,
-   "n": 174,
+   "n": 175,
    "groups": [
     "dave/post",
     "jwork/post",
@@ -469,86 +469,86 @@
     "masterrig/pre"
    ],
    "credits_per_pct": {
-    "dave/post": 146890.09955186653,
-    "jwork/post": 184031.75379780494,
-    "jwork/pre": 189811.88351961778,
-    "masterrig/post": 153700.49888442655,
-    "masterrig/pre": 160581.85824494093
+    "dave/post": 148537.0633568704,
+    "jwork/post": 188968.00408614142,
+    "jwork/pre": 191618.32011658838,
+    "masterrig/post": 155202.0001880695,
+    "masterrig/pre": 162461.60265572424
    },
-   "sse": 3.5199836711146726,
+   "sse": 3.629760308224706,
    "resamples": 600,
    "interval": {
     "sonnet": [
-     0.47050705570914,
-     0.6513414997495556
+     0.45010124997985873,
+     0.6408493755374232
     ],
     "haiku": [
-     8.757801354915451e-14,
-     2.500938877135257
+     1.3699738698815797e-13,
+     2.3735745785696167
     ],
     "fable": [
-     1.9992681209645125,
-     2.226961545262573
+     2.019039239136727,
+     2.274927615868218
     ]
    },
    "cache_read_weight_interval": [
-    7.482147518715491e-17,
-    0.004878182463446655
+    9.822500640127492e-17,
+    0.005479029413004093
    ],
    "fable_by_era": {
-    "pre": 2.1227740269444713,
+    "pre": 2.1245476752162165,
     "pre_interval": [
-     2.0229649236091856,
-     2.2498869013999028
+     2.034558143786857,
+     2.254220750651493
     ],
-    "post": 2.070284553617906,
+    "post": 2.128948128186452,
     "post_interval": [
-     1.8834481260995162,
-     2.3315696759902242
+     1.935683122608914,
+     2.4231962977268333
     ],
-    "post_over_pre": 0.9752731696071679,
+    "post_over_pre": 1.002071242279742,
     "post_over_pre_interval": [
-     0.8745571254328954,
-     1.096460607458268
+     0.8976105386587356,
+     1.1269303233650878
     ],
-    "sse": 3.5181799576957817
+    "sse": 3.629747941330322
    },
    "leave_one_out": {
     "dave": {
-     "n": 142,
+     "n": 143,
      "times_opus": {
       "opus": 1.0,
-      "sonnet": 0.5233142833853643,
-      "haiku": 2.9497722462984823,
-      "fable": 2.329883406176962
+      "sonnet": 0.4948226448982405,
+      "haiku": 3.1307628316663223,
+      "fable": 2.358973896961308
      },
-     "cache_read_weight": 0.00876742477854814
+     "cache_read_weight": 0.009628157922619873
     },
     "jwork": {
      "n": 97,
      "times_opus": {
       "opus": 1.0,
-      "sonnet": 0.5204192809950472,
-      "haiku": 0.3263594298753136,
-      "fable": 1.9937244115023176
+      "sonnet": 0.5204192675561823,
+      "haiku": 0.3263594805836156,
+      "fable": 1.9937244187602245
      },
-     "cache_read_weight": 1.2166044945959328e-17
+     "cache_read_weight": 3.279535891104558e-17
     },
     "masterrig": {
-     "n": 109,
+     "n": 110,
      "times_opus": {
       "opus": 1.0,
-      "sonnet": 0.6048891078324906,
-      "haiku": 0.3914750684865658,
-      "fable": 2.0334526622517006
+      "sonnet": 0.5809113478004265,
+      "haiku": 0.5263496933400881,
+      "fable": 2.0757779556046945
      },
-     "cache_read_weight": 0.002204333661186211
+     "cache_read_weight": 0.0027630483669361635
     }
    }
   },
   "method": "credits_s = sum over families of rate_f x (input + cache_write + 5x output)_f,s + w x cache_reads_s, with Opus at 1 and every other rate and w free and positive; one set of rates for every account and side of 2026-09-14, and one credits-per-1% scale per account and side. Minimises, over the rates, the sum over groups and their stretches of (log(credits_s / delta_pct_s) minus that group's mean of it) squared: the group's scale is the mean, so it is never a parameter. Nelder-Mead in log space, numpy only. The rates are then read in credits against the Opus anchor, 0.6667 credits per token. Intervals are 80% bootstrap intervals over stretches resampled within each group. A family is published when its interval starts above zero and its high end is under 1.5x its low end; a family in fewer than 3 of the stretches is held at the anchor's rate and not measured. Stretches that span the cut are in neither group."
  },
- "generated_at": "2026-09-23T15:31:02+00:00",
+ "generated_at": "2026-09-23T15:37:03+00:00",
  "seed": 20260920,
  "resamples": 600,
  "exclusions": "harness-runs",
@@ -580,8 +580,8 @@
  ],
  "exclusion": {
   "jwork": {
-   "probes_only": 79,
-   "harness_runs": 77,
+   "probes_only": 80,
+   "harness_runs": 78,
    "dropped": [
     {
      "start": "2026-09-09T23:13:14+00:00",
@@ -663,7 +663,7 @@
     "sonnet": 0.6024597690378444,
     "haiku": 0.13273974485746337,
     "fable": 1.0,
-    "opus-5-5": 0.0
+    "opus-5-5": 0.4787980679805078
    },
    "fable": {
     "out5x": {
@@ -1300,12 +1300,12 @@
    }
   },
   "jwork/post/out5x": {
-   "n": 26,
+   "n": 27,
    "rates": {
     "opus": 0.6666666666666666,
-    "sonnet": 0.47333132346983975,
-    "haiku": 1.3910237680247186,
-    "fable": 1.698278404548659
+    "sonnet": 0.7046260212107205,
+    "haiku": 1.3969785266186279,
+    "fable": 1.772034437324113
    },
    "interval": {
     "opus": [
@@ -1313,16 +1313,16 @@
      0.6666666666666666
     ],
     "sonnet": [
-     0.2562516929781986,
-     0.7952989729959827
+     0.40428328726280605,
+     1.0693632452911697
     ],
     "haiku": [
      0.0,
-     5.1090062834766465
+     5.818202713179514
     ],
     "fable": [
-     1.4912541613323615,
-     2.095421402091366
+     1.5057461450908125,
+     2.229910249397601
     ]
    },
    "dominant_n": {
@@ -1334,61 +1334,61 @@
    },
    "cache_read_weight": 0.0,
    "cache_read_weight_interval": null,
-   "window_credits_per_pct": 207608.56128640083,
+   "window_credits_per_pct": 223128.0539362005,
    "window_interval": [
-    184524.8314259498,
-    245352.9885937265
+    196123.13994979655,
+    266431.66119711415
    ],
-   "residual_median_abs_rel": 0.1371483925365361,
-   "residual_p90_abs_rel": 0.22875849856304298,
+   "residual_median_abs_rel": 0.13247146478996913,
+   "residual_p90_abs_rel": 0.2534841334504488,
    "ratios": {
     "opus:sonnet": {
      "measurable": true,
-     "ratio": 1.4084566848007176,
+     "ratio": 0.9461283668195642,
      "interval": [
-      0.8330522404074457,
-      2.5619140514896475
+      0.6234239577638976,
+      1.6490087215336635
      ],
      "prior": 1.6666666666666665,
      "free": "sonnet",
-     "verdict": "agrees",
-     "row_move": -0.15492598911956934,
-     "interval_width": 3.0753342074161107
+     "verdict": "disagrees",
+     "row_move": -0.4323229799082614,
+     "interval_width": 2.6450839769590218
     },
     "sonnet:haiku": {
      "measurable": true,
-     "ratio": 0.34027551099430864,
+     "ratio": 0.5043928791921094,
      "interval": [
-      0.09229287322380827,
-      1.6622306200571528
+      0.11188366398241312,
+      2.1615353367819354
      ],
      "prior": 3.0,
      "free": "haiku",
      "verdict": "disagrees",
-     "row_move": -0.8865748296685638,
-     "interval_width": 18.010389773284864
+     "row_move": -0.8318690402692969,
+     "interval_width": 19.319490083214518
     },
     "fable:opus": {
      "measurable": true,
-     "ratio": 2.5474176068229886,
+     "ratio": 2.6580516559861698,
      "interval": [
-      2.2368812419985424,
-      3.143132103137049
+      2.2586192176362188,
+      3.344865374096402
      ],
      "prior": 2.5000000000000004,
      "free": "fable",
      "verdict": "agrees",
-     "row_move": -0.01861399037832867,
-     "interval_width": 1.405140355296116
+     "row_move": -0.05946146894106552,
+     "interval_width": 1.480933726224558
     }
    },
    "joint": {
-    "n": 26,
+    "n": 27,
     "rates": {
      "opus": 0.6666666666666666,
-     "sonnet": 0.3526465737654649,
-     "haiku": 3.1545132152305517,
-     "fable": 2.099078938615216
+     "sonnet": 0.681049675458639,
+     "haiku": 3.514838100822913,
+     "fable": 2.2912978287923185
     },
     "interval": {
      "opus": [
@@ -1396,16 +1396,16 @@
       0.6666666666666666
      ],
      "sonnet": [
-      0.1446665447627764,
-      0.7649669267008938
+      0.258065918574325,
+      1.4301813761855826
      ],
      "haiku": [
-      0.6250219236352379,
-      13.840966559710697
+      0.28661746081016803,
+      17.468920343621633
      ],
      "fable": [
-      1.6567934558129007,
-      3.167171662732603
+      1.7754132478449969,
+      3.9761200305984947
      ]
     },
     "dominant_n": {
@@ -1415,68 +1415,68 @@
      "fable": 3,
      "opus-5-5": 0
     },
-    "cache_read_weight": 0.020873735632300428,
+    "cache_read_weight": 0.02503135855513799,
     "cache_read_weight_interval": [
-     0.012427110212529026,
-     0.04730006858813225
+     0.013594799311353085,
+     0.0656087064260179
     ],
-    "window_credits_per_pct": 323856.7327458082,
+    "window_credits_per_pct": 370659.21315072046,
     "window_interval": [
-     256281.6343493445,
-     519099.52913964604
+     280322.1210805532,
+     694069.4057414007
     ],
-    "residual_median_abs_rel": 0.059013969126258205,
-    "residual_p90_abs_rel": 0.206545653371001,
+    "residual_median_abs_rel": 0.048279996165155124,
+    "residual_p90_abs_rel": 0.2283647189775837,
     "ratios": {
      "opus:sonnet": {
       "measurable": true,
-      "ratio": 1.8904668760798666,
+      "ratio": 0.9788811164438388,
       "interval": [
-       0.863822835558916,
-       4.208931182177484
+       0.4656512407996447,
+       2.5512961610295037
       ],
       "prior": 1.6666666666666665,
       "free": "sonnet",
       "verdict": "agrees",
-      "row_move": 0.13428012564792002,
-      "interval_width": 4.872447229823689
+      "row_move": -0.4126713301336967,
+      "interval_width": 5.478984994538536
      },
      "sonnet:haiku": {
       "measurable": true,
-      "ratio": 0.11179112265652412,
+      "ratio": 0.19376416663378834,
       "interval": [
-       0.02346269562690022,
-       0.7823826959288217
+       0.03440230542516504,
+       1.2137501013404992
       ],
       "prior": 3.0,
       "free": "haiku",
       "verdict": "disagrees",
-      "row_move": -0.9627362924478253,
-      "interval_width": 33.345814495066456
+      "row_move": -0.9354119444554039,
+      "interval_width": 35.28106870572254
      },
      "fable:opus": {
       "measurable": true,
-      "ratio": 3.1486184079228243,
+      "ratio": 3.4369467431884777,
       "interval": [
-       2.485190183719351,
-       4.750757494098905
+       2.6631198717674955,
+       5.964180045897742
       ],
       "prior": 2.5000000000000004,
       "free": "fable",
       "verdict": "agrees",
-      "row_move": -0.2060009578457378,
-      "interval_width": 1.9116273375057726
+      "row_move": -0.27261020120412627,
+      "interval_width": 2.239546221379571
      }
     }
    }
   },
   "jwork/post/out3x": {
-   "n": 26,
+   "n": 27,
    "rates": {
     "opus": 0.6666666666666666,
-    "sonnet": 0.4586324872817562,
-    "haiku": 1.5637007692653289,
-    "fable": 2.073730758828646
+    "sonnet": 0.7072453790860965,
+    "haiku": 1.5878443299587175,
+    "fable": 2.1733439214934145
    },
    "interval": {
     "opus": [
@@ -1484,16 +1484,16 @@
      0.6666666666666666
     ],
     "sonnet": [
-     0.22620659439113858,
-     0.7920508928347566
+     0.3395250615271886,
+     1.0765347679547153
     ],
     "haiku": [
      0.0,
-     5.580302267592325
+     6.239599211272439
     ],
     "fable": [
-     1.7298846073815062,
-     2.5328342085006983
+     1.7692799719651688,
+     2.7258920639640687
     ]
    },
    "dominant_n": {
@@ -1505,61 +1505,61 @@
    },
    "cache_read_weight": 0.0,
    "cache_read_weight_interval": null,
-   "window_credits_per_pct": 189074.5620248378,
+   "window_credits_per_pct": 204707.59823721755,
    "window_interval": [
-    164914.3816459707,
-    223249.68757964554
+    174598.8363356023,
+    244729.89369068522
    ],
-   "residual_median_abs_rel": 0.16340892889083863,
-   "residual_p90_abs_rel": 0.24595784173485846,
+   "residual_median_abs_rel": 0.1458192496625676,
+   "residual_p90_abs_rel": 0.29710645426285043,
    "ratios": {
     "opus:sonnet": {
      "measurable": true,
-     "ratio": 1.4535966926763013,
+     "ratio": 0.9426242805971164,
      "interval": [
-      0.8416967554706759,
-      2.9471584082730997
+      0.619270911178514,
+      1.963527121291107
      ],
      "prior": 1.6666666666666665,
      "free": "sonnet",
      "verdict": "agrees",
-     "row_move": -0.12784198439421912,
-     "interval_width": 3.501449172897253
+     "row_move": -0.4344254316417301,
+     "interval_width": 3.170707820837868
     },
     "sonnet:haiku": {
      "measurable": true,
-     "ratio": 0.29329939352606116,
+     "ratio": 0.44541228994688936,
      "interval": [
-      0.07476680088509989,
-      1.1773160094865496
+      0.09602563943980286,
+      1.8483514480448715
      ],
      "prior": 3.0,
      "free": "haiku",
      "verdict": "disagrees",
-     "row_move": -0.9022335354913129,
-     "interval_width": 15.746507748751014
+     "row_move": -0.8515292366843702,
+     "interval_width": 19.248520070554463
     },
     "fable:opus": {
      "measurable": true,
-     "ratio": 3.110596138242969,
+     "ratio": 3.260015882240122,
      "interval": [
-      2.5948269110722593,
-      3.7992513127510477
+      2.6539199579477533,
+      4.0888380959461035
      ],
      "prior": 2.5000000000000004,
      "free": "fable",
      "verdict": "agrees",
-     "row_move": -0.19629553664522525,
-     "interval_width": 1.4641636775614773
+     "row_move": -0.23313257042106073,
+     "interval_width": 1.5406787547232421
     }
    },
    "joint": {
-    "n": 26,
+    "n": 27,
     "rates": {
      "opus": 0.6666666666666666,
-     "sonnet": 0.32568765331701177,
-     "haiku": 3.5328953018028377,
-     "fable": 2.707527295722979
+     "sonnet": 0.6815355962991255,
+     "haiku": 4.1458517745725585,
+     "fable": 3.050599481871289
     },
     "interval": {
      "opus": [
@@ -1567,16 +1567,16 @@
       0.6666666666666666
      ],
      "sonnet": [
-      0.07889967237025877,
-      0.7694486239001117
+      0.21278707982159117,
+      1.5075010910596376
      ],
      "haiku": [
-      0.8292831050151022,
-      14.77310824214252
+      0.3436688924415492,
+      19.57634277247459
      ],
      "fable": [
-      2.127330402882654,
-      4.14899579868453
+      2.2667806969773476,
+      5.526903207821851
      ]
     },
     "dominant_n": {
@@ -1586,57 +1586,57 @@
      "fable": 3,
      "opus-5-5": 0
     },
-    "cache_read_weight": 0.023660637778294302,
+    "cache_read_weight": 0.03056505881362099,
     "cache_read_weight_interval": [
-     0.014444410168351067,
-     0.049158907024548365
+     0.016514951377209163,
+     0.0800035366139108
     ],
-    "window_credits_per_pct": 322190.4045155326,
+    "window_credits_per_pct": 385850.53423592215,
     "window_interval": [
-     250930.1261169754,
-     508428.95340956404
+     276840.1714627491,
+     738615.5777446144
     ],
-    "residual_median_abs_rel": 0.07959048092637278,
-    "residual_p90_abs_rel": 0.1899898662177711,
+    "residual_median_abs_rel": 0.07354379532812594,
+    "residual_p90_abs_rel": 0.23476119549604224,
     "ratios": {
      "opus:sonnet": {
       "measurable": true,
-      "ratio": 2.0469509969963737,
+      "ratio": 0.9781831943728249,
       "interval": [
-       0.8458088037348251,
-       4.865489871135838
+       0.44163336368405237,
+       2.730096241869199
       ],
       "prior": 1.6666666666666665,
       "free": "sonnet",
       "verdict": "agrees",
-      "row_move": 0.22817059819782437,
-      "interval_width": 5.7524701204945705
+      "row_move": -0.41309008337630504,
+      "interval_width": 6.181816108944
      },
      "sonnet:haiku": {
       "measurable": true,
-      "ratio": 0.0921871794929256,
+      "ratio": 0.16438976436136396,
       "interval": [
-       0.012970373783384705,
-       0.6190998059302768
+       0.023595768393845574,
+       0.8405865110101326
       ],
       "prior": 3.0,
       "free": "haiku",
       "verdict": "disagrees",
-      "row_move": -0.9692709401690248,
-      "interval_width": 47.73183998161683
+      "row_move": -0.9452034118795454,
+      "interval_width": 35.62446015656692
      },
      "fable:opus": {
       "measurable": true,
-      "ratio": 4.061290943584469,
+      "ratio": 4.575899222806934,
       "interval": [
-       3.1909956043239815,
-       6.223493698026796
+       3.4001710454660214,
+       8.290354811732778
       ],
       "prior": 2.5000000000000004,
       "free": "fable",
       "verdict": "agrees",
-      "row_move": -0.3844321830847418,
-      "interval_width": 1.9503297621574929
+      "row_move": -0.45365929661657667,
+      "interval_width": 2.438216989932786
      }
     }
    }
@@ -2643,57 +2643,57 @@
  },
  "section4": {
   "n": {
-   "jwork": 26,
+   "jwork": 27,
    "dave": 32
   },
   "mix": {
    "shellac": {
-    "jwork": 203425.0,
+    "jwork": 202388.10000000003,
     "dave": 155250.16333333333,
-    "ratio": 1.3103045796044144,
+    "ratio": 1.3036256816391114,
     "interval": [
-     1.1741494382562805,
-     1.396352366645716
+     1.15376963587253,
+     1.3861542944593146
     ],
     "verdict": "does not explain"
    },
    "fitted jwork/pre": {
-    "jwork": 184542.68540003104,
+    "jwork": 184426.2229777368,
     "dave": 166039.92553013552,
-    "ratio": 1.1114356068928575,
+    "ratio": 1.1107341947359777,
     "interval": [
-     1.0199457386017605,
-     1.2361112419488185
+     1.0020471044898747,
+     1.214825479780599
     ],
     "verdict": "does not explain"
    },
    "fitted jwork/post": {
-    "jwork": 210853.7184850974,
-    "dave": 160965.20428350818,
-    "ratio": 1.3099335314340392,
+    "jwork": 221271.6272159346,
+    "dave": 181299.8191915187,
+    "ratio": 1.2204735128951845,
     "interval": [
-     1.1497185915528554,
-     1.3687037280762555
+     1.0803211985446464,
+     1.3076775518356316
     ],
     "verdict": "does not explain"
    },
    "fitted dave/post": {
-    "jwork": 157537.11864076235,
+    "jwork": 155701.9477779506,
     "dave": 139490.53144664897,
-    "ratio": 1.1293749977647456,
+    "ratio": 1.1162187580990186,
     "interval": [
-     1.017269539704399,
-     1.2604531418261953
+     1.0066408482501625,
+     1.2451935215700336
     ],
     "verdict": "does not explain"
    }
   },
   "shares": {
    "jwork": {
-    "opus": 0.5638832863473038,
-    "sonnet": 0.30306243929490184,
+    "opus": 0.5597837969960348,
+    "sonnet": 0.31348620517697706,
     "haiku": 0.0,
-    "fable": 0.07849824943799094,
+    "fable": 0.07708733491409572,
     "opus-5-5": 0.0
    },
    "dave": {
@@ -2718,11 +2718,11 @@
    },
    "jwork/post": {
     "True": {
-     "n": 14,
-     "median": 205522.08333333334,
-     "p25": 176176.59333333332,
+     "n": 15,
+     "median": 204784.90666666668,
+     "p25": 170872.6666666667,
      "p75": 222656.3066666667,
-     "min": 147753.5222222222,
+     "min": 96352.06666666667,
      "max": 238937.81999999998
     },
     "False": {
@@ -2734,12 +2734,12 @@
      "max": 237831.97333333333
     },
     "ratio": {
-     "ratio": 1.0695870373526968,
+     "ratio": 1.0657505902219682,
      "interval": [
-      0.9739562849770108,
-      1.2731211906062838
+      0.9437051303800764,
+      1.2328760274737807
      ],
-     "n_num": 14,
+     "n_num": 15,
      "n_den": 12
     }
    },
@@ -2825,11 +2825,11 @@
    "jwork/post": {
     "cut_delta_pct": 10.0,
     "short": {
-     "n": 23,
-     "median": 204461.9,
+     "n": 24,
+     "median": 203425.0,
      "p25": 170872.6666666667,
      "p75": 217268.98666666666,
-     "min": 120148.2,
+     "min": 96352.06666666667,
      "max": 238937.81999999998
     },
     "long": {
@@ -2841,13 +2841,13 @@
      "max": 230361.7878787879
     },
     "ratio": {
-     "ratio": 0.8621966125510795,
+     "ratio": 0.8665914099828317,
      "interval": [
-      0.7226457458441998,
-      1.1266734187581544
+      0.7220753824601892,
+      1.1494986195933496
      ],
      "n_num": 3,
-     "n_den": 23
+     "n_den": 24
     }
    },
    "dave/post": {
@@ -2938,15 +2938,15 @@
   "restricted": {
    "reset_verified only": {
     "n": {
-     "jwork": 14,
+     "jwork": 15,
      "dave": 27
     },
-    "jwork": 205522.08333333334,
+    "jwork": 204784.90666666668,
     "dave": 159703.07333333333,
-    "ratio": 1.2869012414330077,
+    "ratio": 1.2822853210798157,
     "interval": [
-     1.157647911140405,
-     1.3775087582566206
+     1.1128205026709133,
+     1.368219826370376
     ],
     "verdict": "does not explain"
    },
@@ -2978,7 +2978,7 @@
     ]
    },
    "jwork/post": {
-    "n": 26,
+    "n": 27,
     "per_stretch": 0.2,
     "deltas": [
      10.0,
@@ -3035,18 +3035,18 @@
    },
    "sonnet": {
     "shellac_rate": 0.4,
-    "measured_rate": 0.3779051736390796,
+    "measured_rate": 0.36701274430354613,
     "rate_interval": [
-     0.31367137047275995,
-     0.4342276664997037
+     0.30006749998657245,
+     0.42723291702494876
     ],
     "status": null,
     "rate_source": "measured",
     "shellac_tokens": 49247291.66666666,
-    "measured_tokens": 52126612.81393364,
+    "measured_tokens": 53673658.401284926,
     "measured_tokens_interval": [
-     45365411.249492794,
-     62801130.485631526
+     46108143.54811599,
+     65648284.694437616
     ]
    },
    "haiku": {
@@ -3061,18 +3061,18 @@
    },
    "fable": {
     "shellac_rate": null,
-    "measured_rate": 1.4004528098294537,
+    "measured_rate": 1.417607632344332,
     "rate_interval": [
-     1.3328454139763415,
-     1.4846410301750486
+     1.3460261594244847,
+     1.516618410578812
     ],
     "status": null,
     "rate_source": "measured",
     "shellac_tokens": null,
-    "measured_tokens": 14066105.282808913,
+    "measured_tokens": 13895887.8445724,
     "measured_tokens_interval": [
-     13268471.14305068,
-     14779595.938210076
+     12988709.96768966,
+     14634869.113605678
     ]
    },
    "opus-5-5": {
@@ -3121,7 +3121,7 @@
       0.6666666666666666,
       0.6666666666666666
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 10,
      "qualified": true,
      "qualification": "the anchor is exempt from the dominance rule"
@@ -3188,15 +3188,15 @@
      "qualification": "9 of its 32 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
     },
     "jwork/post": {
-     "rate": 0.3526465737654649,
+     "rate": 0.681049675458639,
      "interval": [
-      0.1446665447627764,
-      0.7649669267008938
+      0.258065918574325,
+      1.4301813761855826
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 1,
      "qualified": false,
-     "qualification": "1 of its 26 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
+     "qualification": "1 of its 27 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 0.540413109951884,
@@ -3244,15 +3244,15 @@
    "n_fits_fitted": 4,
    "per_fit": {
     "jwork/post": {
-     "rate": 3.1545132152305517,
+     "rate": 3.514838100822913,
      "interval": [
-      0.6250219236352379,
-      13.840966559710697
+      0.28661746081016803,
+      17.468920343621633
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 0,
      "qualified": false,
-     "qualification": "0 of its 26 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
+     "qualification": "0 of its 27 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 1.2123591486909937,
@@ -3293,15 +3293,15 @@
    "variant": "joint"
   },
   "fable": {
-   "measured": 1.712120474464095,
+   "measured": 1.8082299195526461,
    "interval": [
     1.2201885631320204,
-    3.167171662732603
+    3.9761200305984947
    ],
    "n_fits": 2,
    "points": [
     1.3251620103129738,
-    2.099078938615216
+    2.2912978287923185
    ],
    "n_fits_fitted": 5,
    "per_fit": {
@@ -3317,15 +3317,15 @@
      "qualification": "0 of its 32 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
     },
     "jwork/post": {
-     "rate": 2.099078938615216,
+     "rate": 2.2912978287923185,
      "interval": [
-      1.6567934558129007,
-      3.167171662732603
+      1.7754132478449969,
+      3.9761200305984947
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 3,
      "qualified": true,
-     "qualification": "3 of its 26 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
+     "qualification": "3 of its 27 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 1.4013724486986614,
@@ -3411,7 +3411,7 @@
       0.6666666666666666,
       0.6666666666666666
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 10,
      "qualified": true,
      "qualification": "the anchor is exempt from the dominance rule"
@@ -3478,15 +3478,15 @@
      "qualification": "9 of its 32 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
     },
     "jwork/post": {
-     "rate": 0.47333132346983975,
+     "rate": 0.7046260212107205,
      "interval": [
-      0.2562516929781986,
-      0.7952989729959827
+      0.40428328726280605,
+      1.0693632452911697
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 1,
      "qualified": false,
-     "qualification": "1 of its 26 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
+     "qualification": "1 of its 27 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 0.6216520760848009,
@@ -3534,15 +3534,15 @@
    "n_fits_fitted": 4,
    "per_fit": {
     "jwork/post": {
-     "rate": 1.3910237680247186,
+     "rate": 1.3969785266186279,
      "interval": [
       0.0,
-      5.1090062834766465
+      5.818202713179514
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 0,
      "qualified": false,
-     "qualification": "0 of its 26 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
+     "qualification": "0 of its 27 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 1.5126213365111245,
@@ -3583,15 +3583,15 @@
    "variant": "zero"
   },
   "fable": {
-   "measured": 1.514606171249305,
+   "measured": 1.551484187637032,
    "interval": [
     1.2106590468737255,
-    2.095421402091366
+    2.229910249397601
    ],
    "n_fits": 2,
    "points": [
     1.330933937949951,
-    1.698278404548659
+    1.772034437324113
    ],
    "n_fits_fitted": 5,
    "per_fit": {
@@ -3607,15 +3607,15 @@
      "qualification": "0 of its 32 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
     },
     "jwork/post": {
-     "rate": 1.698278404548659,
+     "rate": 1.772034437324113,
      "interval": [
-      1.4912541613323615,
-      2.095421402091366
+      1.5057461450908125,
+      2.229910249397601
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 3,
      "qualified": true,
-     "qualification": "3 of its 26 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
+     "qualification": "3 of its 27 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 1.26794994486587,
@@ -3701,7 +3701,7 @@
       0.6666666666666666,
       0.6666666666666666
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 10,
      "qualified": true,
      "qualification": "the anchor is exempt from the dominance rule"
@@ -3768,15 +3768,15 @@
      "qualification": "9 of its 32 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
     },
     "jwork/post": {
-     "rate": 0.32568765331701177,
+     "rate": 0.6815355962991255,
      "interval": [
-      0.07889967237025877,
-      0.7694486239001117
+      0.21278707982159117,
+      1.5075010910596376
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 1,
      "qualified": false,
-     "qualification": "1 of its 26 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
+     "qualification": "1 of its 27 stretches carry 60% or more of their raw tokens on Sonnet; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 0.4402102617762038,
@@ -3835,15 +3835,15 @@
      "qualification": "0 of its 32 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
     },
     "jwork/post": {
-     "rate": 3.5328953018028377,
+     "rate": 4.1458517745725585,
      "interval": [
-      0.8292831050151022,
-      14.77310824214252
+      0.3436688924415492,
+      19.57634277247459
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 0,
      "qualified": false,
-     "qualification": "0 of its 26 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
+     "qualification": "0 of its 27 stretches carry 60% or more of their raw tokens on Haiku; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 1.027574715765874,
@@ -3884,15 +3884,15 @@
    "variant": "joint"
   },
   "fable": {
-   "measured": 2.0222689073294315,
+   "measured": 2.1938050004035867,
    "interval": [
     1.2262689925715342,
-    4.14899579868453
+    5.526903207821851
    ],
    "n_fits": 2,
    "points": [
     1.3370105189358839,
-    2.707527295722979
+    3.050599481871289
    ],
    "n_fits_fitted": 5,
    "per_fit": {
@@ -3908,15 +3908,15 @@
      "qualification": "0 of its 32 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
     },
     "jwork/post": {
-     "rate": 2.707527295722979,
+     "rate": 3.050599481871289,
      "interval": [
-      2.127330402882654,
-      4.14899579868453
+      2.2667806969773476,
+      5.526903207821851
      ],
-     "n": 26,
+     "n": 27,
      "dominant_n": 3,
      "qualified": true,
-     "qualification": "3 of its 26 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
+     "qualification": "3 of its 27 stretches carry 60% or more of their raw tokens on Fable; pooling needs 3"
     },
     "jwork/pre": {
      "rate": 1.4467730618246215,
