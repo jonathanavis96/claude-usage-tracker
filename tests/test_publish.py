@@ -9,6 +9,7 @@ from tracker.detect import MIN_STRETCH_PCT
 from tracker.gs_passive import passive_credit_points, passive_dollar_readings, stretch_credits
 from tracker.publish import (
     _regime_with_evidence,
+    ACCOUNT_LABELS,
     CREDITS_TABLE_AS_OF,
     REFERENCE_MIX,
     blended_api_price_per_token,
@@ -16,6 +17,17 @@ from tracker.publish import (
     build_public_json,
     usd_per_pct,
 )
+
+
+class AccountLabelTests(unittest.TestCase):
+    def test_existing_labels_never_move_when_an_account_is_added(self):
+        # a1/a2/a3 must keep naming masterrig/jwork/dave: a page reader's saved
+        # comparison depends on a label meaning the same account run to run.
+        self.assertEqual(ACCOUNT_LABELS[:3], (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3")))
+
+    def test_avis_is_appended_as_a4(self):
+        self.assertIn(("avis", "a4"), ACCOUNT_LABELS)
+        self.assertEqual([label for _name, label in ACCOUNT_LABELS], ["a1", "a2", "a3", "a4"])
 
 
 def probe(day, model, tpp, account="dave"):

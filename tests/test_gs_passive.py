@@ -86,6 +86,10 @@ class AccountTests(unittest.TestCase):
                          ("meter", Path("/h/.paperclip/ops/gs-usage-ceiling.log")))
         self.assertEqual(a["jwork"].meter_since, JWORK_CEILING_SINCE)
         self.assertNotEqual(a["dave"].meter_log, a["jwork"].meter_log)
+        self.assertEqual(a["avis"].config_dir, Path("/h/.claude-avis"))
+        self.assertEqual(a["avis"].meter_log, Path("/h/.paperclip/ops/claude-usage-meter-avis.log"))
+        self.assertEqual(a["avis"].meter_format, "meter")
+        self.assertIsNone(a["avis"].legacy_meter_log)  # no log predates meter_log.py for this account
 
 
 class TranscriptFilesTests(unittest.TestCase):

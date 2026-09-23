@@ -150,6 +150,11 @@ def gs_accounts(home: Path | None = None) -> dict[str, Account]:
         "jwork": Account("jwork", home / ".claude-javiswork", ops / "claude-usage-meter-jwork.log", "meter",
                          JWORK_CEILING_SINCE, legacy_meter_log=ops / "gs-usage-ceiling.log"),
         "dave": Account("dave", home / ".claude-dave", ops / "claude-usage-meter-dave.log", "meter"),
+        # avis: Max 20x, sampled since 2026-09-23 09:47Z. Its projects/ is a symlink into
+        # the same pooled ~/.claude/projects as jwork's (see transcript_files), and it has
+        # its own session-env, so the same pooled-projects filter attributes its
+        # transcripts. No legacy log: meter_log.py's own log is all it has ever had.
+        "avis": Account("avis", home / ".claude-avis", ops / "claude-usage-meter-avis.log", "meter"),
     }
 
 

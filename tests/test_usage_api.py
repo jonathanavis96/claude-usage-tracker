@@ -38,6 +38,52 @@ class ParseTests(unittest.TestCase):
             read_usage(Path(d), fetch=lambda u, h: BODY)
 
 
+class AuthExpiredTests(unittest.TestCase):
+    """On a 401, the sampler must never refresh the token itself (that is Claude Code's
+    job, and a refresh here could rotate the refresh token out from under an active
+    session) -- it only notices when Claude Code already has, by re-reading the
+    credentials file, and retries once only if the on-disk token actually changed."""
+
+    def test_401_with_a_refreshed_credentials_file_retries_once_with_the_new_token(self):
+        import io
+        import urllib.error
+
+        with tempfile.TemporaryDirectory() as d:
+            creds = Path(d, ".credentials.json")
+            creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "stale"}}))
+            seen = []
+
+            def fetch(url, headers):
+                seen.append(headers["Authorization"])
+                if len(seen) == 1:
+                    # Claude Code refreshes the file between our read and this failure.
+                    creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "fresh"}}))
+                    raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b""))
+                return BODY
+
+            u = read_usage(Path(d), fetch=fetch, now=lambda: datetime(2026, 9, 5, tzinfo=timezone.utc))
+            self.assertEqual(seen, ["Bearer stale", "Bearer fresh"])
+            self.assertEqual(u.five_hour, 24.0)
+
+    def test_401_with_the_same_token_on_re_read_raises_auth_expired_not_a_retry(self):
+        import io
+        import urllib.error
+
+        from tracker.usage_api import AuthExpired
+
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "stale"}}))
+            calls = []
+
+            def fetch(url, headers):
+                calls.append(headers["Authorization"])
+                raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b""))
+
+            with self.assertRaises(AuthExpired):
+                read_usage(Path(d), fetch=fetch, now=lambda: datetime(2026, 9, 5, tzinfo=timezone.utc))
+            self.assertEqual(calls, ["Bearer stale"])  # no retry: the token on disk never changed
+
+
 class Retry429Tests(unittest.TestCase):
     def test_429_retries_then_succeeds(self):
         import io
