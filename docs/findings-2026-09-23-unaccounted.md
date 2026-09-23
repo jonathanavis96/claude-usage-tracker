@@ -27,12 +27,12 @@ sessions, and some of them are jwork's. It is not what makes these stretches una
 resolve to that one directory: `.claude`, `.claude-jono`, `.claude-avis` and
 `.claude-javiswork`. Reading each dir's `.claude.json` shows they are not all one account:
 
-| config dir | `oauthAccount.emailAddress` |
+| config dir | signed-in account |
 |---|---|
-| `.claude-javiswork` | jono@greenscape.systems |
-| `.claude-avis` | avis@greenscape.systems |
-| `.claude-dave` | d.jenkinson@greenscape.systems |
-| `.claude-gmail-monitor` | jonathanavis96@gmail.com |
+| `.claude-javiswork` | the Jono Work account (jwork) |
+| `.claude-avis` | a separate work account |
+| `.claude-dave` | the Dave account (dave) |
+| `.claude-gmail-monitor` | Jonathan's personal account |
 | `.claude`, `.claude-jono` | no `oauthAccount` (signed out) |
 
 So the filter is load-bearing. In jwork's meter window (mtime at or after
