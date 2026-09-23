@@ -36,6 +36,22 @@ def parse_usage(body: dict, now: datetime) -> Utilization:
                         seven_day_resets_at=sd_reset)
 
 
+class AuthExpired(Exception):
+    """A 401 whose on-disk access token had not changed since the request that failed.
+
+    Claude Code owns the OAuth refresh: it renews its own token and rewrites
+    `.credentials.json` under the config dir, rotating the refresh token in the
+    process. This sampler must never refresh the token itself -- a refresh here
+    would rotate the refresh token out from under an active, logged-in Claude
+    Code session and could sign it out. So a 401 is handled by re-reading the
+    credentials file (Claude Code may have refreshed it between our read and the
+    failed request) and retrying once only if the token on disk changed; if it
+    is the same token, the account needs an interactive login, not a retry, and
+    this is raised instead so the caller can log a gap with a reason distinct
+    from a transient failure.
+    """
+
+
 RETRY_429_S = (30, 60, 120, 240, 480)
 RETRY_429_MAX_S = 1200  # 20 minutes: doubling backoff caps here once RETRY_429_S is exhausted
 
@@ -72,18 +88,40 @@ def _default_fetch(url: str, headers: dict, sleep: Callable[[float], None] = tim
             attempt += 1
 
 
-def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = None,
-               now: Callable[[], datetime] | None = None) -> Utilization:
+def _read_token(config_dir: Path) -> str:
     creds = Path(config_dir) / ".credentials.json"
     if not creds.exists():
         raise FileNotFoundError(f"no credentials at {creds}")
-    token = json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
-    headers = {"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"}
+    return json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
+
+
+def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = None,
+               now: Callable[[], datetime] | None = None) -> Utilization:
+    config_dir = Path(config_dir)
+    token = _read_token(config_dir)
     # No caller-supplied deadline here, so the default fetch is bounded: it retries a
     # 429 up to len(RETRY_429_S) extra times (matching the old fixed schedule's length)
     # rather than spinning forever, unlike tracker/probe.py's deadline-bounded fetch.
     default_fetch = functools.partial(_default_fetch, max_retries=len(RETRY_429_S))
-    body = (fetch or default_fetch)(USAGE_URL, headers)
+    do_fetch = fetch or default_fetch
+
+    def _call(tok: str) -> dict:
+        headers = {"Authorization": f"Bearer {tok}", "anthropic-beta": "oauth-2025-04-20"}
+        return do_fetch(USAGE_URL, headers)
+
+    try:
+        body = _call(token)
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            raise
+        # The token may have been refreshed (by Claude Code, never by us) between our
+        # read above and this failed request. Re-read it and retry once only if it
+        # actually changed; a 401 against the same token is not transient -- see
+        # AuthExpired.
+        fresh = _read_token(config_dir)
+        if fresh == token:
+            raise AuthExpired(f"401 with unchanged token at {config_dir}") from e
+        body = _call(fresh)
     return parse_usage(body, (now or (lambda: datetime.now(timezone.utc)))())
 
 

@@ -24,7 +24,14 @@ and tracker/weekly.py's parse_row read them unchanged, and reset times make
 window boundaries exact rather than inferred from a drop. A failed read is
 logged as an `error` line, never with the token, and exits 4 as usage-ceiling.py
 does, so the gap shows in the log instead of passing silently; the unit
-counts 4 as success and the next tick tries again.
+counts 4 as success and the next tick tries again. Two failures get their own
+`reason` beside `error`, both still exit 4: `auth_expired` (a 401 whose token
+was the same before and after a re-read of the credentials file -- see
+usage_api.AuthExpired; this sampler never refreshes the token itself, only
+notices when Claude Code already has) and `rate_limited` (a 429, which also
+carries `retry_after_s`; a later tick reads that back off the log itself and
+skips the network call entirely until it has elapsed, rather than retrying
+inside one tick or hammering the endpoint again next minute).
 
     python3 -m tracker.meter_log --config-dir ~/.claude-dave --account dave \\
         --log ~/.paperclip/ops/claude-usage-meter-dave.log
@@ -38,17 +45,23 @@ import functools
 import hashlib
 import json
 import sys
+import urllib.error
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .usage_api import Utilization, _default_fetch, read_usage
+from .usage_api import AuthExpired, Utilization, _default_fetch, read_usage
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
 #: A 429 is logged and left for the next tick. read_usage's own default retries
 #: for up to ~15 minutes, which would carry one oneshot through three of its
 #: own timer's ticks.
 NO_RETRY_FETCH = functools.partial(_default_fetch, max_retries=0)
+#: Fallback backoff when a 429 carries no Retry-After: the measured ceiling on gs is
+#: five calls in ten seconds before a 429 with Retry-After: 300, across three accounts
+#: sampling once a minute each, so 300s is what a real block from this endpoint looks
+#: like.
+DEFAULT_429_BACKOFF_S = 300
 
 
 def account_identity(config_dir: Path) -> str | None:
@@ -98,6 +111,46 @@ def _append(log: Path, line: dict) -> None:
         fh.write(json.dumps(line) + "\n")
 
 
+def _last_line(log: Path) -> dict | None:
+    """The most recent parseable line in `log`, or None for a new, empty or unparseable log."""
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return None
+    for line in reversed(lines):
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return None
+
+
+def _retry_after_s(e: urllib.error.HTTPError) -> float:
+    ra = e.headers.get("Retry-After") if e.headers else None
+    return float(ra) if ra and ra.replace(".", "", 1).isdigit() else DEFAULT_429_BACKOFF_S
+
+
+def _backoff_remaining_s(last: dict | None, now: datetime) -> float | None:
+    """Seconds still to wait, if `last` is an unexpired 429 gap this tick should skip.
+
+    A 429 is rate limiting shared across gs's three accounts (measured ceiling: five
+    calls in ten seconds trips one with Retry-After: 300), so a tick that fires again
+    before that window is over just adds another call against the same block instead
+    of recovering from it. The gap line itself carries the backoff, so a later tick --
+    a separate process, run a minute apart by systemd -- can read it back without any
+    state of its own and skip the network call entirely until it has elapsed.
+    """
+    if not last or last.get("reason") != "rate_limited":
+        return None
+    try:
+        since = datetime.fromisoformat(last["ts"])
+        retry_after_s = float(last["retry_after_s"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    remaining = (since + timedelta(seconds=retry_after_s) - now).total_seconds()
+    return remaining if remaining > 0 else None
+
+
 def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict], dict] | None = None,
            now: Callable[[], datetime] | None = None) -> int:
     """Read the meter once and append one line to `log`. Returns the exit code."""
@@ -112,12 +165,40 @@ def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict
               file=sys.stderr)
         return EXIT_REFUSED
     clock = now or (lambda: datetime.now(timezone.utc))
+    now_ts = clock()
+    remaining = _backoff_remaining_s(_last_line(log), now_ts)
+    if remaining is not None:
+        # Still inside a previous tick's 429 backoff: skip the network call rather than
+        # retrying inside this tick, and write nothing -- the gap line already on the
+        # log carries the backoff the next tick will check.
+        print(f"{account}: skipping tick, {remaining:.0f}s left in 429 backoff", file=sys.stderr)
+        return EXIT_READ_FAILED
     try:
         u = read_usage(config_dir, fetch=fetch or NO_RETRY_FETCH, now=clock)
         if u.five_hour is None:
             raise ValueError("no five_hour utilization in the usage response")
-    except Exception as e:  # noqa: BLE001 - any failed read is one logged gap, never a crashed timer
-        _append(log, {"ts": _stamp(clock()), "account": account, "identity": identity,
+    except AuthExpired as e:
+        # Same token before and after the 401: not transient. Logged with its own
+        # reason so it reads differently from a network hiccup, but still exit 4 --
+        # the next tick tries again, and by then Claude Code may have refreshed it.
+        _append(log, {"ts": _stamp(now_ts), "account": account, "identity": identity,
+                      "error": f"{type(e).__name__}: {e}"[:200], "reason": "auth_expired"})
+        print(f"{account}: usage read failed (token expired), logged as a gap", file=sys.stderr)
+        return EXIT_READ_FAILED
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            retry_after_s = _retry_after_s(e)
+            _append(log, {"ts": _stamp(now_ts), "account": account, "identity": identity,
+                          "error": f"{type(e).__name__}: {e}"[:200], "reason": "rate_limited",
+                          "retry_after_s": retry_after_s})
+            print(f"{account}: usage read failed (429), backing off {retry_after_s:.0f}s", file=sys.stderr)
+            return EXIT_READ_FAILED
+        _append(log, {"ts": _stamp(now_ts), "account": account, "identity": identity,
+                      "error": f"{type(e).__name__}: {e}"[:200]})
+        print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
+        return EXIT_READ_FAILED
+    except Exception as e:  # noqa: BLE001 - any other failed read is one logged gap, never a crashed timer
+        _append(log, {"ts": _stamp(now_ts), "account": account, "identity": identity,
                       "error": f"{type(e).__name__}: {e}"[:200]})
         print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED

@@ -80,6 +80,75 @@ class SampleTests(unittest.TestCase):
             self.assertEqual(sample(cfg, "dave", log, fetch=lambda url, headers: BODY, now=lambda: NOW), 2)
             self.assertFalse(log.exists())
 
+    def test_a_401_with_the_same_token_is_logged_as_auth_expired_not_a_generic_gap(self):
+        def fail(url, headers):
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "meter.log"
+            rc = sample(cfg, "dave", log, fetch=fail, now=lambda: NOW)
+            self.assertEqual(rc, 4)
+            row = json.loads(log.read_text())
+            self.assertEqual(row["reason"], "auth_expired")
+            self.assertIn("401", row["error"])
+            self.assertNotIn(TOKEN, log.read_text())
+
+    def test_a_401_with_a_refreshed_credentials_file_retries_once_and_samples(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "meter.log"
+            calls = []
+
+            def fetch(url, headers):
+                calls.append(headers["Authorization"])
+                if len(calls) == 1:
+                    (cfg / ".credentials.json").write_text(
+                        json.dumps({"claudeAiOauth": {"accessToken": "fresh-token"}}))
+                    raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+                return BODY
+            rc = sample(cfg, "dave", log, fetch=fetch, now=lambda: NOW)
+            self.assertEqual(rc, 0)
+            self.assertEqual(calls, [f"Bearer {TOKEN}", "Bearer fresh-token"])
+            self.assertEqual(len(log.read_text().splitlines()), 1)  # the retry, not a logged gap
+
+    def test_a_429_is_logged_rate_limited_with_its_retry_after(self):
+        def fail(url, headers):
+            raise urllib.error.HTTPError(url, 429, "Too Many Requests", {"Retry-After": "300"}, None)
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "meter.log"
+            rc = sample(cfg, "dave", log, fetch=fail, now=lambda: NOW)
+            self.assertEqual(rc, 4)
+            row = json.loads(log.read_text())
+            self.assertEqual(row["reason"], "rate_limited")
+            self.assertEqual(row["retry_after_s"], 300.0)
+
+    def test_a_tick_inside_a_still_running_429_backoff_skips_the_network_call(self):
+        calls = []
+
+        def fetch(url, headers):
+            calls.append(1)
+            return BODY
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "meter.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(json.dumps({"ts": "2026-09-15T20:58:00+00:00", "account": "dave",
+                                       "identity": account_identity(cfg), "error": "HTTPError: 429",
+                                       "reason": "rate_limited", "retry_after_s": 300}) + "\n")
+            # NOW is 2026-09-15T21:00:03Z, 123s after the gap; 300s backoff has not elapsed.
+            rc = sample(cfg, "dave", log, fetch=fetch, now=lambda: NOW)
+            self.assertEqual(rc, 4)
+            self.assertEqual(calls, [])  # skipped the tick entirely: no network call was made
+            self.assertEqual(len(log.read_text().splitlines()), 1)  # nothing new written
+
+    def test_a_tick_after_the_429_backoff_has_elapsed_samples_normally(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "meter.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(json.dumps({"ts": "2026-09-15T20:00:00+00:00", "account": "dave",
+                                       "identity": account_identity(cfg), "error": "HTTPError: 429",
+                                       "reason": "rate_limited", "retry_after_s": 300}) + "\n")
+            rc = sample(cfg, "dave", log, fetch=lambda url, headers: BODY, now=lambda: NOW)
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(log.read_text().splitlines()), 2)
+
     def test_the_timer_path_never_sits_in_429_backoff(self):
         # read_usage's own default retries a 429 for up to ~15 minutes; a five-minute
         # sampler must give up and let the next tick try.
@@ -110,6 +179,21 @@ class UnitFileTests(unittest.TestCase):
         timer = (UNITS / "claude-usage-meter-dave.timer").read_text()
         self.assertIn("OnUnitActiveSec=1min", timer)
         self.assertIn("Unit=claude-usage-meter-dave.service", timer)
+        self.assertIn("WantedBy=timers.target", timer)
+
+    def test_avis_sampler_reads_avis_into_its_own_log(self):
+        service = (UNITS / "claude-usage-meter-avis.service").read_text()
+        self.assertIn("-m tracker.meter_log", service)
+        self.assertIn("--config-dir %h/.claude-avis", service)
+        self.assertIn("--account avis", service)
+        self.assertIn("--log %h/.paperclip/ops/claude-usage-meter-avis.log", service)
+        self.assertIn("SuccessExitStatus=0 4", service)
+        self.assertIn("WorkingDirectory=%h/claude-usage-tracker", service)
+
+    def test_avis_timer_samples_every_minute(self):
+        timer = (UNITS / "claude-usage-meter-avis.timer").read_text()
+        self.assertIn("OnUnitActiveSec=1min", timer)
+        self.assertIn("Unit=claude-usage-meter-avis.service", timer)
         self.assertIn("WantedBy=timers.target", timer)
 
     def test_jwork_timer_samples_every_minute(self):
