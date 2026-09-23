@@ -266,6 +266,32 @@ class PoolingTests(unittest.TestCase):
         self.assertEqual(mr["per_family"]["sonnet"]["interval"], [0.48, 0.92])
         self.assertIn("disagree", mr["per_family"]["sonnet"]["why"])
 
+    def test_a_pooled_interval_that_reaches_zero_publishes_no_value_and_no_interval(self):
+        """The fit returning a coefficient is not the same as the fit measuring a rate.
+
+        Haiku after 2026-09-23: it is priced, so its tokens reach the design matrix, but it
+        carries at most a quarter of any clean stretch and the bootstrap draws include ones
+        where the other columns absorb it whole. The interval then reaches zero, and the
+        midpoint of such an interval is what tracker/gs_passive.py would price a stretch at
+        if it were published -- so neither the point estimate nor the interval is.
+        """
+        s1 = {"jwork/pre": {"max_share": {"opus": 1.0, "sonnet": 0.7, "haiku": 0.26, "fable": 0.8}}}
+        s3 = self._s3(0.50, 0.54)
+        for row in s3.values():
+            for side in (row, row["joint"]):
+                side["rates"]["haiku"] = 2.0
+                side["interval"]["haiku"] = [0.0, 13.0]
+        haiku = measured_rates(s1, s3)["per_family"]["haiku"]
+        self.assertIsNone(haiku["input"])
+        self.assertIsNone(haiku["interval"])
+        self.assertIsNone(haiku["times_opus_interval"])
+        self.assertIn("cannot separate Haiku from free", haiku["status"])
+        # The fits' own coefficients stay on the record, and the sentence quotes the interval.
+        self.assertEqual(sorted(haiku["per_fit"]), ["jwork/post", "jwork/pre"])
+        self.assertIn("reaches zero", haiku["why"])
+        # A family the same fits do pin down is untouched by the rule.
+        self.assertAlmostEqual(measured_rates(s1, s3)["per_family"]["sonnet"]["input"], 0.52)
+
     def test_the_opus_row_is_the_anchor_and_says_it_came_from_the_reference(self):
         mr = measured_rates({}, self._s3(0.50, 0.54))
         opus = mr["per_family"]["opus"]

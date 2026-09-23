@@ -513,9 +513,17 @@ class PublishedBlockTests(unittest.TestCase):
 
         The reference table has a Haiku row and the page draws it, but nothing divides by it,
         so the row publishes the sentence saying so and no token figure at all.
+
+        The sentence itself is whatever history/model-rates.json holds -- the reason has
+        already changed once, when 2026-09-23 priced Haiku 4.5 and its tokens started
+        reaching the fits without ever carrying a stretch -- so this reads it from there
+        rather than pinning the wording. What must not change is the shape: a status
+        sentence, no value, no interval, and the reference figure still carried.
         """
         haiku = self.credits["per_model"]["haiku"]
-        self.assertEqual(haiku["status"], "not measurable, no clean stretch is Haiku-heavy")
+        expected = C.load_model_rates()["per_family"]["haiku"]["status"]
+        self.assertTrue(expected.startswith("not measurable"), expected)
+        self.assertEqual(haiku["status"], expected)
         self.assertEqual(haiku["rate_source"], "measured")
         self.assertIsNone(haiku["credits_per_token"]["input"])
         self.assertIsNone(haiku["credits_per_token_interval"])
@@ -523,7 +531,7 @@ class PublishedBlockTests(unittest.TestCase):
             figure = haiku["tokens_per_window"][side]
             self.assertIsNone(figure["value"])
             self.assertIsNone(figure["interval"])
-            self.assertEqual(figure["status"], "not measurable, no clean stretch is Haiku-heavy")
+            self.assertEqual(figure["status"], expected)
         # The reference figure is still carried, for the page to draw beside the sentence.
         self.assertEqual(haiku["reference_rate"]["input"], 2 / 15)
 

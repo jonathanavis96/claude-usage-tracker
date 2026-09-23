@@ -641,6 +641,17 @@ def weight_pool(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
 #: it gets a value (the median) and an interval (the union) and `status: null`, with `agree:
 #: false` on the record and a `why` sentence saying so; see `adopt`.
 NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
+#: The same, for a family the fits do carry but cannot separate from free. A bootstrap
+#: interval whose lower end is zero says the resampled data contain draws in which the
+#: family's whole contribution is explained by the other columns, so the point estimate is
+#: whatever the collinearity happened to leave there and not a measurement. Haiku is the
+#: case that made this rule: once 2026-09-23 priced Haiku 4.5 its tokens entered the fits,
+#: but it carries at most 0.257 of any clean stretch's raw tokens and none at all in three
+#: quarters of them, and the pooled rate came out at 3.3 times Opus with the interval
+#: [0.000, 13.841] -- a figure the page would have printed beside a five-hour window of
+#: nine million Haiku tokens with no upper bound on it.
+NOT_IDENTIFIED = ("not measurable, the fits cannot separate {family} from free: its pooled "
+                  "interval reaches zero")
 
 
 def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
@@ -663,10 +674,29 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
         row = pooled[f]
         anchor = f == "opus"
         value = opus_in if anchor else row["measured"]
-        status = None if anchor or value is not None else NOT_MEASURABLE.format(family=f.capitalize())
+        # A pooled interval that reaches zero is not a measurement of the family, whatever
+        # the point estimate is: withhold the value and the interval both, and say so
+        # (NOT_IDENTIFIED). Withholding the interval as well is deliberate. An interval is not
+        # inert here -- tracker/gs_passive.py prices a stretch at the midpoint of one where a
+        # family has no single value ("interval_midpoint"), which for Haiku's [0.000, 13.841]
+        # would charge 6.92 credits a token, ten times Opus and fifty times the reference,
+        # on the third of gs's stretches that carry any Haiku. The fits' own coefficients stay
+        # on the record in `per_fit`, and `why` quotes the interval in words.
+        identified = bool(row["interval"]) and row["interval"][0] > 0
+        if not anchor and value is not None and not identified:
+            value = None
+        pooled_interval = None if anchor or not identified else row["interval"]
+        if anchor:
+            status = None
+        elif value is not None:
+            status = None
+        elif row["n_fits"]:
+            status = NOT_IDENTIFIED.format(family=f.capitalize())
+        else:
+            status = NOT_MEASURABLE.format(family=f.capitalize())
         per_family[f] = {
             "input": value,
-            "interval": None if anchor else row["interval"],
+            "interval": pooled_interval,
             "output_multiplier": out_mult,
             "status": status,
             # The anchor is the reference table's own Opus row: this work measures every other
@@ -676,8 +706,8 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             "anchor": anchor,
             "reference_input": SHELLAC.get(f),
             "times_opus": (value / opus_in if value else None),
-            "times_opus_interval": ([row["interval"][0] / opus_in, row["interval"][1] / opus_in]
-                                    if row["interval"] else None),
+            "times_opus_interval": ([pooled_interval[0] / opus_in, pooled_interval[1] / opus_in]
+                                    if pooled_interval else None),
             "n_fits": row["n_fits"], "points": row["points"], "per_fit": row["per_fit"],
             "agree": row["agree"],
             "max_share_of_a_clean_stretch": max_share[f],
@@ -690,7 +720,7 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
         "nothing in our stretches would show it.")
     for f in FAMILIES:
         row = per_family[f]
-        if f == "opus" or row["agree"] is not False:
+        if f == "opus" or row["agree"] is not False or row["input"] is None:
             continue
         sides = ", ".join(f"{label} {v['rate'] / opus_in:.3f}x Opus "
                           f"[{v['interval'][0] / opus_in:.3f}, {v['interval'][1] / opus_in:.3f}]"
@@ -702,12 +732,30 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             "intervals rather than a single fit's. The data cannot say whether the family's "
             "rate moved or the five-hour window did: the window fitted on the same stretches "
             "moves the same way.")
-    if per_family["haiku"]["status"]:
-        per_family["haiku"]["why"] = (
-            f"the highest Haiku share of any clean stretch on a fitted account is "
-            f"{max_share['haiku']:.3f}, and no fit includes Haiku at all, so there is nothing "
-            "to measure a Haiku rate from. The reference figure stands beside this row, "
-            "untested by our data and used in no arithmetic.")
+    for f in FAMILIES:
+        row = per_family[f]
+        if not row["status"]:
+            continue
+        share = (f"the highest {f.capitalize()} share of any clean stretch on a fitted account "
+                 f"is {max_share[f]:.3f}")
+        if row["n_fits"]:
+            iv = pooled[f]["interval"]
+            row["why"] = (
+                f"{share}, so no fit has a stretch in which this family carries the meter "
+                f"movement, and none can separate its rate from the other columns'. "
+                f"{row['n_fits']} of them do return a coefficient for it, but their pooled "
+                f"interval runs [{iv[0] / opus_in:.2f}x, {iv[1] / opus_in:.2f}x] Opus and "
+                "reaches zero -- the fit saying the family's whole contribution can be "
+                "explained without it. Neither the value nor that interval is published, "
+                "because a published interval is priced at its midpoint where there is no "
+                "value (tracker/gs_passive.py) and this one's midpoint is not a rate anything "
+                "measured. The per-fit coefficients are on this record; the reference figure "
+                "stands beside the row, untested by our data and used in no arithmetic.")
+        else:
+            row["why"] = (
+                f"{share}, and no fit includes {f.capitalize()} at all, so there is nothing "
+                "to measure a rate from. The reference figure stands beside this row, "
+                "untested by our data and used in no arithmetic.")
     return {
         "unit": "credits per input token; the output rate is output_multiplier times it",
         "variant": variant, "output_multiplier": out_mult,
@@ -721,9 +769,10 @@ def measured_rates(s1: dict, s3: dict, variant: str = "joint", mult: str = "out5
             "the account and side of 2026-09-14, with the Opus coefficient rescaled afterwards to "
             f"{opus_in:.4f} credits per token so the fit reads in credits. Intervals are 80% "
             "bootstrap intervals over resampled stretches. A family's rate is the median of the "
-            "per-fit point estimates and the union of their intervals, and only where every fit's "
-            "interval for it overlaps every other's; where they do not it keeps the interval and "
-            "no value."),
+            "per-fit point estimates and its interval is the union of theirs, whether or not the "
+            "fits agree (`agree` records that, and `why` says what the disagreement is). A family "
+            "whose pooled interval reaches zero keeps the interval and no value: the fit cannot "
+            "separate it from free."),
     }
 
 
@@ -743,8 +792,13 @@ def section5(window: dict, mr: dict) -> dict:
                "rate_source": a["rate_source"],
                "shellac_tokens": credits / a["reference_input"] if a["reference_input"] else None,
                "measured_tokens": credits / a["input"] if a["input"] else None,
+               # An interval whose ends are both above zero inverts into a token interval; one
+               # that reaches zero does not -- a free rate buys an unbounded number of tokens,
+               # and `inf` is not a figure to publish beside the others. The rate interval is
+               # still carried above, so the reader sees what the fit did say.
                "measured_tokens_interval": ([credits / a["interval"][1], credits / a["interval"][0]]
-                                            if a["interval"] else None)}
+                                            if a["interval"] and a["interval"][0] > 0
+                                            and a["interval"][1] > 0 else None)}
         rows[f] = row
     return {"window_credits_per_pct": per_pct, "window_credits": credits, "rows": rows}
 
@@ -884,9 +938,11 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
                         f"tokens={row['measured_tokens']:,.0f}")
         elif row["rate_interval"]:
             iv = row["measured_tokens_interval"]
+            tokens = (f" tokens [{iv[0]:,.0f}, {iv[1]:,.0f}]" if iv
+                      else " tokens unbounded (the rate interval reaches zero)")
             measured = (f"{row['status']}: rate interval "
-                        f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}] "
-                        f"tokens [{iv[0]:,.0f}, {iv[1]:,.0f}], no value")
+                        f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}]"
+                        f"{tokens}, no value")
         else:
             measured = row["status"] or "measured rate=NOT MEASURABLE"
         print(f"   {f:7} {shellac:52} {measured}")
@@ -964,7 +1020,8 @@ def main(argv: list[str] | None = None) -> int:
                 "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "inputs": ["history/gs-passive.json", str(a.masterrig), "history/harness-runs.jsonl",
                            "history/probes.jsonl", "data/effort_matrix.json", "data/prices.json"],
-                "findings": "docs/findings-2026-09-20-measured-rates.md",
+                "findings": ["docs/findings-2026-09-20-measured-rates.md",
+                             "docs/findings-2026-09-23-sonnet-rate.md"],
                 "no_traffic": "read-only arithmetic over committed files; no account was driven",
             },
             "measured_rates": mr,
