@@ -90,6 +90,7 @@ from pathlib import Path
 from statistics import mean, median, stdev
 
 from . import credits as credit_model
+from . import speed
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
@@ -426,7 +427,8 @@ def _stretch_record(v: Verdict, reset_source: str = "logged") -> dict:
             "usd": _r(s.usd), "usd_per_pct": _r(s.usd_per_pct), "bounds": [_r(lo), _r(hi)], "tokens": tokens,
             "unpriced_tokens": s.unpriced_tokens, "unpriced": s.unpriced, "turns": s.turns,
             "reset_verified": reset_verified, "reset_source": reset_source, "status": status, "capture_status": v.status,
-            "reference": _r(v.reference), "capture": _r(v.capture)}
+            "reference": _r(v.reference), "capture": _r(v.capture),
+            "fast_mode_tokens": s.fast_mode_tokens, "fast_mode_turns": s.fast_mode_turns}
 
 
 def _pieces(stretches: list[Stretch]) -> int:
@@ -520,16 +522,25 @@ def _split(stretches: list[Stretch]) -> dict:
     return out
 
 
+def fast_mode_ids(files: Iterable[Path]) -> set[str]:
+    """Message ids of the requests in these transcripts that ran in Opus fast mode.
+
+    tracker/speed.py's rule, over the same files the stretches are built from: an Opus
+    request whose session's running median speed is at least FAST_FACTOR times the
+    model's median over the scan. The meter never counts them (tracker/join.py Stretch).
+    """
+    return speed.fast_mode(speed.requests_from_files(files), every=True)
+
+
 def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict] = (), now: datetime | None = None,
            withhold: dict[str, list[str]] | None = None, until: datetime | None = None,
            home: Path | None = None) -> dict:
     """Join, judge and summarise every account; the JSON tracker.gs_passive writes."""
     now = now or datetime.now(timezone.utc)
     withhold = withhold or {}
-    stretches, meta, weekly, samples_by_account = {}, {}, {}, {}
+    stretches, meta, weekly, reset_sources = {}, {}, {}, {}
     for name, account in accounts.items():
         samples = load_samples(account, until)
-        samples_by_account[name] = samples
         # Until inferred resets are certified, nothing is computed from them: the join,
         # the weekly points and every `reset_verified` rollup see the reset-less samples
         # they saw before, and only `_reset_source` reads the inferred ones.
@@ -538,7 +549,8 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         since = samples[0].ts if samples else None
         files, own_sessions = transcript_files(account, since, withhold.get(name, ())) if samples else ([], None)
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
-        stretches[name] = build_stretches(joined, turns, prices)
+        stretches[name] = build_stretches(joined, turns, prices, fast=fast_mode_ids(files))
+        reset_sources[name] = {s.start: _reset_source(s, samples) for s in stretches[name]}
         weekly[name] = window_points(joined)
         root = account.config_dir / "projects"
         meta[name] = {
@@ -555,15 +567,27 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                             "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
                             "own_sessions": own_sessions},
         }
+    return summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until)
+
+
+def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict[datetime, str]], meta: dict,
+              weekly: dict, probe_rows: Iterable[dict], prices: dict, now: datetime,
+              until: datetime | None = None) -> dict:
+    """The capture check and everything read off it, from built stretches: `report`'s second half.
+
+    Split out so a stretch file can be re-judged from its own records after they are
+    corrected (tools/fast_mode_correction.py), by the same code that wrote it.
+    `reset_sources` is each account's `_reset_source` per stretch, keyed by its start.
+    """
     checked = check(stretches, probe_readings(list(probe_rows), prices))
     out_accounts = {}
-    for name in accounts:
+    for name in stretches:
         vs, rs = checked.verdicts[name], checked.runs[name]
         daily = _daily(vs)
         accepted = [v for v in vs if publishable(v)]
         out_accounts[name] = {
             "account": name, **meta[name],
-            "stretches": [_stretch_record(v, _reset_source(v.stretch, samples_by_account[name])) for v in vs],
+            "stretches": [_stretch_record(v, reset_sources[name][v.stretch.start]) for v in vs],
             "runs": [_run_record(r) for r in rs],
             "daily": daily,
             "split": _split([v.stretch for v in accepted]),

@@ -146,6 +146,14 @@ class FastModeTest(unittest.TestCase):
         self.assertTrue({f"f{i}" for i in range(11)} <= flagged)
         self.assertFalse({f"s{i}" for i in range(5, 30)} & flagged)
 
+    def test_every_also_takes_a_fast_sessions_short_requests(self):
+        lines = session(20, 170, prefix="f") + [user(1000), block(1001, "short", 40)]
+        lines += session(40, 70, start=5000, prefix="s") + [user(9000), block(9001, "short-std", 40)]
+        reqs = requests_in(lines[:42], "fast") + requests_in(lines[42:], "std")
+        self.assertNotIn("short", fast_mode(reqs))
+        flagged = fast_mode(reqs, every=True)
+        self.assertEqual(flagged, {f"f{i}" for i in range(20)} | {"short"})
+
     def test_only_opus_is_flagged(self):
         lines = session(40, 70, prefix="s", model="claude-sonnet-5") + \
             session(20, 170, start=5000, prefix="f", model="claude-sonnet-5")

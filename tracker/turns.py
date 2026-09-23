@@ -52,6 +52,9 @@ class Turn:
     # separately because it has a different API price, but is deliberately not
     # added by total: cache_write already contains it.
     cache_write_1h: int = 0
+    #: The response's `message.id`, which tracker/speed.py keys requests by: how a
+    #: stretch tells a fast-mode request's tokens from the rest (tracker/join.py).
+    id: str = ""
 
     @property
     def total(self) -> int:
@@ -67,30 +70,41 @@ def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
     seen: set[str] = set()
     for p in paths:
         with open(p, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                try:
-                    d = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if d.get("type") != "assistant":
-                    continue
-                m = d.get("message") or {}
-                u = m.get("usage")
-                mid = m.get("id")
-                if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
-                    continue
-                seen.add(mid)
-                cache_detail = u.get("cache_creation") or {}
-                cache_write_1h = int(cache_detail.get("ephemeral_1h_input_tokens") or 0)
-                cache_write = int(u.get("cache_creation_input_tokens") or 0)
-                # Some producers expose only the duration breakdown.  Preserve
-                # the compatible aggregate rather than dropping those writes.
-                if not cache_write and isinstance(cache_detail, dict):
-                    cache_write = (int(cache_detail.get("ephemeral_5m_input_tokens") or 0)
-                                   + cache_write_1h)
-                yield Turn(_parse_ts(d["timestamp"]), m.get("model") or "unknown",
-                           int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
-                           int(u.get("cache_read_input_tokens") or 0), cache_write, cache_write_1h)
+            yield from turns_in(_json_lines(fh), seen)
+
+
+def _json_lines(fh: Iterable[str]) -> Iterator[dict]:
+    for line in fh:
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(d, dict):
+            yield d
+
+
+def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
+    """The turns of one transcript's parsed lines: each message id's first line, once across `seen`."""
+    for d in lines:
+        if d.get("type") != "assistant":
+            continue
+        m = d.get("message") or {}
+        u = m.get("usage")
+        mid = m.get("id")
+        if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
+            continue
+        seen.add(mid)
+        cache_detail = u.get("cache_creation") or {}
+        cache_write_1h = int(cache_detail.get("ephemeral_1h_input_tokens") or 0)
+        cache_write = int(u.get("cache_creation_input_tokens") or 0)
+        # Some producers expose only the duration breakdown.  Preserve
+        # the compatible aggregate rather than dropping those writes.
+        if not cache_write and isinstance(cache_detail, dict):
+            cache_write = (int(cache_detail.get("ephemeral_5m_input_tokens") or 0)
+                           + cache_write_1h)
+        yield Turn(_parse_ts(d["timestamp"]), m.get("model") or "unknown",
+                   int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+                   int(u.get("cache_read_input_tokens") or 0), cache_write, cache_write_1h, mid)
 
 
 def normalize_model(model_id: str) -> str | None:

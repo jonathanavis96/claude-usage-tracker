@@ -10,6 +10,7 @@ one point of a 10% stretch is a tenth of that.
 from __future__ import annotations
 
 import bisect
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from itertools import pairwise
@@ -162,6 +163,12 @@ class Stretch:
     up to one point of rounding, and `bounds` widens the rate by exactly that.
     `tokens` keeps canonical model -> class -> count, so a consumer can revalue
     the stretch at later prices, as the publisher revalues probe rows.
+
+    Opus fast mode is billed to usage credits and never reaches the subscription meter
+    (code.claude.com/docs/en/fast-mode), so a fast-mode request's tokens, which the
+    transcripts hold all the same, are kept out of `tokens` and `usd` and recorded in
+    `fast_mode_tokens` (model -> class -> count, `tokens`' shape) and `fast_mode_turns`
+    instead. Which requests ran fast is tracker/speed.py's `fast_mode`.
     """
     start: datetime
     end: datetime
@@ -173,6 +180,8 @@ class Stretch:
     unpriced: dict = field(default_factory=dict)
     turns: int = 0
     reset_verified: bool = True
+    fast_mode_tokens: dict = field(default_factory=dict)
+    fast_mode_turns: int = 0
 
     @property
     def usd_per_pct(self) -> float:
@@ -191,7 +200,15 @@ class Stretch:
         total = priced + self.unpriced_tokens
         return priced / total if total else 1.0
 
-    def add(self, turn: Turn, prices: dict) -> None:
+    def add(self, turn: Turn, prices: dict, fast: bool = False) -> None:
+        if fast:
+            self.fast_mode_turns += 1
+            by_class = self.fast_mode_tokens.setdefault(normalized_raw_model(turn.model), {c: 0 for c in CLASSES})
+            for c in CLASSES:
+                by_class[c] += getattr(turn, c)
+            if turn.cache_write_1h:
+                by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
+            return
         self.turns += 1
         usd = turn_meter_usd(turn, prices)
         if usd is None:
@@ -211,12 +228,14 @@ class Stretch:
 
 
 def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stretch_pct: float = STRETCH_PCT,
-                    max_gap: timedelta = MAX_PAIR_GAP) -> list[Stretch]:
+                    max_gap: timedelta = MAX_PAIR_GAP, fast: Collection[str] = frozenset()) -> list[Stretch]:
     """Stretches of one account's meter, each closed once it has moved `stretch_pct`.
 
     A turn belongs to the pair whose [earlier, later) readings contain its
     timestamp, as in build_intervals. The stretch still open at the end of the
-    samples is not returned: it has not moved far enough to be read.
+    samples is not returned: it has not moved far enough to be read. A turn whose
+    message id is in `fast` ran in Opus fast mode, which the meter never counts
+    (Stretch), so its tokens go to `fast_mode_tokens`, not `tokens`.
     """
     samples = sorted(samples, key=lambda s: s.ts)
     turns = sorted(turns, key=lambda t: t.ts)
@@ -238,7 +257,7 @@ def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stre
         cur.end = b.ts
         cur.delta_pct += b.five_hour - a.five_hour
         for t in turns[bisect.bisect_left(keys, a.ts):bisect.bisect_left(keys, b.ts)]:
-            cur.add(t, prices)
+            cur.add(t, prices, t.id in fast)
         if cur.delta_pct >= stretch_pct:
             out.append(cur)
             cur = None
