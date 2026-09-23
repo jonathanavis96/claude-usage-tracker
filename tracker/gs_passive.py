@@ -209,23 +209,52 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     return [s for s in samples if until is None or s.ts <= until]
 
 
-def transcript_files(account: Account, since: datetime | None,
-                     withhold: Iterable[str] = ()) -> tuple[list[Path], dict | None]:
-    """This account's transcripts, and (kept, dropped) if the pooled-projects filter applied.
+def _session_ids(config_dir: Path) -> set[str]:
+    """The sessions Claude Code has recorded under this config dir, by `session-env` entry."""
+    session_env = config_dir / "session-env"
+    if not session_env.is_dir():
+        return set()
+    return {p.name for p in session_env.iterdir() if p.is_dir()}
 
-    jwork's `projects/` is a symlink shared with the bare `~/.claude` and
-    `~/.claude-jono` config dirs (see the module docstring): a raw glob over it
-    would count those other logins' tokens as jwork's own. Claude Code writes a
+
+def transcript_files(account: Account, since: datetime | None, withhold: Iterable[str] = (),
+                     home: Path | None = None) -> tuple[list[Path], dict | None]:
+    """This account's transcripts, and how the pooled-projects filter split them, if it applied.
+
+    jwork's `projects/` is a symlink shared with the bare `~/.claude`,
+    `~/.claude-jono` and `~/.claude-avis` config dirs (see the module
+    docstring): a raw glob over it would count those other logins' tokens as
+    jwork's own -- `.claude-avis` alone holds 430 files and 3.09 billion tokens
+    of another account in jwork's meter window. Claude Code writes a
     per-config-dir `<config dir>/session-env/<sessionId>/` for every session it
     runs under that login, and a transcript's session id is its filename stem, or
     its parent session's for a sub-agent file (tracker/turns.py
     transcript_session_id) -- the same rule contrib/sample.py's `own_session_filter` applies for
-    the contributed export. Here it fires whenever `projects/` is itself a
-    symlink and the account has a `session-env` directory to filter by; with
-    no `session-env` the filter is a no-op even for a symlinked root, since
-    there is nothing to tell sessions apart with. The second return value is
-    `None` when the filter did not apply, or `{"kept": n, "dropped": m}` when
-    it did, for the account's `transcripts` meta.
+    the contributed export.
+
+    The filter fires whenever the transcripts root is *shared* -- another config
+    dir under `home` resolves to the same directory -- or is reached through a
+    symlink at all, and the account has a `session-env` directory to filter by.
+    Sharing is the condition that matters; the symlink test is kept beside it
+    because a pooled root can be reached without `projects/` itself being the
+    link (`~/.claude-javiswork` could be the link instead), and because a pooled
+    root whose other config dirs have since been removed is still not this
+    account's own. With no `session-env` the filter is a no-op even for a shared
+    root, since there is nothing to tell sessions apart with.
+
+    The second return value is `None` when the filter did not apply, and
+    otherwise counts what it did, for the account's `transcripts` meta:
+    `dropped_to` names the config dir that claims each dropped transcript, and
+    `unclaimed` counts the dropped transcripts *no* config dir under `home`
+    claims. That last number is the blind spot, and it is reported rather than
+    silently folded into `dropped`: a session that never wrote a `session-env`
+    entry -- a one-shot `claude -p` that starts no shell, which is what the
+    tracker's own retired probe, the airlock bench and the filing judge all are
+    -- cannot be attributed to any login, so it is dropped even when it was this
+    account's own spend. On 2026-09-23 that was 1,407 files, 1,518 turns and
+    39.7M tokens in jwork's meter window, against 1,782 files and 8,316M tokens
+    kept: 0.48%, and adding every one of them lifts no unaccounted stretch into
+    the accepted band. docs/findings-2026-09-23-unaccounted.md has the working.
     """
     root = account.config_dir / "projects"
     if not root.exists():
@@ -233,15 +262,29 @@ def transcript_files(account: Account, since: datetime | None,
     patterns = list(withhold)
     paths = [p for p in transcript_paths(root, since)
             if not any(fnmatch(str(p.relative_to(root)), pat) for pat in patterns)]
-    if not root.is_symlink():
+    home = Path(home) if home is not None else account.config_dir.parent
+    others = shared_with(account, home)
+    if not others and not root.is_symlink():
         return paths, None
-    session_env = account.config_dir / "session-env"
-    if not session_env.is_dir():
+    if not (account.config_dir / "session-env").is_dir():
         return paths, None
-    own_ids = {p.name for p in session_env.iterdir() if p.is_dir()}
+    own_ids = _session_ids(account.config_dir)
     kept = [p for p in paths if transcript_session_id(p) in own_ids]
+    claims = {name: _session_ids(home / name) for name in others}
+    dropped_to: dict[str, int] = {}
+    unclaimed = 0
+    for p in paths:
+        sid = transcript_session_id(p)
+        if sid in own_ids:
+            continue
+        claimed = [name for name, ids in claims.items() if sid in ids]
+        if claimed:
+            dropped_to[claimed[0]] = dropped_to.get(claimed[0], 0) + 1
+        else:
+            unclaimed += 1
     return kept, {"kept": len(kept), "dropped": len(paths) - len(kept),
-                  "subagent_files": sum(1 for p in kept if p.parent.name == "subagents")}
+                  "subagent_files": sum(1 for p in kept if p.parent.name == "subagents"),
+                  "dropped_to": dict(sorted(dropped_to.items())), "unclaimed": unclaimed}
 
 
 def shared_with(account: Account, home: Path) -> list[str]:
