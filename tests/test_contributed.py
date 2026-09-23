@@ -14,6 +14,7 @@ import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import ClassVar
 
 from tracker.contributed import _price, _weighted_median, aggregate, fetch, main, merge
 
@@ -344,7 +345,7 @@ class PriceTests(unittest.TestCase):
     # Issue 58, item 1: _price took an id exactly, so an id stored by another client
     # with the [1m] marker or a dated suffix was skipped here but priced on the
     # personal page, which mirrors contrib/sample.py normalize_model.
-    ROWS = {"claude-opus-5-5": {"input": 5}, "claude-haiku-4-5": {"input": 1}, "claude-fable-5-1": {"input": 9}}
+    ROWS: ClassVar[dict] = {"claude-opus-5-5": {"input": 5}, "claude-haiku-4-5": {"input": 1}, "claude-fable-5-1": {"input": 9}}
 
     def test_strips_the_1m_marker_and_a_trailing_date_before_pricing(self):
         self.assertIs(_price("claude-opus-5-5[1m]", self.ROWS), self.ROWS["claude-opus-5-5"])

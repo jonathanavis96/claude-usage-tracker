@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
@@ -77,6 +77,15 @@ WEEKLY_WINDOW_RATIOS_BASIS = {
 # account across published runs, or a reader's saved comparison silently repoints.
 ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"), ("avis", "a4"))
 MAX_SAMPLE_AGE_DAYS = 10
+#: How old an account's feed may be at publish time before `account_feeds` calls it
+#: stopped. masterrig's bin/passive.sh pushes once a day (01:15), so a day and a half
+#: allows one late run; gs's bin/daily.sh reads the gs accounts' meters every hour, so
+#: six hours is several missed runs, not one slow one.
+MASTERRIG_FEED_MAX_AGE = timedelta(hours=36)
+GS_FEED_MAX_AGE = timedelta(hours=6)
+#: A fresh feed whose newest clean stretch is older than this (or absent) is `idle`: the
+#: collector ran, the owner did not use Claude enough to close a stretch.
+IDLE_AFTER = timedelta(hours=72)
 #: How far apart two accounts' onsets may sit and still be read as one dollar-series
 #: change (_agreeing_credit_events). A limit change reaches each account on its own
 #: cadence of use, and a stretch is dated at the reading that closed it.
@@ -702,6 +711,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "last_sample_at": measured_at.isoformat() if measured_at else None,
         "meter_read_at": _last_meter_read(gs_passive),
         "passive_generated_at": passive.get("generated_at"),
+        "account_feeds": _account_feeds(gs_passive, masterrig_passive, credits, now),
         "plan_measured": "max20",
         "instrument": "passive" if series else "unavailable",
         "availability": {"rates": quality["status"], "evidence": evidence_status,
@@ -1695,6 +1705,64 @@ def _regime_current(points: list[tuple], now: datetime) -> dict | None:
             "quality": "measured", "reasons": ["evidence_stale"] if stale else []}
 
 
+def _utc(stamp) -> str | None:
+    """An ISO stamp as UTC, or None for anything that is not a parseable stamp."""
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        dt = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+
+
+def _account_feeds(gs_passive: dict | None, masterrig_passive: dict | None, credits: dict,
+                   now: datetime) -> dict:
+    """Per published label, when the account's data was last collected and whether its
+    collector is still running (issues #32, #33).
+
+    `feed_at` is masterrig's history/masterrig-passive.json `generated_at` (bin/passive.sh
+    writes it once a day; its meter log is written as the account is used, so its newest
+    reading would read an idle account as stopped), and for each gs account the newest
+    meter reading history/gs-passive.json records for it (`accounts.<name>.meter.last`,
+    polled whether or not the account is used, so one account's poller stopping shows
+    even while the file itself is fresh), falling back to that file's `generated_at`.
+    `newest_stretch_end` is the newest end among the account's stretches the per-model fits
+    select from: harness-clean, capture-accepted (masterrig exempt, as in _credits_block)
+    and priceable in credits. `state` is "stopped" when `feed_at` is older than the
+    feed's schedule allows (MASTERRIG_FEED_MAX_AGE, GS_FEED_MAX_AGE), else "idle" when
+    `newest_stretch_end` is null or older than IDLE_AFTER, else "fresh". An account with
+    no file, or no block in its file, is omitted. Only labels are published.
+    """
+    by_account = credit_model.stretches_by_account(gs_passive, masterrig_passive)
+    priceable = credit_model.clean_stretches(by_account, credit_model.harness_runs(),
+                                             require="capture_status", exempt=("masterrig",))
+    gs_accounts = (gs_passive or {}).get("accounts") or {}
+    feeds = {}
+    for name, label in ACCOUNT_LABELS:
+        if name == "masterrig":
+            if not masterrig_passive:
+                continue
+            feed_at, max_age = _utc(masterrig_passive.get("generated_at")), MASTERRIG_FEED_MAX_AGE
+        else:
+            if name not in gs_accounts:
+                continue
+            meter = gs_accounts[name].get("meter") or {}
+            feed_at = _utc(meter.get("last")) or _utc(gs_passive.get("generated_at"))
+            max_age = GS_FEED_MAX_AGE
+        rows = [st for st in priceable.get(name, [])
+                if credit_model.price_tokens(st["tokens"], credits).priced]
+        stretch_end = _utc(credit_model.newest_end(rows))
+        if feed_at is None or now - datetime.fromisoformat(feed_at) > max_age:
+            state = "stopped"
+        elif stretch_end is None or now - datetime.fromisoformat(stretch_end) > IDLE_AFTER:
+            state = "idle"
+        else:
+            state = "fresh"
+        feeds[label] = {"feed_at": feed_at, "newest_stretch_end": stretch_end, "state": state}
+    return feeds
+
+
 def _last_meter_read(gs_passive: dict | None) -> str | None:
     """When a watched account's meter was last read, newest across accounts.
 
@@ -1994,7 +2062,6 @@ def write_json(path: Path, obj: dict) -> None:
 
 def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetime | None = None) -> int:
     import argparse
-    from datetime import timezone
 
     from .alert import ENV_FILE, _default_post
     from .weight import update_output_weight
@@ -2036,6 +2103,10 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1
+    stopped = [label for label, feed in j["account_feeds"].items() if feed["state"] == "stopped"]
+    if stopped:
+        print(f"warning: account feed stopped for {', '.join(stopped)}: older than its schedule allows "
+              f"(account_feeds); publishing anyway", file=sys.stderr)
     write_json(a.out, j)
     print(f"wrote {a.out}: {len(j['rates'])} models, last_change={j['last_change']}")
     return 0

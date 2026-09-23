@@ -61,9 +61,8 @@ class OfflineRebuildTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "data/reference_mix.json must contain a JSON object"):
                 rebuild_offline.rebuild(root, datetime(2026, 9, 16, 12, tzinfo=timezone.utc))
             out = Path(tmp) / "review.json"
-            with patch("sys.stderr", new_callable=io.StringIO) as err:
-                with self.assertRaises(SystemExit) as raised:
-                    rebuild_offline.main(["--root", str(root), "--now", "2026-09-16T12:00:00Z", "--out", str(out)])
+            with patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit) as raised:
+                rebuild_offline.main(["--root", str(root), "--now", "2026-09-16T12:00:00Z", "--out", str(out)])
             self.assertEqual(raised.exception.code, 1)
             self.assertIn(f"offline rebuild failed: {root / 'data/reference_mix.json'}", err.getvalue())
             self.assertFalse(out.exists())
