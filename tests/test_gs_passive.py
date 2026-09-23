@@ -109,7 +109,8 @@ class TranscriptFilesTests(unittest.TestCase):
             (cfg / "projects").symlink_to(d / "shared-projects")
             files, own_sessions = transcript_files(self._account(cfg), None)
             self.assertEqual([p.stem for p in files], ["own-session"])
-            self.assertEqual(own_sessions, {"kept": 1, "dropped": 1, "subagent_files": 0})
+            self.assertEqual(own_sessions, {"kept": 1, "dropped": 1, "subagent_files": 0,
+                                            "dropped_to": {}, "unclaimed": 1})
 
     def test_a_sub_agent_transcript_belongs_to_its_parent_session(self):
         # Real jwork data, 2026-09-16: `<session>/subagents/agent-<id>.jsonl` has no
@@ -129,7 +130,8 @@ class TranscriptFilesTests(unittest.TestCase):
             (cfg / "projects").symlink_to(d / "shared-projects")
             files, own_sessions = transcript_files(self._account(cfg), None)
             self.assertEqual(sorted(p.name for p in files), ["agent-abc.jsonl", "own-session.jsonl"])
-            self.assertEqual(own_sessions, {"kept": 2, "dropped": 2, "subagent_files": 1})
+            self.assertEqual(own_sessions, {"kept": 2, "dropped": 2, "subagent_files": 1,
+                                            "dropped_to": {}, "unclaimed": 2})
 
     def test_non_symlink_root_is_untouched_even_with_a_session_env_dir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -143,6 +145,48 @@ class TranscriptFilesTests(unittest.TestCase):
             files, own_sessions = transcript_files(self._account(cfg), None)
             self.assertEqual({p.stem for p in files}, {"a", "b"})
             self.assertIsNone(own_sessions)
+
+    def test_a_dropped_transcript_is_named_by_the_config_dir_that_claims_it(self):
+        # Real jwork data, 2026-09-23: of 3,620 pooled transcripts in the meter window,
+        # 430 are claimed by .claude-avis (another account, 3.09 billion tokens) and
+        # 1,407 are claimed by nobody. One `dropped` count cannot tell those apart, and
+        # they mean opposite things -- see docs/findings-2026-09-23-unaccounted.md.
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            shared = d / ".claude" / "projects" / "-proj"
+            shared.mkdir(parents=True)
+            for stem in ("mine", "avis-session", "nobodys-session"):
+                (shared / f"{stem}.jsonl").write_text(turn_line(T0, stem) + "\n")
+            cfg = d / ".claude-javiswork"
+            (cfg / "session-env" / "mine").mkdir(parents=True)
+            (cfg / "projects").symlink_to(d / ".claude" / "projects")
+            (d / ".claude-avis" / "session-env" / "avis-session").mkdir(parents=True)
+            (d / ".claude-avis" / "projects").symlink_to(d / ".claude" / "projects")
+            files, own_sessions = transcript_files(self._account(cfg), None, home=d)
+            self.assertEqual([p.stem for p in files], ["mine"])
+            self.assertEqual(own_sessions, {"kept": 1, "dropped": 2, "subagent_files": 0,
+                                            "dropped_to": {".claude-avis": 1}, "unclaimed": 1})
+
+    def test_a_shared_root_is_filtered_even_when_this_account_owns_the_directory(self):
+        # The condition that matters is that another config dir writes into the same
+        # directory, not which way the symlink points. Here this account holds the real
+        # `projects/` and the other login's is the link into it, so `root.is_symlink()`
+        # is False and the old test let the other login's sessions through.
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            cfg = d / ".claude-javiswork"
+            proj = cfg / "projects" / "-proj"
+            proj.mkdir(parents=True)
+            for stem in ("mine", "theirs"):
+                (proj / f"{stem}.jsonl").write_text(turn_line(T0, stem) + "\n")
+            (cfg / "session-env" / "mine").mkdir(parents=True)
+            other = d / ".claude-jono"
+            (other / "session-env" / "theirs").mkdir(parents=True)
+            (other / "projects").symlink_to(cfg / "projects")
+            files, own_sessions = transcript_files(self._account(cfg), None, home=d)
+            self.assertEqual([p.stem for p in files], ["mine"])
+            self.assertEqual(own_sessions, {"kept": 1, "dropped": 1, "subagent_files": 0,
+                                            "dropped_to": {".claude-jono": 1}, "unclaimed": 0})
 
     def test_symlinked_root_with_no_session_env_is_a_no_op(self):
         with tempfile.TemporaryDirectory() as d:
