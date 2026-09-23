@@ -13,6 +13,41 @@ This change admits masterrig from `2026-09-06T00:00:00Z`, under the same dominan
 other two accounts. It also fixes the capture bootstrap, which had left every masterrig stretch
 with `capture: null`. No traffic was sent. Every figure below comes from committed history files.
 
+
+## Update: masterrig rebuilt and capture-checked (same day)
+
+`history/masterrig-passive.json` was rebuilt on masterrig with this branch's capture fix
+(`python3 -m tracker.gs_passive --masterrig --out history/masterrig-passive.json`). From 6
+September every masterrig stretch now has a capture: 68 accepted, 15 surplus, 7 unaccounted.
+`clean()` no longer exempts masterrig, so it is judged exactly like jwork and dave. Refitted
+with the same command as below.
+
+| | masterrig exempt (first version of this change) | masterrig capture-checked (as merged) |
+|---|---|---|
+| masterrig/pre | n 38, residual median 0.059 | n 36, residual median 0.060, p90 0.116 |
+| masterrig/post | n 49, residual median 0.169, p90 0.407 | n 30, residual median 0.054, p90 0.165 |
+| masterrig/post Sonnet | 0.884x Opus, qualifies (4 dominant) | 0.448x Opus, not pooled (2 dominant) |
+| pooled Sonnet | 0.740x Opus [0.485, 1.533] | 0.595x Opus [0.485, 0.672], dave/post only, unchanged from main |
+| pooled Fable | 2.463x Opus [1.820, 4.751], 3 fits | 2.532x Opus [1.798, 4.751], jwork/post and masterrig/pre |
+
+The capture test removes the stretches that made masterrig/post the worst fit. What is left
+fits as cleanly as jwork. Sonnet does not move, and the objections in "What argues against
+admitting masterrig" below, all of which concern the uncapture-checked post-cut group, no longer
+apply to the published figures. They are kept as the record of why the exemption was dropped.
+
+Fable is pooled from two fits that disagree: jwork/post reads 3.149x [2.485, 4.751] and
+masterrig/pre reads 1.916x [1.798, 2.095]. One is after the 14 September cut and one before it,
+so the disagreement is the same open question as before: whether Fable's rate moved or the
+five-hour window did. masterrig/post, capture-checked, reads 1.956x [1.710, 2.192] on 2
+Fable-dominant stretches, one short of pooling.
+
+The rebuild also fills masterrig's capture column in the publisher's five-hour window
+comparison (`five_hour_window_credits.per_account`, n_with_capture 0 to 228). masterrig's
+credits per 1% rise 17.3% across the cut and jwork's fall 6.0%, so the median five-hour change
+moves from -6.0% (jwork alone) to +5.7%. The tokens-per-week change the page states moves with it,
+from -26.8% to -17.7%. All 10,420 published figures reproduce (`tools/credits_report.py
+--publish-check`).
+
 ## What the data says about masterrig
 
 From the committed `history/masterrig-passive.json` (built on masterrig at 01:15Z today):
@@ -56,8 +91,8 @@ stretch, verdict, capture, run or rate differs.
 before it enters any section. `FIT_ACCOUNTS` is now `("jwork", "dave", "masterrig")`. The
 14 September era split is unchanged, so masterrig contributes `masterrig/pre` (6 to 14 September)
 and `masterrig/post`. The 60% dominance rule applies to it exactly as it does to the others.
-masterrig stays exempt from the capture test, as it was. Its committed file carries no capture,
-and requiring one would remove all of its stretches.
+masterrig takes the same capture test as jwork and dave. See the update below: the exemption
+this section first kept was dropped once masterrig's file was rebuilt with the capture fix.
 
 Refitted exactly as `docs/findings-2026-09-23-sonnet-rate.md` shows, except that the masterrig
 file is the committed 01:15Z one and was not rebuilt:

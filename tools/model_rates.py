@@ -385,12 +385,14 @@ MASTERRIG_FROM = P("2026-09-06T00:00:00+00:00")
 
 
 def clean(by_account: dict[str, list[dict]], runs: list) -> dict[str, list[dict]]:
-    """The reconciliation's own selection: capture-accepted, harness-clean, masterrig exempt.
+    """The reconciliation's own selection: capture-accepted and harness-clean, on every account.
 
-    masterrig is exempt from the capture test (its committed stretch file carries no capture,
-    see tracker/capture.py's bootstrap) and admitted only from MASTERRIG_FROM.
+    masterrig takes the same capture test as jwork and dave, now that the bootstrap fix fills
+    its capture column, and is admitted only from MASTERRIG_FROM. Without the test its
+    post-cut Sonnet coefficient read 1.15x Opus against 0.65x from its own Sonnet-heavy
+    stretches read directly (docs/findings-2026-09-23-masterrig-admitted.md).
     """
-    kept = C.clean_stretches(by_account, runs, require="capture_status", exempt=("masterrig",))
+    kept = C.clean_stretches(by_account, runs, require="capture_status")
     if "masterrig" in kept:
         kept["masterrig"] = [s for s in kept["masterrig"] if P(s["start"]) >= MASTERRIG_FROM]
     return kept

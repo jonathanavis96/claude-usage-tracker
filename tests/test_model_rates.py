@@ -416,11 +416,17 @@ class MasterrigAdmissionTests(unittest.TestCase):
                   "2026-09-06T01:40:52+02:00",       # 6 September locally, still the 5th in UTC
                   "2026-09-06T00:00:00+00:00",       # the first admitted instant
                   "2026-09-16T08:00:00+02:00"]
-        kept = clean({"masterrig": [self._stretch(t, capture_status=None) for t in starts],
+        kept = clean({"masterrig": [self._stretch(t) for t in starts],
                       "jwork": [self._stretch(starts[0])]}, [])
         self.assertEqual([s["start"] for s in kept["masterrig"]], starts[2:])
-        # The cut is masterrig's alone, and masterrig is still exempt from the capture test.
+        # The cut is masterrig's alone.
         self.assertEqual(len(kept["jwork"]), 1)
+
+    def test_masterrig_takes_the_capture_test_like_every_other_account(self):
+        start = "2026-09-16T08:00:00+02:00"
+        kept = clean({"masterrig": [self._stretch(start, capture_status=v)
+                                    for v in ("accepted", "unaccounted", "surplus", None)]}, [])
+        self.assertEqual([s["capture_status"] for s in kept["masterrig"]], ["accepted"])
 
     def test_the_masterrig_fits_are_pooled_on_both_sides_of_the_cut(self):
         s3 = PoolingTests()._s3(0.50, 0.54)
