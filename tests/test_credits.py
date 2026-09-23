@@ -205,7 +205,7 @@ class WindowTests(unittest.TestCase):
 
     def test_every_watched_account_is_reported_by_label_including_the_empty_ones(self):
         window = self.cluster()
-        self.assertEqual(sorted(window["accounts"]), ["a1", "a2", "a3"])
+        self.assertEqual(sorted(window["accounts"]), ["a1", "a2", "a3", "a4"])
         self.assertEqual(window["accounts"]["a2"]["n"], 5)
         self.assertEqual(window["accounts"]["a1"], {"n": 0, "value": None, "interval": None})
 
@@ -222,7 +222,7 @@ class WindowTests(unittest.TestCase):
         self.assertIn("no fitted parameter", method)
 
     def test_no_account_name_reaches_the_published_window(self):
-        for name in ("jwork", "dave", "masterrig"):
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, json.dumps(self.cluster()))
 
 
@@ -275,8 +275,8 @@ class FableIntervalTests(unittest.TestCase):
     def test_the_rule_names_no_account_and_publishes_none(self):
         out = self.solve(jwork=[fable_stretch("2026-09-10T00:00:00+00:00", 2_000_000)],
                          masterrig=[fable_stretch("2026-09-10T00:00:00+00:00", 800_000)])
-        self.assertEqual(sorted(out["per_account"]), ["a1", "a2", "a3"])
-        for name in ("jwork", "dave", "masterrig"):
+        self.assertEqual(sorted(out["per_account"]), ["a1", "a2", "a3", "a4"])
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, json.dumps(out))
 
     def test_with_no_measured_window_there_is_nothing_to_solve_against(self):
@@ -513,9 +513,17 @@ class PublishedBlockTests(unittest.TestCase):
 
         The reference table has a Haiku row and the page draws it, but nothing divides by it,
         so the row publishes the sentence saying so and no token figure at all.
+
+        The sentence itself is whatever history/model-rates.json holds -- the reason has
+        already changed once, when 2026-09-23 priced Haiku 4.5 and its tokens started
+        reaching the fits without ever carrying a stretch -- so this reads it from there
+        rather than pinning the wording. What must not change is the shape: a status
+        sentence, no value, no interval, and the reference figure still carried.
         """
         haiku = self.credits["per_model"]["haiku"]
-        self.assertEqual(haiku["status"], "not measurable, no clean stretch is Haiku-heavy")
+        expected = C.load_model_rates()["per_family"]["haiku"]["status"]
+        self.assertTrue(expected.startswith("not measurable"), expected)
+        self.assertEqual(haiku["status"], expected)
         self.assertEqual(haiku["rate_source"], "measured")
         self.assertIsNone(haiku["credits_per_token"]["input"])
         self.assertIsNone(haiku["credits_per_token_interval"])
@@ -523,7 +531,7 @@ class PublishedBlockTests(unittest.TestCase):
             figure = haiku["tokens_per_window"][side]
             self.assertIsNone(figure["value"])
             self.assertIsNone(figure["interval"])
-            self.assertEqual(figure["status"], "not measurable, no clean stretch is Haiku-heavy")
+            self.assertEqual(figure["status"], expected)
         # The reference figure is still carried, for the page to draw beside the sentence.
         self.assertEqual(haiku["reference_rate"]["input"], 2 / 15)
 
@@ -658,7 +666,7 @@ class PublishedBlockTests(unittest.TestCase):
     def test_no_account_name_reaches_the_public_json(self):
         masterrig = report("masterrig", [opus_stretch("2026-09-06T00:00:00+00:00", 150_000)])
         text = json.dumps(_published(gs=self.gs, masterrig=masterrig))
-        for name in ("jwork", "dave", "masterrig"):
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, text)
 
 
@@ -1423,8 +1431,8 @@ class WindowTokensPublishedTests(unittest.TestCase):
         self.assertEqual(self.block["all"]["interval"], [116_000, 348_000])
 
     def test_the_watched_accounts_are_published_by_label_and_never_by_name(self):
-        self.assertEqual(sorted(self.block["accounts"]), ["a1", "a2", "a3"])
-        for name in ("jwork", "dave", "masterrig"):
+        self.assertEqual(sorted(self.block["accounts"]), ["a1", "a2", "a3", "a4"])
+        for name in ("jwork", "dave", "masterrig", "avis"):
             self.assertNotIn(name, json.dumps(self.block))
 
     def test_the_haiku_row_states_the_same_sentence_the_per_model_row_states(self):
