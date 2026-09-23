@@ -91,6 +91,29 @@ windows per plan, and change history.
   weight and the one-hour cache-write meter weight are premises rather than
   independently measured per-model caps.
 
+## Checking the published figures
+
+The headline change, the fall in five-hour windows per week (`last_change.percent`, scope
+`weekly`), is the five-hour meter's movement divided by the seven-day meter's movement over
+the same windows, before and after the change (`tracker/credits.py`
+`windows_per_week_ratio_note`). No token count and no per-model rate enters it, so a change
+to the per-model rates cannot move it. The tokens-per-week figure published beside it
+(`last_change.tokens_per_week_change`) is different: it compounds that ratio with the
+five-hour window's change in credits, which prices tokens per model.
+
+To rebuild the published JSON from the files committed here and compare it field by field
+with the live one:
+
+```
+python3 tools/verify_publish.py
+```
+
+It runs the same publisher command as the hourly cron (`bin/daily.sh`), at the live file's
+own `generated_at`, and prints any difference (exit 1) or says the two are identical (exit 0).
+Only `generated_at` itself is ignored. The rule for changing what counts as evidence is in
+`docs/adr/0001-acceptance-rules-for-published-figures.md`; an out-of-sample test of the
+per-model rates is in `docs/findings-2026-09-23-holdout.md`.
+
 ## Running it
 
 Tests (one test reads a usage log that exists only on the machine that
