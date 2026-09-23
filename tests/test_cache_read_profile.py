@@ -4,8 +4,16 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tools.cache_read_profile import (GRID, PRICES, best_weight, consistency, matrices, pooled,
-                                      profile, sensitivity)
+from tools.cache_read_profile import (
+    GRID,
+    PRICES,
+    best_weight,
+    consistency,
+    matrices,
+    pooled,
+    profile,
+    sensitivity,
+)
 from tools.model_rates import prepare
 
 PRE = "2026-09-10T00:00:00+00:00"
@@ -84,7 +92,7 @@ class ConsistencyTests(unittest.TestCase):
 class PooledTests(unittest.TestCase):
     def test_one_shared_weight_is_recovered_with_its_interval_around_it(self):
         G = {f"g{i}": _group(0.015, seed=10 + i, noise=0.02) for i in range(3)}
-        out = pooled(G, seed=7, resamples=40)
+        out = pooled(G, profile(G), seed=7, resamples=40)
         self.assertAlmostEqual(out["weight"], 0.015, delta=0.001)
         # An 80% interval on noisy data need not hold the truth exactly; it must hold the
         # estimate and land within the noise of the truth.
@@ -97,9 +105,15 @@ class PooledTests(unittest.TestCase):
 
     def test_the_pooled_weight_sits_between_fits_that_disagree(self):
         G = {"zero": _group(0.0, seed=2, noise=0.02), "w": _group(0.02, seed=3, noise=0.02)}
-        w = pooled(G, seed=7, resamples=10)["weight"]
+        w = pooled(G, profile(G), seed=7, resamples=10)["weight"]
         self.assertGreater(w, 0.0)
         self.assertLess(w, 0.02)
+
+    def test_variance_weighting_leans_to_the_fit_that_scatters_less(self):
+        G = {"noisy zero": _group(0.0, seed=2, noise=0.2), "clean": _group(0.02, seed=3, noise=0.01)}
+        out = pooled(G, profile(G), seed=7, resamples=10)
+        self.assertGreater(out["variance_weighted"]["weight"], out["weight"])
+        self.assertAlmostEqual(out["variance_weighted"]["weight"], 0.02, delta=0.002)
 
 
 class SensitivityTests(unittest.TestCase):

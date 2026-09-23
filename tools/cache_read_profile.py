@@ -112,15 +112,18 @@ def summary(X, y, reads, fams, w: float) -> dict:
 
 
 def best_weight(parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
-                lo: float = SEARCH[0], hi: float = SEARCH[1], step: float = STEP) -> float:
+                lo: float = SEARCH[0], hi: float = SEARCH[1], step: float = STEP,
+                scales: list[float] | None = None) -> float:
     """The weight that minimises the summed RSS of every part, each part fitted separately.
 
     One part is one fit's own profile minimum; several are the pooled fit (one weight, rates per
-    fit). A grid, then golden section inside the best cell, so a minimum on a bound is found
-    exactly on it.
+    fit), where `scales` divides each part's RSS by its own. A grid, then golden section inside
+    the best cell, so a minimum on a bound is found exactly on it.
     """
+    div = scales or [1.0] * len(parts)
+
     def total(w):
-        return sum(fit_at(X, y, rd, w)[1] for X, y, rd in parts)
+        return sum(fit_at(X, y, rd, w)[1] / s for (X, y, rd), s in zip(parts, div))
     grid = np.arange(lo, hi + step / 2, step)
     vals = [total(w) for w in grid]
     i = int(np.argmin(vals))
@@ -210,30 +213,45 @@ def consistency(G: dict[str, list[dict]], prof: dict, seed: int, resamples: int)
     return out
 
 
-def pooled(G: dict[str, list[dict]], seed: int, resamples: int) -> dict:
+def pooled(G: dict[str, list[dict]], prof: dict, seed: int, resamples: int) -> dict:
     """Section 3: one cache-read weight across the fits, the family rates still per fit.
 
     The weight minimises the RSS summed over the fits, each refitted at it. The interval
     resamples each fit's stretches within that fit (so every draw still has the same three
     fits) and takes the 80% interval of the draws' pooled weights.
+
+    Plain summed RSS lets the noisiest fit carry the most weight: a fit whose stretches
+    scatter twice as far puts four times the squared error on the scale. `variance_weighted`
+    is the same fit with each fit's RSS divided by its own residual variance at its own best
+    weight (RSS / (n - columns - 1)), fixed from the full data, on the same bootstrap draws.
+    Both are reported; neither is a model of why the fits disagree.
     """
     mats = {label: matrices(recs) for label, recs in G.items()}
     parts = [(X, y, rd) for X, y, rd, _ in mats.values()]
+    var = [prof[label]["best"]["rss"] / (len(y) - X.shape[1] - 1)
+           for label, (X, y, rd, _) in mats.items()]
     w = best_weight(parts)
+    wv = best_weight(parts, scales=var)
     rng = random.Random(f"{seed}/cache-read-pooled")
-    draws = []
+    draws, draws_v = [], []
     for _ in range(resamples):
         drawn = []
         for X, y, rd in parts:
             idx = resample(len(y), rng)
             drawn.append((X[idx], y[idx], rd[idx]))
         draws.append(best_weight(drawn))
-    lo, hi = M.interval(draws)
-    per_fit = {label: summary(X, y, rd, fams, w) for label, (X, y, rd, fams) in mats.items()}
-    return {"weight": w, "interval": [lo, hi], "resamples": resamples,
-            "draws_at_zero": sum(1 for d in draws if d == 0.0),
-            "draws_at_upper_bound": sum(1 for d in draws if d >= SEARCH[1]),
-            "rss": sum(r["rss"] for r in per_fit.values()), "per_fit": per_fit}
+        draws_v.append(best_weight(drawn, scales=var))
+
+    def block(value, ds):
+        per_fit = {label: summary(X, y, rd, fams, value) for label, (X, y, rd, fams) in mats.items()}
+        return {"weight": value, "interval": list(M.interval(ds)), "resamples": resamples,
+                "draws_at_zero": sum(1 for d in ds if d == 0.0),
+                "draws_at_upper_bound": sum(1 for d in ds if d >= SEARCH[1]),
+                "rss": sum(r["rss"] for r in per_fit.values()), "per_fit": per_fit}
+    out = block(w, draws)
+    out["variance_weighted"] = {**block(wv, draws_v),
+                                "residual_variance": dict(zip(mats, var))}
+    return out
 
 
 def published_figures(j: dict) -> dict:
@@ -242,6 +260,12 @@ def published_figures(j: dict) -> dict:
     wt = c["window_tokens"]
     lo, hi = wt["all"]["interval"] or (None, None)
     out = {"window_credits": c["window_credits"]["value"],
+           "window_credits.before": c["window_credits"]["before"]["value"],
+           "window_credits.after": c["window_credits"]["after"]["value"],
+           "window_credits_from_weekly.before (cross-check)":
+               c["window_credits_from_weekly"]["before"]["value"],
+           "window_credits_from_weekly.after (cross-check)":
+               c["window_credits_from_weekly"]["after"]["value"],
            "headline window_tokens.all": wt["all"]["value"],
            "headline window_tokens.all interval low": lo,
            "headline window_tokens.all interval high": hi,
@@ -315,19 +339,27 @@ def show(prof: dict, cons: dict, pool: dict, sens: dict | None) -> None:
     for label, r in pool["per_fit"].items():
         rates = " ".join(f"{f}={v:.3f}" for f, v in r["rates"].items())
         print(f"      {label:10} rss={r['rss']:.2f} median |rel|={r['residual_median_abs_rel']:.4f}  {rates}")
+    v = pool["variance_weighted"]
+    print("   variance-weighted (each fit's RSS over its own residual variance "
+          + ", ".join(f"{k} {s2:.3f}" for k, s2 in v["residual_variance"].items()) + "):")
+    print(f"   weight={v['weight']:.4f} [{v['interval'][0]:.4f}, {v['interval'][1]:.4f}] "
+          f"({v['draws_at_zero']} at 0, {v['draws_at_upper_bound']} at the search bound)")
+    for label, r in v["per_fit"].items():
+        rates = " ".join(f"{f}={x:.3f}" for f, x in r["rates"].items())
+        print(f"      {label:10} rss={r['rss']:.2f} median |rel|={r['residual_median_abs_rel']:.4f}  {rates}")
     if not sens:
         return
     labels = list(sens)
     print("\n4. Published figures at each weight (change from " + labels[0] + ")")
-    print("   " + " " * 44 + "".join(f"{lab:>24}" for lab in labels))
+    print("   " + " " * 50 + "".join(f"{lab:>26}" for lab in labels))
     for k in sens[labels[0]]["figures"]:
         cells = []
         for lab in labels:
             v = sens[lab]["figures"][k]
             ch = sens[lab]["change_from_" + labels[0]][k]
             cells.append(f"{'null' if v is None else f'{v:,.0f}':>15} "
-                         f"{'' if ch is None else f'{ch:+.1%}':>8}")
-        print(f"   {k:44}" + "".join(cells))
+                         f"{'' if ch is None else f'{ch:+.1%}':>10}")
+        print(f"   {k:50}" + "".join(cells))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-publish", action="store_true", help="skip section 4")
     ap.add_argument("--publish-dir", type=Path, default=None,
                     help="where section 4 writes its published documents (default: a directory in /tmp)")
+    ap.add_argument("--extra-weight", type=float, action="append", default=[],
+                    help="another weight for section 4, beside 0, the pooled weight and 0.02; repeatable")
     ap.add_argument("--now", default=None,
                     help="the publish time for section 4, ISO 8601 (default: now); one time for every weight")
     a = ap.parse_args(argv)
@@ -349,13 +383,18 @@ def main(argv: list[str] | None = None) -> int:
     G = groups(data)
     prof = profile(G)
     cons = consistency(G, prof, a.seed, a.resamples)
-    pool = pooled(G, a.seed, a.resamples)
+    pool = pooled(G, prof, a.seed, a.resamples)
     sens = None
     if not a.no_publish:
         now = datetime.fromisoformat(a.now) if a.now else datetime.now(timezone.utc)
         outdir = a.publish_dir or Path(tempfile.mkdtemp(prefix="cache-read-publish-", dir="/tmp"))
-        sens = sensitivity({"w=0": 0.0, f"pooled {pool['weight']:.4f}": round(pool["weight"], 4),
-                            "w=0.02": 0.02}, now, outdir)
+        weights = {"w=0": 0.0, f"pooled {pool['weight']:.4f}": round(pool["weight"], 4),
+                   f"variance-weighted {pool['variance_weighted']['weight']:.4f}":
+                       round(pool["variance_weighted"]["weight"], 4),
+                   "w=0.02": 0.02}
+        weights.update({f"w={w:g}": w for w in a.extra_weight})
+        # Ascending, so w=0 stays first and every change is read from it.
+        sens = sensitivity(dict(sorted(weights.items(), key=lambda kv: kv[1])), now, outdir)
     show(prof, cons, pool, sens)
     if a.json:
         a.json.write_text(json.dumps({
