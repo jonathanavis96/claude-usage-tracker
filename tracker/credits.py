@@ -117,6 +117,14 @@ ANNOUNCEMENT = {
 #: the 14 September change: a temporary +50% from May, made a permanent +25% on
 #: 14 September. Policy, announced and cited -- never a measurement.
 WEEKLY_CAP_MULTIPLIER = {"before": 1.5, "after": 1.25}
+#: How many stretches an account needs on each side of the cut before its own five-hour
+#: change is read as a measurement of that account's window (`five_hour_window_change`).
+#: A side of two or three stretches is a median of two or three stretches.
+FIVE_HOUR_MIN_SIDE = 10
+#: How many readings the after cluster needs before it states the current five-hour window
+#: on its own. Below it the before cluster carries the figure, scaled by the measured
+#: five-hour change, and `current_source` says so.
+MIN_AFTER_CLUSTER = 5
 
 
 def load_credits(prices_raw: dict | None = None, *, default: dict | None = None) -> dict:
@@ -506,15 +514,94 @@ def selection_sentence(min_delta_pct: float = MIN_DELTA_PCT) -> str:
             f"probe row or the effort-matrix run), and reads capture_status 'accepted'.")
 
 
+def five_hour_window_change(across: dict | None) -> dict | None:
+    """The measured change in the five-hour window across the cut, as one percent.
+
+    `across_cut` reads every watched account's credits per 1% either side of 14 September,
+    but not every account's two medians are a reading of that account's own window: one
+    with no usable capture column (`n_with_capture` 0) divides meter movement this host
+    never saw by transcripts it did see, and a side of two or three stretches is a median
+    of two or three stretches. Only accounts with a capture reading at all and at least
+    FIVE_HOUR_MIN_SIDE stretches on each side are read, and the figure is the median of
+    their own `change_pct` -- on today's data one account, at +8.6%.
+
+    None when no account qualifies, and the publisher then states no tokens-per-week
+    change and scales no window by it, rather than compounding a number nobody measured.
+    """
+    per_account = (across or {}).get("per_account") or {}
+    qualifying = {label: row["change_pct"] for label, row in per_account.items()
+                  if row.get("change_pct") is not None
+                  and (row.get("n_with_capture") or 0) > 0
+                  and (row.get("n_before") or 0) >= FIVE_HOUR_MIN_SIDE
+                  and (row.get("n_after") or 0) >= FIVE_HOUR_MIN_SIDE}
+    if not qualifying:
+        return None
+    return {"pct": round(median(list(qualifying.values())), 1), "accounts": sorted(qualifying)}
+
+
+def cut_side(row: dict) -> str | None:
+    """Which side of the announced change a cluster row's stretch started on.
+
+    The stretch's own `start` against CUT_AT, the same instant and the same rule
+    `across_cut` splits by. A row with no start stamp is placed on neither side: every
+    real stretch carries one, and a fixture that does not must not be read as pre-cut.
+    """
+    start = row.get("start")
+    return None if not start else ("before" if datetime.fromisoformat(start) < CUT_AT else "after")
+
+
+def current_cluster_rule(n_before: int, n_after: int,
+                         five_hour_pct: float | None) -> tuple[str, float, str]:
+    """(which side states the window now, the factor it is scaled by, the published source).
+
+    The pure-family cluster spans 14 September, and a median over the whole of it is
+    mostly a pre-cut reading published as the current one: ten of today's twelve stretches
+    are one account's from 9-10 September. So the after cluster states the window itself
+    once it holds MIN_AFTER_CLUSTER readings; below that the before cluster carries it,
+    scaled by the measured five-hour change across the cut (`five_hour_window_change`).
+    With no measured change to scale by, the before cluster is published unscaled, and
+    with no stretch placeable on either side the whole cluster is -- each case naming
+    itself in `current_source` rather than publishing a number with no provenance.
+    """
+    if n_after >= MIN_AFTER_CLUSTER:
+        return "after", 1.0, "after_cluster"
+    if n_before:
+        if five_hour_pct is not None:
+            return "before", 1 + five_hour_pct / 100, "before_cluster_scaled_by_five_hour_change"
+        return "before", 1.0, "before_cluster_unscaled"
+    if n_after:
+        return "after", 1.0, "after_cluster"
+    return "whole", 1.0, "whole_cluster_unsplit"
+
+
+CURRENT_METHOD = (
+    "the pure-family cluster is split on cut_at by each stretch's own start. The after "
+    f"cluster states the current window once it holds {MIN_AFTER_CLUSTER} readings; below "
+    "that the before cluster states it, scaled by the median five-hour window change across "
+    "the cut over the accounts whose capture column can carry one. `current_source` names "
+    "which of the two the published value and interval came from; `n` counts the whole "
+    "cluster, and each side carries its own count.")
+
+
 def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
-                   fam: str = "opus", weight: float | None = None) -> dict:
-    """The five-hour window in credits, from the pure-`fam` cluster pooled across accounts.
+                   fam: str = "opus", weight: float | None = None,
+                   five_hour_pct: float | None = None) -> dict:
+    """The five-hour window in credits, from the pure-`fam` cluster, as it is NOW.
 
     `value` is a full window (100% of the meter), so it is the median credits per 1%
     times 100; `credits_per_pct` keeps the per-percent median the median was taken
-    of. `interval` is the cluster's own min to max, which is the spread of the
+    of. `interval` is the readings' own min to max, which is the spread of the
     readings and not a confidence interval -- there is no error model here, only
-    eleven readings of the same quantity.
+    a dozen readings of the same quantity.
+
+    The cluster spans the 14 September change, and a median over the whole of it is
+    mostly a pre-cut reading: ten of today's twelve stretches are one account's from
+    9-10 September, two are another's from after the cut. So the cluster is split on
+    `cut_at` by each stretch's own start and published as `before` and `after`, and
+    `value`, `credits_per_pct` and `interval` are the CURRENT window -- the after
+    cluster where it is thick enough to state one, else the before cluster scaled by
+    the measured five-hour change (`current_cluster_rule`, `current_source`). `n`
+    stays the whole cluster's count; each side carries its own.
 
     `accounts` reports every watched account by its published label, including the
     ones that contributed nothing, so a reader can see that a cluster came from two
@@ -522,7 +609,25 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
     """
     weight = cache_read_weight(credits) if weight is None else weight
     per_account = pure_family_rows(clean, credits, fam, weight)
-    pooled = sorted(r["credits_per_pct"] for rows in per_account.values() for r in rows)
+    pooled_rows = [r for rows in per_account.values() for r in rows]
+    pooled = sorted(r["credits_per_pct"] for r in pooled_rows)
+    sides: dict[str, list[float]] = {"before": [], "after": [], "whole": pooled}
+    for row in pooled_rows:
+        side = cut_side(row)
+        if side:
+            sides[side].append(row["credits_per_pct"])
+    chosen_name, factor, current_source = current_cluster_rule(
+        len(sides["before"]), len(sides["after"]), five_hour_pct)
+    chosen = sorted(sides[chosen_name])
+    per_pct = median(chosen) * factor if chosen else None
+
+    def side_figure(values: list[float]) -> dict:
+        """One side of the cut as the published {value, interval, n}."""
+        values = sorted(values)
+        return {"value": round(median(values) * 100) if values else None,
+                "interval": [round(values[0] * 100), round(values[-1] * 100)] if values else None,
+                "n": len(values)}
+
     accounts = {}
     for name, label in labels.items():
         rows = per_account.get(name, [])
@@ -532,16 +637,24 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
             "value": round(median(values) * 100) if values else None,
             "interval": [round(values[0] * 100), round(values[-1] * 100)] if values else None,
         }
-    method = (f"median credits per 1% of the five-hour meter over the pure-{fam} stretches of every "
-              f"watched account's passive stretch file, times 100. {selection_sentence()} Every token in a "
+    method = (f"median credits per 1% of the five-hour meter over the current side of the pure-{fam} "
+              f"cluster taken from every watched account's passive stretch file, times 100 "
+              f"(`current_method` for which side that is). {selection_sentence()} Every token in a "
               f"pure-{fam} stretch is priced at a rate data/prices.json publishes, so the figure "
               f"carries no fitted parameter. Cache writes at the input rate, cache reads at "
               f"{weight:g} of it.")
     return {
-        "value": round(median(pooled) * 100) if pooled else None,
-        "credits_per_pct": round(median(pooled)) if pooled else None,
-        "interval": [round(pooled[0] * 100), round(pooled[-1] * 100)] if pooled else None,
+        "value": round(per_pct * 100) if per_pct is not None else None,
+        "credits_per_pct": round(per_pct) if per_pct is not None else None,
+        "interval": ([round(min(chosen) * 100 * factor), round(max(chosen) * 100 * factor)]
+                     if chosen else None),
         "n": len(pooled),
+        "cut_at": CUT_AT.isoformat(),
+        "before": side_figure(sides["before"]),
+        "after": side_figure(sides["after"]),
+        "current_source": current_source if pooled else None,
+        "five_hour_window_pct": five_hour_pct,
+        "current_method": CURRENT_METHOD,
         "accounts": accounts,
         "pure_family": fam,
         "cache_read_weight": weight,
@@ -685,7 +798,8 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
                   model_rates: dict | None = None, *, windows_per_week: float | None = None,
                   windows_per_week_interval: list | None = None,
                   windows_per_week_source: str = "weekly_windows current, max20, newest regime",
-                  fam: str = "opus", weight: float | None = None) -> dict:
+                  fam: str = "opus", weight: float | None = None,
+                  five_hour_pct: float | None = None) -> dict:
     """What a five-hour window buys in tokens, measured on the meter rather than priced.
 
     The same cluster `window_credits` is the median of -- the capture-accepted,
@@ -696,6 +810,16 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     from the route the page states today, where `window_credits` divided by one model's
     rate for one class answers "how much fresh Sonnet input alone would fill a window" --
     a quantity no account's use looks like (docs/findings-2026-09-20-window-tokens.md).
+
+    The cluster spans the 14 September change, so it is split on `cut_at` by each
+    stretch's own start: `before` and `after` at the top level for the all-classes figure,
+    and inside each `per_class` entry for that class. `all` is the CURRENT window -- the
+    after cluster where it is thick enough to state one, else the before cluster scaled by
+    the measured five-hour change (`current_cluster_rule`, `current_source`) -- because
+    ten of today's twelve stretches are one account's from before the cut and a median
+    over the whole cluster is a pre-cut figure published as the current one. `per_class`
+    keeps its own median over the whole cluster: it is the mix the conversions hold their
+    shape from (below), and each class states its own two sides beside it.
 
     `per_class` is what makes it a measurement rather than a mix assumption: the cluster's
     own median is 444M cache reads, 15M cache writes, 2.8M output and 5.8k input per
@@ -735,12 +859,33 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
             "per_class": {cls: _figure_from({label: readings(account_rows, cls)})
                           for cls in TOKEN_CLASSES},
         }
-    by_account = {label: readings(account_rows) for label, account_rows in rows.items()}
-    all_figure = dict(_figure_from(by_account),
+    # The same rows split on the cut, per account, so every figure below can state its own
+    # two sides and the current one can be taken from whichever side states the window now.
+    sides = {"whole": rows,
+             "before": {label: [r for r in account_rows if cut_side(r) == "before"]
+                        for label, account_rows in rows.items()},
+             "after": {label: [r for r in account_rows if cut_side(r) == "after"]
+                       for label, account_rows in rows.items()}}
+    n_side = {name: sum(len(account_rows) for account_rows in by_label.values())
+              for name, by_label in sides.items()}
+    chosen_name, factor, current_source = current_cluster_rule(
+        n_side["before"], n_side["after"], five_hour_pct)
+
+    def figure(side: str, cls: str | None = None, scale: float = 1.0) -> dict:
+        """One side's readings as the published figure, optionally scaled to now."""
+        return _figure_from({label: [v * scale for v in readings(account_rows, cls)]
+                             for label, account_rows in sides[side].items()})
+
+    def both_sides(cls: str | None = None) -> dict:
+        """The `before` and `after` sub-figures one published figure carries."""
+        return {side: dict(figure(side, cls), n=n_side[side]) for side in ("before", "after")}
+
+    all_figure = dict(figure(chosen_name, scale=factor),
                       status=None if pooled_rows else
                       f"no capture-accepted pure-{fam} stretch in the history files")
-    per_class = {cls: _figure_from({label: readings(account_rows, cls)
-                                    for label, account_rows in rows.items()})
+    per_class = {cls: dict(_figure_from({label: readings(account_rows, cls)
+                                         for label, account_rows in rows.items()}),
+                           **both_sides(cls))
                  for cls in TOKEN_CLASSES}
     share = _figure_from({label: [r / t if t else 0.0 for r, t in
                                   zip(readings(account_rows, "cache_read"), readings(account_rows))]
@@ -780,7 +925,9 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     }
     method = (f"median over the pure-{fam} clean stretches of the tokens the stretch carried per 1% "
               f"of the five-hour meter, times 100, taken per token class and over all four classes "
-              f"together. The interval is the spread of the readings themselves -- per account its "
+              f"together -- `all` over the current side of the cut alone (`current_method`), "
+              f"`per_class` over the whole cluster, and both sides published beside each. "
+              f"The interval is the spread of the readings themselves -- per account its "
               f"own lowest and highest per-stretch value, pooled the union of the account intervals "
               f"-- and not a confidence interval. No credit rate and no class weight enters the "
               f"pure-{fam} figure: it is the stretch's own token counts over its own meter movement. "
@@ -790,8 +937,14 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
         "derivation": "credits",
         "as_of": newest_end(pooled_rows),
         "method": method,
+        "current_method": CURRENT_METHOD,
         "selection": selection_sentence(),
         "n": len(pooled_rows),
+        "cut_at": CUT_AT.isoformat(),
+        # The all-classes figure's own two sides; every `per_class` entry carries its own.
+        **both_sides(),
+        "current_source": current_source if pooled_rows else None,
+        "five_hour_window_pct": five_hour_pct,
         "accounts": accounts,
         "per_class": per_class,
         "all": all_figure,
