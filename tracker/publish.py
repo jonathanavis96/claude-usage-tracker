@@ -873,6 +873,9 @@ def _credits_per_model(window: dict, credits: dict, prices: dict,
                                             "output": list(rate.output_interval)}
                                            if rate.input_interval else None),
             "rate_source": rate.rate_source,
+            # "reference_table" or "list_price" where the rate is inferred, not measured
+            # (credits.family_rate); null on a measured or anchor row.
+            "inferred_from": rate.detail.get("inferred_from"),
             "anchor": rate.anchor,
             "reference_rate": {"input": rate.reference_input, "output": rate.reference_output},
             "reference_rate_note": ("the January 2026 table's figure for this family, drawn beside "

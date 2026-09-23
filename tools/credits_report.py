@@ -586,6 +586,7 @@ BLOCK_KIND = {
     "schema_version": "constant",
     "weekly_window_ratios": "constant",
     "weekly_window_ratios_basis": "constant",
+    "account_feeds": "derived",
     "availability": "derived",
     "credits": "derived",
     "effort": "derived",

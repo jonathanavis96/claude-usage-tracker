@@ -142,7 +142,8 @@ went from 92 to 98, and it reached 100 only at 17:22, inside the next window. Th
 - Dave's current falls from 5.64 to **5.50**.
 - Leaving the 16:30 window out as well would give 5.30. That would need a rule based on the
   approach to the cap (for example, a window ending within a few points of 100), not the cap
-  itself. I have not made that change.
+  itself. The director decided on 2026-09-23 against such a rule: a window ending at 98% is not
+  capped, and dave stays at 5.50.
 
 **Other figures, once the next publish rebuilds the series:**
 
@@ -197,13 +198,12 @@ and Opus 5.5 stretches are still unpriced.
 
 An inferred row is a placeholder until the fit can see the family, not a measurement.
 
-**Two things this PR does not do:**
+The per-model row carries `inferred_from` as a top-level key, which is where the site reads it:
+`"reference_table"` or `"list_price"` on an inferred row, and null on a measured or anchor row.
 
-- `tracker/publish.py`'s per-model row has no top-level `inferred_from` key. It sits inside
-  `measured_rate`, because the row's keys are built in a part of `publish.py` outside this change.
-  Lifting it to the top level is one line there.
-- An inferred row takes its `as_of` from the newer of the window and the fits, as a measured row
-  does. The rate itself has no fit behind it, so the window's date alone would be more accurate.
+One thing this PR does not do: an inferred row takes its `as_of` from the newer of the window and
+the fits, as a measured row does. The rate itself has no fit behind it, so the window's date alone
+would be more accurate.
 
 The publish check classifies these figures under the `credits` block. They reproduce from
 `history/model-rates.json` and `data/prices.json`.

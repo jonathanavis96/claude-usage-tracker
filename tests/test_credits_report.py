@@ -343,14 +343,18 @@ class CliTests(unittest.TestCase):
         self.assertIn("no priceable stretches", buf.getvalue())
 
     def test_the_real_reports_price_every_stretch_that_has_tokens(self):
-        """Against the committed history/: no unknown model, and all three accounts present."""
+        """Against the committed history/: no unknown model, and every watched account present.
+
+        avis became the fourth gs account in #78 and its first stretches reached the committed
+        history/gs-passive.json on 2026-09-23, which is what broke the old three-account set.
+        """
         root = Path(__file__).resolve().parent.parent
         gs, mr = root / "history" / "gs-passive.json", root / "history" / "masterrig-passive.json"
         if not (gs.exists() and mr.exists()):
             self.skipTest("no committed history/*-passive.json")
         rows, skipped, _ = load_rows({"gs": gs, "masterrig": mr}, 0.015, 25 / 15, 3)
         self.assertEqual(skipped["unknown_models"], [])
-        self.assertEqual({r["account"] for r in rows}, {"jwork", "dave", "masterrig"})
+        self.assertEqual({r["account"] for r in rows}, {"jwork", "dave", "masterrig", "avis"})
         self.assertTrue(all(r["credits_per_pct"] > 0 for r in rows))
         self.assertEqual(sum(1 for r in rows if r["era"] == "5x"), 0)  # transcripts that old are gone
 

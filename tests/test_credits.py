@@ -638,6 +638,7 @@ class PublishedBlockTests(unittest.TestCase):
         mr = C.load_model_rates()["per_family"]["haiku"]
         self.assertTrue(mr["status"].startswith("not measurable"), mr["status"])
         self.assertEqual(haiku["rate_source"], "inferred")
+        self.assertEqual(haiku["inferred_from"], "reference_table")
         self.assertEqual(haiku["measured_rate"]["inferred_from"], "reference_table")
         self.assertEqual(haiku["measured_rate"]["measured_status"], mr["status"])
         self.assertIsNone(haiku["status"])
@@ -653,7 +654,7 @@ class PublishedBlockTests(unittest.TestCase):
     def test_opus_5_5_is_inferred_from_its_list_price_ratio(self):
         row = self.credits["per_model"]["opus-5-5"]
         self.assertEqual(row["rate_source"], "inferred")
-        self.assertEqual(row["measured_rate"]["inferred_from"], "list_price")
+        self.assertEqual(row["inferred_from"], "list_price")
         self.assertAlmostEqual(row["credits_per_token"]["input"], 0.8 * 10 / 15)
         self.assertAlmostEqual(row["credits_per_token"]["output"], 0.8 * 50 / 15)
 
@@ -674,6 +675,9 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertTrue(self.credits["per_model"]["opus"]["anchor"])
         self.assertEqual({fam for fam, v in sources.items() if v == "measured"}, {"sonnet", "fable"})
         self.assertEqual({fam for fam, v in sources.items() if v == "inferred"}, {"haiku", "opus-5-5"})
+        # Only an inferred row names what it was inferred from.
+        for fam, row in self.credits["per_model"].items():
+            self.assertEqual(row["inferred_from"] is not None, sources[fam] == "inferred", fam)
 
     def test_the_sonnet_row_divides_by_the_measured_rate_not_the_tables(self):
         rate = C.family_rate("sonnet", CREDITS, C.load_model_rates())
