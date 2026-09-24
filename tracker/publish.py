@@ -22,7 +22,8 @@ from .detect import (
     pooled_interval,
     weighted_regimes,
 )
-from .gs_passive import credit_rate_sources, passive_credit_points, passive_dollar_readings
+from .gs_passive import (credit_rate_sources, passive_credit_points, passive_dollar_readings,
+                         stretch_credits)
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
@@ -736,8 +737,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "weekly_windows": weekly_windows,
         "credits": credits_block,
         "reference": _reference_block(weekly_windows),
-        "last_change": _latest_change_with_scope(events, weekly_events, across_cut, weekly_windows),
-        "events": _build_events(events, weekly_events, across_cut, weekly_windows),
+        "last_change": _with_announced_last_change(
+            _latest_change_with_scope(events, weekly_events, across_cut, weekly_windows),
+            credits_block["announced_change"]),
+        "events": sorted(_build_events(events, weekly_events, across_cut, weekly_windows)
+                         + _announced_events(credits_block["announced_change"]),
+                         key=lambda ev: ev["date"]),
         # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the median
         # session token total per model, from passive.py's own transcript-derived
         # daily_rates (tracker/turns.py session_tokens_by_model), unrelated to the
@@ -1347,6 +1352,12 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         "effort_cache_mix": _effort_cache_mix(effort_meta),
         "effort_credits": _effort_credits(effort_meta, credits, window, model_rates),
         "five_hour_window_across_cut": cut,
+        # The known-date test of every change candidate (each family's first-seen stretch),
+        # beside the unknown-date detector. Stretches are valued by the same
+        # `stretch_credits` the credit detection uses (credit_model.announced_change).
+        "announced_change": credit_model.announced_change(
+            by_account, runs, credits,
+            lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels),
         "fable_interval": fable,
         "rates": {"per_family": {fam: (dict(row, interval=fable) if fam == "fable" else row)
                                  for fam, row in credits["per_family"].items()},
@@ -2055,6 +2066,51 @@ def _build_events(window_events: list, weekly_events: list,
                "label": _weekly_label(e)}
                for e in weekly_events]
     return sorted(events, key=lambda ev: ev["date"])
+
+
+def _announced_event_record(cand: dict) -> dict:
+    """One measured known-date candidate as a change event, in the event record's shape.
+
+    Only candidates `credit_model.announced_change_events` passes reach here: state
+    `measured` and a combined interval that excludes no change. The date is the candidate
+    instant, known from the data, so onset earliest and latest are that same day.
+    """
+    pct = cand["change_pct"]
+    direction = "increased" if pct > 0 else "decreased"
+    day = cand["at"][:10]
+    return {
+        "date": day, "direction": direction, "percent": round(abs(pct)), "model": None,
+        "scope": "five_hour", "metric": "credits_per_five_hour_pct",
+        "observation_scope": "account",
+        "attribution": "known_date_test_at_model_first_seen",
+        "known_date_test": True,
+        "family": cand["family"],
+        "onset": {"earliest": day, "latest": day},
+        "confirmation": {"at": None, "evidence_points": sum(
+            cand["per_account"][k]["n_after"] for k in cand["accounts_combined"]),
+            "seven_day_pct": None},
+        "change_pct": pct, "interval_pct": cand["interval_pct"],
+        "rounding_interval_before": None, "rounding_interval_after": None,
+        "evidence_quality": "measured", "provisional": False, "legacy_uncertain": False,
+        "announced": cand["announcement"],
+        "kind": "change",
+        "label": f"Five-hour window {'+' if pct > 0 else ''}{pct}% at {day}",
+    }
+
+
+def _announced_events(block: dict | None) -> list[dict]:
+    return [_announced_event_record(c) for c in credit_model.announced_change_events(block)]
+
+
+def _with_announced_last_change(last: dict | None, block: dict | None) -> dict | None:
+    """`last_change`, or a measured known-date change dated later than it."""
+    found = _announced_events(block)
+    if not found:
+        return last
+    newest = max(found, key=lambda ev: ev["date"])
+    if last is None or newest["date"] > last["date"]:
+        return {k: v for k, v in newest.items() if k not in ("kind", "label")}
+    return last
 
 
 def load_contributed(path: Path | None) -> dict | None:

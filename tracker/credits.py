@@ -115,6 +115,23 @@ ANNOUNCEMENT = {
     "source": "Anthropic on X, quoted by BleepingComputer; recorded in "
               "docs/findings-2026-09-20-reconciliation.md",
 }
+#: Every recorded announcement, oldest first. An announcement annotates a change
+#: candidate (`change_candidates`) whose date it matches; it never creates or gates one.
+#: `ANNOUNCEMENT` above stays the weekly 14 September record the weekly event carries.
+ANNOUNCEMENTS = [
+    ANNOUNCEMENT,
+    {
+        "date": "2026-09-22",
+        "scope": "five_hour",
+        "announced_change_pct": 20,
+        "quote": "We're also raising Pro and Max users' 5-hour limit by 20%.",
+        "also_quoted": ("In addition to the price drop, we're increasing five-hour usage "
+                        "limits on Pro, Max, Team, and seat-based Enterprise plans."),
+        "source": ("Anthropic email to Max subscribers (the figure); "
+                   "anthropic.com/news/claude-opus-5-5 (the increase, no figure); "
+                   "MacRumors 2026-09-22 (the date)"),
+    },
+]
 #: The announced weekly cap as a multiple of the January baseline, before and after
 #: the 14 September change: a temporary +50% from May, made a permanent +25% on
 #: 14 September. Policy, announced and cited -- never a measurement.
@@ -1470,6 +1487,281 @@ def combine_log_ratios(per_account: dict[str, dict]) -> dict:
     log_hi = sum(w * math.log(per_account[k]["ratio_interval"][1]) for k, w in weights.items()) / norm
     return {"weights": weights, "ratio": math.exp(log_mid),
             "interval": (math.exp(log_lo), math.exp(log_hi))}
+
+
+#: How many stretches after a change candidate an account needs before the known-date
+#: test (`announced_change`) calls the candidate provisional, and measured. Measured needs
+#: this many on at least one account that has stretches on both sides.
+ANNOUNCED_PROVISIONAL_N = 5
+ANNOUNCED_MEASURED_N = 10
+#: How many stretches before a candidate an account needs before its own after side is
+#: compared with it. The before side also supplies most of the scatter the interval uses.
+ANNOUNCED_MIN_BEFORE = 5
+
+
+def _t975(df: int) -> float:
+    """The two-sided 95% Student-t quantile, from the Cornish-Fisher expansion in 1/df.
+
+    Within 0.3% of the exact value from df 3 up; df 1 and 2 are taken from the table.
+    """
+    if df <= 2:
+        return (12.706, 4.303)[max(df, 1) - 1]
+    z = 1.959964
+    return z + (z ** 3 + z) / (4 * df) + (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2)
+
+
+def family_first_seen(by_account: dict[str, list[dict]], credits: dict) -> dict[str, dict]:
+    """Each credit family's earliest stretch across every account: its start, end and account.
+
+    The earliest by instant, not by string: the files carry mixed UTC offsets. A model id
+    in no family (`<synthetic>`) is not a family and is skipped.
+    """
+    seen: dict[str, dict] = {}
+    for account in sorted(by_account):
+        for st in by_account[account]:
+            if not st.get("start") or not st.get("end"):
+                continue
+            start = datetime.fromisoformat(st["start"])
+            for model in (st.get("tokens") or {}):
+                fam = family(model, credits)
+                if fam is None:
+                    continue
+                if fam not in seen or start < seen[fam]["start"]:
+                    seen[fam] = {"start": start, "end": datetime.fromisoformat(st["end"]),
+                                 "account": account}
+    return seen
+
+
+def _utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def change_candidates(by_account: dict[str, list[dict]], credits: dict,
+                      announcements: list[dict] | None = None) -> list[dict]:
+    """Candidate change points, generated from the data: every family's first-seen time.
+
+    A family present in the earliest stretch on record is not a candidate: nothing on any
+    account precedes it. The candidate's instant is the start of the earliest stretch that
+    holds the family, so the family's first traffic lies between `at` and
+    `first_seen_stretch_end`. A recorded five-hour announcement dated within a day of the
+    candidate is attached to it as `announcement`; it annotates the candidate and never
+    creates or gates one.
+    """
+    announcements = ANNOUNCEMENTS if announcements is None else announcements
+    starts = [datetime.fromisoformat(st["start"]) for rows in by_account.values()
+              for st in rows if st.get("start") and st.get("tokens")]
+    if not starts:
+        return []
+    earliest = min(starts)
+    out = []
+    for fam, seen in family_first_seen(by_account, credits).items():
+        if seen["start"] <= earliest:
+            continue
+        day = seen["start"].astimezone(timezone.utc).date()
+        note = next((dict(a) for a in announcements if a.get("scope") == "five_hour"
+                     and abs((datetime.fromisoformat(a["date"]).date() - day).days) <= 1), None)
+        out.append({"family": fam, "at": seen["start"], "first_seen_account": seen["account"],
+                    "first_seen_stretch_end": seen["end"], "announcement": note})
+    return sorted(out, key=lambda c: (c["at"], c["family"]))
+
+
+def log_ratio_side(before: list[float], after: list[float]) -> dict | None:
+    """One account's own change across a candidate, from log credits per 1% on each side.
+
+    The ratio is the ratio of the two sides' geometric means. Its interval is a two-sample
+    t interval on the logs with the scatter pooled over both sides, so an after side of one
+    or two stretches borrows the before side's scatter rather than having none. None when
+    the before side is under ANNOUNCED_MIN_BEFORE or the after side is empty.
+    """
+    nb, na = len(before), len(after)
+    if nb < ANNOUNCED_MIN_BEFORE or na < 1:
+        return None
+    mb, ma = sum(before) / nb, sum(after) / na
+    df = nb + na - 2
+    ss = sum((x - mb) ** 2 for x in before) + sum((x - ma) ** 2 for x in after)
+    sd = math.sqrt(ss / df)
+    se = sd * math.sqrt(1 / nb + 1 / na)
+    d, h = ma - mb, _t975(df) * se
+    return {"log_ratio": d, "se": se, "df": df, "sd": sd,
+            "ratio": math.exp(d), "interval": (math.exp(d - h), math.exp(d + h))}
+
+
+def combine_inverse_variance(per_account: dict[str, dict]) -> dict | None:
+    """The paired accounts' log ratios combined as a weighted mean, weights 1 / se squared.
+
+    Each account is compared only with itself, so account-specific scale cancels out of
+    every term. Unlike `combine_log_ratios`, whose interval bounds rounding and so stays
+    as wide as its accounts', this interval bounds scatter, and independent accounts
+    narrow it. It is a t interval on the combined standard error with the accounts'
+    degrees of freedom summed. None when no account is paired.
+    """
+    if not per_account:
+        return None
+    inv = {k: 1 / a["se"] ** 2 if a["se"] > 0 else 1e12 for k, a in per_account.items()}
+    total = sum(inv.values())
+    d = sum(inv[k] * a["log_ratio"] for k, a in per_account.items()) / total
+    se = 1 / math.sqrt(total)
+    h = _t975(sum(a["df"] for a in per_account.values())) * se
+    return {"weights": {k: v / total for k, v in inv.items()}, "ratio": math.exp(d),
+            "interval": (math.exp(d - h), math.exp(d + h))}
+
+
+def announced_state(n_after_paired: list[int]) -> str:
+    """measuring / provisional / measured, from the after counts of the paired accounts."""
+    most = max(n_after_paired, default=0)
+    if most >= ANNOUNCED_MEASURED_N:
+        return "measured"
+    if most >= ANNOUNCED_PROVISIONAL_N:
+        return "provisional"
+    return "measuring"
+
+
+def announced_change_stretches(by_account: dict[str, list[dict]],
+                               runs: list[HarnessRun]) -> dict[str, list[dict]]:
+    """The selection the known-date test reads: status accepted, reset-verified or not.
+
+    `clean_stretches` on the `status` column (harness runs out, at least MIN_DELTA_PCT of
+    meter movement, some tokens), masterrig from MASTERRIG_FROM as in the rate fits. A
+    reset-unverified stretch is admitted and counted per account.
+    """
+    kept = clean_stretches(by_account, runs, require="status")
+    if "masterrig" in kept:
+        kept["masterrig"] = [st for st in kept["masterrig"]
+                             if datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+    return kept
+
+
+def _label_for(labels: dict[str, str], name: str, names: list[str]) -> str:
+    """An account's published label; an account with none gets the next free `aN`."""
+    if name in labels:
+        return labels[name]
+    extra = [n for n in sorted(set(names)) if n not in labels]
+    return f"a{len(labels) + 1 + extra.index(name)}"
+
+
+def candidate_bounds(at: datetime, cands: list[dict]) -> tuple[datetime | None, datetime | None]:
+    """The boundaries either side of `at`: the weekly change (CUT_AT) and every candidate."""
+    bounds = {CUT_AT, *(c["at"] for c in cands)}
+    return (max((b for b in bounds if b < at), default=None),
+            min((b for b in bounds if b > at), default=None))
+
+
+def split_at_candidate(stretches: list[dict], at: datetime, lo: datetime | None,
+                       hi: datetime | None, value) -> dict:
+    """One account's stretches either side of `at`, as log credits per 1%, with counts.
+
+    Before: start at or after `lo` and end at or before `at`. After: start at or after
+    `at` and end at or before `hi`. A stretch spanning either boundary is on neither side.
+    """
+    sides: dict[str, list[float]] = {"before": [], "after": []}
+    unverified = {"before": 0, "after": 0}
+    unpriced = {"before": 0, "after": 0}
+    for st in stretches:
+        start = datetime.fromisoformat(st["start"])
+        end = datetime.fromisoformat(st["end"])
+        if (lo is None or start >= lo) and end <= at:
+            side = "before"
+        elif start >= at and (hi is None or end <= hi):
+            side = "after"
+        else:
+            continue
+        amount = value(st["tokens"])
+        if amount is None or amount <= 0:
+            unpriced[side] += 1
+            continue
+        sides[side].append(math.log(amount / st["delta_pct"]))
+        if st.get("reset_verified") is not True:
+            unverified[side] += 1
+    return {"sides": sides, "unverified": unverified, "unpriced": unpriced}
+
+
+def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], credits: dict,
+                     value, labels: dict[str, str],
+                     announcements: list[dict] | None = None) -> dict:
+    """A known-date test of every change candidate, per account and combined.
+
+    `value(tokens)` is a stretch's credits (the publisher passes
+    `gs_passive.stretch_credits`), or None where it cannot be priced; such a stretch is
+    counted and left out. Each candidate's before side runs from the previous boundary --
+    the weekly change (CUT_AT) or an earlier candidate, whichever is later -- to the
+    candidate; its after side from the candidate to the next boundary. Each account is
+    compared with itself (`log_ratio_side`) and the accounts combined
+    (`combine_inverse_variance`), pairing accounts the way the weekly event does. An
+    account without both sides is listed with its counts and not combined.
+    """
+    selected = announced_change_stretches(by_account, runs)
+    cands = change_candidates(by_account, credits, announcements)
+    names = list(by_account)
+    out = []
+    for cand in cands:
+        at = cand["at"]
+        lo, hi = candidate_bounds(at, cands)
+        per_account, paired = {}, {}
+        for name in sorted(selected, key=lambda n: _label_for(labels, n, names)):
+            label = _label_for(labels, name, names)
+            split = split_at_candidate(selected[name], at, lo, hi, value)
+            sides = split["sides"]
+            row = {"n_before": len(sides["before"]), "n_after": len(sides["after"]),
+                   "n_before_reset_unverified": split["unverified"]["before"],
+                   "n_after_reset_unverified": split["unverified"]["after"],
+                   "n_before_unpriced": split["unpriced"]["before"],
+                   "n_after_unpriced": split["unpriced"]["after"],
+                   "change_pct": None, "interval_pct": None, "combined": False}
+            pair = log_ratio_side(sides["before"], sides["after"])
+            if pair is not None:
+                paired[label] = pair
+                row.update({"change_pct": round((pair["ratio"] - 1) * 100, 1),
+                            "interval_pct": [round((x - 1) * 100, 1) for x in pair["interval"]],
+                            "combined": True})
+            per_account[label] = row
+        combined = combine_inverse_variance(paired)
+        state = announced_state([per_account[k]["n_after"] for k in paired])
+        excludes = bool(combined and not combined["interval"][0] <= 1 <= combined["interval"][1])
+        for k, w in (combined or {}).get("weights", {}).items():
+            per_account[k]["weight"] = round(w, 4)
+        out.append({
+            "family": cand["family"],
+            "at": _utc(at),
+            "first_seen_account": _label_for(labels, cand["first_seen_account"], names),
+            "first_seen_stretch_end": _utc(cand["first_seen_stretch_end"]),
+            "before_from": _utc(lo) if lo else None,
+            "after_until": _utc(hi) if hi else None,
+            "state": state,
+            "change_pct": round((combined["ratio"] - 1) * 100, 1) if combined else None,
+            "interval_pct": ([round((x - 1) * 100, 1) for x in combined["interval"]]
+                             if combined else None),
+            "interval_excludes_no_change": excludes,
+            "accounts_combined": sorted(paired),
+            "per_account": per_account,
+            "announcement": cand["announcement"],
+        })
+    return {
+        "candidates": out,
+        "unit": "credits per 1% of the five-hour meter",
+        "thresholds": {"provisional_after": ANNOUNCED_PROVISIONAL_N,
+                       "measured_after": ANNOUNCED_MEASURED_N,
+                       "min_before": ANNOUNCED_MIN_BEFORE},
+        "method": (
+            "candidates are each model family's first-seen stretch across every account; the "
+            "candidate instant is that stretch's start. Per account, accepted stretches "
+            "(reset-verified or not, counted) are valued in credits and split at the candidate; "
+            "the before side starts at the previous boundary (the 14 September weekly change or "
+            "an earlier candidate) and the after side ends at the next one, and a stretch that "
+            "spans a boundary is on neither side. Each account's change is the ratio of the "
+            "geometric means of its credits per 1% on the two sides, with a 95% t interval on "
+            "the logs using the scatter pooled over both sides; accounts with at least "
+            f"{ANNOUNCED_MIN_BEFORE} stretches before and 1 after are combined as a weighted "
+            "mean of log ratios, weights 1 / se squared. The state is measuring below "
+            f"{ANNOUNCED_PROVISIONAL_N} stretches after on every combined account, provisional "
+            f"at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
+            f"{ANNOUNCED_MEASURED_N} or more on at least one."),
+    }
+
+
+def announced_change_events(block: dict) -> list[dict]:
+    """The candidates that enter the page's change events: measured, interval excluding 1.0."""
+    return [c for c in (block or {}).get("candidates", [])
+            if c["state"] == "measured" and c["interval_excludes_no_change"]]
 
 
 def paired_levels(note: dict | None, by_window: list[dict]) -> tuple[dict, dict] | None:
