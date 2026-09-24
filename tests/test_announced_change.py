@@ -154,11 +154,25 @@ class EventTests(unittest.TestCase):
 
 class PowerTests(unittest.TestCase):
     """Acceptance: +20% after 10 stretches of 10 points on each account with a before side,
-    residuals resampled from the committed history's current regime, fixed seeds."""
+    residuals resampled from a frozen fixture, fixed seeds.
+
+    The fixture holds each account's before-side log residuals as main produced them at
+    52ad06b, the data this test was accepted on. The live history changes daily, so the
+    test reads the fixture rather than it (docs/findings-2026-09-24-opus-5-5-rate.md)."""
 
     @classmethod
     def setUpClass(cls):
-        cls.before = SIM.before_sides("opus-5-5")
+        import json
+        from pathlib import Path
+        path = Path(__file__).resolve().parent / "fixtures" / "announced_change_regimes.json"
+        cls.before = json.loads(path.read_text(encoding="utf-8"))["accounts"]
+
+    def test_the_fixture_is_the_accepted_regime(self):
+        def sd(xs):
+            m = sum(xs) / len(xs)
+            return math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1))
+        self.assertEqual({a: (len(xs), round(sd(xs), 3)) for a, xs in self.before.items()},
+                         {"a1": (32, 0.22), "a2": (41, 0.507), "a3": (51, 0.437)})
 
     def test_accounts_with_a_before_side(self):
         self.assertGreaterEqual(len(self.before), 2)

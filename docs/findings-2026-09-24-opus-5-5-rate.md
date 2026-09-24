@@ -117,6 +117,28 @@ grow: a1 from 32 to 45 stretches and a3 from 51 to 52.
 `tools/credits_report.py --publish-check` reproduces all 19,239 figures in the new file from
 the history files.
 
+## Power of the known-date test on today's data
+
+`python3 -m tools.announced_change_sim` on the current history, with the empty `<synthetic>`
+stretches admitted:
+
+| account | before-side stretches | log sd | +20% found alone | 0% called alone |
+|---|---|---|---|---|
+| a1 | 45 | 0.324 | 38.0% | 3.5% |
+| a2 | 41 | 0.510 | 11.5% | 1.5% |
+| a3 | 52 | 0.437 | 23.0% | 1.5% |
+| combined | | | 62.5% | 2.5% |
+
+At 52ad06b, before the `<synthetic>` change, a1 had 32 before-side stretches with log sd
+0.220, and the combined figure for +20% was 86.0%. Of the 13 stretches a1 gains, the lowest
+reads -1.37 in log against the side's mean: masterrig, 2026-09-18T06:00:02+02:00 to
+2026-09-18T06:23:14+02:00, 13% of the meter.
+
+`tests/test_announced_change.py` `PowerTests` now reads a frozen fixture,
+`tests/fixtures/announced_change_regimes.json`. It holds each account's before-side log
+residuals as 52ad06b produced them (a1 n=32 sd 0.220, a2 n=41 sd 0.507, a3 n=51 sd 0.437).
+The bars are unchanged: at least 70% for +20% and at most 10% for 0%.
+
 ## Inputs
 
 No traffic was sent. The inputs were the committed `history/gs-passive.json` (143 jwork, 52
