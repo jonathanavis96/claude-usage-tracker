@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-24T19:30:13.748505+00:00",
+ "generated_at": "2026-09-24T20:30:13.440207+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 2297,
+    "reset_verified_samples": 2327,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 5488,
+    "samples": 5518,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-24T19:28:37+00:00"
+    "last": "2026-09-24T20:30:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -7823,16 +7823,16 @@
     "note": null,
     "reset_verified_samples": 952,
     "since": null,
-    "samples": 2849,
+    "samples": 2888,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-24T19:28:37+00:00"
+    "last": "2026-09-24T20:26:57+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 908,
-    "turns": 26402,
+    "files": 909,
+    "turns": 26403,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -10582,11 +10582,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 898,
+    "reset_verified_samples": 940,
     "since": null,
-    "samples": 905,
+    "samples": 947,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-09-24T19:28:37+00:00"
+    "last": "2026-09-24T20:30:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -11307,7 +11307,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-09-24T19:30:44.241892+00:00",
+  "generated_at": "2026-09-24T20:30:46.089860+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
