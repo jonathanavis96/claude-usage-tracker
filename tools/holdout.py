@@ -140,7 +140,7 @@ def time_split(recs: list[dict], at: datetime) -> tuple[list[dict], list[dict], 
 def directions(data: dict[str, list[dict]], split_at: datetime = SPLIT_AT) -> list[dict]:
     """Every train/test pair this tool reports, in the order it prints them."""
     out = []
-    accounts = M.FIT_ACCOUNTS
+    accounts = M.fit_accounts(data)
     for era in ("pre", "post"):
         for src in accounts:
             for dst in accounts:

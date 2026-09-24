@@ -93,11 +93,33 @@ FABLE_INTERVAL = (1.8, 4.0)
 
 
 def family(model: str) -> str:
-    return C.family(model, CREDITS) or "other"
+    """The family a model's tokens are fitted under: "other" for none, or one not registered."""
+    f = C.family(model, CREDITS)
+    return f if f in FAMILIES else "other"
+
+
+def register_families(by_account: dict[str, list[dict]]) -> tuple[str, ...]:
+    """Add every family of its own (`tracker.credits.auto_family`) the stretches carry.
+
+    A model the table has never met -- Sonnet 5.5, Haiku 5.5 -- is fitted as its own family
+    from the first run that sees it, with no one adding it here: FAMILIES grows by whatever
+    new families the passive sources hold, in the order first seen, and every section of
+    this tool then treats it like any other family.
+    """
+    global FAMILIES
+    extra = []
+    for stretches in by_account.values():
+        for stretch in stretches:
+            for model in stretch.get("tokens") or {}:
+                f = C.auto_family(model, CREDITS)
+                if f and f not in FAMILIES and f not in extra:
+                    extra.append(f)
+    FAMILIES = FAMILIES + tuple(extra)
+    return tuple(extra)
 
 
 def name(f: str) -> str:
-    return NAMES.get(f, f.capitalize())
+    return NAMES.get(f, C.family_label(f))
 
 
 def api_ratio(prices: dict, num: str, den: str) -> float | None:
@@ -139,15 +161,15 @@ def inferred_rate(f: str) -> dict | None:
                 "output_multiplier": POOLED_OUT_MULT, "inferred_from": "reference_table",
                 "basis": (f"data/prices.json `_credits` reference table: {name(f)} at "
                           f"{SHELLAC[f]:.4f} credits per input token")}
-    ratio = api_ratio(LIST_PRICES, f, ANCHOR)
+    ratio = C.list_price_ratio(f, CREDITS, LIST_PRICES)
     if ratio is None:
         return None
-    by_family = CREDITS.get("list_price_model") or {}
-    num, den = LIST_PRICES[by_family[f]], LIST_PRICES[by_family[ANCHOR]]
+    num_id, den_id = C.list_price_model(f, CREDITS), C.list_price_model(ANCHOR, CREDITS)
+    num, den = LIST_PRICES[num_id], LIST_PRICES[den_id]
     return {"input": ratio * SHELLAC[ANCHOR], "times_opus": ratio,
             "output_multiplier": POOLED_OUT_MULT, "inferred_from": "list_price",
-            "basis": (f"data/prices.json list prices: {by_family[f]} ${num['input']:g}/${num['output']:g} "
-                      f"against {by_family[ANCHOR]} ${den['input']:g}/${den['output']:g} per million, "
+            "basis": (f"data/prices.json list prices: {num_id} ${num['input']:g}/${num['output']:g} "
+                      f"against {den_id} ${den['input']:g}/${den['output']:g} per million, "
                       f"{ratio:g}x the Opus anchor")}
 
 
@@ -621,12 +643,17 @@ def section4(data: dict[str, list[dict]], s3: dict, seed: int, resamples: int) -
     return out
 
 
-#: The accounts whose fits are poolable. masterrig was kept out on the belief that its meter
-#: also counts claude.ai web and phone use; it does not -- the account is used only for Claude
-#: Code on masterrig -- and the phantom meter movement that made its residuals large was the
-#: takeoff pipeline of 2 to 5 September, which MASTERRIG_FROM leaves out. It pools under the
-#: same dominance rule as the other two.
-FIT_ACCOUNTS = ("jwork", "dave", "masterrig")
+#: The accounts whose fits are poolable: every account the passive sources carry, derived
+#: from the data on each run (`fit_accounts`), never listed by hand. A new account joins the
+#: pooled fit with its first clean stretch and gets a per-account fit once it has MIN_FIT_N;
+#: an idle one simply stops contributing. masterrig pools like the rest, from MASTERRIG_FROM
+#: only: its meter counts Claude Code on masterrig alone, and the phantom meter movement that
+#: made its residuals large was the takeoff pipeline of 2 to 5 September.
+def fit_accounts(by_account: dict) -> tuple[str, ...]:
+    """The fit accounts: every account in the passive sources, sorted."""
+    return tuple(sorted(by_account))
+
+
 #: A family's rate is one rate only if every fit's interval for it holds a value every other
 #: fit's interval holds too. Fable's two jwork regimes fail this, and that failure is the
 #: finding, not a reason to average them.
@@ -648,7 +675,7 @@ def group_fits(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict[st
     out = {}
     for key, row in s3.items():
         account, era, m = key.split("/")
-        if account not in FIT_ACCOUNTS or m != mult:
+        if m != mult:
             continue
         fit_row = _variant(row, variant)
         if fit_row:
@@ -657,7 +684,7 @@ def group_fits(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict[st
 
 
 def adopt(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
-    """Pool the FIT_ACCOUNTS fits into one rate per family, whether or not the fits agree.
+    """Pool every account's fits into one rate per family, whether or not the fits agree.
 
     A family's point estimate is the median of the fits' point estimates and its interval is
     the union of theirs. `agree` is still recorded (every fit's interval for the family
@@ -981,12 +1008,28 @@ def pooled_section(data: dict[str, list[dict]], seed: int, resamples: int) -> di
     return out
 
 
-def measurable(iv: list[float] | None) -> bool:
+def measurable(iv: list[float] | None, limit: float = MAX_INTERVAL_RATIO) -> bool:
     """A bootstrap interval that pins a rate down: finite, above zero, and narrow enough."""
     if not iv:
         return False
     lo, hi = iv
-    return bool(np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi / lo < MAX_INTERVAL_RATIO)
+    return bool(np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi / lo < limit)
+
+
+#: A family newer than the January reference table -- Opus 5.5, and any family of its own a
+#: new model id gets (`tracker.credits.auto_family`) -- is published as a provisional rate
+#: while its interval is wider than MAX_INTERVAL_RATIO but under this. The row then carries
+#: `provisional: true` and a status sentence stating the interval; the flag clears on the
+#: first refit whose interval passes MAX_INTERVAL_RATIO. The table's own families (Sonnet,
+#: Haiku, Fable) keep the one rule. A provisional rate is shown, never used to value a
+#: stretch for change detection (tracker/gs_passive.py `stretch_credits`).
+PROVISIONAL_MAX_RATIO = 3.0
+#: The families the reference table has always carried, which never publish provisionally.
+TABLE_FAMILIES = ("opus", "sonnet", "haiku", "fable")
+
+
+def provisional_eligible(f: str) -> bool:
+    return f not in TABLE_FAMILIES
 
 
 #: Why a family has no measured rate at all, in the words the published row carries. The
@@ -1001,6 +1044,9 @@ NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
 #: value (tracker/gs_passive.py) -- and both stay on the record in `pooled`.
 NOT_PINNED = ("not measurable, the pooled fit cannot pin {family} down: its 80% interval is "
               "{ratio} wide end to end, and a published rate needs under {limit:g}x")
+#: The status of a provisional rate (PROVISIONAL_MAX_RATIO): figures only.
+PROVISIONAL = ("provisional: {family} {point:.3f}x Opus, 80% interval [{lo:.3f}x, {hi:.3f}x], "
+               "{ratio:.2f}x wide end to end; a rate is final when its interval is under {limit:g}x")
 
 
 def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "joint",
@@ -1020,8 +1066,8 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
     """
     diagnostics = adopt(s3, variant, mult)
     opus_in = SHELLAC[ANCHOR]
-    max_share = {f: max((row["max_share"].get(f, 0.0) for key, row in s1.items()
-                         if key.split("/")[0] in FIT_ACCOUNTS), default=0.0) for f in FAMILIES}
+    max_share = {f: max((row["max_share"].get(f, 0.0) for row in s1.values()), default=0.0)
+                 for f in FAMILIES}
     pooled = pooled or {}
     free = pooled.get("free") or []
     per_family = {}
@@ -1030,10 +1076,16 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
         iv = (pooled.get("interval") or {}).get(f)
         point = (pooled.get("times_opus") or {}).get(f) if f in free else None
         ok = anchor or (point is not None and measurable(iv))
-        value = opus_in if anchor else (point * opus_in if ok else None)
-        rate_iv = [iv[0] * opus_in, iv[1] * opus_in] if ok and not anchor else None
+        provisional = (not ok and point is not None and provisional_eligible(f)
+                       and measurable(iv, PROVISIONAL_MAX_RATIO))
+        shown = ok or provisional
+        value = opus_in if anchor else (point * opus_in if shown else None)
+        rate_iv = [iv[0] * opus_in, iv[1] * opus_in] if shown and not anchor else None
         if ok:
             status = None
+        elif provisional:
+            status = PROVISIONAL.format(family=name(f), point=point, lo=iv[0], hi=iv[1],
+                                        ratio=iv[1] / iv[0], limit=MAX_INTERVAL_RATIO)
         elif f in free:
             wide = None if not iv or iv[0] <= 0 else iv[1] / iv[0]
             ratio = "over 100x" if wide is None or wide >= 100 else f"{wide:.2f}x"
@@ -1050,6 +1102,7 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             # claiming a measurement of the one rate nothing here measures.
             "rate_source": "reference" if anchor else "measured",
             "anchor": anchor,
+            "provisional": provisional,
             "reference_input": SHELLAC.get(f),
             "times_opus": (value / opus_in if value else None),
             "times_opus_interval": ([iv[0], iv[1]] if rate_iv else None),
@@ -1064,7 +1117,8 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             "max_share_of_a_clean_stretch": max_share[f],
             # What the page shows while the fit cannot measure the family: tracker/credits.py
             # family_rate publishes it with rate_source "inferred". Gone the moment the family
-            # passes the measurable rule.
+            # passes the measurable rule. A provisional row keeps it: detection values the
+            # family's stretches at it until the rate is final.
             "inferred": None if ok else inferred_rate(f),
         }
     groups = ", ".join(pooled.get("groups") or [])
@@ -1085,7 +1139,7 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
         pooled_row = row["pooled"]
         if row["input"] is not None:
             iv = pooled_row["interval"]
-            row["why"] = (
+            row["why"] = (("provisional, " if row["provisional"] else "") +
                 f"one fit pooled over {groups}: rates shared by every group, one credits-per-1% "
                 f"scale per group. {name(f)} {pooled_row['times_opus']:.3f}x Opus, 80% bootstrap "
                 f"interval [{iv[0]:.3f}, {iv[1]:.3f}] from {pooled.get('resamples')} resamples "
@@ -1139,6 +1193,7 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
         "per_family": per_family,
         "cache_read_weight": weight,
         "max_interval_ratio": MAX_INTERVAL_RATIO,
+        "provisional_max_interval_ratio": PROVISIONAL_MAX_RATIO,
         "pooled_fit": ({
             "times_opus": pooled["times_opus"],
             "held": pooled.get("held", []), "held_rate": pooled.get("held_rate", {}),
@@ -1414,6 +1469,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     S = C.stretches_by_account(json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8")),
                                json.loads(a.masterrig.read_text(encoding="utf-8")))
+    register_families(S)
     lists = {"probes-only": probes_only_runs(), "harness-runs": C.harness_runs()}
     excl = exclusion_report(S, lists)
     win = window_check(S, lists)
@@ -1458,7 +1514,8 @@ def main(argv: list[str] | None = None) -> int:
             "dominance": DOMINANCE, "min_n": MIN_N,
             "pool_dominance_share": DOMINANCE_SHARE, "pool_dominance_min_n": DOMINANCE_MIN_N,
             "max_interval_ratio": MAX_INTERVAL_RATIO,
-            "fit_accounts": list(FIT_ACCOUNTS), "masterrig_from": MASTERRIG_FROM.isoformat(),
+            "provisional_max_interval_ratio": PROVISIONAL_MAX_RATIO,
+            "fit_accounts": list(fit_accounts(S)), "masterrig_from": MASTERRIG_FROM.isoformat(),
             "interval_percentiles": INTERVAL, "shellac_rates": SHELLAC, "fable_point": FABLE_POINT,
             "fable_interval": FABLE_INTERVAL, "exclusion": excl, "window_check": win,
             "section1": s1, "section2": s2, "section3": s3, "section4": s4, "section5": s5,

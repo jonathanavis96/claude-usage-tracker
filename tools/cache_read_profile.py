@@ -47,9 +47,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import model_rates as M
 from tracker import credits as C
 
-#: The fits whose rates the publisher pools (tools/model_rates.py FIT_ACCOUNTS, both sides of the
-#: cut where a side has enough stretches), at the output multiplier it adopts.
-FITS = ("jwork/pre", "jwork/post", "dave/post")
+#: The fits are derived from the data, as tools/model_rates.py derives its fit accounts: every
+#: account and side of the cut with at least tools/model_rates.py MIN_FIT_N usable stretches,
+#: at the output multiplier it adopts.
 OUT_MULT = 5
 GRID = (0.0, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03)
 #: The pooled weight is searched over this range: a step of STEP, then a golden-section
@@ -65,9 +65,11 @@ PRICES = Path("data/prices.json")
 def groups(data: dict[str, list[dict]]) -> dict[str, list[dict]]:
     """The usable stretches of each pooled fit, keyed `account/era`."""
     out = {}
-    for label in FITS:
-        account, era = label.split("/")
-        out[label] = [r for r in data.get(account, []) if r["era"] == era and r["ok"]]
+    for account in M.fit_accounts(data):
+        for era in ("pre", "post"):
+            recs = [r for r in data[account] if r["era"] == era and r["ok"]]
+            if len(recs) >= M.MIN_FIT_N:
+                out[f"{account}/{era}"] = recs
     return out
 
 

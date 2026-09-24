@@ -654,11 +654,17 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
 #: it is what a credit means here, nothing in this repository measures it, and every
 #: measured rate is expressed against it. A stretch that reads `measured` therefore had
 #: at least one family whose rate was fitted; one that reads `anchor` was pure Opus.
-CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_table")
+CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_table",
+                       "inferred_list_price")
 
 
-def stretch_credits(tokens: dict, credits: dict,
-                    model_rates: dict | None) -> tuple[float | None, str]:
+def _empty(tok) -> bool:
+    """A token bundle that holds no tokens (Claude Code's `<synthetic>` placeholder rows)."""
+    return isinstance(tok, dict) and not credit_model.raw_tokens(tok)
+
+
+def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
+                    prices: dict | None = None) -> tuple[float | None, str]:
     """A token bundle's value in meter credits, and which rate source it needed.
 
     The meter does not charge list-price ratios. It charges a small rational rate
@@ -679,6 +685,14 @@ def stretch_credits(tokens: dict, credits: dict,
       of both accounts' evidence; pricing them at the midpoint is the same choice
       `fable_interval` publishes, with the reading's source recorded.
     - no measurement at all: the January reference table's rate ("reference_table").
+    - no measurement and no reference row -- Opus 5.5, and any family of its own
+      (`credit_model.auto_family`) such as a future Sonnet 5.5 -- its API list-price ratio
+      to the Opus anchor from data/prices.json ("inferred_list_price"). A rate the fit
+      publishes as `provisional` is skipped for this one too. Every Opus 5.5 stretch comes
+      after the 22 September five-hour change, so a rate fitted from them alone absorbs
+      that change: valuing them at it would cancel the very step detection looks for. The
+      list ratio is fixed in advance, and is replaced by the measured rate as soon as the
+      fit's interval passes the published-rate rule.
     - no rate anywhere, or a model in no family: `(None, "unpriced")`, and the caller
       drops the stretch whole, exactly as an unpriced model already does in dollars.
 
@@ -690,17 +704,23 @@ def stretch_credits(tokens: dict, credits: dict,
     weight = credit_model.cache_read_weight(credits)
     total, worst = 0.0, CREDIT_RATE_SOURCES[0]
     for model, tok in tokens.items():
-        if not isinstance(tok, dict):
+        # A bundle of no tokens is nothing to value: Claude Code's `<synthetic>` placeholder
+        # rows carry the model id `<synthetic>` and zero tokens, belong to no family, and
+        # would otherwise drop the whole stretch as unpriced. One that ever carries tokens
+        # is not skipped, and lands in `unpriced_credit_models`.
+        if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
             continue
         fam = credit_model.family(model, credits)
         if fam is None:
             return None, "unpriced"
         rate = credit_model.family_rate(fam, credits, model_rates)
-        if rate.rate_source == "inferred":
-            # An inferred rate is shown on the page, never used to value a stretch: the credit
-            # series must not move because a family was shown before it was measured. Falls
-            # through to the reference table, as it did before the inference existed.
-            rate = replace(rate, input=None, output=None)
+        provisional = bool(((model_rates or {}).get("per_family", {}).get(fam) or {}).get("provisional"))
+        if rate.rate_source == "inferred" or provisional:
+            # An inferred rate is shown on the page, and a provisional one published, but
+            # neither values a stretch: the credit series must not move because a family was
+            # shown before it was measured. Falls through to the reference table, then to
+            # the list-price ratio below.
+            rate = replace(rate, input=None, output=None, input_interval=None, output_interval=None)
         if rate.input is not None and rate.output is not None:
             rate_in, rate_out = rate.input, rate.output
             source = "anchor" if rate.anchor else "measured"
@@ -708,12 +728,16 @@ def stretch_credits(tokens: dict, credits: dict,
             rate_in = sum(rate.input_interval) / 2
             rate_out = sum(rate.output_interval) / 2
             source = "interval_midpoint"
-        else:
-            pair = credit_model.rates(fam, credits)
-            if pair is None:
-                return None, "unpriced"
+        elif (pair := credit_model.rates(fam, credits)) is not None:
             rate_in, rate_out = pair
             source = "reference_table"
+        else:
+            ratio = credit_model.list_price_ratio(fam, credits, prices)
+            anchor = credit_model.rates("opus", credits)
+            if ratio is None or anchor is None:
+                return None, "unpriced"
+            rate_in, rate_out = ratio * anchor[0], ratio * anchor[1]
+            source = "inferred_list_price"
         if CREDIT_RATE_SOURCES.index(source) > CREDIT_RATE_SOURCES.index(worst):
             worst = source
         total += credit_model.input_side(tok, weight) * rate_in + tok.get("output", 0) * rate_out
@@ -756,14 +780,42 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0 or not s.get("tokens"):
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()):
+            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
+                   if not _empty(tok)):
                 continue
-            value, _source = stretch_credits(s["tokens"], credits, model_rates)
+            value, _source = stretch_credits(s["tokens"], credits, model_rates, prices)
             if value is None or not s.get("delta_pct"):
+                continue
+            if value <= 0:
+                # Priced, but nothing charged: a stretch whose only bundles are empty
+                # `<synthetic>` ones. The meter moved and no work explains it, so it is no
+                # reading of credits per percent, and a zero here would pull the level down.
                 continue
             out.append((datetime.fromisoformat(s["end"]), value, float(s["delta_pct"]),
                         int(s.get("windows") or 1)))
     return sorted(out, key=lambda p: p[0])
+
+
+def unpriced_credit_models(report: dict, prices: dict, credits: dict,
+                           model_rates: dict | None = None) -> list[str]:
+    """Every model id in a stretch that neither the credit rates nor the list prices can value.
+
+    Such a stretch is dropped from change detection whole, the same as before this list
+    existed; the list is what keeps the drop visible. A model that joins with no row in
+    data/prices.json -- a release the price table has not caught up with -- lands here until
+    its list price is added, instead of disappearing from the series without a word.
+    """
+    out = set()
+    for account in report.get("accounts", {}).values():
+        for s in account.get("stretches") or []:
+            for model, tok in (s.get("tokens") or {}).items():
+                # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows).
+                if not isinstance(tok, dict) or model in out or not credit_model.raw_tokens(tok):
+                    continue
+                if (bundle_meter_usd(model, tok, prices) is None
+                        or stretch_credits({model: tok}, credits, model_rates, prices)[0] is None):
+                    out.add(model)
+    return sorted(out)
 
 
 def credit_rate_sources(report: dict, prices: dict, credits: dict,
@@ -779,10 +831,12 @@ def credit_rate_sources(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0:
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()):
+            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
+                   if not _empty(tok)):
                 continue
-            value, source = stretch_credits(s["tokens"], credits, model_rates)
-            if value is not None:
+            value, source = stretch_credits(s["tokens"], credits, model_rates, prices)
+            # The same admission rule as passive_credit_points: priced and charged.
+            if value is not None and value > 0:
                 counts[source] = counts.get(source, 0) + 1
     return counts
 

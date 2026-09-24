@@ -4,7 +4,7 @@ from typing import ClassVar
 
 import numpy as np
 
-from tools.model_rates import (DOMINANCE, DOMINANCE_MIN_N, DOMINANCE_SHARE, FIT_ACCOUNTS,
+from tools.model_rates import (DOMINANCE, DOMINANCE_MIN_N, DOMINANCE_SHARE, fit_accounts,
                                MASTERRIG_FROM, MAX_INTERVAL_RATIO, MIN_N, SHELLAC, adopt, agree,
                                clean, fit, fit_bootstrap, group_fits, measurable,
                                measured_rates, nelder_mead, pooled_fit, pooled_records,
@@ -356,6 +356,47 @@ class PoolingTests(unittest.TestCase):
         self.assertIsNone(mr["per_family"]["sonnet"]["inferred"])
         self.assertIsNone(mr["per_family"]["opus"]["inferred"])
 
+    def test_opus_5_5_publishes_provisionally_while_haiku_at_the_same_width_is_withheld(self):
+        mr = measured_rates({}, self._s3(0.50, 0.54),
+                            self._pooled(**{"opus-5-5": [0.46, 0.84], "haiku": [0.10, 0.18]}))
+        row = mr["per_family"]["opus-5-5"]
+        self.assertTrue(row["provisional"])
+        self.assertAlmostEqual(row["times_opus"], 0.65)
+        self.assertEqual(row["times_opus_interval"], [0.46, 0.84])
+        self.assertEqual(row["status"], "provisional: Opus 5.5 0.650x Opus, 80% interval [0.460x, 0.840x], "
+                                        "1.83x wide end to end; a rate is final when its interval is under 1.5x")
+        # The list-price rate stays on the row: detection values the family at it meanwhile.
+        self.assertAlmostEqual(row["inferred"]["times_opus"], 0.8)
+        haiku = mr["per_family"]["haiku"]
+        self.assertFalse(haiku["provisional"])
+        self.assertIsNone(haiku["input"])
+        self.assertIn("not measurable", haiku["status"])
+        self.assertFalse(mr["per_family"]["sonnet"]["provisional"])
+
+    def test_the_provisional_flag_clears_once_the_interval_passes_the_rule(self):
+        mr = measured_rates({}, self._s3(0.50, 0.54), self._pooled(**{"opus-5-5": [0.55, 0.75]}))
+        row = mr["per_family"]["opus-5-5"]
+        self.assertFalse(row["provisional"])
+        self.assertIsNone(row["status"])
+        self.assertIsNone(row["inferred"])
+        self.assertAlmostEqual(row["times_opus"], 0.65)
+
+    def test_an_unseen_model_id_becomes_its_own_fitted_family(self):
+        import tools.model_rates as M
+        saved = M.FAMILIES
+        try:
+            stretches = {"jwork": [_kept(POST, 10.0, {"claude-sonnet-5-5-20261101": {
+                "input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}})]}
+            self.assertEqual(M.register_families(stretches), ("sonnet-5-5",))
+            self.assertIn("sonnet-5-5", M.FAMILIES)
+            rec = prepare("jwork", stretches["jwork"])[0]
+            self.assertTrue(rec["ok"])
+            self.assertEqual(rec["raw"]["sonnet-5-5"], 1100)
+            self.assertEqual(M.name("sonnet-5-5"), "Sonnet 5.5")
+            self.assertTrue(M.provisional_eligible("sonnet-5-5"))
+        finally:
+            M.FAMILIES = saved
+
     def test_the_measurability_rule(self):
         self.assertEqual(MAX_INTERVAL_RATIO, 1.5)
         self.assertTrue(measurable([2.0, 2.2]))
@@ -498,8 +539,10 @@ class MasterrigAdmissionTests(unittest.TestCase):
     def _stretch(self, start, **fields):
         return _kept(start, 10.0, _tokens(opus=(1000, 100)), **fields)
 
-    def test_masterrig_is_one_of_the_fit_accounts(self):
-        self.assertEqual(FIT_ACCOUNTS, ("jwork", "dave", "masterrig"))
+    def test_the_fit_accounts_are_every_account_in_the_data(self):
+        by_account = {"jwork": [], "masterrig": [], "dave": [], "avis": []}
+        self.assertEqual(fit_accounts(by_account), ("avis", "dave", "jwork", "masterrig"))
+        self.assertEqual(fit_accounts({"jwork": [], "newcomer": []}), ("jwork", "newcomer"))
 
     def test_nothing_before_the_admission_date_enters_and_everything_after_it_does(self):
         self.assertEqual(MASTERRIG_FROM.isoformat(), "2026-09-06T00:00:00+00:00")

@@ -68,6 +68,19 @@ python3 -m tracker.gs_passive \
   --out history/gs-passive.json \
   || echo "warning: tracker.gs_passive failed with exit $?, publishing with the previous gs-passive.json" >&2
 
+# The per-model credit rates (tools/model_rates.py), refitted once a day from
+# the passive histories so a new account, a new model family or a provisional rate
+# turning final reaches the page with no one running it by hand. About a minute,
+# so it runs under nice and only when history/model-rates.json was not already
+# generated today (its `generated_at` is local time, so is the date compared).
+# Advisory: a failed refit publishes with the previous rates.
+rates_day="$(python3 -c 'import json; print(json.load(open("history/model-rates.json"))["_meta"]["generated_at"][:10])' 2>/dev/null || true)"
+if [ "$rates_day" != "$(date +%F)" ]; then
+  PYTHONPATH=. nice python3 -m tools.model_rates history/masterrig-passive.json \
+    --json history/model-rates.json > /dev/null \
+    || echo "warning: tools.model_rates failed with exit $?, publishing with the previous model-rates.json" >&2
+fi
+
 python3 -m tracker.publish \
   --probes history/probes.jsonl \
   --passive history/passive.json \
@@ -91,7 +104,7 @@ fi
 git add data/prices.json
 # None of these exist until their first successful run (contributed) or first
 # tick of usable transcript+meter data (gs-passive).
-for f in history/contributed.jsonl data/contributed.json history/gs-passive.json; do
+for f in history/contributed.jsonl data/contributed.json history/gs-passive.json history/model-rates.json; do
   [ -f "$f" ] && git add "$f"
 done
 if ! git diff --cached --quiet; then

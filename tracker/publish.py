@@ -23,7 +23,7 @@ from .detect import (
     weighted_regimes,
 )
 from .gs_passive import (credit_rate_sources, passive_credit_points, passive_dollar_readings,
-                         stretch_credits)
+                         stretch_credits, unpriced_credit_models)
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
@@ -539,7 +539,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                     "testable_accounts": sum(1 for pts in account_points.values()
                                              if sum(p[2] for p in pts) >= 2 * MIN_STRETCH_PCT),
                     "rate_sources": credit_rate_sources(gs_passive, prices, credits, model_rates)
-                    if gs_passive else {}}}
+                    if gs_passive else {},
+                    # Model ids no rate can value, so every stretch carrying them is left
+                    # out of detection: named here rather than dropped without a word.
+                    "unpriced_models": unpriced_credit_models(gs_passive, prices, credits, model_rates)
+                    if gs_passive else []}}
     quality = {"status": "unavailable" if evidence_status == "unavailable" else "conditional",
                "reasons": reasons, "capture_complete": None,
                "unpriced_work": False if series else None}
@@ -1099,7 +1103,7 @@ def _measured_rates_block(model_rates: dict | None, labels: dict[str, str]) -> d
     block = _relabel({k: v for k, v in model_rates.items() if k != "per_family"}, labels)
     block["per_family"] = {
         fam: _relabel({k: v for k, v in row.items()
-                       if k in ("input", "interval", "status", "rate_source", "anchor",
+                       if k in ("input", "interval", "status", "rate_source", "anchor", "provisional",
                                 "reference_input", "times_opus", "times_opus_interval",
                                 "n_fits", "agree", "per_fit", "why", "output_multiplier",
                                 "max_share_of_a_clean_stretch")}, labels)

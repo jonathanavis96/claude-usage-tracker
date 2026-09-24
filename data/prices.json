@@ -15,6 +15,9 @@
     "per_family": {
       "haiku": {
         "matches": "haiku",
+        "members": [
+          "claude-haiku-4-5"
+        ],
         "input": [
           2,
           15
@@ -28,6 +31,10 @@
       },
       "sonnet": {
         "matches": "sonnet",
+        "members": [
+          "claude-sonnet-5",
+          "claude-sonnet-4-6"
+        ],
         "input": [
           6,
           15
@@ -41,6 +48,11 @@
       },
       "opus": {
         "matches": "opus",
+        "members": [
+          "claude-opus-5",
+          "claude-opus-4-8",
+          "claude-opus-4-7"
+        ],
         "input": [
           10,
           15
@@ -56,6 +68,9 @@
       },
       "opus-5-5": {
         "matches": "opus-5-5",
+        "members": [
+          "claude-opus-5-5"
+        ],
         "input": null,
         "output": null,
         "role": "reference",
@@ -64,6 +79,10 @@
       },
       "fable": {
         "matches": "fable",
+        "members": [
+          "claude-fable-5-1",
+          "claude-fable-5"
+        ],
         "input": null,
         "output": null,
         "output_ratio_candidates": [
@@ -84,6 +103,7 @@
       "opus-5-5": "claude-opus-5-5",
       "fable": "claude-fable-5-1"
     },
+    "members_note": "Every model id already filed under a family. tracker/credits.py family() files a `claude-<name>-<version>` id that is in no family's `members` as a family of its own, keyed by the id without `claude-` and any date suffix (claude-sonnet-5-5 becomes `sonnet-5-5`), so a new model is never credited at an older model's rate. A new model needs no entry here to be handled; an entry is added only to fold a new id into an existing family on purpose.",
     "list_price_model_note": "which model id of the dollar table above prices a family's tokens in API dollars, where a family now has several rows (Opus 5, 5.5, 4.8 and 4.7; Sonnet 5 and 4.6) and they do not all list at the same price. It names the current model of the family, never the first row that happens to match. Haiku was null until 2026-09-23 because the family had no row in the dollar table at all; Claude Haiku 4.5 now has one, so the API value of a Haiku figure has a list price to use. Haiku's own credit rate is still not measurable from our stretches, so the published Haiku figures remain null with a status -- what changed is the reason the status gives.",
     "across_cut_fable_rate": {
       "input": 1.667,
