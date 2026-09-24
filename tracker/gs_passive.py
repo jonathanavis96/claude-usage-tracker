@@ -784,7 +784,12 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                    if not _empty(tok)):
                 continue
             value, _source = stretch_credits(s["tokens"], credits, model_rates, prices)
-            if not value or not s.get("delta_pct"):
+            if value is None or not s.get("delta_pct"):
+                continue
+            if value <= 0:
+                # Priced, but nothing charged: a stretch whose only bundles are empty
+                # `<synthetic>` ones. The meter moved and no work explains it, so it is no
+                # reading of credits per percent, and a zero here would pull the level down.
                 continue
             out.append((datetime.fromisoformat(s["end"]), value, float(s["delta_pct"]),
                         int(s.get("windows") or 1)))
@@ -830,7 +835,8 @@ def credit_rate_sources(report: dict, prices: dict, credits: dict,
                    if not _empty(tok)):
                 continue
             value, source = stretch_credits(s["tokens"], credits, model_rates, prices)
-            if value:
+            # The same admission rule as passive_credit_points: priced and charged.
+            if value is not None and value > 0:
                 counts[source] = counts.get(source, 0) + 1
     return counts
 

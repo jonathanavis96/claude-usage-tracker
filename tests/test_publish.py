@@ -7,7 +7,8 @@ from statistics import median
 from typing import ClassVar
 
 from tracker.detect import MIN_STRETCH_PCT
-from tracker.gs_passive import passive_credit_points, passive_dollar_readings, stretch_credits
+from tracker.gs_passive import (credit_rate_sources, passive_credit_points, passive_dollar_readings,
+                                stretch_credits)
 from tracker.publish import (
     _regime_with_evidence,
     ACCOUNT_LABELS,
@@ -2186,6 +2187,20 @@ class CreditValuedDetectionTests(unittest.TestCase):
         j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
         block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
         self.assertEqual(block["unpriced_models"], ["<synthetic>"])
+
+    def test_a_stretch_whose_only_bundle_is_an_empty_synthetic_one_is_no_reading(self):
+        # It prices to 0 credits against real meter movement: dropped from the points and
+        # left out of the rate-source tally, never admitted as 0 credits per percent.
+        empty = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        self.assertEqual(stretch_credits({"<synthetic>": empty}, self.credits, self.model_rates)[0], 0.0)
+        report = self.mixed_report(accounts=("dave",))
+        before = credit_rate_sources(report, PRICES, self.credits, self.model_rates)
+        report["accounts"]["dave"]["stretches"][0]["tokens"] = {"<synthetic>": empty}
+        points = passive_credit_points(report, PRICES, self.credits, self.model_rates)
+        self.assertEqual(len(points), 79)
+        self.assertTrue(all(p[1] > 0 for p in points))
+        after = credit_rate_sources(report, PRICES, self.credits, self.model_rates)
+        self.assertEqual(sum(after.values()), sum(before.values()) - 1)
 
     def test_the_evidence_names_the_series_detection_ran_on(self):
         j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self.mixed_report())
