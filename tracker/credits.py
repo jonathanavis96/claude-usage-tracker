@@ -65,8 +65,10 @@ exactly those and nothing else.
 """
 from __future__ import annotations
 
+import functools
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -184,12 +186,83 @@ def family(model: str, credits: dict) -> str | None:
     key order.
     """
     lowered = model.lower()
+    auto = auto_family(lowered, credits)
+    if auto is not None:
+        return auto
     best, best_len = None, -1
     for name, row in credits["per_family"].items():
         needle = row.get("matches", name)
         if needle in lowered and len(needle) > best_len:
             best, best_len = name, len(needle)
     return best
+
+
+#: A current-style model id: `claude-<name>-<major>[-<minor>...]`, with an optional
+#: eight-digit date suffix. Older ids (`claude-3-5-sonnet-...`) and the tracker's own
+#: non-model strings do not match and keep the substring rule.
+_MODEL_ID = re.compile(r"^claude-([a-z]+(?:-\d{1,2})+)(?:-\d{8})?$")
+
+
+def model_key(model: str) -> str | None:
+    """A current-style model id without `claude-` and any date suffix, or None."""
+    m = _MODEL_ID.match(model.lower())
+    return m.group(1) if m else None
+
+
+def auto_family(model: str, credits: dict) -> str | None:
+    """The family of its own a model id gets when no table family lists it, or None.
+
+    Every id already filed under a family is in that family's `members`. A current-style
+    id that is in none of them is a model the table has not met -- Sonnet 5.5, Haiku 5.5 --
+    and it becomes its own family, keyed by the id without `claude-` and any date suffix,
+    rather than being credited at an older model's rate through a substring match (the
+    reason Opus 5.5 was split from Opus on 2026-09-23). Nobody has to add it anywhere:
+    tools/model_rates.py fits it like any family once stretches carry it, and until then
+    detection values it at its list-price ratio to the Opus anchor (`list_price_ratio`).
+    A table without `members` lists (a fixture, an archive) never auto-files anything.
+    """
+    key = model_key(model)
+    if key is None:
+        return None
+    rows = credits.get("per_family") or {}
+    if not any("members" in row for row in rows.values()):
+        return None
+    full = f"claude-{key}"
+    if any(full in (row.get("members") or ()) for row in rows.values()):
+        return None
+    return key
+
+
+def family_label(fam: str) -> str:
+    """How a family is named in a sentence: `opus-5-5` reads "Opus 5.5"."""
+    head, *version = fam.split("-")
+    return head.capitalize() + (" " + ".".join(version) if version else "")
+
+
+def list_price_model(fam: str, credits: dict) -> str:
+    """The data/prices.json row a family lists at: the table's choice, else its own id."""
+    return (credits.get("list_price_model") or {}).get(fam) or f"claude-{fam}"
+
+
+def list_price_ratio(fam: str, credits: dict, prices: dict | None = None) -> float | None:
+    """A family's API input list price over the Opus anchor's, from data/prices.json, or None.
+
+    None when either row is missing from the dollar table: a model the price table does not
+    list has no list price to infer a rate from, and is reported unpriced rather than guessed.
+    """
+    if prices is None:
+        prices = _list_prices()
+    num = prices.get(list_price_model(fam, credits)) or {}
+    den = prices.get(list_price_model("opus", credits)) or {}
+    if not num.get("input") or not den.get("input"):
+        return None
+    return num["input"] / den["input"]
+
+
+@functools.lru_cache(maxsize=1)
+def _list_prices() -> dict:
+    """data/prices.json, read once per process: `list_price_ratio` runs per stretch."""
+    return json.loads(PRICES_PATH.read_text(encoding="utf-8"))
 
 
 def rates(fam: str, credits: dict) -> tuple[float, float] | None:
@@ -199,7 +272,10 @@ def rates(fam: str, credits: dict) -> tuple[float, float] | None:
     (`fable_interval`) and published as an interval, because the data bound its input
     rate only loosely and do not separate its output ratio at all.
     """
-    row = credits["per_family"][fam]
+    row = credits["per_family"].get(fam)
+    if row is None:
+        # A family of its own (`auto_family`): the table has never met it, so it has no rate.
+        return None
     rate_in, rate_out = _rate(row.get("input")), _rate(row.get("output"))
     return None if rate_in is None or rate_out is None else (rate_in, rate_out)
 
@@ -326,7 +402,7 @@ def family_rate(fam: str, credits: dict, model_rates: dict | None) -> FamilyRate
         interval_out = (interval_in[0] * mult, interval_in[1] * mult)
     else:
         interval_out = None
-    detail = {k: row[k] for k in ("n_fits", "agree", "per_fit", "times_opus",
+    detail = {k: row[k] for k in ("n_fits", "agree", "per_fit", "times_opus", "provisional",
                                   "times_opus_interval", "why", "max_share_of_a_clean_stretch")
               if k in row}
     detail["output_multiplier"] = mult
@@ -399,7 +475,7 @@ def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Pr
         charged += at_in + at_out
         fam = family(model, credits)
         pair = rates(fam, credits) if fam else None
-        if fam is None:
+        if fam is None or fam not in credits["per_family"]:
             priced = False
         elif pair is None:
             fable_in += at_in

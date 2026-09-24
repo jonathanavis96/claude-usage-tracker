@@ -651,12 +651,18 @@ class PublishedBlockTests(unittest.TestCase):
             self.assertIsNotNone(haiku["api_value_per_window_usd"]["input"]["value"])
         self.assertEqual(haiku["reference_rate"]["input"], 2 / 15)
 
-    def test_opus_5_5_is_inferred_from_its_list_price_ratio(self):
+    def test_opus_5_5_publishes_its_fitted_rate_as_provisional(self):
+        # The committed fit puts Opus 5.5's interval between the published-rate rule and the
+        # provisional limit, so the row carries the fitted value, its interval, and a status
+        # sentence that says it is provisional; the list-price rate stays in model-rates.json.
+        rates = C.load_model_rates()["per_family"]["opus-5-5"]
         row = self.credits["per_model"]["opus-5-5"]
-        self.assertEqual(row["rate_source"], "inferred")
-        self.assertEqual(row["inferred_from"], "list_price")
-        self.assertAlmostEqual(row["credits_per_token"]["input"], 0.8 * 10 / 15)
-        self.assertAlmostEqual(row["credits_per_token"]["output"], 0.8 * 50 / 15)
+        self.assertTrue(rates["provisional"])
+        self.assertEqual(row["rate_source"], "measured")
+        self.assertTrue(row["measured_rate"]["provisional"])
+        self.assertTrue(row["status"].startswith("provisional: Opus 5.5 "))
+        self.assertAlmostEqual(row["credits_per_token"]["input"], rates["input"])
+        self.assertAlmostEqual(rates["inferred"]["times_opus"], 0.8)
 
     def test_a_family_that_passes_the_rule_is_measured_by_itself(self):
         rates = C.load_model_rates()
@@ -673,8 +679,8 @@ class PublishedBlockTests(unittest.TestCase):
         sources = {fam: row["rate_source"] for fam, row in self.credits["per_model"].items()}
         self.assertEqual(sources["opus"], "reference")
         self.assertTrue(self.credits["per_model"]["opus"]["anchor"])
-        self.assertEqual({fam for fam, v in sources.items() if v == "measured"}, {"sonnet", "fable"})
-        self.assertEqual({fam for fam, v in sources.items() if v == "inferred"}, {"haiku", "opus-5-5"})
+        self.assertEqual({fam for fam, v in sources.items() if v == "measured"}, {"sonnet", "fable", "opus-5-5"})
+        self.assertEqual({fam for fam, v in sources.items() if v == "inferred"}, {"haiku"})
         # Only an inferred row names what it was inferred from.
         for fam, row in self.credits["per_model"].items():
             self.assertEqual(row["inferred_from"] is not None, sources[fam] == "inferred", fam)

@@ -2128,6 +2128,65 @@ class CreditValuedDetectionTests(unittest.TestCase):
         self.assertEqual(stretch_credits({"some-other-vendor-model": opus["claude-opus-5"]},
                                          self.credits, self.model_rates), (None, "unpriced"))
 
+    def test_opus_5_5_is_valued_at_its_list_price_ratio_not_dropped(self):
+        tok = {"input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}
+        opus = stretch_credits({"claude-opus-5": tok}, self.credits, self.model_rates)[0]
+        value, source = stretch_credits({"claude-opus-5-5": tok}, self.credits, self.model_rates)
+        self.assertEqual(source, "inferred_list_price")
+        self.assertAlmostEqual(value / opus, 0.8)
+        # A provisional measured rate is published but does not value the stretch: every
+        # Opus 5.5 stretch is post-change, so its fitted rate would absorb the change.
+        provisional = {"per_family": {"opus": {"anchor": True, "input": 10 / 15, "rate_source": "reference"},
+                                      "opus-5-5": {"input": 0.4, "interval": [0.3, 0.55],
+                                                   "rate_source": "measured", "provisional": True}}}
+        value, source = stretch_credits({"claude-opus-5-5": tok}, self.credits, provisional)
+        self.assertEqual(source, "inferred_list_price")
+        self.assertAlmostEqual(value / opus, 0.8)
+        # Once the rate is final it is used as measured.
+        provisional["per_family"]["opus-5-5"]["provisional"] = False
+        value, source = stretch_credits({"claude-opus-5-5": tok}, self.credits, provisional)
+        self.assertEqual(source, "measured")
+        self.assertAlmostEqual(value, 0.4 * 1000 + 2.0 * 100)
+
+    def test_an_unseen_model_is_its_own_family_priced_by_list_ratio_or_named_unpriced(self):
+        from tracker import credits as credit_model
+        self.assertEqual(credit_model.family("claude-sonnet-5-5", self.credits), "sonnet-5-5")
+        self.assertEqual(credit_model.family("claude-haiku-5-5-20261101", self.credits), "haiku-5-5")
+        self.assertEqual(credit_model.family("claude-sonnet-5", self.credits), "sonnet")
+        tok = {"input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}
+        listed = {**PRICES, "claude-sonnet-5-5": {"input": 2.4, "output": 12.0, "cache_read": 0.24,
+                                                  "cache_write": 3.0}}
+        opus = stretch_credits({"claude-opus-5": tok}, self.credits, self.model_rates, listed)[0]
+        value, source = stretch_credits({"claude-sonnet-5-5": tok}, self.credits, self.model_rates, listed)
+        self.assertEqual(source, "inferred_list_price")
+        self.assertAlmostEqual(value / opus, 2.4 / listed["claude-opus-5"]["input"])
+        # Without a list price it cannot be valued, and the publish names it.
+        self.assertEqual(stretch_credits({"claude-sonnet-5-5": tok}, self.credits, self.model_rates, PRICES),
+                         (None, "unpriced"))
+        report = self.mixed_report(accounts=("dave",))
+        report["accounts"]["dave"]["stretches"][-1]["tokens"]["claude-sonnet-5-5"] = tok
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
+        self.assertEqual(block["unpriced_models"], ["claude-sonnet-5-5"])
+
+    def test_an_empty_synthetic_bundle_is_ignored_and_a_non_empty_one_is_named(self):
+        tok = {"input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}
+        empty = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        alone = stretch_credits({"claude-opus-5": tok}, self.credits, self.model_rates)
+        self.assertEqual(stretch_credits({"claude-opus-5": tok, "<synthetic>": empty},
+                                         self.credits, self.model_rates), alone)
+        report = self.mixed_report(accounts=("dave",))
+        stretches = report["accounts"]["dave"]["stretches"]
+        stretches[0]["tokens"]["<synthetic>"] = empty
+        points = passive_credit_points(report, PRICES, self.credits, self.model_rates)
+        self.assertEqual(len(points), 80)
+        # With tokens in it, it cannot be valued: the stretch is dropped and the model named.
+        stretches[1]["tokens"]["<synthetic>"] = tok
+        self.assertEqual(len(passive_credit_points(report, PRICES, self.credits, self.model_rates)), 79)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
+        self.assertEqual(block["unpriced_models"], ["<synthetic>"])
+
     def test_the_evidence_names_the_series_detection_ran_on(self):
         j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self.mixed_report())
         block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
@@ -2136,6 +2195,7 @@ class CreditValuedDetectionTests(unittest.TestCase):
         self.assertEqual(block["min_meter_pct_per_side"], MIN_STRETCH_PCT)
         self.assertEqual(block["testable_accounts"], 2)
         self.assertEqual(set(block["rate_sources"]), {"anchor", "measured"})
+        self.assertEqual(block["unpriced_models"], [])
 
 
 class AccountFeedsTests(unittest.TestCase):
