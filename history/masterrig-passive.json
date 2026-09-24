@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-23T14:49:33.969147+00:00",
+ "generated_at": "2026-09-24T01:17:07.384889+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 3292,
+    "reset_verified_samples": 3307,
     "since": null,
-    "samples": 11830,
+    "samples": 11970,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-09-23T16:47:45+02:00"
+    "last": "2026-09-24T03:12:41+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 4168,
-    "turns": 97219,
+    "files": 4182,
+    "turns": 98083,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -6214,7 +6214,7 @@
      "end": "2026-09-05T01:17:00+02:00",
      "delta_pct": 10.0,
      "windows": 1,
-     "usd": 0.7986,
+     "usd": 0.7987,
      "usd_per_pct": 0.0799,
      "bounds": [
       0.0726,
@@ -10283,6 +10283,13 @@
        "cache_read": 945333,
        "cache_write": 69501
       },
+      "claude-opus-5": {
+       "input": 364,
+       "output": 112261,
+       "cache_read": 27006412,
+       "cache_write": 382069,
+       "cache_write_1h": 382069
+      },
       "claude-sonnet-5": {
        "input": 86,
        "output": 4423,
@@ -10295,13 +10302,6 @@
        "cache_read": 216189,
        "cache_write": 33940,
        "cache_write_1h": 33940
-      },
-      "claude-opus-5": {
-       "input": 364,
-       "output": 112261,
-       "cache_read": 27006412,
-       "cache_write": 382069,
-       "cache_write_1h": 382069
       },
       "<synthetic>": {
        "input": 0,
@@ -10349,6 +10349,13 @@
       2.6572
      ],
      "tokens": {
+      "claude-opus-5": {
+       "input": 520,
+       "output": 252643,
+       "cache_read": 53146059,
+       "cache_write": 808565,
+       "cache_write_1h": 808565
+      },
       "claude-opus-4-7": {
        "input": 107,
        "output": 35052,
@@ -10373,13 +10380,6 @@
        "cache_read": 3990489,
        "cache_write": 167145,
        "cache_write_1h": 167145
-      },
-      "claude-opus-5": {
-       "input": 520,
-       "output": 252643,
-       "cache_read": 53146059,
-       "cache_write": 808565,
-       "cache_write_1h": 808565
       },
       "<synthetic>": {
        "input": 0,
@@ -10440,18 +10440,18 @@
        "cache_read": 34827549,
        "cache_write": 1124049
       },
-      "claude-opus-4-7": {
-       "input": 83,
-       "output": 30288,
-       "cache_read": 1449133,
-       "cache_write": 225341
-      },
       "claude-opus-5": {
        "input": 328,
        "output": 66167,
        "cache_read": 24908835,
        "cache_write": 203154,
        "cache_write_1h": 203154
+      },
+      "claude-opus-4-7": {
+       "input": 83,
+       "output": 30288,
+       "cache_read": 1449133,
+       "cache_write": 225341
       },
       "<synthetic>": {
        "input": 0,
@@ -10506,18 +10506,18 @@
        "cache_write": 202406,
        "cache_write_1h": 58995
       },
-      "claude-opus-4-7": {
-       "input": 78,
-       "output": 44169,
-       "cache_read": 2100837,
-       "cache_write": 353252
-      },
       "claude-opus-5": {
        "input": 396,
        "output": 105999,
        "cache_read": 34360607,
        "cache_write": 244693,
        "cache_write_1h": 244693
+      },
+      "claude-opus-4-7": {
+       "input": 78,
+       "output": 44169,
+       "cache_read": 2100837,
+       "cache_write": 353252
       }
      },
      "unpriced_tokens": 0,
@@ -10552,6 +10552,13 @@
       1.6136
      ],
      "tokens": {
+      "claude-opus-5": {
+       "input": 244,
+       "output": 65961,
+       "cache_read": 21814913,
+       "cache_write": 195588,
+       "cache_write_1h": 195588
+      },
       "claude-fable-5-1": {
        "input": 750,
        "output": 53862,
@@ -10570,13 +10577,6 @@
        "output": 13307,
        "cache_read": 12284484,
        "cache_write": 564411
-      },
-      "claude-opus-5": {
-       "input": 244,
-       "output": 65961,
-       "cache_read": 21814913,
-       "cache_write": 195588,
-       "cache_write_1h": 195588
       },
       "<synthetic>": {
        "input": 0,
@@ -10637,18 +10637,18 @@
        "cache_write": 314542,
        "cache_write_1h": 314542
       },
-      "claude-opus-4-7": {
-       "input": 14,
-       "output": 906,
-       "cache_read": 75720,
-       "cache_write": 52805
-      },
       "claude-opus-5": {
        "input": 88,
        "output": 29472,
        "cache_read": 9470590,
        "cache_write": 42874,
        "cache_write_1h": 42874
+      },
+      "claude-opus-4-7": {
+       "input": 14,
+       "output": 906,
+       "cache_read": 75720,
+       "cache_write": 52805
       }
      },
      "unpriced_tokens": 0,
@@ -10998,6 +10998,13 @@
       2.884
      ],
      "tokens": {
+      "claude-opus-5": {
+       "input": 1536,
+       "output": 248620,
+       "cache_read": 97474639,
+       "cache_write": 1766496,
+       "cache_write_1h": 635843
+      },
       "claude-sonnet-5": {
        "input": 672,
        "output": 28635,
@@ -11010,13 +11017,6 @@
        "output": 5557,
        "cache_read": 243061,
        "cache_write": 174697
-      },
-      "claude-opus-5": {
-       "input": 1536,
-       "output": 248620,
-       "cache_read": 97474639,
-       "cache_write": 1766496,
-       "cache_write_1h": 635843
       }
      },
      "unpriced_tokens": 0,
@@ -11123,7 +11123,7 @@
      "end": "2026-09-22T16:59:21+02:00",
      "delta_pct": 10.0,
      "windows": 1,
-     "usd": 19.537,
+     "usd": 19.5369,
      "usd_per_pct": 1.9537,
      "bounds": [
       1.7761,
@@ -11455,6 +11455,70 @@
      "capture": 1.5567,
      "fast_session_tokens": {},
      "fast_session_turns": 0
+    },
+    {
+     "start": "2026-09-23T14:43:25+02:00",
+     "end": "2026-09-23T17:43:31+02:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 22.6983,
+     "usd_per_pct": 2.2698,
+     "bounds": [
+      2.0635,
+      2.522
+     ],
+     "tokens": {
+      "claude-sonnet-5": {
+       "input": 4,
+       "output": 402,
+       "cache_read": 69413,
+       "cache_write": 3599,
+       "cache_write_1h": 3599
+      },
+      "claude-opus-5-5": {
+       "input": 692,
+       "output": 184821,
+       "cache_read": 52683501,
+       "cache_write": 1917234,
+       "cache_write_1h": 743958
+      },
+      "claude-opus-5": {
+       "input": 336,
+       "output": 37084,
+       "cache_read": 25400452,
+       "cache_write": 730022
+      },
+      "claude-opus-4-7": {
+       "input": 37,
+       "output": 23075,
+       "cache_read": 1093831,
+       "cache_write": 175067
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 531,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 1.4456,
+     "capture": 1.5702,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0
     }
    ],
    "runs": [
@@ -11768,12 +11832,12 @@
     },
     {
      "start": "2026-09-23T11:07:06+02:00",
-     "end": "2026-09-23T14:43:25+02:00",
-     "kind": "surplus",
+     "end": "2026-09-23T17:43:31+02:00",
+     "kind": "level_shift",
      "direction": "high",
-     "stretches": 2,
-     "step": 0.4113,
-     "capture": 1.4113,
+     "stretches": 3,
+     "step": 0.5567,
+     "capture": 1.5567,
      "corroborated_by": [],
      "contradicted_by": []
     }
@@ -12173,44 +12237,44 @@
     },
     {
      "date": "2026-09-23",
-     "usd_per_pct": 2.0186,
-     "delta_pct": 40.0,
-     "stretches": 4,
-     "rounding": 0.1,
+     "usd_per_pct": 2.0688,
+     "delta_pct": 50.0,
+     "stretches": 5,
+     "rounding": 0.08,
      "bounds": [
-      1.8351,
-      2.2428
+      1.9156,
+      2.2487
      ],
      "pieces": 4,
      "reset_verified": false,
-     "capture_diagnosed": 3
+     "capture_diagnosed": 4
     }
    ],
    "split": {
     "input": 0.000112,
-    "output": 0.004334,
-    "cache_read": 0.96826,
-    "cache_write": 0.027294,
-    "cache_write_1h": 0.016287
+    "output": 0.004322,
+    "cache_read": 0.96821,
+    "cache_write": 0.027357,
+    "cache_write_1h": 0.016222
    },
-   "last_usable_at": "2026-09-23T14:43:25+02:00",
+   "last_usable_at": "2026-09-23T17:43:31+02:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 211,
-     "median": 1.3868,
-     "half_range": 3.3422,
-     "mad": 0.3194,
-     "cv": 0.683
+     "n": 212,
+     "median": 1.3881,
+     "half_range": 3.3392,
+     "mad": 0.3217,
+     "cv": 0.6808
     },
     "daily": {
      "n": 29,
      "median": 1.5206,
      "half_range": 2.9825,
      "mad": 0.3044,
-     "cv": 0.8761
+     "cv": 0.8754
     }
    },
    "weekly_by_window": [
@@ -13439,18 +13503,6 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-11T04:28:19+02:00",
-     "windows": 8.0,
-     "five_hour_pct": 16.0,
-     "seven_day_pct": 2.0,
-     "rounding_interval": [
-      4.0412,
-      40.9153
-     ],
-     "pieces": 1,
-     "reset_verified": false
-    },
-    {
      "window_ending": "2026-09-11T13:25:12+02:00",
      "windows": null,
      "five_hour_pct": 3.0,
@@ -13787,13 +13839,37 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-23T16:47:45+02:00",
-     "windows": 4.0,
-     "five_hour_pct": 12.0,
-     "seven_day_pct": 3.0,
+     "window_ending": "2026-09-23T18:29:11+02:00",
+     "windows": 4.5,
+     "five_hour_pct": 18.0,
+     "seven_day_pct": 4.0,
      "rounding_interval": [
-      2.2819,
-      9.4936
+      2.9493,
+      8.0556
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-23T23:28:17+02:00",
+     "windows": 6.0,
+     "five_hour_pct": 6.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      1.7231,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-24T03:12:41+02:00",
+     "windows": 0.0,
+     "five_hour_pct": 0.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      0.0,
+      null
      ],
      "pieces": 1,
      "reset_verified": false
@@ -13801,22 +13877,5 @@
    ]
   }
  },
- "changes": [],
- "fast_session_restore": {
-  "applied_at": "2026-09-23T18:03:58+00:00",
-  "extract": "masterrig-timing.jsonl.gz",
-  "files": 4159,
-  "requests": 97479,
-  "fast_requests": 5144,
-  "stretches_changed": 19,
-  "fast_session_turns": 3101,
-  "rule": "tracker/speed.py fast_sessions over the extract; tokens joined as tracker/join.py build_stretches",
-  "tool": "tools/fast_session_restore.py",
-  "undid": {
-   "pr": 88,
-   "applied_at": "2026-09-23T17:26:49+00:00",
-   "stretches_changed": 19,
-   "turns": 3101
-  }
- }
+ "changes": []
 }
