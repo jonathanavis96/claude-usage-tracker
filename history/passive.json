@@ -1,11 +1,11 @@
 {
- "generated_at": "2026-09-24T01:17:06.857058+00:00",
+ "generated_at": "2026-09-25T01:15:29.912478+00:00",
  "plan_ratio_5x_to_20x": null,
  "split": {
   "input": 0.0001,
-  "output": 0.0041,
-  "cache_read": 0.9702,
-  "cache_write": 0.0253
+  "output": 0.0038,
+  "cache_read": 0.9711,
+  "cache_write": 0.025
  },
  "history": {
   "2026-08-20": {
@@ -147,17 +147,21 @@
   "2026-09-23": {
    "tokens_per_pct": 9701072,
    "interpolated": false
+  },
+  "2026-09-24": {
+   "tokens_per_pct": 7286258,
+   "interpolated": false
   }
  },
  "session_tokens": {
-  "claude-sonnet-4-6": 283226,
-  "claude-opus-5": 1803762,
-  "claude-sonnet-5": 521166,
+  "claude-sonnet-4-6": 274438,
+  "claude-opus-5": 1748865,
+  "claude-sonnet-5": 538388,
   "claude-haiku-4-5": 203137,
   "claude-fable-5-1": 6741351,
-  "claude-opus-4-7": 127968,
+  "claude-opus-4-7": 129107,
   "claude-opus-4-8": 2242089,
-  "claude-opus-5-5": 3120001
+  "claude-opus-5-5": 4512768
  },
  "weekly_windows": {
   "current": 5.62,
@@ -360,14 +364,14 @@
    },
    {
     "week_ending": "2026-09-25",
-    "windows": 4.79,
-    "five_hour_pct": 321.0,
-    "seven_day_pct": 67.0,
+    "windows": 4.85,
+    "five_hour_pct": 330.0,
+    "seven_day_pct": 68.0,
     "rounding_interval": [
-     4.1728,
-     5.5772
+     4.1957,
+     5.7006
     ],
-    "pieces": 26,
+    "pieces": 30,
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": true
@@ -4569,6 +4573,30 @@
     "seven_day_pct": 1.0,
     "rounding_interval": [
      0.0,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-24T13:10:00.240947+00:00",
+    "windows": null,
+    "five_hour_pct": 4.0,
+    "seven_day_pct": 0.0,
+    "rounding_interval": [
+     1.5469,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-24T18:10:00.103349+00:00",
+    "windows": 5.0,
+    "five_hour_pct": 5.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     1.3341,
      null
     ],
     "pieces": 1,

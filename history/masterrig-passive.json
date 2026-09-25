@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-24T01:17:07.384889+00:00",
+ "generated_at": "2026-09-25T01:15:30.043327+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 3307,
+    "reset_verified_samples": 3335,
     "since": null,
-    "samples": 11970,
+    "samples": 12206,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-09-24T03:12:41+02:00"
+    "last": "2026-09-25T03:10:22+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 4182,
-    "turns": 98083,
+    "files": 4201,
+    "turns": 98626,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -11519,6 +11519,63 @@
      "capture": 1.5702,
      "fast_session_tokens": {},
      "fast_session_turns": 0
+    },
+    {
+     "start": "2026-09-23T17:43:31+02:00",
+     "end": "2026-09-24T11:53:23+02:00",
+     "delta_pct": 10.0,
+     "windows": 4,
+     "usd": 24.5339,
+     "usd_per_pct": 2.4534,
+     "bounds": [
+      1.7524,
+      4.089
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1444,
+       "output": 303884,
+       "cache_read": 104049700,
+       "cache_write": 2375731,
+       "cache_write_1h": 1122334
+      },
+      "claude-opus-4-7": {
+       "input": 62,
+       "output": 22266,
+       "cache_read": 778752,
+       "cache_write": 235703
+      },
+      "claude-sonnet-5": {
+       "input": 166,
+       "output": 8204,
+       "cache_read": 6845936,
+       "cache_write": 280281
+      },
+      "claude-haiku-4-5": {
+       "input": 62,
+       "output": 11,
+       "cache_read": 211020,
+       "cache_write": 72287
+      },
+      "claude-sonnet-4-6": {
+       "input": 11,
+       "output": 3579,
+       "cache_read": 290878,
+       "cache_write": 41231,
+       "cache_write_1h": 41231
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 799,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 1.4456,
+     "capture": 1.6972,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0
     }
    ],
    "runs": [
@@ -11832,12 +11889,12 @@
     },
     {
      "start": "2026-09-23T11:07:06+02:00",
-     "end": "2026-09-23T17:43:31+02:00",
+     "end": "2026-09-24T11:53:23+02:00",
      "kind": "level_shift",
      "direction": "high",
-     "stretches": 3,
-     "step": 0.5567,
-     "capture": 1.5567,
+     "stretches": 4,
+     "step": 0.5634,
+     "capture": 1.5634,
      "corroborated_by": [],
      "contradicted_by": []
     }
@@ -12248,33 +12305,47 @@
      "pieces": 4,
      "reset_verified": false,
      "capture_diagnosed": 4
+    },
+    {
+     "date": "2026-09-24",
+     "usd_per_pct": 2.4534,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.4,
+     "bounds": [
+      1.7524,
+      4.089
+     ],
+     "pieces": 4,
+     "reset_verified": false,
+     "capture_diagnosed": 1
     }
    ],
    "split": {
-    "input": 0.000112,
-    "output": 0.004322,
-    "cache_read": 0.96821,
-    "cache_write": 0.027357,
-    "cache_write_1h": 0.016222
+    "input": 0.00011,
+    "output": 0.004304,
+    "cache_read": 0.968245,
+    "cache_write": 0.02734,
+    "cache_write_1h": 0.016145
    },
-   "last_usable_at": "2026-09-23T17:43:31+02:00",
+   "last_usable_at": "2026-09-24T11:53:23+02:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 212,
-     "median": 1.3881,
-     "half_range": 3.3392,
-     "mad": 0.3217,
-     "cv": 0.6808
+     "n": 213,
+     "median": 1.3893,
+     "half_range": 3.3363,
+     "mad": 0.3266,
+     "cv": 0.6789
     },
     "daily": {
-     "n": 29,
-     "median": 1.5206,
-     "half_range": 2.9825,
-     "mad": 0.3044,
-     "cv": 0.8754
+     "n": 30,
+     "median": 1.5329,
+     "half_range": 2.9585,
+     "mad": 0.3531,
+     "cv": 0.853
     }
    },
    "weekly_by_window": [
@@ -13863,12 +13934,36 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-24T03:12:41+02:00",
+     "window_ending": "2026-09-24T03:33:16+02:00",
      "windows": 0.0,
      "five_hour_pct": 0.0,
      "seven_day_pct": 1.0,
      "rounding_interval": [
       0.0,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-24T15:05:15+02:00",
+     "windows": null,
+     "five_hour_pct": 4.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      1.5469,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-24T20:05:51+02:00",
+     "windows": 5.0,
+     "five_hour_pct": 5.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      1.3341,
       null
      ],
      "pieces": 1,
