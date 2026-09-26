@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-25T01:15:30.043327+00:00",
+ "generated_at": "2026-09-26T01:15:25.571932+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 3335,
+    "reset_verified_samples": 3367,
     "since": null,
-    "samples": 12206,
+    "samples": 12527,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-09-25T03:10:22+02:00"
+    "last": "2026-09-26T03:11:08+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 4201,
-    "turns": 98626,
+    "files": 4210,
+    "turns": 98819,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -11576,6 +11576,57 @@
      "capture": 1.6972,
      "fast_session_tokens": {},
      "fast_session_turns": 0
+    },
+    {
+     "start": "2026-09-24T11:53:23+02:00",
+     "end": "2026-09-25T23:38:21+02:00",
+     "delta_pct": 10.0,
+     "windows": 4,
+     "usd": 16.3342,
+     "usd_per_pct": 1.6334,
+     "bounds": [
+      1.1667,
+      2.7224
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 872,
+       "output": 166545,
+       "cache_read": 64776332,
+       "cache_write": 1171802,
+       "cache_write_1h": 596974
+      },
+      "claude-opus-4-7": {
+       "input": 107,
+       "output": 63274,
+       "cache_read": 1780530,
+       "cache_write": 393009
+      },
+      "claude-sonnet-4-6": {
+       "input": 14,
+       "output": 2757,
+       "cache_read": 403227,
+       "cache_write": 41505,
+       "cache_write_1h": 41505
+      },
+      "claude-sonnet-5": {
+       "input": 120,
+       "output": 5070,
+       "cache_read": 4001334,
+       "cache_write": 387914
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 541,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.4456,
+     "capture": 1.1299,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0
     }
    ],
    "runs": [
@@ -12319,33 +12370,47 @@
      "pieces": 4,
      "reset_verified": false,
      "capture_diagnosed": 1
+    },
+    {
+     "date": "2026-09-25",
+     "usd_per_pct": 1.6334,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.4,
+     "bounds": [
+      1.1667,
+      2.7224
+     ],
+     "pieces": 4,
+     "reset_verified": false,
+     "capture_diagnosed": 0
     }
    ],
    "split": {
     "input": 0.00011,
-    "output": 0.004304,
-    "cache_read": 0.968245,
+    "output": 0.004296,
+    "cache_read": 0.968255,
     "cache_write": 0.02734,
-    "cache_write_1h": 0.016145
+    "cache_write_1h": 0.016087
    },
-   "last_usable_at": "2026-09-24T11:53:23+02:00",
+   "last_usable_at": "2026-09-25T23:38:21+02:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 213,
-     "median": 1.3893,
-     "half_range": 3.3363,
-     "mad": 0.3266,
-     "cv": 0.6789
+     "n": 214,
+     "median": 1.39,
+     "half_range": 3.3345,
+     "mad": 0.3226,
+     "cv": 0.6768
     },
     "daily": {
-     "n": 30,
-     "median": 1.5329,
-     "half_range": 2.9585,
-     "mad": 0.3531,
-     "cv": 0.853
+     "n": 31,
+     "median": 1.5452,
+     "half_range": 2.935,
+     "mad": 0.3232,
+     "cv": 0.8426
     }
    },
    "weekly_by_window": [
@@ -13964,6 +14029,30 @@
      "seven_day_pct": 1.0,
      "rounding_interval": [
       1.3341,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-09-25T04:09:59.612515+00:00",
+     "windows": null,
+     "five_hour_pct": 2.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.2734,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": true
+    },
+    {
+     "window_ending": "2026-09-26T03:11:08+02:00",
+     "windows": 2.0,
+     "five_hour_pct": 2.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      0.1671,
       null
      ],
      "pieces": 1,
