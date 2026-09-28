@@ -128,25 +128,130 @@ class AnnouncedChangeTests(unittest.TestCase):
         self.assertIsNotNone(cand["change_pct"])
 
 
-class EventTests(unittest.TestCase):
-    def test_measured_excluding_one_enters_events_and_last_change(self):
-        block = C.announced_change(_fixture(step=1.6), [], CREDITS, _output_value, LABELS)
-        cand = block["candidates"][0]
-        self.assertTrue(cand["interval_excludes_no_change"])
+FIVE_HOUR_NOTE = next(a for a in C.ANNOUNCEMENTS if a["scope"] == "five_hour")
+
+
+def _window(label, ending, d5, d7, pieces=1):
+    return {"account": label, "window_ending": ending.isoformat(), "five_hour_pct": d5,
+            "seven_day_pct": d7, "pieces": pieces, "reset_verified": True}
+
+
+def _max20(n_after=10, after_wpw=4.5, n_before=20):
+    """a1 and a2 at 5 windows per week from the cut, then `after_wpw` from CAND; a3 after only.
+
+    One window straddles CAND (ends 2 hours after it) and belongs to neither side.
+    """
+    rows = []
+    for label in ("a1", "a2"):
+        rows += [_window(label, C.CUT_AT + timedelta(hours=6 * (i + 1)), 50.0, 10.0)
+                 for i in range(n_before)]
+        rows.append(_window(label, CAND + timedelta(hours=2), 50.0, 1.0))
+        rows += [_window(label, CAND + timedelta(hours=6 * (i + 1)), 50.0, 50.0 / after_wpw)
+                 for i in range(n_after)]
+    rows += [_window("a3", CAND + timedelta(hours=6 * (i + 1)), 40.0, 10.0) for i in range(4)]
+    return {"by_window": rows, "by_account": {}}
+
+
+def _announced(note=FIVE_HOUR_NOTE, at=CAND):
+    return {"candidates": [{"family": "opus-5-5", "at": at.isoformat(), "at_source": "first_turn",
+                            "first_seen_account": "a1", "first_seen_stretch_end": at.isoformat(),
+                            "before_from": C.CUT_AT.isoformat(), "after_until": None,
+                            "announcement": note}]}
+
+
+class FirstTurnTests(unittest.TestCase):
+    def test_candidate_instant_is_the_first_turn_not_the_stretch_start(self):
+        by = _fixture()
+        for rows in by.values():
+            for st in rows:
+                if "claude-opus-5-5" in st["tokens"]:
+                    first = datetime.fromisoformat(st["start"]) + timedelta(minutes=40)
+                    st["first_turns"] = {"claude-opus-5-5": first.isoformat()}
+        # A week-long stretch that starts first but whose first Opus 5.5 turn is days later.
+        long = _st(CAND - timedelta(days=1), 150, "claude-opus-5-5", 1.0)
+        long["first_turns"] = {"claude-opus-5-5": (CAND + timedelta(days=5)).isoformat()}
+        by["acct_new"] = [long]
+        cand = C.change_candidates(by, CREDITS)[0]
+        self.assertEqual(cand["at"], CAND + timedelta(minutes=40))
+        self.assertEqual(cand["at_source"], "first_turn")
+        self.assertEqual(cand["first_seen_account"], "acct_one")
+        self.assertEqual(cand["first_seen_stretch_end"], CAND + timedelta(hours=2))
+
+    def test_without_stamps_the_stretch_start_stands_and_says_so(self):
+        cand = C.change_candidates(_fixture(), CREDITS)[0]
+        self.assertEqual((cand["at"], cand["at_source"]), (CAND, "stretch_start"))
+
+    def test_stretch_records_each_models_first_turn(self):
+        from tracker.join import Stretch
+        from tracker.turns import Turn
+        s = Stretch(CAND, CAND + timedelta(hours=1))
+        for minutes, model in ((5, "claude-opus-5"), (9, "claude-opus-5-5"), (20, "claude-opus-5-5")):
+            s.add(Turn(ts=CAND + timedelta(minutes=minutes), model=model, id=str(minutes),
+                       input=1, output=1, cache_read=0, cache_write=0), {})
+        self.assertEqual(s.first_turns["claude-opus-5-5"], CAND + timedelta(minutes=9))
+
+
+class MeterTests(unittest.TestCase):
+    def test_windows_per_week_ratio_gives_the_five_hour_change(self):
+        cand = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
+        a1 = cand["per_account"]["a1"]
+        self.assertEqual((a1["n_before"], a1["n_after"], a1["n_straddling"]), (20, 10, 1))
+        self.assertEqual((a1["windows_per_week_before"], a1["windows_per_week_after"]), (5.0, 4.5))
+        self.assertEqual(a1["change_pct"], round((5.0 / 4.5 - 1) * 100, 1))
+        lo, hi = a1["interval_pct"]
+        self.assertLess(lo, a1["change_pct"])
+        self.assertGreater(hi, a1["change_pct"])
+        self.assertEqual(cand["accounts_combined"], ["a1", "a2"])
+        self.assertFalse(cand["per_account"]["a3"]["combined"])
+        self.assertEqual(cand["change_pct"], 11.1)
+        self.assertEqual(cand["windows_per_week_ratio"], 0.9)
+        self.assertEqual(cand["state"], "measured")
+        self.assertTrue(cand["applies"])
+        self.assertEqual(cand["method"], "windows_per_week_ratio")
+        self.assertIn("weekly cap unchanged", C.five_hour_on_meters(_announced(), _max20())["method"])
+
+    def test_states_follow_readings_after(self):
+        for n, state in ((4, "measuring"), (5, "provisional"), (9, "provisional"), (10, "measured")):
+            with self.subTest(n=n):
+                cand = C.five_hour_on_meters(_announced(), _max20(n_after=n))["candidates"][0]
+                self.assertEqual(cand["state"], state)
+                self.assertEqual(cand["applies"], state == "measured")
+
+    def test_a_candidate_without_a_five_hour_announcement_is_not_measured(self):
+        self.assertEqual(C.five_hour_on_meters(_announced(note=None), _max20())["candidates"], [])
+
+    def test_own_weekly_step_later_than_the_boundary_starts_the_before_side(self):
+        m = _max20()
+        step = C.CUT_AT + timedelta(hours=6 * 10 + 1)
+        m["by_account"]["a1"] = {"step": {"percent": -20},
+                                 "regimes": [{"start": "2026-09-01T00:00:00+00:00",
+                                              "end": C.CUT_AT.isoformat()},
+                                             {"start": step.isoformat(), "end": CAND.isoformat()}]}
+        a1 = C.five_hour_on_meters(_announced(), m)["candidates"][0]["per_account"]["a1"]
+        self.assertEqual(a1["n_before"], 10)
+        self.assertEqual(a1["before_from"], step.isoformat())
+
+    def test_measured_change_enters_events_and_last_change_with_its_method(self):
+        block = C.five_hour_on_meters(_announced(), _max20())
         events = P._announced_events(block)
         self.assertEqual(len(events), 1)
         ev = events[0]
-        self.assertEqual(ev["date"], "2026-09-22")
-        self.assertEqual(ev["direction"], "increased")
+        self.assertEqual((ev["date"], ev["direction"], ev["percent"]), ("2026-09-22", "increased", 11))
+        self.assertEqual((ev["method"], ev["metric"]), ("windows_per_week_ratio", "windows_per_week_ratio"))
+        self.assertEqual(ev["change_pct"], 11.1)
         self.assertTrue(ev["known_date_test"])
-        self.assertEqual(ev["kind"], "change")
         older = {"date": "2026-09-11", "percent": 26}
-        self.assertEqual(P._with_announced_last_change(older, block)["date"], "2026-09-22")
-        self.assertNotIn("label", P._with_announced_last_change(older, block))
+        last = P._with_announced_last_change(older, block)
+        self.assertEqual((last["date"], last["method"]), ("2026-09-22", "windows_per_week_ratio"))
+        self.assertNotIn("label", last)
+
+    def test_the_credits_test_no_longer_drives_events(self):
+        credits_block = C.announced_change(_fixture(step=1.6), [], CREDITS, _output_value, LABELS)
+        self.assertTrue(credits_block["candidates"][0]["interval_excludes_no_change"])
+        self.assertEqual(P._announced_events(credits_block), [])
 
     def test_not_measured_stays_out_of_events(self):
-        block = C.announced_change(_fixture(n_after_one=6, step=1.6), [], CREDITS,
-                                   _output_value, LABELS)
+        block = C.five_hour_on_meters(_announced(), _max20(n_after=6))
         self.assertEqual(P._announced_events(block), [])
         older = {"date": "2026-09-11"}
         self.assertIs(P._with_announced_last_change(older, block), older)

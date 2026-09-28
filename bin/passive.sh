@@ -12,9 +12,21 @@
 # transcripts cannot see, and each one's `capture` is how a reader tells. Fast-session
 # requests (tracker/speed.py) count in every stretch's tokens like any other, and are also
 # recorded per stretch as `fast_session_tokens` (tracker/join.py), for diagnosis only.
+#
+# Safe to run every hour: it exits 0 at once unless its last successful run is more than
+# 20 hours old, so a run the machine slept through is made up at the next hourly tick
+# rather than the next day. `.passive-last-ok` in the checkout (gitignored) is the stamp:
+# touched only after a commit that pushed, or a run with nothing to commit. `--force`
+# skips the check.
 set -euo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.."
+STAMP=.passive-last-ok
+MAX_AGE=$((20 * 3600))
+if [ "${1:-}" != "--force" ] && [ -f "$STAMP" ] \
+    && [ $(( $(date +%s) - $(stat -c %Y "$STAMP") )) -lt "$MAX_AGE" ]; then
+  exit 0
+fi
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 python3 -m tracker.passive --out history/passive.json
 # Never let the stretch record's failure cost the day's passive.json, which the page reads.
@@ -29,11 +41,14 @@ git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --r
 git add history/passive.json
 git add history/masterrig-passive.json 2>/dev/null || true
 git add history/masterrig-speed.json 2>/dev/null || true
+if git diff --cached --quiet; then
+  touch "$STAMP"
+  exit 0
+fi
 git -c user.name=tracker -c user.email=tracker@local commit -q -m "Passive history $(date -u +%F)" || exit 0
-if ! git push -q origin "$BRANCH"; then
-  if git pull -q --rebase origin "$BRANCH" && git push -q origin "$BRANCH"; then
-    :
-  else
-    echo "warning: git push failed after a rebase retry, commit made locally only" >&2
-  fi
+if git push -q origin "$BRANCH" \
+    || { git pull -q --rebase origin "$BRANCH" && git push -q origin "$BRANCH"; }; then
+  touch "$STAMP"
+else
+  echo "warning: git push failed after a rebase retry, commit made locally only" >&2
 fi

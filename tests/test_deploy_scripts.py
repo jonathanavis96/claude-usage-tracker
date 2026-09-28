@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import ClassVar
@@ -419,7 +420,7 @@ class TestProbeShFlow(unittest.TestCase):
             (repo / "data" / "prices.json").write_bytes(ROTATION_PRICES.read_bytes())
             self._git("-c", "user.name=t", "-c", "user.email=t@t", "checkout", "-q", "-b", "build", cwd=repo)
             self._git("add", "-A", cwd=repo)
-            self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed", cwd=repo)
+            self._git("-c", "user.name=t", "-c", "user.email=t", "commit", "-q", "-m", "seed", cwd=repo)
             self._git("push", "-q", "-u", "origin", "build", cwd=repo)
 
             env = {k: v for k, v in os.environ.items() if not k.startswith("FAKE_")}
@@ -554,3 +555,96 @@ class TestProbeShFlow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPassiveShGuard(unittest.TestCase):
+    """bin/passive.sh runs hourly and skips unless its last success is over 20 hours old.
+
+    The script is run for real against a scratch git clone with a bare origin. Its three
+    python steps are stub `tracker` modules in the clone, which record that they ran and
+    write the history files, so the guard, the commit, the push and the stamp are the
+    script's own.
+    """
+
+    STAMP = ".passive-last-ok"
+
+    def _git(self, cwd: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True)
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        origin, self.repo = tmp / "origin.git", tmp / "repo"
+        self._git(tmp, "init", "-q", "--bare", "-b", "main", str(origin))
+        self._git(tmp, "clone", "-q", str(origin), str(self.repo))
+        (self.repo / "bin").mkdir()
+        (self.repo / "bin" / "passive.sh").write_text((BIN / "passive.sh").read_text())
+        (self.repo / "history").mkdir()
+        pkg = self.repo / "tracker"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        for name, out in (("passive", "history/passive.json"),
+                          ("gs_passive", "history/masterrig-passive.json"),
+                          ("speed", "history/masterrig-speed.json")):
+            (pkg / f"{name}.py").write_text(
+                "import pathlib, time\n"
+                "pathlib.Path('ran').open('a').write('" + name + "\\n')\n"
+                f"pathlib.Path('{out}').write_text(str(time.time_ns()))\n")
+        (self.repo / ".gitignore").write_text(f"{self.STAMP}\nran\ntracker/\n")
+        self._git(self.repo, "add", ".gitignore", "bin/passive.sh")
+        self._git(self.repo, "-c", "user.name=t", "-c", "user.email=t", "commit", "-q", "-m", "init")
+        self._git(self.repo, "push", "-q", "origin", "HEAD:main")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", str(self.repo / "bin" / "passive.sh"), *args], cwd=self.repo,
+                              capture_output=True, text=True, check=False, timeout=60)
+
+    def _ran(self) -> bool:
+        return (self.repo / "ran").exists()
+
+    def _stamp_age(self, hours: float) -> None:
+        stamp = self.repo / self.STAMP
+        stamp.touch()
+        when = stamp.stat().st_mtime - hours * 3600
+        os.utime(stamp, (when, when))
+
+    def test_a_missing_stamp_runs_pushes_and_writes_the_stamp(self) -> None:
+        proc = self._run()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self._ran())
+        self.assertTrue((self.repo / self.STAMP).exists())
+        log = subprocess.run(["git", "log", "--oneline", "origin/main"], cwd=self.repo,
+                             capture_output=True, text=True, check=True).stdout
+        self.assertIn("Passive history", log)
+
+    def test_a_fresh_stamp_skips_the_run(self) -> None:
+        self._stamp_age(1)
+        proc = self._run()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(self._ran())
+
+    def test_a_stale_stamp_runs(self) -> None:
+        self._stamp_age(21)
+        proc = self._run()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self._ran())
+        self.assertLess(time.time() - (self.repo / self.STAMP).stat().st_mtime, 60)
+
+    def test_force_runs_despite_a_fresh_stamp(self) -> None:
+        self._stamp_age(1)
+        self.assertEqual(self._run("--force").returncode, 0)
+        self.assertTrue(self._ran())
+
+    def test_a_failed_step_writes_no_stamp(self) -> None:
+        (self.repo / "tracker" / "passive.py").write_text("raise SystemExit(3)\n")
+        self.assertNotEqual(self._run().returncode, 0)
+        self.assertFalse((self.repo / self.STAMP).exists())
+
+    def test_a_failed_push_writes_no_stamp(self) -> None:
+        self._git(self.repo, "remote", "set-url", "origin", str(self.repo.parent / "gone.git"))
+        proc = self._run()
+        self.assertIn("commit made locally only", proc.stderr)
+        self.assertFalse((self.repo / self.STAMP).exists())

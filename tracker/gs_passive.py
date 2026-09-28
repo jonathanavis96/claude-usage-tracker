@@ -428,7 +428,8 @@ def _stretch_record(v: Verdict, reset_source: str = "logged") -> dict:
             "unpriced_tokens": s.unpriced_tokens, "unpriced": s.unpriced, "turns": s.turns,
             "reset_verified": reset_verified, "reset_source": reset_source, "status": status, "capture_status": v.status,
             "reference": _r(v.reference), "capture": _r(v.capture),
-            "fast_session_tokens": s.fast_session_tokens, "fast_session_turns": s.fast_session_turns}
+            "fast_session_tokens": s.fast_session_tokens, "fast_session_turns": s.fast_session_turns,
+            "first_turns": {m: ts.isoformat() for m, ts in sorted(s.first_turns.items())}}
 
 
 def _pieces(stretches: list[Stretch]) -> int:

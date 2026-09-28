@@ -7,3 +7,4 @@ out/
 .playwright-mcp/
 *.png
 docs/handoffs/
+.passive-last-ok
