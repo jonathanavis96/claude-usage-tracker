@@ -751,12 +751,11 @@ CURRENT_METHOD = (
 #: `current_source` of a regime opened by a measured known-date change and stated by the
 #: previous regime times that change, or by the regime's own cluster once it is thick enough.
 KNOWN_DATE_SCALED_SOURCE = "previous_regime_scaled_by_known_date_change"
-#: `current_source` of a regime opened by a measured change whose data has not placed it on
-#: the five-hour window (scope undetermined or weekly): the previous regime's value, unscaled.
-KNOWN_DATE_UNSCALED_SOURCE = "previous_regime_unscaled_scope_not_five_hour"
-#: `windows_per_week_source`-side twin: a week that carries the previous regime's value
-#: because the change's scope is undetermined.
-UNDETERMINED_WEEK_SOURCE = "previous_regime_carried_scope_undetermined"
+#: `current_source` of a regime opened by a change whose joint fit cannot yet separate the
+#: new family's rate from the limit change: the previous regime's value, carried.
+KNOWN_DATE_UNSCALED_SOURCE = "previous_regime_carried_fit_not_separable"
+#: `per_week_source` twin: a week that carries the previous regime's value for the same reason.
+UNDETERMINED_WEEK_SOURCE = "previous_regime_carried_fit_not_separable"
 KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
 
 KNOWN_DATE_METHOD = (
@@ -764,10 +763,10 @@ KNOWN_DATE_METHOD = (
     "windows-per-week ratio across a change candidate; state measured, dated after cut_at) "
     "opens a new regime in `regimes`, from the candidate's own instant. A regime's own cluster "
     f"(stretches starting in it) states it once it holds {MIN_AFTER_CLUSTER} readings; below "
-    "that it is the previous regime's value times the change's five-hour window ratio, the "
-    "interval's low edge times the ratio's low edge and its high edge times the ratio's high "
-    "edge. Where the data has not placed the change on the five-hour window (its `scope` is "
-    "undetermined or weekly) the window ratio is 1: the previous regime's value, unscaled "
+    "that it is the previous regime's value times the change's five-hour limit ratio g (the "
+    "joint fit's point estimate, whatever its interval), the interval's low edge times g's low "
+    "edge and its high edge times g's high edge. Where the joint fit cannot yet separate the "
+    "new family's rate from g, the regime carries the previous regime's value "
     f"(`{KNOWN_DATE_UNSCALED_SOURCE}`). The window interval "
     "is a spread of readings, not a standard error, so the edges are multiplied rather than "
     "standard errors combined. The published value and interval are the newest regime's.")
@@ -779,18 +778,18 @@ def known_date_changes(meters: dict | None) -> list[dict]:
     The candidates of the `five_hour_on_meters` block that `apply` (measurable at all, dated
     after CUT_AT: the 14 September split already stands for everything before it). Each
     carries its instant, its scope, and the five-hour window ratio and interval, from the
-    published rounded percents so a reader can redo the arithmetic. A change the data has
-    not placed on the five-hour window (`change_pct` null, or its scope weekly) scales the
-    window by 1 and says so in `window_scaled`. Nothing here names a date; the boundaries
-    are the candidate records' own.
+    published rounded percents so a reader can redo the arithmetic. The ratio is the joint
+    fit's five-hour limit change g at its point estimate, whatever its interval or `scope`
+    label; a change whose fit is not separable (`change_pct` null) has none, and
+    `window_scaled` False tells `window_regimes` to carry the previous regime. Nothing here
+    names a date; the boundaries are the candidate records' own.
     """
     out = []
     for cand in five_hour_meter_events(meters):
         at = datetime.fromisoformat(cand["at"])
         if at <= CUT_AT:
             continue
-        scaled = cand.get("change_pct") is not None and bool(cand.get("interval_pct")) \
-            and (cand.get("scope") or {}).get("state") in ("five_hour", "both")
+        scaled = cand.get("change_pct") is not None and bool(cand.get("interval_pct"))
         lo, hi = cand["interval_pct"] if scaled else (0.0, 0.0)
         pct = cand["change_pct"] if scaled else 0.0
         out.append({"at": at, "family": cand["family"], "change_pct": pct,
@@ -818,7 +817,7 @@ def current_method(changes: list[dict]) -> str:
         return CURRENT_METHOD + KNOWN_DATE_METHOD
     applied = "; ".join(f"from {_utc(c['at'])} ({c['family']} first turn), "
                         + (f"{c['change_pct']:+g}%" if c.get("window_scaled", True)
-                           else "window unscaled, scope not five-hour")
+                           else "window carried, joint fit not separable")
                         for c in changes)
     return (CURRENT_METHOD + KNOWN_DATE_METHOD
             + f" Known-date changes applied: {applied}.")
@@ -844,9 +843,9 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
     for k, change in enumerate(changes, start=2):
         prev = regimes[-1]
         prev["until"] = _utc(change["at"])
-        if change.get("scope") == "undetermined" and prev["value"] is not None:
-            # No claim about which budget moved: the window carries the previous regime's
-            # value, however thick this regime's own cluster.
+        if not change.get("window_scaled", True) and prev["value"] is not None:
+            # No separable fit, so no estimate of the limit change: the window carries the
+            # previous regime's value, however thick this regime's own cluster.
             fig, source = {"value": prev["value"], "interval": prev["interval"]}, \
                 KNOWN_DATE_UNSCALED_SOURCE
         elif counts.get(k, 0) >= MIN_AFTER_CLUSTER or prev["value"] is None:
@@ -856,8 +855,7 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
             fig = {"value": prev["value"] * change["ratio"],
                    "interval": ([prev["interval"][0] * r_lo, prev["interval"][1] * r_hi]
                                 if prev["interval"] else None)}
-            source = KNOWN_DATE_SCALED_SOURCE if change.get("window_scaled", True) \
-                else KNOWN_DATE_UNSCALED_SOURCE
+            source = KNOWN_DATE_SCALED_SOURCE
         regimes.append({"from": _utc(change["at"]), "until": None, "value": fig["value"],
                         "interval": fig["interval"], "source": source})
     return regimes, regimes[-1]["source"]
@@ -2471,11 +2469,13 @@ WINDOWS_PER_WEEK_METHOD = (
     "tokens at its base family's rate) / (the account's own before level x g). The weekly "
     "limit's change is g times the windows-per-week ratio, its interval from g's bootstrap "
     "interval and the ratio's (`windows_per_week_ratio_bootstrap_interval`) as independent "
-    "log-normal ones. `five_hour` is g's interval excluding no change with the weekly one "
-    "including it, `weekly` the reverse, and `both` both. While the fit cannot separate the "
-    "rate from g (the mix too uniform), or neither interval excludes no change, the scope is "
-    "`undetermined`, `change_pct` (the five-hour window change) is null and `scope.reason` "
-    "says why. The state is "
+    "log-normal ones. Once the fit separates the rate from g, `change_pct` is g at its point "
+    "estimate, whatever its interval: the regimes scale the window by g and the week by g "
+    "times the ratio at once, and the figures move as readings arrive. `scope` only "
+    "describes which intervals exclude no change: `five_hour` g's alone, `weekly` the weekly "
+    "one alone, `both` both, `undetermined` neither. While the fit cannot separate the rate "
+    "from g (the mix too uniform), `change_pct` is null, the regimes carry the previous "
+    "window and week, and `scope.reason` says why. The state is "
     f"measuring below {ANNOUNCED_PROVISIONAL_N} readings after on every combined account, "
     f"provisional at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
     f"{ANNOUNCED_MEASURED_N} or more on at least one, and says how settled the figure is. A "
@@ -2659,11 +2659,9 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
             rho_boot = _bootstrap_ratio(sides, combined["weights"], f"{JOINT_SEED}:{cand['at']}")
             scope = meter_scope(cand.get("joint_fit"), rho, rho_boot)
             wpw_pct, wpw_interval = round((rho - 1) * 100, 1), _pct_interval(rho_lo, rho_hi)
-            if scope["state"] == "five_hour":
-                pct, interval = _five_hour_from_ratio(rho, rho_lo, rho_hi)
-            elif scope["state"] == "weekly":
-                pct, interval = 0.0, [0.0, 0.0]
-            elif scope["state"] == "both":
+            if scope["separable"] and scope["five_hour_limit_change_pct"] is not None:
+                # The best measured estimate, at once: the joint fit's g, whatever its
+                # interval and whichever way `scope` labels it.
                 pct = scope["five_hour_limit_change_pct"]
                 interval = scope["five_hour_limit_change_interval_pct"]
         out.append({
@@ -2757,11 +2755,10 @@ PER_REGIME_METHOD = (
     "not the product of the two factors' independent intervals: its value and interval are the "
     "previous regime's value and interval times the product of the two point ratios "
     "(`per_week_factor`: this regime's window over the previous one's, times the paired "
-    "ratio): 1 when the data places the change on the five-hour window alone, the ratio "
-    "itself for a weekly change, and g times the ratio for both. While the change's scope is "
-    "undetermined only windows per week steps: the window and the week carry the previous "
-    "regime's value (`per_week_factor` 1, `per_week_source` "
-    f"`{UNDETERMINED_WEEK_SOURCE}`), with no claim about which budget moved. `window` and "
+    "ratio): with the window scaled by the joint fit's g, g times the ratio, which is the "
+    "weekly limit's change. While the joint fit cannot separate the new family's rate from g "
+    "only windows per week steps: the window and the week carry the previous regime's value "
+    f"(`per_week_factor` 1, `per_week_source` `{UNDETERMINED_WEEK_SOURCE}`). `window` and "
     "`windows_per_week` stay published as the two factors. `per_week` is the newest regime's "
     "figure, and every family's week moves from its window the way the anchor's does. "
     "`account_regimes` gives each account's own two factors in each regime and never another "
@@ -2825,11 +2822,11 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
         week_source = None
         if source == "previous_regime_times_paired_ratio" and prev["value"] and prev["window"] \
                 and window is not None:
-            undetermined = ((change.get("scope") or {}).get("state") or "undetermined") == "undetermined"
+            undetermined = change.get("change_pct") is None
             # The window change and the windows-per-week ratio are one measurement of one
             # change, so the week moves by their product, not by two independent intervals.
-            # While the scope is undetermined only windows per week steps: the week carries
-            # the previous regime's value, with no claim about which budget moved.
+            # While the joint fit cannot separate the rate from the limit change only windows
+            # per week steps: the week carries the previous regime's value.
             factor = 1.0 if undetermined else round(window / prev["window"]
                                                     * change["windows_per_week_ratio"], 4)
             week_source = UNDETERMINED_WEEK_SOURCE if undetermined else "previous_regime_times_per_week_factor"

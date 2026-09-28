@@ -174,7 +174,9 @@ notify_change() {
   # Changes reach the page at once, but the email waits for the data to settle: nothing
   # goes out until the change is 24 hours old (its instant `at`, or the start of its
   # date when it has none, to the publish's generated_at). From 24 hours it goes out if
-  # its interval excludes no change (a weekly event is certified, so it does); from 48
+  # its interval excludes no change -- on the five-hour or the weekly limit change,
+  # whichever is larger, as the publisher reads it (a weekly event is certified, so it
+  # does); from 48
   # hours it goes out at whatever figure it then has. The email states the measured
   # figure and how settled it is (`state`), never announcement text.
   local body
@@ -276,7 +278,8 @@ if any(same_event(d, shown) for d in announced):
 payload = {k: change[k] for k in required}
 if change.get("model"):
     payload["model"] = change["model"]
-for key in ("scope", "metric", "change_pct", "interval_pct", "state"):
+for key in ("scope", "metric", "change_pct", "interval_pct", "weekly_limit_change_pct",
+            "weekly_limit_change_interval_pct", "state"):
     if change.get(key) is not None:
         payload[key] = change[key]
 print(json.dumps(payload))
@@ -331,6 +334,11 @@ if c.get("change_pct") is not None:
     if c.get("interval_pct"):
         figure += f" [{c['interval_pct'][0]:+g}, {c['interval_pct'][1]:+g}]"
     figure += f" {c.get('metric') or ''}".rstrip()
+if c.get("weekly_limit_change_pct") is not None:
+    figure += f", weekly limit {c['weekly_limit_change_pct']:+g}%"
+    if c.get("weekly_limit_change_interval_pct"):
+        lo, hi = c["weekly_limit_change_interval_pct"]
+        figure += f" [{lo:+g}, {hi:+g}]"
 state = f", {c['state']}" if c.get("state") else ""
 print(f"{c['direction']} {c['percent']}% on {c['date']}{model}{figure}{state}")
 PYEOF

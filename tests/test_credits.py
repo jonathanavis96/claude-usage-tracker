@@ -1920,13 +1920,15 @@ class WindowTokensCutTests(unittest.TestCase):
 
 
 def announced_block(at: str, change_pct: float | None = 38.0, interval_pct=(14.0, 67.0),
-                    state: str = "measured", scope: str = "five_hour") -> dict:
-    """The one field `known_date_changes` reads: the five_hour_on_meters candidates, with the
-    scope their data decided (`five_hour` scales the window; `undetermined` leaves it)."""
-    if scope != "five_hour":
+                    state: str = "measured", scope: str = "five_hour",
+                    separable: bool = True) -> dict:
+    """The one field `known_date_changes` reads: the five_hour_on_meters candidates. A
+    separable joint fit publishes its g as `change_pct` whatever its `scope` label, and the
+    window scales by it; a fit that cannot separate publishes none, and the window carries."""
+    if not separable:
         change_pct, interval_pct = None, None
     return {"candidates": [{"family": "opus-5-5", "at": at, "state": state,
-                            "scope": {"state": scope},
+                            "scope": {"state": scope, "separable": separable},
                             "change_pct": change_pct,
                             "interval_pct": list(interval_pct) if interval_pct else None,
                             "interval_excludes_no_change": bool(interval_pct) and (
@@ -1989,13 +1991,18 @@ class KnownDateRegimeTests(unittest.TestCase):
         self.assertEqual(len(window["regimes"]), 3)
         self.assertEqual(window["regimes"][-1]["value"], round(11_500_000 * 1.086 * 1.05))
 
-    def test_a_change_of_undetermined_scope_opens_a_regime_but_leaves_the_window(self):
+    def test_a_separable_change_of_undetermined_scope_still_scales_the_window(self):
         window = self.window(announced_block(self.AT, scope="undetermined"))
+        self.assertEqual(window["current_source"], C.KNOWN_DATE_SCALED_SOURCE)
+        self.assertEqual(window["regimes"][-1]["value"], round(11_500_000 * 1.086 * 1.38))
+
+    def test_a_change_whose_fit_cannot_separate_opens_a_regime_but_carries_the_window(self):
+        window = self.window(announced_block(self.AT, scope="undetermined", separable=False))
         self.assertEqual(len(window["regimes"]), 3)
         middle, now = window["regimes"][1:]
         self.assertEqual((now["value"], now["interval"]), (middle["value"], middle["interval"]))
         self.assertEqual(window["current_source"], C.KNOWN_DATE_UNSCALED_SOURCE)
-        self.assertIn("window unscaled", window["current_method"])
+        self.assertIn("window carried, joint fit not separable", window["current_method"])
 
     def test_a_change_before_the_cut_opens_no_regime(self):
         window = self.window(announced_block("2026-08-28T01:19:43+00:00"))
@@ -2184,8 +2191,10 @@ class RegimeFiguresTests(unittest.TestCase):
                 "delta_pct": 10.0, "tokens": {"v": v}}
 
     def meters(self, ratio=0.8, interval=(0.7, 0.9), scope="five_hour"):
+        # A separable joint fit publishes its g as `change_pct`; one that is not, null.
         return {"candidates": [{"at": self.AT.isoformat(), "applies": True,
-                                "scope": {"state": scope},
+                                "scope": {"state": scope, "separable": scope != "undetermined"},
+                                "change_pct": None if scope == "undetermined" else 9.1,
                                 "windows_per_week_ratio": ratio,
                                 "windows_per_week_ratio_interval": list(interval)}]}
 

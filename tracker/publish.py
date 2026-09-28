@@ -2107,23 +2107,33 @@ def _announced_event_record(cand: dict) -> dict:
     measured) says how settled it is, and `at` is the candidate instant the notify step
     times its 24 and 48 hour rules from. The date is that instant's day, so onset earliest
     and latest are that same day.
-    The headline figure follows the scope the data decided: the five-hour window's change
-    where the data places it there (`five_hour`, `both`), the weekly cap's where it places it
-    there (`weekly`), and the windows-per-week change itself -- scope-free -- while the scope
-    is `undetermined`, with `readings` giving the change under each scope either way.
+    The headline is the best measured estimate, at once. Once the joint fit separates the
+    new family's rate from the limit change it is the five-hour limit change g, with the
+    weekly limit change (g times the windows-per-week ratio) beside it, each with its
+    interval, whatever `scope` labels them; `interval_excludes_no_change` is read on
+    whichever of the two moved more. Before that it is the windows-per-week change itself.
+    Windows per week and `readings` stay as secondary figures either way.
     """
-    scope = (cand.get("scope") or {}).get("state") or "undetermined"
-    if scope in ("five_hour", "both"):
-        pct, interval, metric = cand["change_pct"], cand["interval_pct"], "five_hour_window"
-        what = "Five-hour window"
-    elif scope == "weekly":
-        reading = cand["readings"]["weekly_scope"]
-        pct, interval = reading["weekly_cap_change_pct"], reading["weekly_cap_change_interval_pct"]
-        metric, what = "weekly_cap", "Weekly cap"
+    scope_test = cand.get("scope") or {}
+    scope = scope_test.get("state") or "undetermined"
+    weekly = weekly_iv = None
+    if cand.get("change_pct") is not None:
+        pct, interval, metric = cand["change_pct"], cand["interval_pct"], "five_hour_limit"
+        weekly = scope_test.get("weekly_limit_change_pct")
+        weekly_iv = scope_test.get("weekly_limit_change_interval_pct")
+        larger = (weekly_iv if weekly is not None and weekly_iv and abs(weekly) > abs(pct)
+                  else interval)
+        excludes = bool(larger and not larger[0] <= 0 <= larger[1])
+        label = (f"Five-hour limit {pct:+g}%"
+                 + (f", weekly limit {weekly:+g}%" if weekly is not None else "")
+                 + f" ({cand['state']})")
     else:
         pct = cand["windows_per_week_change_pct"]
         interval = cand["windows_per_week_change_interval_pct"]
-        metric, what = "windows_per_week", "Windows per week"
+        metric = "windows_per_week"
+        excludes = bool(interval and not interval[0] <= 0 <= interval[1])
+        label = (f"Windows per week {pct:+g}% ({cand['state']}; the new model's rate and the "
+                 "limit change not yet separable)")
     direction = "increased" if pct > 0 else "decreased"
     day = cand["at"][:10]
     return {
@@ -2140,7 +2150,8 @@ def _announced_event_record(cand: dict) -> dict:
             cand["per_account"][k]["n_after"] for k in cand["accounts_combined"]),
             "seven_day_pct": None},
         "change_pct": pct, "interval_pct": interval,
-        "interval_excludes_no_change": bool(interval and not interval[0] <= 0 <= interval[1]),
+        "weekly_limit_change_pct": weekly, "weekly_limit_change_interval_pct": weekly_iv,
+        "interval_excludes_no_change": excludes,
         "windows_per_week_change_pct": cand["windows_per_week_change_pct"],
         "windows_per_week_change_interval_pct": cand["windows_per_week_change_interval_pct"],
         "windows_per_week_ratio": cand["windows_per_week_ratio"],
@@ -2152,8 +2163,7 @@ def _announced_event_record(cand: dict) -> dict:
         # Reference metadata only: nothing above is computed from it.
         "announced": cand.get("announcement"),
         "kind": "change",
-        "label": (f"{what} {'+' if pct > 0 else ''}{pct}% at {day}"
-                  + (" (scope undetermined)" if scope == "undetermined" else "")),
+        "label": label,
     }
 
 

@@ -394,6 +394,24 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertEqual(requests[3], "", "never the same change twice")
         self.assertEqual(self.state, ["2026-09-22"])
 
+    def test_the_email_carries_the_fitted_five_hour_and_weekly_figures(self) -> None:
+        # A separable joint fit: the five-hour and weekly limit changes, each with its
+        # interval. The publisher reads `interval_excludes_no_change` on the larger of the two.
+        fitted = {**self.MEASURED, "metric": "five_hour_limit", "percent": 30,
+                  "direction": "increased", "change_pct": 30.5, "interval_pct": [-2.0, 62.7],
+                  "weekly_limit_change_pct": 27.9, "weekly_limit_change_interval_pct": [-8.4, 78.7],
+                  "state": "measured", "interval_excludes_no_change": False}
+        _procs, requests, alerts = self._timed(fitted, 30, 48.5)
+        self.assertEqual(requests[:2], ["", ""], "an unsettled interval waits for 48 hours")
+        payload = self._payload(requests[2])
+        self.assertEqual((payload["change_pct"], payload["interval_pct"]), (30.5, [-2.0, 62.7]))
+        self.assertEqual((payload["weekly_limit_change_pct"], payload["weekly_limit_change_interval_pct"]),
+                         (27.9, [-8.4, 78.7]))
+        self.assertEqual(payload["metric"], "five_hour_limit")
+        self.assertNotIn("announced", json.dumps(payload))
+        self.assertIn("+30.5% [-2, +62.7] five_hour_limit, weekly limit +27.9% [-8.4, +78.7], measured",
+                      alerts[2])
+
     def test_a_change_already_notified_is_never_sent_again_after_48_hours(self) -> None:
         _procs, requests, _alerts = self._publishes(
             (self.MEASURED, self.W1), (self.MEASURED, self.W2), notified="2026-09-22",

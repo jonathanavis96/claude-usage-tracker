@@ -272,13 +272,19 @@ class MeterTests(unittest.TestCase):
         m = _max20(n_before=30, n_after=30, after_wpw=5.0 / 1.2)
         cand = C.five_hour_on_meters(_announced(joint_fit=fit), m)["candidates"][0]
         self.assertEqual(cand["scope"]["state"], "five_hour")
-        self.assertAlmostEqual(cand["change_pct"], 20.0, delta=0.1)
+        # The published change is the fit's own g, within its interval of the true +20%.
+        self.assertEqual(cand["change_pct"], fit["five_hour_limit_change_pct"])
+        self.assertAlmostEqual(cand["change_pct"], 20.0, delta=5.0)
         self.assertAlmostEqual(cand["windows_per_week_change_pct"], (1 / 1.2 - 1) * 100, delta=0.1)
         undecided = C.five_hour_on_meters(_announced(), m)["candidates"][0]
         self.assertAlmostEqual(
             undecided["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 20.0, delta=0.1)
         ev = P._announced_events(C.five_hour_on_meters(_announced(joint_fit=fit), m))[0]
-        self.assertEqual((ev["scope"], ev["percent"], ev["direction"]), ("five_hour", 20, "increased"))
+        self.assertEqual((ev["scope"], ev["metric"], ev["direction"]),
+                         ("five_hour", "five_hour_limit", "increased"))
+        self.assertAlmostEqual(ev["percent"], 20, delta=5)
+        # The weekly limit (g times the ratio 1 / 1.2) is about unchanged.
+        self.assertAlmostEqual(ev["weekly_limit_change_pct"], 0.0, delta=5.0)
 
     def test_a_weekly_only_step_is_recovered_as_weekly(self):
         # The five-hour limit unchanged, the weekly cap down 20%: windows per week 5 to 4.
@@ -294,9 +300,39 @@ class MeterTests(unittest.TestCase):
         self.assertLess(w_lo, -20.0)
         self.assertGreater(w_hi, -20.0)
         self.assertLess(w_hi, 0.0)
-        self.assertEqual(cand["change_pct"], 0.0)
+        self.assertAlmostEqual(cand["change_pct"], 0.0, delta=5.0)
         ev = P._announced_events(C.five_hour_on_meters(_announced(joint_fit=fit), m))[0]
-        self.assertEqual((ev["scope"], ev["metric"], ev["change_pct"]), ("weekly", "weekly_cap", -20.0))
+        self.assertEqual((ev["scope"], ev["metric"]), ("weekly", "five_hour_limit"))
+        self.assertAlmostEqual(ev["weekly_limit_change_pct"], -20.0, delta=5.0)
+        # The weekly change moved more, so its interval decides whether the email may go early.
+        self.assertTrue(ev["interval_excludes_no_change"])
+
+    def test_a_separable_fit_moves_the_regimes_at_once_whatever_its_intervals(self):
+        # A small, noisy +8% step: separable, but both intervals include no change.
+        fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11))
+        self.assertTrue(fit["separable"])
+        g_lo, g_hi = fit["five_hour_limit_change_interval_pct"]
+        self.assertLess(g_lo, 0.0)
+        self.assertGreater(g_hi, 0.0)
+        meters = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())
+        cand = meters["candidates"][0]
+        self.assertEqual(cand["scope"]["state"], "undetermined")
+        self.assertEqual(cand["change_pct"], fit["five_hour_limit_change_pct"])
+        (change,) = C.known_date_changes(meters)
+        self.assertTrue(change["window_scaled"])
+        self.assertAlmostEqual(change["ratio"], 1 + fit["five_hour_limit_change_pct"] / 100)
+        (ev,) = P._announced_events(meters)
+        g, w = cand["change_pct"], cand["scope"]["weekly_limit_change_pct"]
+        self.assertEqual(ev["label"], f"Five-hour limit {g:+g}%, weekly limit {w:+g}% (measured)")
+        self.assertFalse(ev["interval_excludes_no_change"])
+        self.assertNotIn("announce", ev["label"].lower())
+
+    def test_a_fit_that_cannot_separate_carries_the_window(self):
+        meters = C.five_hour_on_meters(_announced(joint_fit=_joint(_mixed(share=0.5))), _max20())
+        self.assertIsNone(meters["candidates"][0]["change_pct"])
+        (change,) = C.known_date_changes(meters)
+        self.assertFalse(change["window_scaled"])
+        self.assertEqual(change["ratio"], 1.0)
 
     def test_states_follow_readings_after_and_every_state_applies(self):
         # A change applies as soon as it can be measured at all; `state` says how settled.
@@ -351,7 +387,7 @@ class MeterTests(unittest.TestCase):
         self.assertEqual((ev["scope"], ev["metric"]), ("undetermined", "windows_per_week"))
         self.assertEqual(ev["change_pct"], -10.0)
         self.assertEqual(ev["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 11.1)
-        self.assertIn("scope undetermined", ev["label"])
+        self.assertIn("not yet separable", ev["label"])
         self.assertTrue(ev["known_date_test"])
         older = {"date": "2026-09-11", "percent": 26}
         last = P._with_announced_last_change(older, block)

@@ -147,17 +147,39 @@ weekly cut.
     reads +31.4% [+11.6, +54.7].
 
   Both limits look to have risen by about the same amount, which is why windows per week
-  barely moved (−2%). Neither interval excludes no change yet, so the scope is `undetermined`
-  (`scope.reason`: "neither limit's change excludes no change yet"). The fit is separable,
-  and the tracker will decide on its own as stretches arrive.
-- **While the scope is undetermined, only windows per week steps.** The window regime and
-  the week carry the previous regime's value: `per_week_factor` 1, `per_week_source`
-  `previous_regime_carried_scope_undetermined`, and the window source
-  `previous_regime_unscaled_scope_not_five_hour`, however thick the regime's own cluster.
-  Windows per week chains by the paired ratio. Once the scope is decided:
-  - `five_hour` scales the window by 1 / ratio and holds the week;
-  - `weekly` holds the window and moves the week by the ratio;
-  - `both` scales the window by g and the week by g × ratio.
+  barely moved (−2%). Neither interval excludes no change yet, so the `scope` label reads
+  `undetermined` ("neither limit's change excludes no change yet").
+
+  Some of Max account 1's work after 22 Sep is Opus 4.7. It came from the security-guidance
+  plugin's automatic security reviews: Python Agent SDK sessions whose default model is
+  `claude-opus-4-7`. That is real usage on the account, at an unchanged and known rate, so
+  the fit counts it as known-rate work, and its share varying from stretch to stretch is
+  part of what separates r from g. `SECURITY_REVIEW_MODEL` is now set to `claude-opus-5-5` on
+  masterrig and gs, so that source of mixed work stops from now on. Sonnet 5 sub-agent work
+  still varies the mix.
+- **The regimes move at once on a separable fit.** This is Jonathan's rule: the stats change
+  immediately at the best measured estimate and readjust as data arrives; only the email
+  waits.
+  - Once the joint fit is `separable`, `change_pct` is its g at the point estimate, whatever
+    its interval. The window scales by g, unless the regime's own cluster is thick enough to
+    state itself.
+  - The week scales by `per_week_factor` = window ratio × windows-per-week ratio, which is
+    g × ratio: the weekly limit's change. That reduces to five-hour-only when the ratio is
+    about 1/g, and to weekly-only when g is about 1.
+  - The `scope` label (five_hour, weekly, both, undetermined) is still published. It
+    describes which intervals exclude no change, but no longer decides whether the window
+    or the week moves.
+  - Only a fit that cannot separate r from g carries the previous regime's window and week
+    (`per_week_factor` 1, both sources `previous_regime_carried_fit_not_separable`). In that
+    case only windows per week steps.
+- **Event headline.**
+  - With a separable fit, the headline is the five-hour limit change, with the weekly limit
+    change beside it, each with its interval and the `state`: "Five-hour limit +30.5%,
+    weekly limit +27.9% (measured)", metric `five_hour_limit`.
+  - `interval_excludes_no_change` is read on whichever of the two changes is larger.
+  - Windows per week and `readings` stay as secondary figures.
+  - Without a separable fit, the headline is the windows-per-week change, labelled "not
+    yet separable".
 - **Changes apply at once; the email waits.**
   - A candidate after the weekly cut `applies` as soon as one reading after it exists on a
     combined account, in state `measuring` upward. It opens a regime and enters `events` and
@@ -169,8 +191,9 @@ weekly cut.
     so they count as excluding it. From 48 hours it sends at the figure it then has.
   - The two-publish rule and `.notified-change` are unchanged: that file holds 2026-09-22, so
     this change is never sent again.
-  - The payload now carries `scope`, `metric`, `change_pct`, `interval_pct` and `state`, and
-    never the announcement. Jonathan's alert line quotes the figure, interval and state.
+  - The payload now carries `scope`, `metric`, `change_pct`, `interval_pct`,
+    `weekly_limit_change_pct`, `weekly_limit_change_interval_pct` and `state`, and never the
+    announcement. Jonathan's alert line quotes both figures, their intervals and the state.
 - `windows_per_week_ratio_note.consistent_with` loses the "announced 17% weekly cut" split.
   The five-hour-only and weekly-only splits stay.
 - Announcements remain in the JSON only as reference metadata: `announcement` on candidates
@@ -178,23 +201,29 @@ weekly cut.
 
 ## Before and after (rebuilt from the same inputs, `now` 2026-09-28T17:00Z)
 
-"main" is `d30cdef` plus the 17:30Z state. "PR v1" is this PR's first commit (74f5302).
+The columns are:
+- "main": `d30cdef` plus the 17:30Z state.
+- "v1": this PR's first commit (74f5302), which added the announcement-free scope test.
+- "v2": 2d1c44f, which added the joint fit and carried the window and week while the scope
+  was undetermined.
+- "now": the regimes move on the separable fit.
 
-| figure | main | PR v1 | now |
-|---|---|---|---|
-| 22 Sep event | "Five-hour window +2.0%", scope five_hour, [−36.1, +51.0] | "Windows per week −2.0% (scope undetermined)", [−33.8, +56.5] | same headline; `state` measured, `at` 19:41:49Z; `scope_test` carries the joint fit |
-| scope basis | announcement | Opus-5.5-free stretches: 0 after, undetermined | joint fit: g +30.5% [−2.0, +62.7], weekly +27.9% [−8.4, +78.7], undetermined |
-| Opus 5.5 rate | 0.776× Opus (pooled fit, measured) | same | **0.758× [0.466, 1.100]**, `joint_fit_at_first_use` |
-| per account (windows per week, before → after) | Max 1 4.96 → 4.74; Max 2 4.58 → 4.25; Max 3 5.50 → 7.17; Max 4 after only (3.88) | unchanged | unchanged |
-| per-account five-hour reading | Max 1 +4.8%, Max 2 +7.7%, Max 3 −23.3% | unchanged | unchanged; joint fit g: +35.1%, +31.7%, +11.7% |
-| window regimes (tokens) | 450.6M → 431.7M → 440.3M | 450.6M → 431.7M → 431.7M | 450.6M → 431.7M → 431.7M (carried) |
-| window regimes (credits) | 19.54M → 18.72M → 19.10M | 19.54M → 18.72M → 18.72M | 19.54M → 18.72M → 18.72M |
-| `per_week_regimes` | 2.922B → 2.173B → 2.173B (factor 0.9998) | 2.922B → 2.173B → 2.130B (factor 0.9802) | 2.922B → 2.173B → **2.173B** (factor 1, carried) |
-| windows per week by regime | 6.48 → 5.03 → 4.94 (chained; pooled 4.44) | unchanged | unchanged |
-| `weekly_windows.max20.regimes` | 6.48 (to 10 Sep) → 4.76 (from 11 Sep) | unchanged | unchanged |
-| hero `per_week` | 2.173B | 2.130B | 2.173B |
-| Opus 5.5 sessions per week | 870.5 [347.0, 1017.4] | 870.5 | 891.3 [270.5, 1546.7] (fitted rate's wider interval) |
-| haiku and fable candidates | not listed | measured, undetermined, not applying | same; joint fit has no before side |
+| figure | main | v1 | v2 | now |
+|---|---|---|---|---|
+| 22 Sep event label | "Five-hour window +2.0%" | "Windows per week −2.0% (scope undetermined)" | same as v1 | **"Five-hour limit +30.5%, weekly limit +27.9% (measured)"** |
+| event headline | +2.0% [−36.1, +51.0] | −2.0% windows per week [−33.8, +56.5] | same as v1 | five-hour +30.5% [−2.0, +62.7]; weekly +27.9% [−8.4, +78.7]; windows per week −2.0% secondary |
+| scope basis | announcement | Opus-5.5-free stretches (0 after) | joint fit, undetermined | joint fit, separable; label `undetermined` |
+| Opus 5.5 rate | 0.776× Opus (pooled fit) | same | 0.758× [0.466, 1.100], joint fit | same as v2 |
+| per account (windows per week, before → after) | Max 1 4.96 → 4.74; Max 2 4.58 → 4.25; Max 3 5.50 → 7.17; Max 4 after only (3.88) | unchanged | unchanged | unchanged |
+| window regimes (tokens) | 450.6M → 431.7M → 440.3M | 450.6M → 431.7M → 431.7M | 450.6M → 431.7M → 431.7M | 450.6M → 431.7M → **563.3M** (× g) |
+| window regimes (credits) | 19.54M → 18.72M → 19.10M | 19.54M → 18.72M → 18.72M | same as v1 | 19.54M → 18.72M → **24.43M** |
+| `per_week_regimes` | 2.922B → 2.173B → 2.173B (factor 0.9998) | 2.922B → 2.173B → 2.130B (0.9802) | 2.922B → 2.173B → 2.173B (1, carried) | 2.922B → 2.173B → **2.780B** (factor 1.2792) |
+| windows per week by regime | 6.48 → 5.03 → 4.94 | unchanged | unchanged | unchanged |
+| `weekly_windows.max20.regimes` | 6.48 → 4.76 | unchanged | unchanged | unchanged |
+| hero window (tokens) | 440.3M [106.2M, 784.6M] | 431.7M [166.2M, 519.6M] | 431.7M | **563.3M [162.9M, 845.4M]** |
+| hero window (credits) | 19.10M | 18.72M | 18.72M | **24.43M [8.07M, 32.45M]** |
+| hero `per_week` (tokens) | 2.173B | 2.130B | 2.173B | **2.780B [1.013B, 3.546B]** |
+| Opus 5.5 sessions per week | 870.5 | 870.5 | 891.3 | 1163.1 [265.1, 2516.5] |
 
 ## Checks
 
@@ -211,8 +240,11 @@ weekly cut.
     five-hour step within its intervals, published as five_hour +20%. A weekly-only step
     (−20%) is recovered as `weekly`. A uniform mix is reported as not separable, with the
     reason. The fit is reproducible, and a separable fit is absorbed into the rates.
-  - A candidate applies from one reading after, in every state. An undetermined change
-    carries the window and the week.
+  - A candidate applies from one reading after, in every state.
+  - A separable fit whose intervals both include no change still scales the window by g and
+    the week by g × ratio, and its label is "Five-hour limit …, weekly limit … (state)". A fit
+    that cannot separate carries the window and the week.
+  - The email carries the fitted five-hour and weekly figures with their intervals.
   - The notify gate waits under 24 hours; sends from 24 hours with a settled interval; waits
     between 24 and 48 hours with an unsettled one; sends at 48 hours at the figure then;
     never repeats a notified date; and sends no announcement text.
