@@ -487,6 +487,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     series = sorted(verified_readings if verified_readings else all_readings)
     # The measured per-family credit rates, needed here and again for the credits block.
     model_rates = credit_model.load_model_rates() if model_rates is None else model_rates
+    # Every new family's rate is fitted at its first use jointly with any five-hour limit
+    # change there, and absorbed into the rates everything below values stretches at, so no
+    # figure prices a new model at a rate the limit change is confounded with.
+    model_rates, joint_fits = credit_model.absorb_new_family_rates(
+        credit_model.stretches_by_account(gs_passive, masterrig_passive),
+        credit_model.harness_runs(), credits, model_rates, dict(ACCOUNT_LABELS),
+        lambda rates: (lambda tokens: stretch_credits(tokens, credits, rates)[0]))
     # Detection runs per account, on that account's own stretches valued in meter
     # credits and weighted by the meter movement each one carries, and publishes only
     # what two accounts agree on (_agreeing_credit_events). The list-dollar daily
@@ -708,7 +715,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         gs_passive, masterrig_passive, all_probe_rows, effort_meta, credits, prices,
         session_split, session_split_source, passive.get("session_tokens", {}),
         weekly_windows, weekly_events,
-        model_rates)
+        model_rates, joint_fits)
     # Accounts behind the passive evidence: those with an accepted stretch (the rates)
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
@@ -1282,7 +1289,8 @@ def _reference_block(weekly: dict) -> dict:
 def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, probe_rows: list[dict],
                    effort_meta: dict | None, credits: dict, prices: dict, split: dict,
                    split_source: str, session_tokens: dict, weekly: dict,
-                   weekly_events: list, model_rates: dict | None = None) -> tuple[dict, dict]:
+                   weekly_events: list, model_rates: dict | None = None,
+                   joint_fits: dict | None = None) -> tuple[dict, dict]:
     """(the published `credits` block, the across-the-cut figures the event row carries).
 
     Everything here is computed from the history files at publish time. Nothing is
@@ -1324,7 +1332,8 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # window regime, and the current window is the newest one (credits.window_regimes).
     announced = credit_model.announced_change(
         by_account, runs, credits,
-        lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels)
+        lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels,
+        joint_fits=joint_fits)
     # The same candidates measured on the two meters, with no model rate in the figure: the
     # windows per week either side, and the scope decided from data (the credits test on work
     # the candidate did not reprice), never from an announcement. This, not the credits test
@@ -2092,9 +2101,12 @@ def _build_events(window_events: list, weekly_events: list,
 def _announced_event_record(cand: dict) -> dict:
     """One meter-measured change candidate as a change event, in the event record's shape.
 
-    Only candidates `credit_model.five_hour_meter_events` passes reach here: a measured
-    candidate after the weekly change (`credit_model.five_hour_on_meters`). The date is the
-    candidate instant, known from the data, so onset earliest and latest are that same day.
+    Only candidates `credit_model.five_hour_meter_events` passes reach here: a candidate
+    after the weekly change that can be measured at all (`credit_model.five_hour_on_meters`).
+    It enters at once and is recomputed every publish; `state` (measuring, provisional,
+    measured) says how settled it is, and `at` is the candidate instant the notify step
+    times its 24 and 48 hour rules from. The date is that instant's day, so onset earliest
+    and latest are that same day.
     The headline figure follows the scope the data decided: the five-hour window's change
     where the data places it there (`five_hour`, `both`), the weekly cap's where it places it
     there (`weekly`), and the windows-per-week change itself -- scope-free -- while the scope
@@ -2115,7 +2127,8 @@ def _announced_event_record(cand: dict) -> dict:
     direction = "increased" if pct > 0 else "decreased"
     day = cand["at"][:10]
     return {
-        "date": day, "direction": direction, "percent": round(abs(pct)), "model": None,
+        "date": day, "at": cand["at"], "state": cand["state"],
+        "direction": direction, "percent": round(abs(pct)), "model": None,
         "scope": scope, "metric": metric,
         "method": "windows_per_week_ratio",
         "observation_scope": "account",
@@ -2135,7 +2148,7 @@ def _announced_event_record(cand: dict) -> dict:
         "readings": cand["readings"],
         "scope_test": cand.get("scope"),
         "rounding_interval_before": None, "rounding_interval_after": None,
-        "evidence_quality": "measured", "provisional": False, "legacy_uncertain": False,
+        "evidence_quality": cand["state"], "provisional": False, "legacy_uncertain": False,
         # Reference metadata only: nothing above is computed from it.
         "announced": cand.get("announcement"),
         "kind": "change",

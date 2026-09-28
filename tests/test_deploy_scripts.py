@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
@@ -124,12 +125,13 @@ class TestDailyNotifyChange(unittest.TestCase):
         assert match, "notify_change not found in bin/daily.sh"
         cls.func = match.group(0)
 
-    def _publishes(self, *publishes, notified=None, env_file=True):
+    def _publishes(self, *publishes, notified=None, env_file=True, generated_at=None):
         """Run notify_change once per publish, in order, in one repo checkout.
 
         Each publish is (last_change, newest weekly window[, curl status[, feeds]]): the
         public JSON that publish wrote, where feeds maps an account label to its
-        newest_stretch_end. Returns (procs, requests, alerts), one entry per
+        newest_stretch_end. `generated_at`, one stamp per publish, is each publish's own
+        time, which the 24 and 48 hour rules measure from. Returns (procs, requests, alerts), one entry per
         publish, and sets self.state to the announced dates recorded, or None.
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -150,12 +152,14 @@ class TestDailyNotifyChange(unittest.TestCase):
             if notified is not None:
                 (cwd / ".notified-change").write_text(notified + "\n", encoding="utf-8")
             procs, requests, alerts = [], [], []
-            for publish in publishes:
+            for i, publish in enumerate(publishes):
                 last_change, newest_window, *rest = publish
                 curl_status = rest[0] if rest else "200"
                 feeds = rest[1] if len(rest) > 1 else None
                 windows = [{"window_ending": newest_window}] if newest_window else []
                 public = {"last_change": last_change, "weekly_windows": {"passive": {"by_window": windows}}}
+                if generated_at is not None:
+                    public["generated_at"] = generated_at[i]
                 if feeds is not None:
                     public["account_feeds"] = {label: {"newest_stretch_end": end, "state": "fresh"}
                                                for label, end in feeds.items()}
@@ -336,6 +340,65 @@ class TestDailyNotifyChange(unittest.TestCase):
         # Not recorded as announced, so the next publish sends it again and records it.
         self.assertEqual(self._payload(requests[2])["date"], "2026-09-11")
         self.assertEqual(self.state, ["2026-09-11"])
+
+    #: A meter-measured change as the publisher writes it: its instant, state and interval.
+    MEASURED: ClassVar[dict] = {"date": "2026-09-22", "at": "2026-09-22T19:41:49+00:00",
+                                "direction": "decreased", "percent": 2, "scope": "undetermined",
+                                "metric": "windows_per_week", "change_pct": -2.0,
+                                "interval_pct": [-33.8, 56.5], "state": "measuring",
+                                "interval_excludes_no_change": False,
+                                "announced": {"quote": "an announcement never reaches the email"}}
+
+    def _timed(self, change, *hours_after):
+        """Two publishes of new evidence per stamp, `hours_after` the change instant."""
+        at = datetime.fromisoformat(change["at"])
+        stamps, publishes = [], []
+        for n, h in enumerate(hours_after):
+            stamp = (at + timedelta(hours=h)).isoformat()
+            stamps += [stamp, stamp]
+            publishes += [(change, f"2026-09-2{n}T0{n}:00:00+00:00"),
+                          (change, f"2026-09-2{n}T0{n}:30:00+00:00")]
+        return self._publishes(*publishes, generated_at=stamps)
+
+    def test_no_email_before_the_change_is_24_hours_old(self) -> None:
+        settled = {**self.MEASURED, "interval_excludes_no_change": True}
+        procs, requests, alerts = self._timed(settled, 23.5)
+        self.assertEqual(requests, ["", ""])
+        self.assertEqual(alerts, ["", ""])
+        self.assertIn("under 24", procs[1].stderr)
+        self.assertIsNone(self.state)
+
+    def test_from_24_hours_a_change_whose_interval_excludes_no_change_is_sent(self) -> None:
+        settled = {**self.MEASURED, "interval_excludes_no_change": True, "state": "provisional"}
+        _procs, requests, alerts = self._timed(settled, 24.5)
+        payload = self._payload(requests[1])
+        self.assertEqual(payload["change_pct"], -2.0)
+        self.assertEqual(payload["state"], "provisional")
+        self.assertEqual(payload["metric"], "windows_per_week")
+        self.assertNotIn("announced", json.dumps(payload))
+        self.assertNotIn("announcement", alerts[1])
+        self.assertIn("-2% [-33.8, +56.5] windows_per_week, provisional", alerts[1])
+        self.assertEqual(self.state, ["2026-09-22"])
+
+    def test_between_24_and_48_hours_an_unsettled_interval_waits(self) -> None:
+        procs, requests, _alerts = self._timed(self.MEASURED, 30)
+        self.assertEqual(requests, ["", ""])
+        self.assertIn("waiting for 48", procs[1].stderr)
+
+    def test_at_48_hours_the_change_is_sent_at_its_figure_then(self) -> None:
+        _procs, requests, _alerts = self._timed(self.MEASURED, 30, 48.5)
+        self.assertEqual(requests[:2], ["", ""])
+        payload = self._payload(requests[2])
+        self.assertEqual((payload["date"], payload["change_pct"], payload["state"]),
+                         ("2026-09-22", -2.0, "measuring"))
+        self.assertEqual(requests[3], "", "never the same change twice")
+        self.assertEqual(self.state, ["2026-09-22"])
+
+    def test_a_change_already_notified_is_never_sent_again_after_48_hours(self) -> None:
+        _procs, requests, _alerts = self._publishes(
+            (self.MEASURED, self.W1), (self.MEASURED, self.W2), notified="2026-09-22",
+            generated_at=["2026-09-26T00:00:00+00:00"] * 2)
+        self.assertEqual(requests, ["", ""])
 
     def test_incomplete_change_is_skipped(self) -> None:
         _procs, requests, _alerts = self._publishes(({"date": "2026-09-11"}, self.W1), ({"date": "2026-09-11"}, self.W2))

@@ -68,6 +68,7 @@ from __future__ import annotations
 import functools
 import json
 import math
+import random
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -753,6 +754,9 @@ KNOWN_DATE_SCALED_SOURCE = "previous_regime_scaled_by_known_date_change"
 #: `current_source` of a regime opened by a measured change whose data has not placed it on
 #: the five-hour window (scope undetermined or weekly): the previous regime's value, unscaled.
 KNOWN_DATE_UNSCALED_SOURCE = "previous_regime_unscaled_scope_not_five_hour"
+#: `windows_per_week_source`-side twin: a week that carries the previous regime's value
+#: because the change's scope is undetermined.
+UNDETERMINED_WEEK_SOURCE = "previous_regime_carried_scope_undetermined"
 KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
 
 KNOWN_DATE_METHOD = (
@@ -772,13 +776,13 @@ KNOWN_DATE_METHOD = (
 def known_date_changes(meters: dict | None) -> list[dict]:
     """The measured changes that open window regimes, oldest first, with their window ratio.
 
-    The candidates of the `five_hour_on_meters` block that `apply` (state measured, dated
+    The candidates of the `five_hour_on_meters` block that `apply` (measurable at all, dated
     after CUT_AT: the 14 September split already stands for everything before it). Each
-    carries its instant and the five-hour window ratio and interval, from the published
-    rounded percents so a reader can redo the arithmetic. A change the data has not placed
-    on the five-hour window (`change_pct` null, or its scope weekly) scales the window by 1
-    and says so in `window_scaled`. Nothing here names a date; the boundaries are the
-    candidate records' own.
+    carries its instant, its scope, and the five-hour window ratio and interval, from the
+    published rounded percents so a reader can redo the arithmetic. A change the data has
+    not placed on the five-hour window (`change_pct` null, or its scope weekly) scales the
+    window by 1 and says so in `window_scaled`. Nothing here names a date; the boundaries
+    are the candidate records' own.
     """
     out = []
     for cand in five_hour_meter_events(meters):
@@ -790,6 +794,7 @@ def known_date_changes(meters: dict | None) -> list[dict]:
         lo, hi = cand["interval_pct"] if scaled else (0.0, 0.0)
         pct = cand["change_pct"] if scaled else 0.0
         out.append({"at": at, "family": cand["family"], "change_pct": pct,
+                    "scope": (cand.get("scope") or {}).get("state") or "undetermined",
                     "window_scaled": scaled, "ratio": 1 + pct / 100,
                     "ratio_interval": (1 + lo / 100, 1 + hi / 100)})
     return sorted(out, key=lambda c: c["at"])
@@ -839,7 +844,12 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
     for k, change in enumerate(changes, start=2):
         prev = regimes[-1]
         prev["until"] = _utc(change["at"])
-        if counts.get(k, 0) >= MIN_AFTER_CLUSTER or prev["value"] is None:
+        if change.get("scope") == "undetermined" and prev["value"] is not None:
+            # No claim about which budget moved: the window carries the previous regime's
+            # value, however thick this regime's own cluster.
+            fig, source = {"value": prev["value"], "interval": prev["interval"]}, \
+                KNOWN_DATE_UNSCALED_SOURCE
+        elif counts.get(k, 0) >= MIN_AFTER_CLUSTER or prev["value"] is None:
             fig, source = own(k, 1.0), KNOWN_DATE_CLUSTER_SOURCE
         else:
             r_lo, r_hi = change["ratio_interval"]
@@ -1908,29 +1918,30 @@ def candidate_bounds(at: datetime, cands: list[dict]) -> tuple[datetime | None, 
             min((b for b in bounds if b > at), default=None))
 
 
+def _side_of(st: dict, at: datetime, lo: datetime | None, hi: datetime | None) -> str | None:
+    """Which side of `at` a stretch lies wholly on, within (lo, hi), or None if it spans one."""
+    start = datetime.fromisoformat(st["start"])
+    end = datetime.fromisoformat(st["end"])
+    if (lo is None or start >= lo) and end <= at:
+        return "before"
+    if start >= at and (hi is None or end <= hi):
+        return "after"
+    return None
+
+
 def split_at_candidate(stretches: list[dict], at: datetime, lo: datetime | None,
-                       hi: datetime | None, value, *, without: str | None = None,
-                       credits: dict | None = None) -> dict:
+                       hi: datetime | None, value) -> dict:
     """One account's stretches either side of `at`, as log credits per 1%, with counts.
 
     Before: start at or after `lo` and end at or before `at`. After: start at or after
     `at` and end at or before `hi`. A stretch spanning either boundary is on neither side.
-    With `without` (a family) and `credits`, a stretch holding any model of that family is
-    left out: what remains is work whose price the candidate did not change.
     """
     sides: dict[str, list[float]] = {"before": [], "after": []}
     unverified = {"before": 0, "after": 0}
     unpriced = {"before": 0, "after": 0}
     for st in stretches:
-        if without is not None and any(family(m, credits) == without for m in st.get("tokens") or {}):
-            continue
-        start = datetime.fromisoformat(st["start"])
-        end = datetime.fromisoformat(st["end"])
-        if (lo is None or start >= lo) and end <= at:
-            side = "before"
-        elif start >= at and (hi is None or end <= hi):
-            side = "after"
-        else:
+        side = _side_of(st, at, lo, hi)
+        if side is None:
             continue
         amount = value(st["tokens"])
         if amount is None or amount <= 0:
@@ -1944,7 +1955,8 @@ def split_at_candidate(stretches: list[dict], at: datetime, lo: datetime | None,
 
 def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], credits: dict,
                      value, labels: dict[str, str],
-                     announcements: list[dict] | None = None) -> dict:
+                     announcements: list[dict] | None = None,
+                     joint_fits: dict | None = None) -> dict:
     """A known-date test of every change candidate, per account and combined.
 
     `value(tokens)` is a stretch's credits (the publisher passes
@@ -1954,7 +1966,9 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
     candidate; its after side from the candidate to the next boundary. Each account is
     compared with itself (`log_ratio_side`) and the accounts combined
     (`combine_inverse_variance`), pairing accounts the way the weekly event does. An
-    account without both sides is listed with its counts and not combined.
+    account without both sides is listed with its counts and not combined. `joint_fits`
+    (from `absorb_new_family_rates`, keyed by family and instant) is attached to each
+    candidate as `joint_fit`; `five_hour_on_meters` decides the scope from it.
     """
     selected = announced_change_stretches(by_account, runs)
     cands = change_candidates(by_account, credits, announcements)
@@ -1986,8 +2000,6 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
         excludes = bool(combined and not combined["interval"][0] <= 1 <= combined["interval"][1])
         for k, w in (combined or {}).get("weights", {}).items():
             per_account[k]["weight"] = round(w, 4)
-        unconfounded = _unconfounded_test(selected, cand["family"], at, lo, hi, value, credits,
-                                          labels, names)
         out.append({
             "family": cand["family"],
             "at": _utc(at),
@@ -2003,7 +2015,7 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "interval_excludes_no_change": excludes,
             "accounts_combined": sorted(paired),
             "per_account": per_account,
-            "unconfounded": unconfounded,
+            "joint_fit": (joint_fits or {}).get((cand["family"], _utc(at))),
             "announcement": cand["announcement"],
         })
     return {
@@ -2027,38 +2039,240 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "mean of log ratios, weights 1 / se squared. The state is measuring below "
             f"{ANNOUNCED_PROVISIONAL_N} stretches after on every combined account, provisional "
             f"at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
-            f"{ANNOUNCED_MEASURED_N} or more on at least one. `unconfounded` repeats the test "
-            "on the stretches that hold no model of the candidate's own family, whose price the "
-            "candidate cannot have changed; `five_hour_on_meters` reads it to decide the "
-            "change's scope. `announcement` is reference metadata and changes no figure."),
+            f"{ANNOUNCED_MEASURED_N} or more on at least one. `joint_fit` is the candidate "
+            "family's rate fitted jointly with the five-hour limit change "
+            "(`joint_rate_fit`); `five_hour_on_meters` reads it to decide the change's scope. "
+            "`announcement` is reference metadata and changes no figure."),
     }
 
 
-def _unconfounded_test(selected: dict[str, list[dict]], fam: str, at: datetime,
-                       lo: datetime | None, hi: datetime | None, value, credits: dict,
-                       labels: dict[str, str], names: list[str]) -> dict:
-    """The known-date test on the stretches that hold no model of `fam`, per account and combined.
+#: The joint fit's search range for a new family's rate, relative to its base family's.
+JOINT_RATE_BOUNDS = (0.05, 20.0)
+#: Bootstrap draws behind the joint fit's intervals, and its fixed seed (a publish is
+#: reproducible: the same history gives the same intervals).
+JOINT_BOOTSTRAP = 200
+JOINT_SEED = 20260928
+#: The fit separates the rate from the limit change when the rate's 95% interval spans at
+#: most this factor end to end and touches neither search bound. A mix too uniform to
+#: separate them leaves the rate's interval spread across the range.
+JOINT_SEPARABLE_SPAN = 3.0
 
-    A candidate is a family's first use, and that family's own price is what a launch can
-    change (Opus 5.5's dropped on 22 September). Credits per 1% of the five-hour meter on
-    the remaining work are priced at rates the candidate did not move, so their change is
-    the five-hour window's own change, with no rate confounded with it.
+
+def base_family(fam: str, credits: dict) -> str:
+    """The family a new family's tokens are valued at before its own rate is known.
+
+    Its head (`opus-5-5` -> `opus`, an auto-filed `sonnet-5-5` -> `sonnet`) where the table
+    has that family, else the Opus anchor. The joint fit reports the new rate relative to it.
     """
-    per_account, paired = {}, {}
+    head = fam.split("-")[0]
+    return head if head != fam and head in (credits.get("per_family") or {}) else "opus"
+
+
+def _base_model(fam: str, credits: dict) -> str:
+    members = (credits.get("per_family") or {}).get(fam, {}).get("members") or []
+    return members[0] if members else f"claude-{fam}"
+
+
+def _merge_bundles(bundles: list[dict]) -> dict:
+    out: dict[str, float] = {}
+    for tok in bundles:
+        for k, v in tok.items():
+            if isinstance(v, (int, float)):
+                out[k] = out.get(k, 0) + v
+    return out
+
+
+def _joint_rows(stretches: list[dict], fam: str, at: datetime, lo: datetime | None,
+                hi: datetime | None, value, credits: dict) -> tuple[list[float], list[tuple]]:
+    """One account's before side as log known credits per 1%, and its after side as
+    (known credits, new-family credits at its base family's rate, meter %) triples."""
+    base = _base_model(base_family(fam, credits), credits)
+    before, after = [], []
+    for st in stretches:
+        if not st.get("delta_pct") or st["delta_pct"] <= 0:
+            continue
+        side = _side_of(st, at, lo, hi)
+        if side is None:
+            continue
+        tokens = st.get("tokens") or {}
+        own = [t for m, t in tokens.items() if family(m, credits) == fam and isinstance(t, dict)]
+        rest = {m: t for m, t in tokens.items() if family(m, credits) != fam}
+        known = value(rest) if rest else 0.0
+        new = value({base: _merge_bundles(own)}) if own else 0.0
+        if known is None or new is None:
+            continue
+        if side == "before":
+            if known > 0 and not new:
+                before.append(math.log(known / st["delta_pct"]))
+        elif known + new > 0:
+            after.append((known, new, st["delta_pct"]))
+    return before, after
+
+
+def _joint_solve(groups: list[tuple[list[float], list[tuple]]]) -> tuple[float, float, float] | None:
+    """(rate relative to base, log limit change, residual spread) minimising the squared log
+    residuals of (known + rate x new) / meter % against each account's own before level."""
+    rows = []
+    for before, after in groups:
+        level = sum(before) / len(before)
+        rows += [(k, u, d, level) for k, u, d in after]
+    if not rows:
+        return None
+
+    def ss(r: float) -> tuple[float, float]:
+        e = [math.log((k + r * u) / d) - level for k, u, d, level in rows]
+        m = sum(e) / len(e)
+        return sum((x - m) ** 2 for x in e), m
+
+    lo, hi = (math.log(b) for b in JOINT_RATE_BOUNDS)
+    grid = [lo + (hi - lo) * i / 40 for i in range(41)]
+    best = min(range(len(grid)), key=lambda i: ss(math.exp(grid[i]))[0])
+    a, b = grid[max(best - 1, 0)], grid[min(best + 1, len(grid) - 1)]
+    phi = (math.sqrt(5) - 1) / 2
+    for _ in range(30):
+        c, d = b - phi * (b - a), a + phi * (b - a)
+        if ss(math.exp(c))[0] <= ss(math.exp(d))[0]:
+            b = d
+        else:
+            a = c
+    r = math.exp((a + b) / 2)
+    total, m = ss(r)
+    return r, m, math.sqrt(total / max(len(rows) - 1, 1))
+
+
+def _pct_of(x: float) -> float:
+    return round((x - 1) * 100, 1)
+
+
+def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
+                   lo: datetime | None, hi: datetime | None, value, credits: dict,
+                   labels: dict[str, str], names: list[str],
+                   base_times_opus: float | None = None) -> dict:
+    """A new family's rate and the five-hour limit change at its first use, fitted jointly.
+
+    Per stretch, meter % = (known + r x new) / (L x g): `known` is the credits of every
+    model whose rate the candidate did not touch, `new` the candidate family's tokens valued
+    at its base family's rate (`base_family`), L the account's own credits per 1% from its
+    before side (known work only), and g the limit change. Mixed stretches vary the new
+    family's share, and that variation separates r from g; a mix too uniform leaves r
+    unpinned and the fit says so. Intervals are a percentile bootstrap, stretches resampled
+    within each account and side. `value(tokens)` prices a bundle in credits.
+    """
+    per_account, groups = {}, []
     for name in sorted(selected, key=lambda n: _label_for(labels, n, names)):
         label = _label_for(labels, name, names)
-        sides = split_at_candidate(selected[name], at, lo, hi, value, without=fam,
-                                   credits=credits)["sides"]
-        per_account[label] = {"n_before": len(sides["before"]), "n_after": len(sides["after"])}
-        pair = log_ratio_side(sides["before"], sides["after"])
-        if pair is not None:
-            paired[label] = pair
-    combined = combine_inverse_variance(paired)
-    return {"without_family": fam,
-            "state": announced_state([per_account[k]["n_after"] for k in paired]),
-            "ratio": round(combined["ratio"], 4) if combined else None,
-            "ratio_interval": ([round(x, 4) for x in combined["interval"]] if combined else None),
-            "accounts_combined": sorted(paired), "per_account": per_account}
+        before, after = _joint_rows(selected[name], fam, at, lo, hi, value, credits)
+        shares = sorted(u / (k + u) for k, u, _ in after)
+        per_account[label] = {"n_before": len(before), "n_after": len(after),
+                              "new_family_share_median": round(median(shares), 3) if shares else None,
+                              "combined": False}
+        if len(before) >= ANNOUNCED_MIN_BEFORE and after:
+            per_account[label]["combined"] = True
+            groups.append((label, before, after))
+    state = announced_state([per_account[g[0]]["n_after"] for g in groups])
+    out = {"family": fam, "base_family": base_family(fam, credits), "state": state,
+           "separable": False, "rate_relative_to_base": None, "rate_relative_interval": None,
+           "times_opus": None, "times_opus_interval": None,
+           "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
+           "log_residual_sd": None, "accounts_combined": [g[0] for g in groups],
+           "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP}
+    fit = _joint_solve([(b, a) for _, b, a in groups])
+    if fit is None or not any(u for _, _, a in groups for _, u, _ in a):
+        out["reason"] = "no stretch after the candidate on an account with a before side"
+        return out
+    r, logg, sd = fit
+    rng = random.Random(f"{JOINT_SEED}:{fam}:{_utc(at)}")
+    draws = []
+    for _ in range(JOINT_BOOTSTRAP):
+        sample = [([rng.choice(b) for _ in b], [rng.choice(a) for _ in a]) for _, b, a in groups]
+        got = _joint_solve(sample)
+        if got is not None:
+            draws.append(got[:2])
+    rs = sorted(d[0] for d in draws)
+    gs = sorted(math.exp(d[1]) for d in draws)
+
+    def q(xs: list[float], p: float) -> float:
+        return xs[min(int(p * len(xs)), len(xs) - 1)]
+
+    r_lo, r_hi = q(rs, 0.025), q(rs, 0.975)
+    g_lo, g_hi = q(gs, 0.025), q(gs, 0.975)
+    lo_b, hi_b = JOINT_RATE_BOUNDS
+    separable = (r_lo > lo_b * 1.05 and r_hi < hi_b / 1.05 and r_hi / r_lo <= JOINT_SEPARABLE_SPAN)
+    for label, b, a in groups:
+        level = sum(b) / len(b)
+        e = [math.log((k + r * u) / d) - level for k, u, d in a]
+        per_account[label]["five_hour_limit_change_pct"] = _pct_of(math.exp(sum(e) / len(e)))
+    out.update({
+        "separable": separable,
+        "rate_relative_to_base": round(r, 4),
+        "rate_relative_interval": [round(r_lo, 4), round(r_hi, 4)],
+        "times_opus": round(r * base_times_opus, 4) if base_times_opus else None,
+        "times_opus_interval": ([round(r_lo * base_times_opus, 4), round(r_hi * base_times_opus, 4)]
+                                if base_times_opus else None),
+        "five_hour_limit_change_pct": _pct_of(math.exp(logg)),
+        "five_hour_limit_change_interval_pct": [_pct_of(g_lo), _pct_of(g_hi)],
+        "log_residual_sd": round(sd, 4),
+        "reason": (None if separable else
+                   f"the new family's share of the work varies too little to separate its rate "
+                   f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "
+                   f"{r_hi:.2f}x its base family's"),
+    })
+    return out
+
+
+def _base_input_rate(fam: str, credits: dict, model_rates: dict | None) -> tuple[float, float] | None:
+    """(input rate, output multiplier) of a family as stretches are valued at it now."""
+    rate = family_rate(fam, credits, model_rates)
+    if rate.input is not None and rate.output is not None:
+        return rate.input, rate.output / rate.input
+    if rate.input_interval and rate.output_interval:
+        return sum(rate.input_interval) / 2, sum(rate.output_interval) / sum(rate.input_interval)
+    pair = rates(fam, credits)
+    return (pair[0], pair[1] / pair[0]) if pair else None
+
+
+def absorb_new_family_rates(by_account: dict[str, list[dict]], runs: list[HarnessRun],
+                            credits: dict, model_rates: dict | None, labels: dict[str, str],
+                            value_for) -> tuple[dict, dict]:
+    """Every candidate family's rate fitted at its first use, and the pricing with it absorbed.
+
+    Candidates are taken oldest first, and each one the fit separates replaces that family's
+    row in the measured rates before the next is fitted, so a later candidate's known work
+    is valued at the earlier ones' fitted rates. `value_for(rates)` is the stretch valuation
+    under a rates block. Returns (the rates block with the fitted rows, the fits keyed by
+    family and instant). A fitted row keeps the one it replaced under `replaced`.
+    """
+    rates_now = dict(model_rates or {})
+    rates_now["per_family"] = dict(rates_now.get("per_family") or {})
+    selected = announced_change_stretches(by_account, runs)
+    cands = change_candidates(by_account, credits, [])
+    names = list(by_account)
+    anchor = _base_input_rate("opus", credits, rates_now)
+    fits = {}
+    for cand in cands:
+        fam, at = cand["family"], cand["at"]
+        lo, hi = candidate_bounds(at, cands)
+        base = _base_input_rate(base_family(fam, credits), credits, rates_now)
+        fit = joint_rate_fit(selected, fam, at, lo, hi, value_for(rates_now), credits, labels,
+                             names, base_times_opus=(base[0] / anchor[0] if base and anchor else None))
+        fits[(fam, _utc(at))] = fit
+        if not fit["separable"] or base is None:
+            continue
+        r, (r_lo, r_hi) = fit["rate_relative_to_base"], fit["rate_relative_interval"]
+        old = rates_now["per_family"].get(fam) or {}
+        rates_now["per_family"][fam] = {
+            "input": base[0] * r, "interval": [base[0] * r_lo, base[0] * r_hi],
+            "output_multiplier": base[1], "status": None,
+            "rate_source": "joint_fit_at_first_use", "anchor": False, "provisional": False,
+            "times_opus": fit["times_opus"], "times_opus_interval": fit["times_opus_interval"],
+            "joint_fit": {"at": _utc(at), "base_family": fit["base_family"],
+                          "rate_relative_to_base": r, "rate_relative_interval": [r_lo, r_hi]},
+            "replaced": {k: old.get(k) for k in ("input", "interval", "rate_source", "times_opus")},
+        }
+    # Nothing absorbed: the caller's block itself, so an empty one still reads as no source.
+    changed = any(r.get("rate_source") == "joint_fit_at_first_use"
+                  for r in rates_now["per_family"].values())
+    return (rates_now if changed else model_rates), fits
 
 
 def announced_change_events(block: dict) -> list[dict]:
@@ -2250,20 +2464,25 @@ WINDOWS_PER_WEEK_METHOD = (
     "`windows_per_week_change_pct` is that ratio as a change, and it is scope-free: a fall can "
     "come from a larger five-hour window or a smaller weekly cap. `readings` works out both: "
     "the five-hour change 1 / ratio - 1 with the weekly cap unchanged, and the weekly cap "
-    "change ratio - 1 with the window unchanged. `scope` decides between them from data: the "
-    "credits per 1% of the five-hour meter on stretches holding no model of the candidate's "
-    "own family (`announced_change` `unconfounded`, priced at rates the candidate did not "
-    "move) is the window's own change f, and the weekly meter's cost per 1% moves by f times "
-    "the ratio. Once that test is measured, `five_hour` is a window change with the weekly "
-    "cost unmoved, `weekly` the reverse, and `both` both, each judged by whether its interval "
-    "excludes no change; before then, or when neither moved detectably, the scope is "
-    "`undetermined` and `change_pct` (the five-hour window change) is null. The state is "
+    "change ratio - 1 with the window unchanged. `scope` decides between them from data. The "
+    "joint fit (`joint_fit`, `joint_rate_fit`) solves, over mixed stretches either side of "
+    "the candidate, for the new family's rate and the five-hour limit change g together: "
+    "per stretch, meter % = (credits of models whose rate is known + rate x the new family's "
+    "tokens at its base family's rate) / (the account's own before level x g). The weekly "
+    "limit's change is g times the windows-per-week ratio, its interval from g's bootstrap "
+    "interval and the ratio's (`windows_per_week_ratio_bootstrap_interval`) as independent "
+    "log-normal ones. `five_hour` is g's interval excluding no change with the weekly one "
+    "including it, `weekly` the reverse, and `both` both. While the fit cannot separate the "
+    "rate from g (the mix too uniform), or neither interval excludes no change, the scope is "
+    "`undetermined`, `change_pct` (the five-hour window change) is null and `scope.reason` "
+    "says why. The state is "
     f"measuring below {ANNOUNCED_PROVISIONAL_N} readings after on every combined account, "
     f"provisional at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
-    f"{ANNOUNCED_MEASURED_N} or more on at least one. A measured candidate after the weekly "
-    "change `applies`: it opens a window regime and enters `events` and `last_change` at its "
-    "measured size, however small, and the figure moves as readings arrive. `announcement` "
-    "is reference metadata and changes no figure, state or scope.")
+    f"{ANNOUNCED_MEASURED_N} or more on at least one, and says how settled the figure is. A "
+    "candidate after the weekly change `applies` as soon as it can be measured at all (one "
+    "reading after on a combined account): it opens a window regime and enters `events` and "
+    "`last_change` at its measured size, however small, and every publish recomputes it. "
+    "`announcement` is reference metadata and changes no figure, state or scope.")
 
 
 def own_weekly_step_start(block: dict | None) -> datetime | None:
@@ -2302,41 +2521,77 @@ def scope_readings(rho: float, rho_lo: float, rho_hi: float) -> dict:
                              "weekly_cap_change_interval_pct": _pct_interval(rho_lo, rho_hi)}}
 
 
-def meter_scope(unconfounded: dict | None, rho: float, rho_lo: float, rho_hi: float) -> dict:
+def _log_normal_product(x: float, x_iv: list[float], y: float, y_iv: list[float]) -> tuple:
+    """x times y, with a 95% interval from both intervals read as independent log-normal ones."""
+    se = math.sqrt(sum(((math.log(hi) - math.log(lo)) / (2 * 1.96)) ** 2
+                       for lo, hi in (x_iv, y_iv)))
+    v = x * y
+    return v, (v * math.exp(-1.96 * se), v * math.exp(1.96 * se))
+
+
+def meter_scope(joint: dict | None, rho: float, rho_iv: list[float] | None) -> dict:
     """Which budget a candidate moved, from its own data (see WINDOWS_PER_WEEK_METHOD).
 
-    `f` is the five-hour window's own change, read off credits per 1% of the five-hour meter
-    on work whose price the candidate did not change; the weekly meter's cost per 1% is that
-    times the windows-per-week ratio. Undetermined until that test is measured.
+    `joint` is the candidate's `joint_rate_fit`: g, the five-hour limit change, fitted on
+    mixed work jointly with the new family's rate. The weekly limit's change is g times the
+    windows-per-week ratio (credits per 1% of the weekly meter are credits per 1% of the
+    five-hour meter times five-hour over seven-day movement), its interval from g's and the
+    ratio's bootstrap intervals. Undetermined until the fit separates the rate from g.
     """
-    test = unconfounded or {}
-    n_after = sum(a["n_after"] for a in (test.get("per_account") or {}).values())
-    base = {"unconfounded_state": test.get("state"), "unconfounded_n_after": n_after,
-            "five_hour_cost_change_pct": None, "five_hour_cost_change_interval_pct": None,
-            "weekly_cost_change_pct": None, "weekly_cost_change_interval_pct": None}
-    if test.get("state") != "measured" or not test.get("ratio"):
+    fit = joint or {}
+    base = {"joint_fit_state": fit.get("state"), "separable": bool(fit.get("separable")),
+            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
+            "weekly_limit_change_pct": None, "weekly_limit_change_interval_pct": None}
+    if not fit.get("separable") or fit.get("five_hour_limit_change_pct") is None or not rho_iv:
         return {"state": "undetermined", **base,
-                "reason": ("too few stretches without the candidate's own family after it "
-                           f"({n_after}; measured needs {ANNOUNCED_MEASURED_N} on one account)")}
-    f, (f_lo, f_hi) = test["ratio"], test["ratio_interval"]
-    w, w_lo, w_hi = f * rho, f_lo * rho_lo, f_hi * rho_hi
-    five_moved, weekly_moved = not f_lo <= 1 <= f_hi, not w_lo <= 1 <= w_hi
+                "reason": fit.get("reason") or "no joint fit of the new family's rate and the limit"}
+    g = 1 + fit["five_hour_limit_change_pct"] / 100
+    g_iv = [1 + x / 100 for x in fit["five_hour_limit_change_interval_pct"]]
+    w, (w_lo, w_hi) = _log_normal_product(g, g_iv, rho, rho_iv)
+    five_moved, weekly_moved = not g_iv[0] <= 1 <= g_iv[1], not w_lo <= 1 <= w_hi
     state = {(True, False): "five_hour", (False, True): "weekly",
              (True, True): "both"}.get((five_moved, weekly_moved), "undetermined")
-    base.update(five_hour_cost_change_pct=round((f - 1) * 100, 1),
-                five_hour_cost_change_interval_pct=_pct_interval(f_lo, f_hi),
-                weekly_cost_change_pct=round((w - 1) * 100, 1),
-                weekly_cost_change_interval_pct=_pct_interval(w_lo, w_hi))
+    base.update(five_hour_limit_change_pct=fit["five_hour_limit_change_pct"],
+                five_hour_limit_change_interval_pct=fit["five_hour_limit_change_interval_pct"],
+                weekly_limit_change_pct=_pct_of(w),
+                weekly_limit_change_interval_pct=[_pct_of(w_lo), _pct_of(w_hi)])
     return {"state": state, **base,
-            "reason": ("neither meter's cost per 1% moved detectably" if state == "undetermined"
-                       else "decided by which meter's cost per 1% moved")}
+            "reason": ("neither limit's change excludes no change yet" if state == "undetermined"
+                       else "decided by which limit's change excludes no change")}
+
+
+def _bootstrap_ratio(sides: dict[str, tuple[list[dict], list[dict]]], weights: dict[str, float],
+                     seed: str) -> list[float] | None:
+    """A 95% percentile interval on the combined windows-per-week ratio: each paired account's
+    windows resampled within side, its pooled ratio recomputed, and the accounts' log ratios
+    combined at their fixed weights."""
+    rng = random.Random(seed)
+    norm = sum(weights.values())
+    draws = []
+    for _ in range(JOINT_BOOTSTRAP):
+        total = 0.0
+        for label, (before, after) in sides.items():
+            b = [rng.choice(before) for _ in before]
+            a = [rng.choice(after) for _ in after]
+            b7, a7 = sum(r["seven_day_pct"] for r in b), sum(r["seven_day_pct"] for r in a)
+            b5, a5 = sum(r["five_hour_pct"] for r in b), sum(r["five_hour_pct"] for r in a)
+            if not (b7 and a7 and b5 and a5):
+                break
+            total += weights[label] * math.log((a5 / a7) / (b5 / b7))
+        else:
+            draws.append(math.exp(total / norm))
+    if len(draws) < JOINT_BOOTSTRAP // 2:
+        return None
+    draws.sort()
+    return [round(draws[int(0.025 * len(draws))], 4),
+            round(draws[min(int(0.975 * len(draws)), len(draws) - 1)], 4)]
 
 
 def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
     """Every change candidate measured on the two meters, per account and combined.
 
     `announced` is the `announced_change` block, read for its candidates (instant, bounds,
-    and the `unconfounded` credits test the scope is decided from); `max20` is
+    and the `joint_fit` the scope is decided from); `max20` is
     `weekly_windows.max20` (its `by_window` readings and `by_account` steps). See
     WINDOWS_PER_WEEK_METHOD. No announcement is read: a candidate's `announcement` is
     carried through as reference metadata only.
@@ -2349,7 +2604,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
         at = datetime.fromisoformat(cand["at"])
         lo = datetime.fromisoformat(cand["before_from"]) if cand.get("before_from") else None
         hi = datetime.fromisoformat(cand["after_until"]) if cand.get("after_until") else None
-        per_account, paired = {}, {}
+        per_account, paired, sides = {}, {}, {}
         for label in labels:
             rows = [r for r in by_window if r.get("account") == label]
             own = own_weekly_step_start(by_account.get(label))
@@ -2386,6 +2641,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                 rho, rho_lo, rho_hi = a["ratio"] / b["ratio"], a_lo / b_hi, a_hi / b_lo
                 paired[label] = {"ratio_after_over_before": round(rho, 4),
                                  "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)]}
+                sides[label] = (before, after)
                 row.update(paired[label], combined=True,
                            windows_per_week_change_pct=round((rho - 1) * 100, 1),
                            windows_per_week_change_interval_pct=_pct_interval(rho_lo, rho_hi),
@@ -2395,20 +2651,21 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
         for k, w in (combined or {}).get("weights", {}).items():
             per_account[k]["weight"] = w
         state = announced_state([per_account[k]["n_after"] for k in paired])
-        readings = scope = None
+        readings = scope = rho_boot = None
         pct = interval = wpw_pct = wpw_interval = None
         if combined:
             rho, (rho_lo, rho_hi) = combined["ratio"], combined["interval"]
             readings = scope_readings(rho, rho_lo, rho_hi)
-            scope = meter_scope(cand.get("unconfounded"), rho, rho_lo, rho_hi)
+            rho_boot = _bootstrap_ratio(sides, combined["weights"], f"{JOINT_SEED}:{cand['at']}")
+            scope = meter_scope(cand.get("joint_fit"), rho, rho_boot)
             wpw_pct, wpw_interval = round((rho - 1) * 100, 1), _pct_interval(rho_lo, rho_hi)
             if scope["state"] == "five_hour":
                 pct, interval = _five_hour_from_ratio(rho, rho_lo, rho_hi)
             elif scope["state"] == "weekly":
                 pct, interval = 0.0, [0.0, 0.0]
             elif scope["state"] == "both":
-                pct = scope["five_hour_cost_change_pct"]
-                interval = scope["five_hour_cost_change_interval_pct"]
+                pct = scope["five_hour_limit_change_pct"]
+                interval = scope["five_hour_limit_change_interval_pct"]
         out.append({
             "family": cand["family"], "at": cand["at"], "at_source": cand.get("at_source"),
             "first_seen_account": cand.get("first_seen_account"),
@@ -2426,7 +2683,9 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
             "windows_per_week_ratio": round(combined["ratio"], 4) if combined else None,
             "windows_per_week_ratio_interval": ([round(x, 4) for x in combined["interval"]]
                                                 if combined else None),
-            "applies": bool(combined) and state == "measured" and at > CUT_AT,
+            "windows_per_week_ratio_bootstrap_interval": rho_boot,
+            "joint_fit": cand.get("joint_fit"),
+            "applies": bool(combined) and at > CUT_AT,
             "accounts_combined": sorted(paired),
             "per_account": per_account,
             "announcement": cand.get("announcement"),
@@ -2498,8 +2757,11 @@ PER_REGIME_METHOD = (
     "not the product of the two factors' independent intervals: its value and interval are the "
     "previous regime's value and interval times the product of the two point ratios "
     "(`per_week_factor`: this regime's window over the previous one's, times the paired "
-    "ratio), which is 1 when the data places the change on the five-hour window alone and "
-    "the ratio itself when the window was left unscaled (scope undetermined or weekly). `window` and "
+    "ratio): 1 when the data places the change on the five-hour window alone, the ratio "
+    "itself for a weekly change, and g times the ratio for both. While the change's scope is "
+    "undetermined only windows per week steps: the window and the week carry the previous "
+    "regime's value (`per_week_factor` 1, `per_week_source` "
+    f"`{UNDETERMINED_WEEK_SOURCE}`), with no claim about which budget moved. `window` and "
     "`windows_per_week` stay published as the two factors. `per_week` is the newest regime's "
     "figure, and every family's week moves from its window the way the anchor's does. "
     "`account_regimes` gives each account's own two factors in each regime and never another "
@@ -2560,16 +2822,23 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                      round(reg["interval"][1] * wpw["interval"][1])]
                     if reg["interval"] and wpw["interval"] else None)
         factor = None
+        week_source = None
         if source == "previous_regime_times_paired_ratio" and prev["value"] and prev["window"] \
                 and window is not None:
+            undetermined = ((change.get("scope") or {}).get("state") or "undetermined") == "undetermined"
             # The window change and the windows-per-week ratio are one measurement of one
             # change, so the week moves by their product, not by two independent intervals.
-            factor = round(window / prev["window"] * change["windows_per_week_ratio"], 4)
+            # While the scope is undetermined only windows per week steps: the week carries
+            # the previous regime's value, with no claim about which budget moved.
+            factor = 1.0 if undetermined else round(window / prev["window"]
+                                                    * change["windows_per_week_ratio"], 4)
+            week_source = UNDETERMINED_WEEK_SOURCE if undetermined else "previous_regime_times_per_week_factor"
             product = round(prev["value"] * factor)
             interval = ([round(x * factor) for x in prev["interval"]]
                         if prev["interval"] else None)
         per_week.append({"from": reg["from"], "until": reg["until"], "value": product,
                          "interval": interval, "window": window, "per_week_factor": factor,
+                         "per_week_source": week_source,
                          "windows_per_week": wpw["value"], "windows_per_week_interval": wpw["interval"],
                          "windows_per_week_source": source,
                          "windows_per_week_pooled": pooled["value"],

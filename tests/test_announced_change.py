@@ -152,19 +152,43 @@ def _max20(n_after=10, after_wpw=4.5, n_before=20):
     return {"by_window": rows, "by_account": {}}
 
 
-def _announced(note=FIVE_HOUR_NOTE, at=CAND, unconfounded=None):
+def _announced(note=FIVE_HOUR_NOTE, at=CAND, joint_fit=None):
     return {"candidates": [{"family": "opus-5-5", "at": at.isoformat(), "at_source": "first_turn",
                             "first_seen_account": "a1", "first_seen_stretch_end": at.isoformat(),
                             "before_from": C.CUT_AT.isoformat(), "after_until": None,
-                            "announcement": note, "unconfounded": unconfounded}]}
+                            "announcement": note, "joint_fit": joint_fit}]}
 
 
-def _unconfounded(ratio, interval, n_after=10, state="measured"):
-    """An `announced_change` `unconfounded` block: the five-hour meter's cost per 1% moved by
-    `ratio` on work the candidate did not reprice."""
-    return {"without_family": "opus-5-5", "state": state, "ratio": ratio,
-            "ratio_interval": list(interval), "accounts_combined": ["a1"],
-            "per_account": {"a1": {"n_before": 20, "n_after": n_after}}}
+def _mixed(g=1.2, r=0.6, n=24, sd=0.08, seed=5, share=None):
+    """Two accounts' stretches around CAND: known-rate Opus 5 work at 100 credits per 1%
+    before; after it Opus 5 and Opus 5.5 mixed, the Opus 5.5 share varying stretch to
+    stretch (or fixed at `share`), the new family charged at `r` times Opus 5 and the
+    five-hour limit multiplied by `g`. Valued by `_output_value`, so a stretch's credits at
+    the base rate are its output tokens."""
+    rng = random.Random(seed)
+    by = {}
+    for name, level in (("acct_one", 100.0), ("acct_two", 140.0)):
+        rows = []
+        for i in range(n):
+            known = rng.uniform(500, 3000)
+            st = _st(C.CUT_AT + timedelta(hours=3 * (i + 1)), 2, "claude-opus-5", known)
+            st["delta_pct"] = known / level * math.exp(rng.gauss(0, sd))
+            rows.append(st)
+        for i in range(n):
+            total = rng.uniform(500, 3000)
+            s_new = share if share is not None else rng.uniform(0.05, 0.95)
+            known, new = total * (1 - s_new), total * s_new
+            st = _st(CAND + timedelta(hours=3 * (i + 1)), 2, "claude-opus-5", known)
+            st["tokens"]["claude-opus-5-5"] = {"output": new}
+            st["delta_pct"] = (known + r * new) / (level * g) * math.exp(rng.gauss(0, sd))
+            rows.append(st)
+        by[name] = rows
+    return by
+
+
+def _joint(by):
+    return C.joint_rate_fit(by, "opus-5-5", CAND, C.CUT_AT, None, _output_value, CREDITS,
+                            LABELS, list(by), base_times_opus=1.0)
 
 
 class FirstTurnTests(unittest.TestCase):
@@ -221,52 +245,72 @@ class MeterTests(unittest.TestCase):
         self.assertTrue(cand["applies"])
         self.assertEqual(cand["method"], "windows_per_week_ratio")
 
-    def test_without_unrepriced_work_the_scope_is_undetermined_and_no_window_change_is_claimed(self):
+    def test_without_a_separable_joint_fit_the_scope_is_undetermined(self):
         cand = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
         self.assertEqual(cand["scope"]["state"], "undetermined")
-        self.assertIn("too few stretches", cand["scope"]["reason"])
         self.assertIsNone(cand["change_pct"])
         self.assertIsNone(cand["interval_pct"])
-
-    def test_scope_is_decided_by_which_meters_cost_moved(self):
-        # The five-hour meter's cost per 1% up 11%, and the weekly's (that times 0.9) flat.
-        five = C.five_hour_on_meters(_announced(unconfounded=_unconfounded(1.111, (1.05, 1.17))),
-                                     _max20())["candidates"][0]
-        self.assertEqual(five["scope"]["state"], "five_hour")
-        self.assertEqual(five["change_pct"], 11.1)
-        # The five-hour meter's cost flat, so the weekly's fell with the ratio.
-        weekly = C.five_hour_on_meters(_announced(unconfounded=_unconfounded(1.0, (0.99, 1.01))),
-                                       _max20(n_before=200, n_after=200))["candidates"][0]
-        self.assertEqual(weekly["scope"]["state"], "weekly")
-        self.assertEqual(weekly["change_pct"], 0.0)
-        # Too few readings of the unrepriced work: undetermined whatever it says.
-        thin = C.five_hour_on_meters(
-            _announced(unconfounded=_unconfounded(1.111, (1.05, 1.17), n_after=3, state="measuring")),
-            _max20())["candidates"][0]
-        self.assertEqual(thin["scope"]["state"], "undetermined")
+        uniform = _joint(_mixed(share=0.5))
+        self.assertFalse(uniform["separable"])
+        self.assertIn("varies too little", uniform["reason"])
+        cand = C.five_hour_on_meters(_announced(joint_fit=uniform), _max20())["candidates"][0]
+        self.assertEqual(cand["scope"]["state"], "undetermined")
+        self.assertIn("varies too little", cand["scope"]["reason"])
 
     def test_a_known_twenty_percent_five_hour_step_is_published_as_twenty_percent(self):
-        # Windows per week falls from 5 to 5 / 1.2, the weekly cap unchanged: +20% window.
+        # The new family at 0.6x its base, the five-hour limit up 20%, the weekly cap
+        # unchanged: windows per week falls from 5 to 5 / 1.2.
+        fit = _joint(_mixed(g=1.2, r=0.6))
+        self.assertTrue(fit["separable"])
+        lo, hi = fit["rate_relative_interval"]
+        self.assertLess(lo, 0.6)
+        self.assertGreater(hi, 0.6)
+        g_lo, g_hi = fit["five_hour_limit_change_interval_pct"]
+        self.assertLess(g_lo, 20.0)
+        self.assertGreater(g_hi, 20.0)
+        self.assertGreater(g_lo, 0.0)
         m = _max20(n_before=30, n_after=30, after_wpw=5.0 / 1.2)
-        cand = C.five_hour_on_meters(_announced(unconfounded=_unconfounded(1.2, (1.1, 1.3))),
-                                     m)["candidates"][0]
+        cand = C.five_hour_on_meters(_announced(joint_fit=fit), m)["candidates"][0]
         self.assertEqual(cand["scope"]["state"], "five_hour")
         self.assertAlmostEqual(cand["change_pct"], 20.0, delta=0.1)
         self.assertAlmostEqual(cand["windows_per_week_change_pct"], (1 / 1.2 - 1) * 100, delta=0.1)
-        # Before the scope is known the five-hour reading carries the same +20%.
         undecided = C.five_hour_on_meters(_announced(), m)["candidates"][0]
         self.assertAlmostEqual(
             undecided["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 20.0, delta=0.1)
-        ev = P._announced_events(C.five_hour_on_meters(
-            _announced(unconfounded=_unconfounded(1.2, (1.1, 1.3))), m))[0]
+        ev = P._announced_events(C.five_hour_on_meters(_announced(joint_fit=fit), m))[0]
         self.assertEqual((ev["scope"], ev["percent"], ev["direction"]), ("five_hour", 20, "increased"))
 
-    def test_states_follow_readings_after(self):
-        for n, state in ((4, "measuring"), (5, "provisional"), (9, "provisional"), (10, "measured")):
+    def test_a_weekly_only_step_is_recovered_as_weekly(self):
+        # The five-hour limit unchanged, the weekly cap down 20%: windows per week 5 to 4.
+        fit = _joint(_mixed(g=1.0, r=0.6, seed=8))
+        self.assertTrue(fit["separable"])
+        g_lo, g_hi = fit["five_hour_limit_change_interval_pct"]
+        self.assertLess(g_lo, 0.0)
+        self.assertGreater(g_hi, 0.0)
+        m = _max20(n_before=30, n_after=30, after_wpw=4.0)
+        cand = C.five_hour_on_meters(_announced(joint_fit=fit), m)["candidates"][0]
+        self.assertEqual(cand["scope"]["state"], "weekly")
+        w_lo, w_hi = cand["scope"]["weekly_limit_change_interval_pct"]
+        self.assertLess(w_lo, -20.0)
+        self.assertGreater(w_hi, -20.0)
+        self.assertLess(w_hi, 0.0)
+        self.assertEqual(cand["change_pct"], 0.0)
+        ev = P._announced_events(C.five_hour_on_meters(_announced(joint_fit=fit), m))[0]
+        self.assertEqual((ev["scope"], ev["metric"], ev["change_pct"]), ("weekly", "weekly_cap", -20.0))
+
+    def test_states_follow_readings_after_and_every_state_applies(self):
+        # A change applies as soon as it can be measured at all; `state` says how settled.
+        for n, state in ((1, "measuring"), (4, "measuring"), (5, "provisional"),
+                         (9, "provisional"), (10, "measured")):
             with self.subTest(n=n):
                 cand = C.five_hour_on_meters(_announced(), _max20(n_after=n))["candidates"][0]
                 self.assertEqual(cand["state"], state)
-                self.assertEqual(cand["applies"], state == "measured")
+                self.assertTrue(cand["applies"])
+
+    def test_no_reading_after_on_a_combined_account_does_not_apply(self):
+        cand = C.five_hour_on_meters(_announced(), _max20(n_after=0))["candidates"][0]
+        self.assertEqual(cand["accounts_combined"], [])
+        self.assertFalse(cand["applies"])
 
     def test_a_candidate_without_an_announcement_is_measured_the_same(self):
         with_note = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
@@ -319,25 +363,57 @@ class MeterTests(unittest.TestCase):
         self.assertTrue(credits_block["candidates"][0]["interval_excludes_no_change"])
         self.assertEqual(P._announced_events(credits_block), [])
 
-    def test_not_measured_stays_out_of_events(self):
-        block = C.five_hour_on_meters(_announced(), _max20(n_after=6))
+    def test_a_measuring_change_enters_events_at_once_with_its_state_and_instant(self):
+        block = C.five_hour_on_meters(_announced(), _max20(n_after=2))
+        (ev,) = P._announced_events(block)
+        self.assertEqual((ev["state"], ev["evidence_quality"]), ("measuring", "measuring"))
+        self.assertEqual(ev["at"], CAND.isoformat())
+        self.assertFalse(ev["provisional"])
+        last = P._with_announced_last_change({"date": "2026-09-11"}, block)
+        self.assertEqual((last["date"], last["state"]), ("2026-09-22", "measuring"))
+
+    def test_nothing_measurable_stays_out_of_events(self):
+        block = C.five_hour_on_meters(_announced(), _max20(n_after=0))
         self.assertEqual(P._announced_events(block), [])
         older = {"date": "2026-09-11"}
         self.assertIs(P._with_announced_last_change(older, block), older)
 
 
-class UnconfoundedTests(unittest.TestCase):
-    def test_the_credits_test_on_work_without_the_candidates_family(self):
-        rng = random.Random(3)
-        by = _fixture()
-        # Opus 5 work either side of the candidate, its cost per 1% up 20% after it.
-        by["acct_one"] += _series(CAND + timedelta(days=2), 12, "claude-opus-5", 1200.0, rng, sd=0.05)
-        cand = C.announced_change(by, [], CREDITS, _output_value, LABELS)["candidates"][0]
-        test = cand["unconfounded"]
-        self.assertEqual(test["without_family"], "opus-5-5")
-        self.assertEqual(test["per_account"]["a1"], {"n_before": 20, "n_after": 12})
-        self.assertEqual(test["state"], "measured")
-        self.assertAlmostEqual(test["ratio"], 1.2, delta=0.1)
+class JointFitTests(unittest.TestCase):
+    def test_known_rate_and_limit_change_are_recovered_per_account_too(self):
+        fit = _joint(_mixed(g=1.2, r=0.6))
+        self.assertEqual(fit["state"], "measured")
+        self.assertEqual(fit["base_family"], "opus")
+        self.assertEqual(fit["accounts_combined"], ["a1", "a2"])
+        self.assertAlmostEqual(fit["rate_relative_to_base"], 0.6, delta=0.1)
+        self.assertAlmostEqual(fit["five_hour_limit_change_pct"], 20.0, delta=5.0)
+        for label in ("a1", "a2"):
+            self.assertAlmostEqual(fit["per_account"][label]["five_hour_limit_change_pct"], 20.0,
+                                   delta=8.0)
+
+    def test_the_fit_is_reproducible(self):
+        self.assertEqual(_joint(_mixed()), _joint(_mixed()))
+
+    def test_a_separable_fit_is_absorbed_into_the_rates(self):
+        by = _mixed(g=1.2, r=0.6)
+        rates, fits = C.absorb_new_family_rates(
+            by, [], CREDITS, {"per_family": {}}, LABELS,
+            lambda rates: _output_value)
+        (key, fit), = fits.items()  # the candidate instant is the first Opus 5.5 stretch's start
+        self.assertEqual(key, ("opus-5-5", (CAND + timedelta(hours=3)).isoformat()))
+        self.assertTrue(fit["separable"])
+        row = rates["per_family"]["opus-5-5"]
+        self.assertEqual(row["rate_source"], "joint_fit_at_first_use")
+        anchor = C.family_rate("opus", CREDITS, {}).input
+        self.assertAlmostEqual(row["input"], anchor * fit["rate_relative_to_base"])
+        rate = C.family_rate("opus-5-5", CREDITS, rates)
+        self.assertAlmostEqual(rate.input, row["input"])
+
+    def test_nothing_absorbed_returns_the_rates_given(self):
+        given = {}
+        rates, _ = C.absorb_new_family_rates(_mixed(share=0.5), [], CREDITS, given, LABELS,
+                                             lambda rates: _output_value)
+        self.assertIs(rates, given)
 
 
 class AnnouncementIndependenceTests(unittest.TestCase):

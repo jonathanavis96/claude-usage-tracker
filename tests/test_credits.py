@@ -2183,8 +2183,9 @@ class RegimeFiguresTests(unittest.TestCase):
         return {"start": start.isoformat(), "end": (start + timedelta(hours=hours)).isoformat(),
                 "delta_pct": 10.0, "tokens": {"v": v}}
 
-    def meters(self, ratio=0.8, interval=(0.7, 0.9)):
+    def meters(self, ratio=0.8, interval=(0.7, 0.9), scope="five_hour"):
         return {"candidates": [{"at": self.AT.isoformat(), "applies": True,
+                                "scope": {"state": scope},
                                 "windows_per_week_ratio": ratio,
                                 "windows_per_week_ratio_interval": list(interval)}]}
 
@@ -2263,6 +2264,13 @@ class RegimeFiguresTests(unittest.TestCase):
         self.assertNotEqual(last["interval"], [round(1000 * last["windows_per_week_interval"][0]),
                                                round(1400 * last["windows_per_week_interval"][1])])
         self.assertIsNone(middle["per_week_factor"])
+
+    def test_while_the_scope_is_undetermined_only_windows_per_week_steps(self):
+        _, middle, last = self.figures(self.meters(scope="undetermined"))["per_week_regimes"]
+        self.assertEqual(last["windows_per_week"], 4.0)
+        self.assertEqual(last["per_week_factor"], 1.0)
+        self.assertEqual((last["value"], last["interval"]), (middle["value"], middle["interval"]))
+        self.assertEqual(last["per_week_source"], C.UNDETERMINED_WEEK_SOURCE)
 
     def test_a_change_that_does_not_apply_leaves_the_pooled_figure(self):
         meters = self.meters()
