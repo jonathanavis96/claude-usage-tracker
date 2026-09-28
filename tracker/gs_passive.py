@@ -276,23 +276,45 @@ def transcript_files(account: Account, since: datetime | None, withhold: Iterabl
     kept: 0.48%, and adding every one of them lifts no unaccounted stretch into
     the accepted band. docs/findings-2026-09-23-unaccounted.md has the working.
     """
+    kept, meta, _ = _split_transcripts(account, since, withhold, home)
+    return kept, meta
+
+
+def unclaimed_transcripts(account: Account, since: datetime | None, withhold: Iterable[str] = (),
+                          home: Path | None = None) -> list[Path]:
+    """The pooled root's transcripts that no config dir under `home` claims (`transcript_files`).
+
+    Nothing tells whose meter they spent on. Headless `claude -p` runs start no shell, so they
+    write no `session-env` entry: the auto-mail filing judge, whose seat picker runs it under
+    whichever of the gs logins has room, and the airlock bench, which runs under the
+    `CLAUDE_CONFIG_DIR` it inherits. Their tokens are recorded per stretch as
+    `unclaimed_tokens` so a fit can measure how much of them the account's meter carried
+    (`tracker.credits.unclaimed_shares`) rather than leave them out or add them whole. Empty
+    when the pooled-projects filter did not apply.
+    """
+    return _split_transcripts(account, since, withhold, home)[2]
+
+
+def _split_transcripts(account: Account, since: datetime | None, withhold: Iterable[str] = (),
+                       home: Path | None = None) -> tuple[list[Path], dict | None, list[Path]]:
+    """(this account's transcripts, the filter's counts or None, the unclaimed transcripts)."""
     root = account.config_dir / "projects"
     if not root.exists():
-        return [], None
+        return [], None, []
     patterns = list(withhold)
     paths = [p for p in transcript_paths(root, since)
             if not any(fnmatch(str(p.relative_to(root)), pat) for pat in patterns)]
     home = Path(home) if home is not None else account.config_dir.parent
     others = shared_with(account, home)
     if not others and not root.is_symlink():
-        return paths, None
+        return paths, None, []
     if not (account.config_dir / "session-env").is_dir():
-        return paths, None
+        return paths, None, []
     own_ids = _session_ids(account.config_dir)
     kept = [p for p in paths if transcript_session_id(p) in own_ids]
     claims = {name: _session_ids(home / name) for name in others}
     dropped_to: dict[str, int] = {}
-    unclaimed = 0
+    unclaimed_paths: list[Path] = []
     for p in paths:
         sid = transcript_session_id(p)
         if sid in own_ids:
@@ -301,10 +323,10 @@ def transcript_files(account: Account, since: datetime | None, withhold: Iterabl
         if claimed:
             dropped_to[claimed[0]] = dropped_to.get(claimed[0], 0) + 1
         else:
-            unclaimed += 1
+            unclaimed_paths.append(p)
     return kept, {"kept": len(kept), "dropped": len(paths) - len(kept),
                   "subagent_files": sum(1 for p in kept if p.parent.name == "subagents"),
-                  "dropped_to": dict(sorted(dropped_to.items())), "unclaimed": unclaimed}
+                  "dropped_to": dict(sorted(dropped_to.items())), "unclaimed": len(unclaimed_paths)}, unclaimed_paths
 
 
 def shared_with(account: Account, home: Path) -> list[str]:
@@ -401,7 +423,8 @@ def _reset_source(s: Stretch, samples: list[Sample]) -> str:
 INFERRED_RESET_VERIFIED = False
 
 
-def _stretch_record(v: Verdict, reset_source: str = "logged") -> dict:
+def _stretch_record(v: Verdict, reset_source: str = "logged",
+                    unclaimed: dict[datetime, dict] | None = None) -> dict:
     s = v.stretch
     lo, hi = s.bounds
     # Unpriced work is kept by raw model id beside the priced models, so the record
@@ -429,7 +452,10 @@ def _stretch_record(v: Verdict, reset_source: str = "logged") -> dict:
             "reset_verified": reset_verified, "reset_source": reset_source, "status": status, "capture_status": v.status,
             "reference": _r(v.reference), "capture": _r(v.capture),
             "fast_session_tokens": s.fast_session_tokens, "fast_session_turns": s.fast_session_turns,
-            "first_turns": {m: ts.isoformat() for m, ts in sorted(s.first_turns.items())}}
+            "first_turns": {m: ts.isoformat() for m, ts in sorted(s.first_turns.items())},
+            # Only where the pooled-projects filter ran: the work no login claims, in this
+            # stretch's pairs (`unclaimed_transcripts`); an empty dict when there was none.
+            **({"unclaimed_tokens": unclaimed.get(s.start, {})} if unclaimed is not None else {})}
 
 
 def _pieces(stretches: list[Stretch]) -> int:
@@ -541,6 +567,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
     now = now or datetime.now(timezone.utc)
     withhold = withhold or {}
     stretches, meta, weekly, reset_sources = {}, {}, {}, {}
+    unclaimed: dict[str, dict[datetime, dict]] = {}
     for name, account in accounts.items():
         samples = load_samples(account, until)
         # Until inferred resets are certified, nothing is computed from them: the join,
@@ -549,9 +576,16 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         joined = samples if INFERRED_RESET_VERIFIED else [
             replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in samples]
         since = samples[0].ts if samples else None
-        files, own_sessions = transcript_files(account, since, withhold.get(name, ())) if samples else ([], None)
+        files, own_sessions, unclaimed_files = (_split_transcripts(account, since, withhold.get(name, ()), home)
+                                                if samples else ([], None, []))
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
         stretches[name] = build_stretches(joined, turns, prices, fast=fast_session_ids(files))
+        if own_sessions is not None:
+            # The same samples close the same stretches whatever the turns, so building them
+            # again over the unclaimed turns gives each stretch the unclaimed work in its pairs.
+            others = [t for t in iter_turns(unclaimed_files) if until is None or t.ts <= until]
+            unclaimed[name] = {s.start: {**s.tokens, **s.unpriced}
+                               for s in build_stretches(joined, others, prices)}
         reset_sources[name] = {s.start: _reset_source(s, samples) for s in stretches[name]}
         weekly[name] = window_points(joined)
         root = account.config_dir / "projects"
@@ -569,17 +603,19 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                             "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
                             "own_sessions": own_sessions},
         }
-    return summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until)
+    return summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until, unclaimed)
 
 
 def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict[datetime, str]], meta: dict,
               weekly: dict, probe_rows: Iterable[dict], prices: dict, now: datetime,
-              until: datetime | None = None) -> dict:
+              until: datetime | None = None, unclaimed: dict[str, dict[datetime, dict]] | None = None) -> dict:
     """The capture check and everything read off it, from built stretches: `report`'s second half.
 
     Split out so a stretch file can be re-judged from its own records after they are
     corrected (tools/fast_session_restore.py), by the same code that wrote it.
     `reset_sources` is each account's `_reset_source` per stretch, keyed by its start.
+    `unclaimed` is, for an account whose pooled-projects filter ran, the unclaimed work in
+    each stretch keyed by its start; its records carry it as `unclaimed_tokens`.
     """
     checked = check(stretches, probe_readings(list(probe_rows), prices))
     out_accounts = {}
@@ -589,7 +625,8 @@ def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict
         accepted = [v for v in vs if publishable(v)]
         out_accounts[name] = {
             "account": name, **meta[name],
-            "stretches": [_stretch_record(v, reset_sources[name][v.stretch.start]) for v in vs],
+            "stretches": [_stretch_record(v, reset_sources[name][v.stretch.start],
+                                          (unclaimed or {}).get(name)) for v in vs],
             "runs": [_run_record(r) for r in rs],
             "daily": daily,
             "split": _split([v.stretch for v in accepted]),

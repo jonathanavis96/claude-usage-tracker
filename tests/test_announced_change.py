@@ -2,6 +2,7 @@
 import copy
 import math
 import random
+import statistics
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -450,6 +451,102 @@ class JointFitTests(unittest.TestCase):
         rates, _ = C.absorb_new_family_rates(_mixed(share=0.5), [], CREDITS, given, LABELS,
                                              lambda rates: _output_value)
         self.assertIs(rates, given)
+
+
+class RoundingWeightTests(unittest.TestCase):
+    """Each stretch weighs 1 / (scatter + its own whole-percent rounding variance)."""
+
+    def test_rounding_variance_is_windows_over_six_delta_squared(self):
+        self.assertAlmostEqual(C.rounding_variance({"delta_pct": 10.0, "windows": 1}), 1 / 600)
+        self.assertAlmostEqual(C.rounding_variance({"delta_pct": 5.0, "windows": 3}), 3 / 150)
+        self.assertEqual(C.rounding_variance({"delta_pct": 0}), 0.0)
+
+    def test_equal_rounding_is_the_plain_two_sample_interval(self):
+        rng = random.Random(3)
+        before = [rng.gauss(0, 0.2) for _ in range(12)]
+        after = [rng.gauss(0.2, 0.2) for _ in range(6)]
+        plain = C.log_ratio_side(before, after)
+        same = C.log_ratio_side(before, after, [0.002] * 12, [0.002] * 6)
+        self.assertAlmostEqual(same["log_ratio"], plain["log_ratio"])
+        for a, b in zip(same["interval"], plain["interval"]):
+            self.assertAlmostEqual(a, b)
+
+    def test_a_stretch_that_is_mostly_rounding_counts_for_less(self):
+        # Nine before stretches at level 0, one whose 3% over four window pieces read half a
+        # log point high: an error its rounding alone (4 / 54 = 0.074) can make. After: 0.2.
+        before = [0.01 * (-1) ** i for i in range(9)] + [0.5]
+        rounding_before = [1 / 600] * 9 + [4 / (6 * 3 ** 2)]
+        after = [0.2 + 0.01 * (-1) ** i for i in range(6)]
+        plain = C.log_ratio_side(before, after)
+        weighted = C.log_ratio_side(before, after, rounding_before, [1 / 600] * 6)
+        self.assertLess(abs(weighted["log_ratio"] - 0.2), abs(plain["log_ratio"] - 0.2) / 3)
+        self.assertLess(weighted["scatter_sd"], weighted["sd"])
+
+    def test_the_joint_fit_weights_a_rounding_heavy_after_stretch_down(self):
+        # _mixed at a known 20% limit change, then three after stretches spread over six window
+        # pieces each with their meter reading 40% high -- inside what six pieces of rounding
+        # allow on a small movement, and far outside the fixture's own scatter.
+        by = _mixed(g=1.2, r=0.6, sd=0.02)
+        after = [st for st in by["acct_one"] if datetime.fromisoformat(st["start"]) >= CAND]
+        for st in sorted(after, key=lambda s: s["delta_pct"])[:3]:
+            st["delta_pct"] *= 1.4
+            st["windows"] = 6
+        groups = [C._joint_rows(by[n], "opus-5-5", CAND, C.CUT_AT, None, _output_value, CREDITS)
+                  for n in sorted(by)]
+        plain = C._joint_solve(groups)
+        fit = _joint(by)
+        self.assertLess(abs(fit["five_hour_limit_change_pct"] - 20.0),
+                        abs((math.exp(plain[1]) - 1) * 100 - 20.0) / 2)
+        self.assertLess(abs(fit["rate_relative_to_base"] - 0.6), abs(plain[0] - 0.6) / 2)
+
+
+class UnclaimedShareTests(unittest.TestCase):
+    """The pooled root's unclaimed work: each account's share of it is measured, not assumed."""
+
+    def _pooled(self, seed=5):
+        # One account whose meter carried every unclaimed bundle: its own tokens are the meter's
+        # credits less a varying unclaimed part, so leaving the part out scatters the stretches.
+        rng = random.Random(seed)
+        out = []
+        for i, st in enumerate(_series(T0, 20, "claude-opus-5", 1000.0, rng, sd=0.02)
+                               + _series(CAND, 8, "claude-opus-5", 1200.0, rng, sd=0.02)):
+            part = st["tokens"]["claude-opus-5"]["output"] * (0.1 + 0.5 * (i % 3) / 2)
+            st["tokens"]["claude-opus-5"]["output"] -= part
+            st["unclaimed_tokens"] = {"claude-opus-5": {"output": part}}
+            out.append(st)
+        return {"acct_one": out}
+
+    def test_the_share_is_measured_and_takes_the_scatter_out(self):
+        by = self._pooled()
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertGreaterEqual(shares["a1"]["share"], 0.9)
+        self.assertEqual(shares["a1"]["n_with_unclaimed"], 28)
+        lo, hi = shares["a1"]["interval"]
+        self.assertLessEqual(lo, shares["a1"]["share"])
+        self.assertLessEqual(shares["a1"]["share"], hi)
+        without = C.split_at_candidate(by["acct_one"], CAND, C.CUT_AT, None, _output_value)
+        withit = C.split_at_candidate(by["acct_one"], CAND, C.CUT_AT, None, _output_value,
+                                      shares["a1"]["share"])
+        self.assertLess(statistics.stdev(withit["sides"]["before"]),
+                        statistics.stdev(without["sides"]["before"]) / 3)
+        ratio = math.exp(statistics.mean(withit["sides"]["after"])
+                         - statistics.mean(withit["sides"]["before"]))
+        self.assertAlmostEqual(ratio, 1.2, delta=0.03)
+
+    def test_work_another_meter_carried_gets_no_share(self):
+        # The unclaimed bundles are noise here: the account's own tokens already match its meter.
+        rng = random.Random(9)
+        by = {"acct_one": _series(T0, 20, "claude-opus-5", 1000.0, rng, sd=0.02)}
+        for i, st in enumerate(by["acct_one"]):
+            st["unclaimed_tokens"] = {"claude-opus-5": {"output": 800.0 * (i % 4)}}
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertLessEqual(shares["a1"]["share"], 0.04)
+
+    def test_an_account_with_no_unclaimed_work_is_not_listed(self):
+        by = _fixture()
+        self.assertEqual(C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by)), {})
+        st = by["acct_one"][3]
+        self.assertEqual(C.stretch_amount(st, _output_value, 1.0), _output_value(st["tokens"]))
 
 
 class AnnouncementIndependenceTests(unittest.TestCase):

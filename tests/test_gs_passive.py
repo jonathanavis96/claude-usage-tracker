@@ -364,6 +364,28 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(passive_dollar_readings({"accounts": {"jwork": r}}, PRICES), [])
         self.assertTrue(passive_dollar_readings({"accounts": {"jwork": r}}, PRICES, allow_legacy_unverified=True))
 
+    def test_work_no_login_claims_is_recorded_beside_the_stretch_not_in_it(self):
+        # A headless `claude -p` run writes no session-env entry, so on a pooled root nothing
+        # says whose meter it spent. Its tokens stay out of `tokens` and are recorded per
+        # stretch as `unclaimed_tokens`; an account whose root is its own has no such field.
+        with tempfile.TemporaryDirectory() as d:
+            home = jwork_home(Path(d))
+            (home / ".claude-javiswork" / "session-env" / "s").mkdir(parents=True)
+            headless = [turn_line(JWORK_CEILING_SINCE + timedelta(minutes=3 + 5 * i), f"h{i}",
+                                  cw=2 * DOLLAR, model="claude-opus-5") for i in range(3)]
+            (home / ".claude" / "projects" / "-proj" / "headless.jsonl").write_text("\n".join(headless) + "\n")
+            dave_home(Path(d) / "d")
+            r = report({"jwork": gs_accounts(home)["jwork"],
+                        "dave": gs_accounts(Path(d) / "d" / "home")["dave"]}, PRICES, now=T0)["accounts"]
+        jwork = r["jwork"]["stretches"]
+        self.assertEqual(r["jwork"]["transcripts"]["own_sessions"]["unclaimed"], 1)
+        self.assertEqual(jwork[0]["unclaimed_tokens"],
+                         {"claude-opus-5": {"input": 0, "output": 0, "cache_read": 0,
+                                            "cache_write": 6 * DOLLAR}})
+        self.assertEqual(set(jwork[0]["tokens"]), {"claude-sonnet-5"})
+        self.assertEqual([s["unclaimed_tokens"] for s in jwork[1:]], [{}] * (len(jwork) - 1))
+        self.assertNotIn("unclaimed_tokens", r["dave"]["stretches"][0])
+
     def test_jworks_reset_bearing_log_takes_over_from_its_first_reading(self):
         with tempfile.TemporaryDirectory() as d:
             home = jwork_home(Path(d))
