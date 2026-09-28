@@ -2236,10 +2236,21 @@ class RegimeFiguresTests(unittest.TestCase):
         first, middle, _ = self.figures(self.meters())["per_week_regimes"]
         lo, hi = middle["windows_per_week_interval"]
         self.assertEqual(last["windows_per_week_interval"], [round(lo * 0.7, 4), round(hi * 0.9, 4)])
-        self.assertEqual(last["value"], 1200 * 4)
-        self.assertEqual(last["interval"], [round(1000 * lo * 0.7), round(1400 * hi * 0.9)])
         self.assertEqual(middle["windows_per_week_source"], "pooled_all_accounts")
         self.assertEqual(middle["windows_per_week"], middle["windows_per_week_pooled"])
+
+    def test_the_chained_week_is_one_measurement_not_two_intervals(self):
+        # The window rose 1100 to 1200 and windows per week fell by the paired 0.8: one change,
+        # so the week is the previous week times 1200 / 1100 x 0.8, value and both ends, never
+        # the window interval times the chained windows-per-week interval.
+        _, middle, last = self.figures(self.meters())["per_week_regimes"]
+        factor = round(1200 / 1100 * 0.8, 4)
+        self.assertEqual(last["per_week_factor"], factor)
+        self.assertEqual(last["value"], round(middle["value"] * factor))
+        self.assertEqual(last["interval"], [round(x * factor) for x in middle["interval"]])
+        self.assertNotEqual(last["interval"], [round(1000 * last["windows_per_week_interval"][0]),
+                                               round(1400 * last["windows_per_week_interval"][1])])
+        self.assertIsNone(middle["per_week_factor"])
 
     def test_a_change_that_does_not_apply_leaves_the_pooled_figure(self):
         meters = self.meters()
@@ -2253,7 +2264,12 @@ class RegimeFiguresTests(unittest.TestCase):
         newest, week = figures["per_week_regimes"][-1], figures["per_week"]
         self.assertEqual(week["all"]["value"], newest["value"])
         self.assertEqual(week["all"]["interval"], newest["interval"])
-        self.assertEqual(week["per_family"]["opus"]["all"]["value"], newest["value"])
-        self.assertEqual(week["per_family"]["sonnet"]["all"]["value"], 2400 * 4)
+        self.assertEqual(week["per_family"]["opus"]["all"], {"value": newest["value"],
+                                                              "interval": newest["interval"]})
+        # Every family's week moves from its window as the anchor's does, end by end.
+        self.assertEqual(week["per_family"]["sonnet"]["all"]["value"], 2 * newest["value"])
+        self.assertEqual(week["per_family"]["sonnet"]["all"]["interval"],
+                         [round(2000 / 1000 * newest["interval"][0]),
+                          round(2800 / 1400 * newest["interval"][1])])
         self.assertEqual(week["windows_per_week"]["value"], newest["windows_per_week"])
         self.assertIn("newest regime", week["windows_per_week"]["source"])

@@ -2367,8 +2367,14 @@ PER_REGIME_METHOD = (
     "`windows_per_week_ratio`), each interval end times the ratio interval's same end. Pooling "
     "there would compare different sets of accounts either side (an account with readings on "
     "one side only moves the pool through account mix), so the pooled figure is published "
-    "beside it as `windows_per_week_pooled`, for reference. `per_week` is the newest regime's "
-    "figure. "
+    "beside it as `windows_per_week_pooled`, for reference. In such a regime the window change "
+    "and the windows-per-week ratio are one measurement of one change, so the regime's week is "
+    "not the product of the two factors' independent intervals: its value and interval are the "
+    "previous regime's value and interval times the product of the two point ratios "
+    "(`per_week_factor`: this regime's window over the previous one's, times the paired "
+    "ratio), which the announced scope (weekly cap unchanged) puts at 1. `window` and "
+    "`windows_per_week` stay published as the two factors. `per_week` is the newest regime's "
+    "figure, and every family's week moves from its window the way the anchor's does. "
     "`account_regimes` gives each account's own two factors in each regime and never another "
     "account's: its windows per week from its own readings, and its window from its own "
     "stretches that lie wholly in the regime, valued as `five_hour_window_across_cut` values "
@@ -2426,8 +2432,17 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
         interval = ([round(reg["interval"][0] * wpw["interval"][0]),
                      round(reg["interval"][1] * wpw["interval"][1])]
                     if reg["interval"] and wpw["interval"] else None)
+        factor = None
+        if source == "previous_regime_times_paired_ratio" and prev["value"] and prev["window"] \
+                and window is not None:
+            # The window change and the windows-per-week ratio are one measurement of one
+            # change, so the week moves by their product, not by two independent intervals.
+            factor = round(window / prev["window"] * change["windows_per_week_ratio"], 4)
+            product = round(prev["value"] * factor)
+            interval = ([round(x * factor) for x in prev["interval"]]
+                        if prev["interval"] else None)
         per_week.append({"from": reg["from"], "until": reg["until"], "value": product,
-                         "interval": interval, "window": window,
+                         "interval": interval, "window": window, "per_week_factor": factor,
                          "windows_per_week": wpw["value"], "windows_per_week_interval": wpw["interval"],
                          "windows_per_week_source": source,
                          "windows_per_week_pooled": pooled["value"],
@@ -2458,8 +2473,27 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                          "n_window": len(readings), "n_wpw": wpw["n"]})
         accounts[label] = rows
     newest = per_week[-1]
-    week = per_week_block(window_tokens["all"], window_tokens["per_family"],
-                          newest["windows_per_week"], newest["windows_per_week_interval"],
+    all_fig = window_tokens["all"]
+    week = per_week_block(all_fig, window_tokens["per_family"], newest["windows_per_week"],
+                          newest["windows_per_week_interval"],
                           f"per_week_regimes, newest regime ({newest['windows_per_week_source']})")
+    if newest["per_week_factor"] is not None and all_fig.get("value"):
+        # The week is the newest regime's own figure, not window times windows per week, so
+        # every family moves from its window the way the anchor's week moved from its own:
+        # value by value, each interval end by the same end.
+        lo_w, hi_w = all_fig.get("interval") or (None, None)
+
+        def scaled(fig: dict) -> dict:
+            if fig.get("value") is None and not fig.get("interval"):
+                return fig
+            value = (round(fig["value"] / all_fig["value"] * newest["value"])
+                     if fig.get("value") is not None else None)
+            interval = ([round(fig["interval"][0] / lo_w * newest["interval"][0]),
+                         round(fig["interval"][1] / hi_w * newest["interval"][1])]
+                        if fig.get("interval") and newest["interval"] and lo_w and hi_w else None)
+            return dict(fig, value=value, interval=interval)
+        week["all"] = dict(week["all"], value=newest["value"], interval=newest["interval"])
+        week["per_family"] = {name: {"all": scaled(row["all"])}
+                              for name, row in window_tokens["per_family"].items()}
     return {"per_week_regimes": per_week, "account_regimes": accounts, "per_week": week,
             "per_regime_method": PER_REGIME_METHOD}
