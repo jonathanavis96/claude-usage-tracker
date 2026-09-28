@@ -747,10 +747,108 @@ CURRENT_METHOD = (
     "which of the two the published value and interval came from; `n` counts the whole "
     "cluster, and each side carries its own count.")
 
+#: `current_source` of a regime opened by a measured known-date change and stated by the
+#: previous regime times that change, or by the regime's own cluster once it is thick enough.
+KNOWN_DATE_SCALED_SOURCE = "previous_regime_scaled_by_known_date_change"
+KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
+
+KNOWN_DATE_METHOD = (
+    " After that, every change the known-date test (`announced_change`) has measured -- state "
+    "measured, interval excluding no change, dated after cut_at -- opens a new regime in "
+    "`regimes`, from the candidate's own instant. A regime's own cluster (stretches starting "
+    f"in it) states it once it holds {MIN_AFTER_CLUSTER} readings; below that it is the "
+    "previous regime's value times the change's combined ratio, the interval's low edge times "
+    "the ratio's low edge and its high edge times the ratio's high edge. The window interval "
+    "is a spread of readings, not a standard error, so the edges are multiplied rather than "
+    "standard errors combined. The published value and interval are the newest regime's.")
+
+
+def known_date_changes(announced: dict | None) -> list[dict]:
+    """The measured known-date changes the window regimes scale by, oldest first.
+
+    `announced_change_events` (state measured, interval excluding no change) dated after
+    CUT_AT: the 14 September split already stands for everything before it. Each carries
+    its instant, the combined ratio and the ratio interval, from the published rounded
+    percents so a reader can redo the arithmetic. Nothing here names a date; the
+    boundaries are the candidate records' own.
+    """
+    out = []
+    for cand in announced_change_events(announced):
+        at = datetime.fromisoformat(cand["at"])
+        if at <= CUT_AT or cand.get("change_pct") is None or not cand.get("interval_pct"):
+            continue
+        lo, hi = cand["interval_pct"]
+        out.append({"at": at, "family": cand["family"], "change_pct": cand["change_pct"],
+                    "ratio": 1 + cand["change_pct"] / 100,
+                    "ratio_interval": (1 + lo / 100, 1 + hi / 100)})
+    return sorted(out, key=lambda c: c["at"])
+
+
+def regime_index(row: dict, changes: list[dict]) -> int | None:
+    """Which window regime a cluster row's stretch started in: 0 before CUT_AT, then one
+    more for every known-date change at or before its start. None with no start stamp."""
+    side = cut_side(row)
+    if side is None:
+        return None
+    if side == "before":
+        return 0
+    start = datetime.fromisoformat(row["start"])
+    return 1 + sum(1 for c in changes if c["at"] <= start)
+
+
+def current_method(changes: list[dict]) -> str:
+    """CURRENT_METHOD, plus the known-date regimes and, where one applied, which."""
+    if not changes:
+        return CURRENT_METHOD + KNOWN_DATE_METHOD
+    applied = "; ".join(f"from {_utc(c['at'])} ({c['family']} first seen), {c['change_pct']:+g}%"
+                        for c in changes)
+    return (CURRENT_METHOD + KNOWN_DATE_METHOD
+            + f" Known-date changes applied: {applied}.")
+
+
+def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
+                   changes: list[dict]) -> tuple[list[dict], str]:
+    """The window regimes oldest first, and the current one's `current_source`.
+
+    `own(key, scale)` is one cluster as {value, interval} (unrounded is fine), where key is
+    a regime index or "whole". Regime 0 is the before cluster as measured. Regime 1 is the
+    14 September split exactly as `current_cluster_rule` states it, over the stretches
+    that started before the first known-date change. Every later regime is its own cluster
+    once that holds MIN_AFTER_CLUSTER readings, else the previous regime times the change.
+    """
+    before = own(0, 1.0)
+    regimes = [{"from": None, "until": CUT_AT.isoformat(), "value": before["value"],
+                "interval": before["interval"], "source": "before_cluster"}]
+    chosen, factor, source = current_cluster_rule(counts.get(0, 0), counts.get(1, 0), five_hour_pct)
+    fig = own({"before": 0, "after": 1, "whole": "whole"}[chosen], factor)
+    regimes.append({"from": CUT_AT.isoformat(), "until": None, "value": fig["value"],
+                    "interval": fig["interval"], "source": source})
+    for k, change in enumerate(changes, start=2):
+        prev = regimes[-1]
+        prev["until"] = _utc(change["at"])
+        if counts.get(k, 0) >= MIN_AFTER_CLUSTER or prev["value"] is None:
+            fig, source = own(k, 1.0), KNOWN_DATE_CLUSTER_SOURCE
+        else:
+            r_lo, r_hi = change["ratio_interval"]
+            fig = {"value": prev["value"] * change["ratio"],
+                   "interval": ([prev["interval"][0] * r_lo, prev["interval"][1] * r_hi]
+                                if prev["interval"] else None)}
+            source = KNOWN_DATE_SCALED_SOURCE
+        regimes.append({"from": _utc(change["at"]), "until": None, "value": fig["value"],
+                        "interval": fig["interval"], "source": source})
+    return regimes, regimes[-1]["source"]
+
+
+def _rounded_regimes(regimes: list[dict], unit: float = 1.0) -> list[dict]:
+    """The regimes as published: value and interval edges times `unit`, rounded."""
+    return [dict(r, value=_round(r["value"] * unit if r["value"] is not None else None),
+                 interval=[_round(x * unit) for x in r["interval"]] if r["interval"] else None)
+            for r in regimes]
+
 
 def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
                    fam: str = "opus", weight: float | None = None,
-                   five_hour_pct: float | None = None) -> dict:
+                   five_hour_pct: float | None = None, announced: dict | None = None) -> dict:
     """The five-hour window in credits, from the pure-`fam` cluster, as it is NOW.
 
     `value` is a full window (100% of the meter), so it is the median credits per 1%
@@ -768,6 +866,11 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
     the measured five-hour change (`current_cluster_rule`, `current_source`). `n`
     stays the whole cluster's count; each side carries its own.
 
+    A change the known-date test measured after the cut (`announced`, the
+    `announced_change` block; `known_date_changes`) opens a further regime, and the
+    current figure is the newest regime's (`window_regimes`). `regimes` publishes every
+    one, oldest first, in credits per full window.
+
     `accounts` reports every watched account by its published label, including the
     ones that contributed nothing, so a reader can see that a cluster came from two
     accounts of three and why the third is absent. Account names are never published.
@@ -781,10 +884,22 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
         side = cut_side(row)
         if side:
             sides[side].append(row["credits_per_pct"])
-    chosen_name, factor, current_source = current_cluster_rule(
-        len(sides["before"]), len(sides["after"]), five_hour_pct)
-    chosen = sorted(sides[chosen_name])
-    per_pct = median(chosen) * factor if chosen else None
+    changes = known_date_changes(announced)
+    by_regime: dict[int, list[float]] = {}
+    for row in pooled_rows:
+        idx = regime_index(row, changes)
+        if idx is not None:
+            by_regime.setdefault(idx, []).append(row["credits_per_pct"])
+
+    def own(key, scale: float) -> dict:
+        """One regime's cluster (or the whole one) in credits per 1%, scaled."""
+        values = pooled if key == "whole" else sorted(by_regime.get(key, []))
+        return {"value": median(values) * scale if values else None,
+                "interval": [values[0] * scale, values[-1] * scale] if values else None}
+
+    regimes, current_source = window_regimes(
+        {k: len(v) for k, v in by_regime.items()}, own, five_hour_pct, changes)
+    per_pct, per_pct_interval = regimes[-1]["value"], regimes[-1]["interval"]
 
     def side_figure(values: list[float]) -> dict:
         """One side of the cut as the published {value, interval, n}."""
@@ -811,15 +926,16 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
     return {
         "value": round(per_pct * 100) if per_pct is not None else None,
         "credits_per_pct": round(per_pct) if per_pct is not None else None,
-        "interval": ([round(min(chosen) * 100 * factor), round(max(chosen) * 100 * factor)]
-                     if chosen else None),
+        "interval": ([round(per_pct_interval[0] * 100), round(per_pct_interval[1] * 100)]
+                     if per_pct_interval else None),
         "n": len(pooled),
         "cut_at": CUT_AT.isoformat(),
         "before": side_figure(sides["before"]),
         "after": side_figure(sides["after"]),
+        "regimes": _rounded_regimes(regimes, 100),
         "current_source": current_source if pooled else None,
         "five_hour_window_pct": five_hour_pct,
-        "current_method": CURRENT_METHOD,
+        "current_method": current_method(changes),
         "accounts": accounts,
         "pure_family": fam,
         "cache_read_weight": weight,
@@ -964,7 +1080,7 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
                   windows_per_week_interval: list | None = None,
                   windows_per_week_source: str = "weekly_windows current, max20, newest regime",
                   fam: str = "opus", weight: float | None = None,
-                  five_hour_pct: float | None = None) -> dict:
+                  five_hour_pct: float | None = None, announced: dict | None = None) -> dict:
     """What a five-hour window buys in tokens, measured on the meter rather than priced.
 
     The same cluster `window_credits` is the median of -- the capture-accepted,
@@ -984,7 +1100,9 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     ten of today's twelve stretches are one account's from before the cut and a median
     over the whole cluster is a pre-cut figure published as the current one. `per_class`
     keeps its own median over the whole cluster: it is the mix the conversions hold their
-    shape from (below), and each class states its own two sides beside it.
+    shape from (below), and each class states its own two sides beside it. A measured
+    known-date change after the cut opens a further regime exactly as in `window_credits`,
+    `all` is the newest regime's, and `regimes` publishes every one in tokens per window.
 
     `per_class` is what makes it a measurement rather than a mix assumption: the cluster's
     own median is 444M cache reads, 15M cache writes, 2.8M output and 5.8k input per
@@ -1033,19 +1151,35 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
                        for label, account_rows in rows.items()}}
     n_side = {name: sum(len(account_rows) for account_rows in by_label.values())
               for name, by_label in sides.items()}
-    chosen_name, factor, current_source = current_cluster_rule(
-        n_side["before"], n_side["after"], five_hour_pct)
+    changes = known_date_changes(announced)
+    by_regime: dict[int, dict[str, list[dict]]] = {}
+    for label, account_rows in rows.items():
+        for r in account_rows:
+            idx = regime_index(r, changes)
+            if idx is not None:
+                by_regime.setdefault(idx, {}).setdefault(label, []).append(r)
 
     def figure(side: str, cls: str | None = None, scale: float = 1.0) -> dict:
         """One side's readings as the published figure, optionally scaled to now."""
         return _figure_from({label: [v * scale for v in readings(account_rows, cls)]
                              for label, account_rows in sides[side].items()})
 
+    def own(key, scale: float) -> dict:
+        """One regime's cluster (or the whole one), all classes, scaled."""
+        by_label = rows if key == "whole" else by_regime.get(key, {})
+        return _figure_from({label: [v * scale for v in readings(account_rows)]
+                             for label, account_rows in by_label.items()})
+
+    regimes, current_source = window_regimes(
+        {k: sum(len(v) for v in by_label.values()) for k, by_label in by_regime.items()},
+        own, five_hour_pct, changes)
+    regimes = _rounded_regimes(regimes)
+
     def both_sides(cls: str | None = None) -> dict:
         """The `before` and `after` sub-figures one published figure carries."""
         return {side: dict(figure(side, cls), n=n_side[side]) for side in ("before", "after")}
 
-    all_figure = dict(figure(chosen_name, scale=factor),
+    all_figure = dict(value=regimes[-1]["value"], interval=regimes[-1]["interval"],
                       status=None if pooled_rows else
                       f"no capture-accepted pure-{fam} stretch in the history files")
     per_class = {cls: dict(_figure_from({label: readings(account_rows, cls)
@@ -1102,12 +1236,13 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
         "derivation": "credits",
         "as_of": newest_end(pooled_rows),
         "method": method,
-        "current_method": CURRENT_METHOD,
+        "current_method": current_method(changes),
         "selection": selection_sentence(),
         "n": len(pooled_rows),
         "cut_at": CUT_AT.isoformat(),
         # The all-classes figure's own two sides; every `per_class` entry carries its own.
         **both_sides(),
+        "regimes": regimes,
         "current_source": current_source if pooled_rows else None,
         "five_hour_window_pct": five_hour_pct,
         "accounts": accounts,

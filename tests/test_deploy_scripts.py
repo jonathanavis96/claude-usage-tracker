@@ -126,8 +126,9 @@ class TestDailyNotifyChange(unittest.TestCase):
     def _publishes(self, *publishes, notified=None, env_file=True):
         """Run notify_change once per publish, in order, in one repo checkout.
 
-        Each publish is (last_change, newest weekly window[, curl status]): the public
-        JSON that publish wrote. Returns (procs, requests, alerts), one entry per
+        Each publish is (last_change, newest weekly window[, curl status[, feeds]]): the
+        public JSON that publish wrote, where feeds maps an account label to its
+        newest_stretch_end. Returns (procs, requests, alerts), one entry per
         publish, and sets self.state to the announced dates recorded, or None.
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,12 +150,15 @@ class TestDailyNotifyChange(unittest.TestCase):
                 (cwd / ".notified-change").write_text(notified + "\n", encoding="utf-8")
             procs, requests, alerts = [], [], []
             for publish in publishes:
-                last_change, newest_window, curl_status = (*publish, "200")[:3]
+                last_change, newest_window, *rest = publish
+                curl_status = rest[0] if rest else "200"
+                feeds = rest[1] if len(rest) > 1 else None
                 windows = [{"window_ending": newest_window}] if newest_window else []
-                (data / "claude-usage.json").write_text(
-                    json.dumps({"last_change": last_change, "weekly_windows": {"passive": {"by_window": windows}}}),
-                    encoding="utf-8",
-                )
+                public = {"last_change": last_change, "weekly_windows": {"passive": {"by_window": windows}}}
+                if feeds is not None:
+                    public["account_feeds"] = {label: {"newest_stretch_end": end, "state": "fresh"}
+                                               for label, end in feeds.items()}
+                (data / "claude-usage.json").write_text(json.dumps(public), encoding="utf-8")
                 # A stub curl that never touches the network. It records the request
                 # so the payload can be asserted, and prints the status curl -w would.
                 curl = stub / "curl"
@@ -224,6 +228,36 @@ class TestDailyNotifyChange(unittest.TestCase):
             (self.CHANGE, self.W1), (self.CHANGE, self.W1), (self.CHANGE, self.W1), (self.CHANGE, self.W2))
         self.assertEqual(requests[:3], ["", "", ""])
         self.assertEqual(self._payload(requests[3])["date"], "2026-09-11")
+
+    FIVE_HOUR: ClassVar[dict] = {"date": "2026-09-22", "direction": "increased", "percent": 38,
+                                 "scope": "five_hour"}
+    #: The live stall: the weekly windows stuck at 2026-09-24T18:10 for days.
+    STALLED = "2026-09-24T18:10:00.103349+00:00"
+
+    def test_a_newer_stretch_on_any_account_is_new_evidence_while_the_windows_stall(self) -> None:
+        # The first publish carries a stretch newer than the windows; the next hour's is
+        # the same look; the next day's brings a newer stretch on another account, in a
+        # non-UTC offset, and the stalled windows no longer hold the change back.
+        feeds1 = {"a1": "2026-09-25T21:38:21+00:00", "a2": "2026-09-25T11:37:07+00:00"}
+        feeds2 = {"a1": "2026-09-25T21:38:21+00:00", "a2": "2026-09-26T09:00:00+02:00"}
+        _procs, requests, alerts = self._publishes(
+            (self.FIVE_HOUR, self.STALLED, "200", feeds1),
+            (self.FIVE_HOUR, self.STALLED, "200", feeds1),
+            (self.FIVE_HOUR, self.STALLED, "200", feeds2))
+        self.assertEqual(requests[:2], ["", ""], "one look at the same evidence is not two")
+        self.assertEqual(self._payload(requests[2]),
+                         {"date": "2026-09-22", "direction": "increased", "percent": 38, "scope": "five_hour"})
+        self.assertIn("Observed change: increased 38% on 2026-09-22", alerts[2])
+        self.assertEqual(self.state, ["2026-09-22"])
+
+    def test_stalled_windows_and_unchanged_stretches_never_announce(self) -> None:
+        # The bug this gate fixes, the other way round: with neither source moving, hourly
+        # publishes stay one look however many there are.
+        feeds = {"a1": "2026-09-25T21:38:21+00:00"}
+        _procs, requests, _alerts = self._publishes(
+            *[(self.FIVE_HOUR, self.STALLED, "200", feeds)] * 4)
+        self.assertEqual(requests, ["", "", "", ""])
+        self.assertIsNone(self.state)
 
     def test_the_real_misdated_cut_is_never_announced_and_the_cut_is(self) -> None:
         # The committed history replayed as masterrig pushed it (tests/test_detect.py):

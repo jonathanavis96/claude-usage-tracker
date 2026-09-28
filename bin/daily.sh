@@ -161,14 +161,19 @@ notify_change() {
   # real cut on 2026-09-14 (tracker/detect.py, why these constants). So a change is
   # announced only once two consecutive publishes of new weekly evidence show it
   # dated within a day of each other, and never when it is within a day of a date
-  # already announced. New evidence means a newer window in weekly_windows.passive:
-  # this script publishes hourly but masterrig's history arrives daily, and an
-  # hourly re-read of the same windows is not a second look. The observation is
+  # already announced. New evidence means a newer window in weekly_windows.passive,
+  # or a newer stretch on any account (account_feeds[].newest_stretch_end): this
+  # script publishes hourly but the histories arrive daily, and an hourly re-read of
+  # the same windows and stretches is not a second look. Stretches count as well as
+  # windows because a five-hour change (the known-date test, last_change.scope
+  # "five_hour") is measured on stretches, and the weekly windows can stall for days
+  # while stretches keep arriving -- keyed on windows alone, the 2026-09-22 five-hour
+  # change waited four days on a window list stuck at 2026-09-24. The observation is
   # recorded before the env file is checked, so it never skips a day.
   local body
   body="$(SEEN="$seen" NOTIFIED="$state" python3 - "$json" <<'PYEOF'
 import json, os, sys
-from datetime import date
+from datetime import date, datetime, timezone
 
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
@@ -197,8 +202,25 @@ def same_event(a, b):
         return False
 
 
+def instant(stamp):
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def newest(stamps):
+    """The newest stamp by instant (the feeds mix UTC offsets), as the stamp itself."""
+    dated = [(instant(s), str(s)) for s in stamps if s and instant(s) is not None]
+    dated = [(t if t.tzinfo else t.replace(tzinfo=timezone.utc), s) for t, s in dated]
+    return max(dated)[1] if dated else None
+
+
 windows = ((public.get("weekly_windows") or {}).get("passive") or {}).get("by_window") or []
-evidence = (max((str(w["window_ending"]) for w in windows if isinstance(w, dict) and w.get("window_ending")), default=None)
+feeds = public.get("account_feeds") or {}
+evidence = (newest([w.get("window_ending") for w in windows if isinstance(w, dict)]
+                   + [f.get("newest_stretch_end") for f in (feeds.values() if isinstance(feeds, dict) else [])
+                      if isinstance(f, dict)])
             or public.get("passive_generated_at") or public.get("generated_at"))
 try:
     with open(os.environ["SEEN"], encoding="utf-8") as fh:
@@ -217,7 +239,7 @@ with open(os.environ["SEEN"], "w", encoding="utf-8") as fh:
 if shown is None:
     raise SystemExit(0)
 if not same_event(seen.get("previous"), shown):
-    print(f"notify: change on {shown} is not yet on two consecutive publishes of new weekly evidence, waiting",
+    print(f"notify: change on {shown} is not yet on two consecutive publishes of new evidence, waiting",
           file=sys.stderr)
     raise SystemExit(0)
 try:
