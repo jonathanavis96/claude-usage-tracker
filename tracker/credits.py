@@ -1970,13 +1970,84 @@ def _side_of(st: dict, at: datetime, lo: datetime | None, hi: datetime | None) -
     return None
 
 
+#: How finely, and with how many resamples, `unclaimed_shares` reads an account's share of the
+#: unclaimed work. The share is bounded to [0, 1]: a meter can have carried none of it, or all.
+UNCLAIMED_GRID = 50
+UNCLAIMED_BOOTSTRAP = 100
+
+
+def stretch_amount(st: dict, value, share: float = 0.0) -> float | None:
+    """A stretch's credits: its own tokens, plus `share` of the work no login claimed in it.
+
+    `unclaimed_tokens` (tracker/gs_passive.py) is the pooled projects root's work that no
+    config dir's `session-env` claims, in the stretch's pairs. An unpriceable unclaimed
+    bundle adds nothing rather than dropping the stretch, since it may not be this meter's.
+    """
+    amount = value(st["tokens"])
+    if amount is None or not share or not st.get("unclaimed_tokens"):
+        return amount
+    extra = value(st["unclaimed_tokens"])
+    return amount + share * extra if extra else amount
+
+
+def unclaimed_shares(selected: dict[str, list[dict]], value, at: datetime, lo: datetime | None,
+                     hi: datetime | None, labels: dict[str, str], names: list[str]) -> dict[str, dict]:
+    """How much of the unclaimed work each pooled account's meter carried, measured.
+
+    The work no login claims on the pooled projects root (`stretch_amount`) was spent on some
+    account, and nothing on disk says which: the auto-mail filing judge picks a seat per run
+    and the airlock bench inherits its caller's config dir. Left out, it is meter movement with
+    no tokens, and the stretch reads low; added whole to every pooled account, it is counted
+    once per account. So the share is fitted: per account, the s in [0, 1] that minimises the
+    squared scatter of log((credits + s x unclaimed credits) / meter %) about each side's own
+    mean, either side of `at` as the known-date test splits them. Its 95% interval is a
+    percentile bootstrap, stretches resampled within side, with a fixed seed. An account whose
+    stretches carry no unclaimed work is not listed and adds nothing.
+    """
+    out = {}
+    grid = [i / UNCLAIMED_GRID for i in range(UNCLAIMED_GRID + 1)]
+    for name in sorted(selected, key=lambda n: _label_for(labels, n, names)):
+        sides: dict[str, list[tuple[float, float, float]]] = {"before": [], "after": []}
+        for st in selected[name]:
+            side = _side_of(st, at, lo, hi)
+            own = value(st["tokens"]) if side else None
+            if not own or own <= 0:
+                continue
+            extra = value(st["unclaimed_tokens"]) if st.get("unclaimed_tokens") else 0.0
+            sides[side].append((own, extra or 0.0, st["delta_pct"]))
+        rows = [r for rs in sides.values() for r in rs]
+        if not any(u for _, u, _ in rows):
+            continue
+
+        def best(groups: list[list[tuple[float, float, float]]]) -> float:
+            def ss(s: float) -> float:
+                total = 0.0
+                for g in groups:
+                    ys = [math.log((c + s * u) / d) for c, u, d in g]
+                    m = sum(ys) / len(ys) if ys else 0.0
+                    total += sum((y - m) ** 2 for y in ys)
+                return total
+            return min(grid, key=ss)
+
+        groups = [g for g in sides.values() if g]
+        share = best(groups)
+        rng = random.Random(f"{JOINT_SEED}:unclaimed:{name}:{_utc(at)}")
+        draws = sorted(best([[rng.choice(g) for _ in g] for g in groups])
+                       for _ in range(UNCLAIMED_BOOTSTRAP))
+        out[_label_for(labels, name, names)] = {
+            "share": share, "interval": [draws[int(0.025 * len(draws))], draws[int(0.975 * len(draws)) - 1]],
+            "n_with_unclaimed": sum(1 for _, u, _ in rows if u), "n": len(rows)}
+    return out
+
+
 def split_at_candidate(stretches: list[dict], at: datetime, lo: datetime | None,
-                       hi: datetime | None, value) -> dict:
+                       hi: datetime | None, value, unclaimed_share: float = 0.0) -> dict:
     """One account's stretches either side of `at`, as log credits per 1%, with counts.
 
     Before: start at or after `lo` and end at or before `at`. After: start at or after
     `at` and end at or before `hi`. A stretch spanning either boundary is on neither side.
     `rounding` holds each kept stretch's `rounding_variance`, in the same order as `sides`.
+    A stretch's credits include `unclaimed_share` of its unclaimed work (`stretch_amount`).
     """
     sides: dict[str, list[float]] = {"before": [], "after": []}
     rounding: dict[str, list[float]] = {"before": [], "after": []}
@@ -1986,7 +2057,7 @@ def split_at_candidate(stretches: list[dict], at: datetime, lo: datetime | None,
         side = _side_of(st, at, lo, hi)
         if side is None:
             continue
-        amount = value(st["tokens"])
+        amount = stretch_amount(st, value, unclaimed_share)
         if amount is None or amount <= 0:
             unpriced[side] += 1
             continue
@@ -2022,9 +2093,11 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
         at = cand["at"]
         lo, hi = candidate_bounds(at, cands)
         per_account, paired = {}, {}
+        shares = unclaimed_shares(selected, value, at, lo, hi, labels, names)
         for name in sorted(selected, key=lambda n: _label_for(labels, n, names)):
             label = _label_for(labels, name, names)
-            split = split_at_candidate(selected[name], at, lo, hi, value)
+            split = split_at_candidate(selected[name], at, lo, hi, value,
+                                       shares.get(label, {}).get("share", 0.0))
             sides = split["sides"]
             row = {"n_before": len(sides["before"]), "n_after": len(sides["after"]),
                    "n_before_reset_unverified": split["unverified"]["before"],
@@ -2060,6 +2133,7 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "interval_excludes_no_change": excludes,
             "accounts_combined": sorted(paired),
             "per_account": per_account,
+            "unclaimed_share": shares,
             "joint_fit": (joint_fits or {}).get((cand["family"], _utc(at))),
             "announcement": cand["announcement"],
         })
@@ -2080,7 +2154,9 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "spans a boundary is on neither side. Each account's change is the ratio of the "
             "weighted geometric means of its credits per 1% on the two sides, each stretch "
             "weighted by 1 / (scatter + its own whole-percent rounding variance), with a 95% t "
-            "interval on the logs using the scatter pooled over both sides; accounts with at least "
+            "interval on the logs using the scatter pooled over both sides. A stretch's credits "
+            "include the account's fitted share (`unclaimed_share`, 0 to 1) of the work no login "
+            "claims on the pooled projects root in its span. Accounts with at least "
             f"{ANNOUNCED_MIN_BEFORE} stretches before and 1 after are combined as a weighted "
             "mean of log ratios, weights 1 / se squared. The state is measuring below "
             f"{ANNOUNCED_PROVISIONAL_N} stretches after on every combined account, provisional "
@@ -2129,10 +2205,12 @@ def _merge_bundles(bundles: list[dict]) -> dict:
 
 
 def _joint_rows(stretches: list[dict], fam: str, at: datetime, lo: datetime | None,
-                hi: datetime | None, value, credits: dict) -> tuple[list[tuple], list[tuple]]:
+                hi: datetime | None, value, credits: dict,
+                unclaimed_share: float = 0.0) -> tuple[list[tuple], list[tuple]]:
     """One account's before side as (log known credits per 1%, rounding variance) pairs, and
     its after side as (known credits, new-family credits at its base family's rate, meter %,
-    rounding variance) rows. The rounding variance is `rounding_variance`."""
+    rounding variance) rows. The rounding variance is `rounding_variance`; `unclaimed_share`
+    of the stretch's unclaimed work (`stretch_amount`) counts as known-rate work."""
     base = _base_model(base_family(fam, credits), credits)
     before, after = [], []
     for st in stretches:
@@ -2148,6 +2226,8 @@ def _joint_rows(stretches: list[dict], fam: str, at: datetime, lo: datetime | No
         new = value({base: _merge_bundles(own)}) if own else 0.0
         if known is None or new is None:
             continue
+        if unclaimed_share and st.get("unclaimed_tokens"):
+            known += unclaimed_share * (value(st["unclaimed_tokens"]) or 0.0)
         if side == "before":
             if known > 0 and not new:
                 before.append((math.log(known / st["delta_pct"]), rounding_variance(st)))
@@ -2228,14 +2308,17 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     family's share, and that variation separates r from g; a mix too uniform leaves r
     unpinned and the fit says so. Each stretch is weighted by 1 / (scatter + its own
     whole-percent rounding variance): the fit runs once unweighted to measure the scatter
-    (`_joint_scatter`), then again weighted. Intervals are a percentile bootstrap, stretches
-    resampled within each account and side, at that scatter. `value(tokens)` prices a bundle
-    in credits.
+    (`_joint_scatter`), then again weighted. Each pooled account's measured share of the work
+    no login claims (`unclaimed_shares`) is added to its stretches' known work. Intervals are
+    a percentile bootstrap, stretches resampled within each account and side, at that
+    scatter. `value(tokens)` prices a bundle in credits.
     """
     per_account, groups = {}, []
+    unclaimed = unclaimed_shares(selected, value, at, lo, hi, labels, names)
     for name in sorted(selected, key=lambda n: _label_for(labels, n, names)):
         label = _label_for(labels, name, names)
-        before, after = _joint_rows(selected[name], fam, at, lo, hi, value, credits)
+        before, after = _joint_rows(selected[name], fam, at, lo, hi, value, credits,
+                                    unclaimed.get(label, {}).get("share", 0.0))
         shares = sorted(u / (k + u) for k, u, *_ in after)
         per_account[label] = {"n_before": len(before), "n_after": len(after),
                               "new_family_share_median": round(median(shares), 3) if shares else None,
@@ -2249,7 +2332,7 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
            "times_opus": None, "times_opus_interval": None,
            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
            "log_residual_sd": None, "scatter_sd": None, "rounding_sd": None,
-           "accounts_combined": [g[0] for g in groups],
+           "unclaimed_share": unclaimed, "accounts_combined": [g[0] for g in groups],
            "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP}
     fit = _joint_solve([(b, a) for _, b, a in groups])
     if fit is None or not any(u for _, _, a in groups for _, u, *_ in a):

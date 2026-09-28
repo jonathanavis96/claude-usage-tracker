@@ -2,6 +2,7 @@
 import copy
 import math
 import random
+import statistics
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -497,6 +498,55 @@ class RoundingWeightTests(unittest.TestCase):
         self.assertLess(abs(fit["five_hour_limit_change_pct"] - 20.0),
                         abs((math.exp(plain[1]) - 1) * 100 - 20.0) / 2)
         self.assertLess(abs(fit["rate_relative_to_base"] - 0.6), abs(plain[0] - 0.6) / 2)
+
+
+class UnclaimedShareTests(unittest.TestCase):
+    """The pooled root's unclaimed work: each account's share of it is measured, not assumed."""
+
+    def _pooled(self, seed=5):
+        # One account whose meter carried every unclaimed bundle: its own tokens are the meter's
+        # credits less a varying unclaimed part, so leaving the part out scatters the stretches.
+        rng = random.Random(seed)
+        out = []
+        for i, st in enumerate(_series(T0, 20, "claude-opus-5", 1000.0, rng, sd=0.02)
+                               + _series(CAND, 8, "claude-opus-5", 1200.0, rng, sd=0.02)):
+            part = st["tokens"]["claude-opus-5"]["output"] * (0.1 + 0.5 * (i % 3) / 2)
+            st["tokens"]["claude-opus-5"]["output"] -= part
+            st["unclaimed_tokens"] = {"claude-opus-5": {"output": part}}
+            out.append(st)
+        return {"acct_one": out}
+
+    def test_the_share_is_measured_and_takes_the_scatter_out(self):
+        by = self._pooled()
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertGreaterEqual(shares["a1"]["share"], 0.9)
+        self.assertEqual(shares["a1"]["n_with_unclaimed"], 28)
+        lo, hi = shares["a1"]["interval"]
+        self.assertLessEqual(lo, shares["a1"]["share"])
+        self.assertLessEqual(shares["a1"]["share"], hi)
+        without = C.split_at_candidate(by["acct_one"], CAND, C.CUT_AT, None, _output_value)
+        withit = C.split_at_candidate(by["acct_one"], CAND, C.CUT_AT, None, _output_value,
+                                      shares["a1"]["share"])
+        self.assertLess(statistics.stdev(withit["sides"]["before"]),
+                        statistics.stdev(without["sides"]["before"]) / 3)
+        ratio = math.exp(statistics.mean(withit["sides"]["after"])
+                         - statistics.mean(withit["sides"]["before"]))
+        self.assertAlmostEqual(ratio, 1.2, delta=0.03)
+
+    def test_work_another_meter_carried_gets_no_share(self):
+        # The unclaimed bundles are noise here: the account's own tokens already match its meter.
+        rng = random.Random(9)
+        by = {"acct_one": _series(T0, 20, "claude-opus-5", 1000.0, rng, sd=0.02)}
+        for i, st in enumerate(by["acct_one"]):
+            st["unclaimed_tokens"] = {"claude-opus-5": {"output": 800.0 * (i % 4)}}
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertLessEqual(shares["a1"]["share"], 0.04)
+
+    def test_an_account_with_no_unclaimed_work_is_not_listed(self):
+        by = _fixture()
+        self.assertEqual(C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by)), {})
+        st = by["acct_one"][3]
+        self.assertEqual(C.stretch_amount(st, _output_value, 1.0), _output_value(st["tokens"]))
 
 
 class AnnouncementIndependenceTests(unittest.TestCase):
