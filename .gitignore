@@ -8,3 +8,4 @@ out/
 *.png
 docs/handoffs/
 .passive-last-ok
+graphify-out/
