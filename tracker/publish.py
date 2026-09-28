@@ -1316,7 +1316,16 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     cut = credit_model.across_cut(priceable, credits, labels, model_rates=model_rates)
     five_hour = credit_model.five_hour_window_change(cut)
     five_hour_pct = five_hour["pct"] if five_hour else None
-    window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct)
+    # The known-date test of every change candidate (each family's first-seen stretch),
+    # beside the unknown-date detector. Stretches are valued by the same
+    # `stretch_credits` the credit detection uses (credit_model.announced_change). It is
+    # read before the window too: a change it has measured after the cut opens a new
+    # window regime, and the current window is the newest one (credits.window_regimes).
+    announced = credit_model.announced_change(
+        by_account, runs, credits,
+        lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels)
+    window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct,
+                                         announced=announced)
     fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels,
                                         model_rates=model_rates)
     windows_per_week = weekly["max20"]["current"]
@@ -1346,7 +1355,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
             windows_per_week=windows_per_week,
             windows_per_week_interval=(weekly["max20"].get("current_estimate")
                                        or {}).get("rounding_interval"),
-            fam=window["pure_family"], five_hour_pct=five_hour_pct),
+            fam=window["pure_family"], five_hour_pct=five_hour_pct, announced=announced),
         "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
         "per_model": _credits_per_model(window, credits, prices, model_rates, labels,
                                         window_as_of, fits_as_of),
@@ -1356,12 +1365,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         "effort_cache_mix": _effort_cache_mix(effort_meta),
         "effort_credits": _effort_credits(effort_meta, credits, window, model_rates),
         "five_hour_window_across_cut": cut,
-        # The known-date test of every change candidate (each family's first-seen stretch),
-        # beside the unknown-date detector. Stretches are valued by the same
-        # `stretch_credits` the credit detection uses (credit_model.announced_change).
-        "announced_change": credit_model.announced_change(
-            by_account, runs, credits,
-            lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels),
+        "announced_change": announced,
         "fable_interval": fable,
         "rates": {"per_family": {fam: (dict(row, interval=fable) if fam == "fable" else row)
                                  for fam, row in credits["per_family"].items()},

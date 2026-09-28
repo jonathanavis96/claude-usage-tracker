@@ -1916,6 +1916,95 @@ class WindowTokensCutTests(unittest.TestCase):
         self.assertEqual(block["per_family"]["opus"]["all"]["value"], current)
 
 
+def announced_block(at: str, change_pct: float = 38.0, interval_pct=(14.0, 67.0),
+                    state: str = "measured") -> dict:
+    """The one field `known_date_changes` reads: the announced_change candidates."""
+    return {"candidates": [{"family": "opus-5-5", "at": at, "state": state,
+                            "change_pct": change_pct, "interval_pct": list(interval_pct),
+                            "interval_excludes_no_change": interval_pct[0] > 0 or interval_pct[1] < 0}]}
+
+
+class KnownDateRegimeTests(unittest.TestCase):
+    """A change the known-date test measured after the cut opens a third window regime.
+
+    Before the cut 115,000 credits per 1% (four stretches); after it one stretch at
+    200,000, too thin to state the window, so the second regime is the before cluster
+    scaled by the five-hour change. A measured +38% on 22 September scales that again.
+    """
+
+    AT = "2026-09-22T17:03:48+00:00"
+    BEFORE = WindowClusterCutTests.BEFORE
+    AFTER: ClassVar[list] = [opus_stretch("2026-09-16T00:00:00+00:00", 200_000)]
+
+    def window(self, announced=None, after=None, five_hour_pct=8.6):
+        clean = C.clean_stretches({"jwork": self.BEFORE,
+                                   "dave": self.AFTER if after is None else after}, [])
+        return C.window_credits(clean, CREDITS, LABELS, five_hour_pct=five_hour_pct,
+                                announced=announced)
+
+    def test_with_no_known_date_change_there_are_the_two_regimes_of_today(self):
+        window = self.window()
+        self.assertEqual(window["current_source"], "before_cluster_scaled_by_five_hour_change")
+        self.assertEqual([r["source"] for r in window["regimes"]],
+                         ["before_cluster", "before_cluster_scaled_by_five_hour_change"])
+        first, second = window["regimes"]
+        self.assertEqual((first["from"], first["until"]), (None, C.CUT_AT.isoformat()))
+        self.assertEqual((second["from"], second["until"]), (C.CUT_AT.isoformat(), None))
+        self.assertEqual(first["value"], window["before"]["value"])
+        self.assertEqual((second["value"], second["interval"]), (window["value"], window["interval"]))
+
+    def test_a_measured_change_scales_the_previous_regime_from_its_own_instant(self):
+        window = self.window(announced_block(self.AT))
+        self.assertEqual(window["current_source"], C.KNOWN_DATE_SCALED_SOURCE)
+        before, middle, now = window["regimes"]
+        self.assertEqual((middle["until"], now["from"], now["until"]), (self.AT, self.AT, None))
+        self.assertEqual(middle["value"], round(11_500_000 * 1.086))
+        self.assertEqual(now["value"], round(11_500_000 * 1.086 * 1.38))
+        self.assertEqual(now["interval"], [round(10_000_000 * 1.086 * 1.14),
+                                           round(13_000_000 * 1.086 * 1.67)])
+        self.assertEqual((window["value"], window["interval"]), (now["value"], now["interval"]))
+        self.assertEqual(window["credits_per_pct"], round(115_000 * 1.086 * 1.38))
+        self.assertIn("Known-date changes applied: from 2026-09-22T17:03:48+00:00",
+                      window["current_method"])
+
+    def test_a_change_not_yet_measured_or_not_excluding_none_is_not_applied(self):
+        for block in (announced_block(self.AT, state="provisional"),
+                      announced_block(self.AT, change_pct=5.0, interval_pct=(-10.0, 20.0))):
+            with self.subTest(block=block):
+                window = self.window(block)
+                self.assertEqual(len(window["regimes"]), 2)
+                self.assertEqual(window["current_source"], "before_cluster_scaled_by_five_hour_change")
+
+    def test_a_change_before_the_cut_opens_no_regime(self):
+        window = self.window(announced_block("2026-08-28T01:19:43+00:00"))
+        self.assertEqual(len(window["regimes"]), 2)
+
+    def test_a_thick_regime_states_itself_and_splits_the_after_cluster(self):
+        after = [*self.AFTER, *(opus_stretch(f"2026-09-{d:02d}T00:00:00+00:00", level)
+                                for d, level in ((23, 300_000), (24, 310_000), (25, 320_000),
+                                                 (26, 330_000), (27, 340_000)))]
+        window = self.window(announced_block(self.AT), after=after)
+        self.assertEqual(window["current_source"], C.KNOWN_DATE_CLUSTER_SOURCE)
+        self.assertEqual((window["value"], window["interval"]), (32_000_000, [30_000_000, 34_000_000]))
+        # The middle regime is still thin -- its own one stretch -- so it stays scaled.
+        self.assertEqual(window["regimes"][1]["source"], "before_cluster_scaled_by_five_hour_change")
+        # The published `after` side is still everything after the cut.
+        self.assertEqual(window["after"]["n"], 6)
+
+    def test_the_token_figure_carries_the_same_regimes(self):
+        clean = C.clean_stretches({"jwork": WindowTokensCutTests.BEFORE}, [])
+        block = C.window_tokens(clean, CREDITS, LABELS, None, five_hour_pct=8.6,
+                                windows_per_week=5.0, announced=announced_block(self.AT))
+        self.assertEqual(block["current_source"], C.KNOWN_DATE_SCALED_SOURCE)
+        self.assertEqual([r["value"] for r in block["regimes"]],
+                         [174_000, round(174_000 * 1.086), round(174_000 * 1.086 * 1.38)])
+        self.assertEqual(block["regimes"][-1]["interval"],
+                         [round(116_000 * 1.086 * 1.14), round(232_000 * 1.086 * 1.67)])
+        self.assertEqual(block["all"]["value"], block["regimes"][-1]["value"])
+        self.assertEqual(block["per_family"]["opus"]["all"]["value"], block["all"]["value"])
+        self.assertEqual(block["per_week"]["all"]["value"], round(block["all"]["value"] * 5.0))
+
+
 class CurrentWindowDownstreamTests(unittest.TestCase):
     """Everything the page divides by the window follows the current figure, with no
     second rule: the per-model rows, the session counts and the week."""
@@ -1962,6 +2051,16 @@ class CurrentWindowDownstreamTests(unittest.TestCase):
         tokens = self.credits["window_tokens"]
         self.assertEqual(tokens["current_source"], "before_cluster_scaled_by_five_hour_change")
         self.assertEqual(tokens["all"]["value"], round(tokens["before"]["value"] * 1.10))
+
+    def test_both_blocks_publish_their_regimes_ending_at_the_current_figure(self):
+        # No known-date change is measured in this fixture, so the regimes are the two
+        # the 14 September split gives, and the newest one is the published figure.
+        tokens = self.credits["window_tokens"]
+        for regimes, current in ((self.window["regimes"], self.window["value"]),
+                                 (tokens["regimes"], tokens["all"]["value"])):
+            self.assertEqual([(r["from"], r["until"]) for r in regimes],
+                             [(None, C.CUT_AT.isoformat()), (C.CUT_AT.isoformat(), None)])
+            self.assertEqual(regimes[-1]["value"], current)
 
 
 class PricedModelsTests(unittest.TestCase):
