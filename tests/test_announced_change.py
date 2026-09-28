@@ -152,11 +152,19 @@ def _max20(n_after=10, after_wpw=4.5, n_before=20):
     return {"by_window": rows, "by_account": {}}
 
 
-def _announced(note=FIVE_HOUR_NOTE, at=CAND):
+def _announced(note=FIVE_HOUR_NOTE, at=CAND, unconfounded=None):
     return {"candidates": [{"family": "opus-5-5", "at": at.isoformat(), "at_source": "first_turn",
                             "first_seen_account": "a1", "first_seen_stretch_end": at.isoformat(),
                             "before_from": C.CUT_AT.isoformat(), "after_until": None,
-                            "announcement": note}]}
+                            "announcement": note, "unconfounded": unconfounded}]}
+
+
+def _unconfounded(ratio, interval, n_after=10, state="measured"):
+    """An `announced_change` `unconfounded` block: the five-hour meter's cost per 1% moved by
+    `ratio` on work the candidate did not reprice."""
+    return {"without_family": "opus-5-5", "state": state, "ratio": ratio,
+            "ratio_interval": list(interval), "accounts_combined": ["a1"],
+            "per_account": {"a1": {"n_before": 20, "n_after": n_after}}}
 
 
 class FirstTurnTests(unittest.TestCase):
@@ -192,23 +200,66 @@ class FirstTurnTests(unittest.TestCase):
 
 
 class MeterTests(unittest.TestCase):
-    def test_windows_per_week_ratio_gives_the_five_hour_change(self):
+    def test_windows_per_week_ratio_gives_the_change_and_both_readings(self):
         cand = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
         a1 = cand["per_account"]["a1"]
         self.assertEqual((a1["n_before"], a1["n_after"], a1["n_straddling"]), (20, 10, 1))
         self.assertEqual((a1["windows_per_week_before"], a1["windows_per_week_after"]), (5.0, 4.5))
-        self.assertEqual(a1["change_pct"], round((5.0 / 4.5 - 1) * 100, 1))
-        lo, hi = a1["interval_pct"]
-        self.assertLess(lo, a1["change_pct"])
-        self.assertGreater(hi, a1["change_pct"])
+        self.assertEqual(a1["windows_per_week_change_pct"], -10.0)
+        self.assertEqual(a1["readings"]["five_hour_scope"]["five_hour_window_change_pct"],
+                         round((5.0 / 4.5 - 1) * 100, 1))
+        lo, hi = a1["windows_per_week_change_interval_pct"]
+        self.assertLess(lo, -10.0)
+        self.assertGreater(hi, -10.0)
         self.assertEqual(cand["accounts_combined"], ["a1", "a2"])
         self.assertFalse(cand["per_account"]["a3"]["combined"])
-        self.assertEqual(cand["change_pct"], 11.1)
+        self.assertEqual(cand["windows_per_week_change_pct"], -10.0)
+        self.assertEqual(cand["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 11.1)
+        self.assertEqual(cand["readings"]["weekly_scope"]["weekly_cap_change_pct"], -10.0)
         self.assertEqual(cand["windows_per_week_ratio"], 0.9)
         self.assertEqual(cand["state"], "measured")
         self.assertTrue(cand["applies"])
         self.assertEqual(cand["method"], "windows_per_week_ratio")
-        self.assertIn("weekly cap unchanged", C.five_hour_on_meters(_announced(), _max20())["method"])
+
+    def test_without_unrepriced_work_the_scope_is_undetermined_and_no_window_change_is_claimed(self):
+        cand = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
+        self.assertEqual(cand["scope"]["state"], "undetermined")
+        self.assertIn("too few stretches", cand["scope"]["reason"])
+        self.assertIsNone(cand["change_pct"])
+        self.assertIsNone(cand["interval_pct"])
+
+    def test_scope_is_decided_by_which_meters_cost_moved(self):
+        # The five-hour meter's cost per 1% up 11%, and the weekly's (that times 0.9) flat.
+        five = C.five_hour_on_meters(_announced(unconfounded=_unconfounded(1.111, (1.05, 1.17))),
+                                     _max20())["candidates"][0]
+        self.assertEqual(five["scope"]["state"], "five_hour")
+        self.assertEqual(five["change_pct"], 11.1)
+        # The five-hour meter's cost flat, so the weekly's fell with the ratio.
+        weekly = C.five_hour_on_meters(_announced(unconfounded=_unconfounded(1.0, (0.99, 1.01))),
+                                       _max20(n_before=200, n_after=200))["candidates"][0]
+        self.assertEqual(weekly["scope"]["state"], "weekly")
+        self.assertEqual(weekly["change_pct"], 0.0)
+        # Too few readings of the unrepriced work: undetermined whatever it says.
+        thin = C.five_hour_on_meters(
+            _announced(unconfounded=_unconfounded(1.111, (1.05, 1.17), n_after=3, state="measuring")),
+            _max20())["candidates"][0]
+        self.assertEqual(thin["scope"]["state"], "undetermined")
+
+    def test_a_known_twenty_percent_five_hour_step_is_published_as_twenty_percent(self):
+        # Windows per week falls from 5 to 5 / 1.2, the weekly cap unchanged: +20% window.
+        m = _max20(n_before=30, n_after=30, after_wpw=5.0 / 1.2)
+        cand = C.five_hour_on_meters(_announced(unconfounded=_unconfounded(1.2, (1.1, 1.3))),
+                                     m)["candidates"][0]
+        self.assertEqual(cand["scope"]["state"], "five_hour")
+        self.assertAlmostEqual(cand["change_pct"], 20.0, delta=0.1)
+        self.assertAlmostEqual(cand["windows_per_week_change_pct"], (1 / 1.2 - 1) * 100, delta=0.1)
+        # Before the scope is known the five-hour reading carries the same +20%.
+        undecided = C.five_hour_on_meters(_announced(), m)["candidates"][0]
+        self.assertAlmostEqual(
+            undecided["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 20.0, delta=0.1)
+        ev = P._announced_events(C.five_hour_on_meters(
+            _announced(unconfounded=_unconfounded(1.2, (1.1, 1.3))), m))[0]
+        self.assertEqual((ev["scope"], ev["percent"], ev["direction"]), ("five_hour", 20, "increased"))
 
     def test_states_follow_readings_after(self):
         for n, state in ((4, "measuring"), (5, "provisional"), (9, "provisional"), (10, "measured")):
@@ -217,8 +268,12 @@ class MeterTests(unittest.TestCase):
                 self.assertEqual(cand["state"], state)
                 self.assertEqual(cand["applies"], state == "measured")
 
-    def test_a_candidate_without_a_five_hour_announcement_is_not_measured(self):
-        self.assertEqual(C.five_hour_on_meters(_announced(note=None), _max20())["candidates"], [])
+    def test_a_candidate_without_an_announcement_is_measured_the_same(self):
+        with_note = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
+        without = C.five_hour_on_meters(_announced(note=None), _max20())["candidates"][0]
+        self.assertIsNone(without["announcement"])
+        self.assertEqual({k: v for k, v in with_note.items() if k != "announcement"},
+                         {k: v for k, v in without.items() if k != "announcement"})
 
     def test_own_weekly_step_later_than_the_boundary_starts_the_before_side(self):
         m = _max20()
@@ -231,14 +286,28 @@ class MeterTests(unittest.TestCase):
         self.assertEqual(a1["n_before"], 10)
         self.assertEqual(a1["before_from"], step.isoformat())
 
-    def test_measured_change_enters_events_and_last_change_with_its_method(self):
+    def test_own_weekly_step_after_the_candidate_ends_the_after_side(self):
+        m = _max20()
+        own_end = CAND + timedelta(hours=6 * 4 + 1)
+        m["by_account"]["a1"] = {"step": {"percent": -20},
+                                 "regimes": [{"start": "2026-09-01T00:00:00+00:00",
+                                              "end": own_end.isoformat()},
+                                             {"start": (own_end + timedelta(hours=5)).isoformat(),
+                                              "end": "2026-10-01T00:00:00+00:00"}]}
+        a1 = C.five_hour_on_meters(_announced(), m)["candidates"][0]["per_account"]["a1"]
+        self.assertEqual(a1["n_after"], 4)
+        self.assertEqual(a1["after_until"], own_end.isoformat())
+
+    def test_measured_change_enters_events_and_last_change_at_its_scope_free_size(self):
         block = C.five_hour_on_meters(_announced(), _max20())
         events = P._announced_events(block)
         self.assertEqual(len(events), 1)
         ev = events[0]
-        self.assertEqual((ev["date"], ev["direction"], ev["percent"]), ("2026-09-22", "increased", 11))
-        self.assertEqual((ev["method"], ev["metric"]), ("windows_per_week_ratio", "windows_per_week_ratio"))
-        self.assertEqual(ev["change_pct"], 11.1)
+        self.assertEqual((ev["date"], ev["direction"], ev["percent"]), ("2026-09-22", "decreased", 10))
+        self.assertEqual((ev["scope"], ev["metric"]), ("undetermined", "windows_per_week"))
+        self.assertEqual(ev["change_pct"], -10.0)
+        self.assertEqual(ev["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 11.1)
+        self.assertIn("scope undetermined", ev["label"])
         self.assertTrue(ev["known_date_test"])
         older = {"date": "2026-09-11", "percent": 26}
         last = P._with_announced_last_change(older, block)
@@ -255,6 +324,50 @@ class MeterTests(unittest.TestCase):
         self.assertEqual(P._announced_events(block), [])
         older = {"date": "2026-09-11"}
         self.assertIs(P._with_announced_last_change(older, block), older)
+
+
+class UnconfoundedTests(unittest.TestCase):
+    def test_the_credits_test_on_work_without_the_candidates_family(self):
+        rng = random.Random(3)
+        by = _fixture()
+        # Opus 5 work either side of the candidate, its cost per 1% up 20% after it.
+        by["acct_one"] += _series(CAND + timedelta(days=2), 12, "claude-opus-5", 1200.0, rng, sd=0.05)
+        cand = C.announced_change(by, [], CREDITS, _output_value, LABELS)["candidates"][0]
+        test = cand["unconfounded"]
+        self.assertEqual(test["without_family"], "opus-5-5")
+        self.assertEqual(test["per_account"]["a1"], {"n_before": 20, "n_after": 12})
+        self.assertEqual(test["state"], "measured")
+        self.assertAlmostEqual(test["ratio"], 1.2, delta=0.1)
+
+
+class AnnouncementIndependenceTests(unittest.TestCase):
+    """No announcement changes any computed figure: the committed history rebuilt with
+    ANNOUNCEMENTS emptied publishes identical numbers, only the reference metadata gone."""
+
+    @staticmethod
+    def _strip(node):
+        if isinstance(node, dict):
+            return {k: AnnouncementIndependenceTests._strip(v) for k, v in node.items()
+                    if k not in ("announcement", "announced")}
+        if isinstance(node, list):
+            return [AnnouncementIndependenceTests._strip(v) for v in node]
+        return node
+
+    def test_rebuild_with_announcements_emptied_is_identical(self):
+        from pathlib import Path
+        from unittest import mock
+
+        from tracker.rebuild_offline import rebuild
+        root = Path(__file__).resolve().parent.parent
+        now = datetime(2026, 9, 28, 17, tzinfo=timezone.utc)
+        with_notes = rebuild(root, now)
+        with mock.patch.object(C, "ANNOUNCEMENTS", []):
+            without = rebuild(root, now)
+        cands = with_notes["credits"]["five_hour_on_meters"]["candidates"]
+        self.assertTrue(any(c["announcement"] for c in cands), "the fixture must carry a note")
+        self.assertFalse(any(c["announcement"]
+                             for c in without["credits"]["five_hour_on_meters"]["candidates"]))
+        self.assertEqual(self._strip(with_notes), self._strip(without))
 
 
 class PowerTests(unittest.TestCase):

@@ -1712,17 +1712,15 @@ class WindowsPerWeekRatioNoteTests(unittest.TestCase):
                            if s["five_hour_window_change_pct"] == 0.0)
         self.assertAlmostEqual(weekly_only["weekly_cap_change_pct"], -50.0)
 
-    def test_the_announced_17_percent_split_is_the_third_worked_example(self):
+    def test_no_worked_example_is_computed_from_an_announced_figure(self):
+        # The announced 17% weekly cut once made a third split; announcements change no figure.
         regimes = [self._regime("2026-09-01T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
                   self._regime("2026-09-06T00:00:00+00:00", "2026-09-10T00:00:00+00:00")]
         by_window = [self._row("2026-09-02T00:00:00+00:00", 20.0, 10.0),
                     self._row("2026-09-07T00:00:00+00:00", 10.0, 10.0)]
         out = C.windows_per_week_ratio_note(self._weekly(regimes, by_window))
-        announced = next(s for s in out["consistent_with"]
-                         if s["weekly_cap_change_pct"] == -17.0)
-        rho = 0.5
-        expected_five_hour = round(((1 - 0.17) / rho - 1) * 100, 2)
-        self.assertAlmostEqual(announced["five_hour_window_change_pct"], expected_five_hour)
+        self.assertEqual(len(out["consistent_with"]), 2)
+        self.assertNotIn("announced", repr(out["consistent_with"]))
 
 
 class EventRecordWeeklyRatioWiringTests(unittest.TestCase):
@@ -1921,12 +1919,18 @@ class WindowTokensCutTests(unittest.TestCase):
         self.assertEqual(block["per_family"]["opus"]["all"]["value"], current)
 
 
-def announced_block(at: str, change_pct: float = 38.0, interval_pct=(14.0, 67.0),
-                    state: str = "measured") -> dict:
-    """The one field `known_date_changes` reads: the five_hour_on_meters candidates."""
+def announced_block(at: str, change_pct: float | None = 38.0, interval_pct=(14.0, 67.0),
+                    state: str = "measured", scope: str = "five_hour") -> dict:
+    """The one field `known_date_changes` reads: the five_hour_on_meters candidates, with the
+    scope their data decided (`five_hour` scales the window; `undetermined` leaves it)."""
+    if scope != "five_hour":
+        change_pct, interval_pct = None, None
     return {"candidates": [{"family": "opus-5-5", "at": at, "state": state,
-                            "change_pct": change_pct, "interval_pct": list(interval_pct),
-                            "interval_excludes_no_change": interval_pct[0] > 0 or interval_pct[1] < 0,
+                            "scope": {"state": scope},
+                            "change_pct": change_pct,
+                            "interval_pct": list(interval_pct) if interval_pct else None,
+                            "interval_excludes_no_change": bool(interval_pct) and (
+                                interval_pct[0] > 0 or interval_pct[1] < 0),
                             "applies": state == "measured"
                                        and datetime.fromisoformat(at) > C.CUT_AT}]}
 
@@ -1980,10 +1984,18 @@ class KnownDateRegimeTests(unittest.TestCase):
         self.assertEqual(window["current_source"], "before_cluster_scaled_by_five_hour_change")
 
     def test_a_measured_change_applies_even_when_its_interval_includes_none(self):
-        # The announcement records that the change happened; the meters measure its size.
+        # A small change shows small: the meters measure its size, and it moves with the data.
         window = self.window(announced_block(self.AT, change_pct=5.0, interval_pct=(-10.0, 20.0)))
         self.assertEqual(len(window["regimes"]), 3)
         self.assertEqual(window["regimes"][-1]["value"], round(11_500_000 * 1.086 * 1.05))
+
+    def test_a_change_of_undetermined_scope_opens_a_regime_but_leaves_the_window(self):
+        window = self.window(announced_block(self.AT, scope="undetermined"))
+        self.assertEqual(len(window["regimes"]), 3)
+        middle, now = window["regimes"][1:]
+        self.assertEqual((now["value"], now["interval"]), (middle["value"], middle["interval"]))
+        self.assertEqual(window["current_source"], C.KNOWN_DATE_UNSCALED_SOURCE)
+        self.assertIn("window unscaled", window["current_method"])
 
     def test_a_change_before_the_cut_opens_no_regime(self):
         window = self.window(announced_block("2026-08-28T01:19:43+00:00"))
