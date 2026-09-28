@@ -28,6 +28,13 @@ if [ "${1:-}" != "--force" ] && [ -f "$STAMP" ] \
   exit 0
 fi
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# Take main's code before the joins, not only before the commit: the joins run whatever
+# tracker/ this checkout holds, and a pull only after them left each day's masterrig
+# record one run behind main. PR #99 changed how tracker/turns.py counts a message's
+# tokens, and masterrig's next record would still have been counted the old way while
+# gs's were counted the new way, in one before-and-after comparison. A failed pull is
+# advisory: the day's history is still written, on the code already here.
+git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase before the joins failed, joining with the local code" >&2
 python3 -m tracker.passive --out history/passive.json
 # Never let the stretch record's failure cost the day's passive.json, which the page reads.
 python3 -m tracker.gs_passive --masterrig --out history/masterrig-passive.json \
