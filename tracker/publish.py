@@ -82,8 +82,9 @@ WEEKLY_WINDOW_RATIOS_BASIS = {
 ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"), ("avis", "a4"))
 MAX_SAMPLE_AGE_DAYS = 10
 #: How old an account's feed may be at publish time before `account_feeds` calls it
-#: stopped. masterrig's bin/passive.sh pushes once a day (01:15), so a day and a half
-#: allows one late run; gs's bin/daily.sh reads the gs accounts' meters every hour, so
+#: stopped. masterrig's bin/passive.sh pushes about once a day (an hourly cron that runs
+#: once its last success is 20 hours old), so a day and a half allows one late run; gs's
+#: bin/daily.sh reads the gs accounts' meters every half hour, so
 #: six hours is several missed runs, not one slow one.
 MASTERRIG_FEED_MAX_AGE = timedelta(hours=36)
 GS_FEED_MAX_AGE = timedelta(hours=6)
@@ -743,9 +744,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "reference": _reference_block(weekly_windows),
         "last_change": _with_announced_last_change(
             _latest_change_with_scope(events, weekly_events, across_cut, weekly_windows),
-            credits_block["announced_change"]),
+            credits_block["five_hour_on_meters"]),
         "events": sorted(_build_events(events, weekly_events, across_cut, weekly_windows)
-                         + _announced_events(credits_block["announced_change"]),
+                         + _announced_events(credits_block["five_hour_on_meters"]),
                          key=lambda ev: ev["date"]),
         # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the median
         # session token total per model, from passive.py's own transcript-derived
@@ -1324,8 +1325,13 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     announced = credit_model.announced_change(
         by_account, runs, credits,
         lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels)
+    # The same candidates measured on the two meters, with no model rate in the figure: the
+    # windows per week either side, under the announced scope (weekly cap unchanged). This,
+    # not the credits test above, is the five-hour change the window regimes, `events` and
+    # `last_change` use; the credits test stays published as a cross-check.
+    meters = credit_model.five_hour_on_meters(announced, weekly["max20"])
     window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct,
-                                         announced=announced)
+                                         meters=meters)
     fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels,
                                         model_rates=model_rates)
     windows_per_week = weekly["max20"]["current"]
@@ -1335,6 +1341,16 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # fits ran over. `as_of` is the newer, and each per-model row carries its own.
     window_as_of = credit_model.cluster_as_of(clean, credits, window["pure_family"])
     fits_as_of = credit_model.fits_as_of(priceable, credits, model_rates)
+    tokens = credit_model.window_tokens(
+        clean, credits, labels, model_rates,
+        windows_per_week=windows_per_week,
+        windows_per_week_interval=(weekly["max20"].get("current_estimate")
+                                   or {}).get("rounding_interval"),
+        fam=window["pure_family"], five_hour_pct=five_hour_pct, meters=meters)
+    # Every figure per regime, so no chart holds one window across a boundary.
+    tokens.update(credit_model.regime_figures(
+        window, tokens, weekly["max20"], priceable, labels,
+        credit_model.across_cut_value(credits, model_rates=model_rates), meters=meters))
     return {
         "as_of": credit_model.newest(window_as_of, fits_as_of),
         "as_of_source": {
@@ -1350,12 +1366,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         # the other question -- a window spent on nothing but one class of one model --
         # and the page stated it as if it were this one
         # (docs/findings-2026-09-20-window-tokens.md).
-        "window_tokens": credit_model.window_tokens(
-            clean, credits, labels, model_rates,
-            windows_per_week=windows_per_week,
-            windows_per_week_interval=(weekly["max20"].get("current_estimate")
-                                       or {}).get("rounding_interval"),
-            fam=window["pure_family"], five_hour_pct=five_hour_pct, announced=announced),
+        "window_tokens": tokens,
         "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
         "per_model": _credits_per_model(window, credits, prices, model_rates, labels,
                                         window_as_of, fits_as_of),
@@ -1366,6 +1377,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         "effort_credits": _effort_credits(effort_meta, credits, window, model_rates),
         "five_hour_window_across_cut": cut,
         "announced_change": announced,
+        "five_hour_on_meters": meters,
         "fable_interval": fable,
         "rates": {"per_family": {fam: (dict(row, interval=fable) if fam == "fable" else row)
                                  for fam, row in credits["per_family"].items()},
@@ -2077,20 +2089,22 @@ def _build_events(window_events: list, weekly_events: list,
 
 
 def _announced_event_record(cand: dict) -> dict:
-    """One measured known-date candidate as a change event, in the event record's shape.
+    """One meter-measured five-hour candidate as a change event, in the event record's shape.
 
-    Only candidates `credit_model.announced_change_events` passes reach here: state
-    `measured` and a combined interval that excludes no change. The date is the candidate
-    instant, known from the data, so onset earliest and latest are that same day.
+    Only candidates `credit_model.five_hour_meter_events` passes reach here: an announced
+    five-hour candidate after the weekly change, measured on the windows-per-week ratio
+    (`credit_model.five_hour_on_meters`). The date is the candidate instant, known from the
+    data, so onset earliest and latest are that same day.
     """
     pct = cand["change_pct"]
     direction = "increased" if pct > 0 else "decreased"
     day = cand["at"][:10]
     return {
         "date": day, "direction": direction, "percent": round(abs(pct)), "model": None,
-        "scope": "five_hour", "metric": "credits_per_five_hour_pct",
+        "scope": "five_hour", "metric": "windows_per_week_ratio",
+        "method": "windows_per_week_ratio",
         "observation_scope": "account",
-        "attribution": "known_date_test_at_model_first_seen",
+        "attribution": "announced_five_hour_scope_windows_per_week_ratio",
         "known_date_test": True,
         "family": cand["family"],
         "onset": {"earliest": day, "latest": day},
@@ -2098,6 +2112,9 @@ def _announced_event_record(cand: dict) -> dict:
             cand["per_account"][k]["n_after"] for k in cand["accounts_combined"]),
             "seven_day_pct": None},
         "change_pct": pct, "interval_pct": cand["interval_pct"],
+        "interval_excludes_no_change": cand["interval_excludes_no_change"],
+        "windows_per_week_ratio": cand["windows_per_week_ratio"],
+        "windows_per_week_ratio_interval": cand["windows_per_week_ratio_interval"],
         "rounding_interval_before": None, "rounding_interval_after": None,
         "evidence_quality": "measured", "provisional": False, "legacy_uncertain": False,
         "announced": cand["announcement"],
@@ -2107,11 +2124,11 @@ def _announced_event_record(cand: dict) -> dict:
 
 
 def _announced_events(block: dict | None) -> list[dict]:
-    return [_announced_event_record(c) for c in credit_model.announced_change_events(block)]
+    return [_announced_event_record(c) for c in credit_model.five_hour_meter_events(block)]
 
 
 def _with_announced_last_change(last: dict | None, block: dict | None) -> dict | None:
-    """`last_change`, or a measured known-date change dated later than it."""
+    """`last_change`, or a meter-measured five-hour change dated later than it."""
     found = _announced_events(block)
     if not found:
         return last

@@ -169,6 +169,9 @@ class Stretch:
     `turns` like any other, and is also recorded in `fast_session_tokens` (model -> class
     -> count, `tokens`' shape) and `fast_session_turns`, for diagnosis only. Why those
     sessions run faster is not known.
+
+    `first_turns` is each model's earliest turn in the stretch (model -> timestamp), so a
+    reader can date a model's first use to the turn rather than to the stretch's start.
     """
     start: datetime
     end: datetime
@@ -182,6 +185,7 @@ class Stretch:
     reset_verified: bool = True
     fast_session_tokens: dict = field(default_factory=dict)
     fast_session_turns: int = 0
+    first_turns: dict = field(default_factory=dict)
 
     @property
     def usd_per_pct(self) -> float:
@@ -210,6 +214,10 @@ class Stretch:
                 by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
         self.turns += 1
         usd = turn_meter_usd(turn, prices)
+        # The first turn on each model, keyed the way `tokens` or `unpriced` keys it. Turns
+        # arrive in time order (build_stretches), so the first one seen is the earliest.
+        key = normalized_raw_model(turn.model) if usd is None else normalize_model(turn.model)
+        self.first_turns.setdefault(key, turn.ts)
         if usd is None:
             self.unpriced_tokens += turn.total
             by_class = self.unpriced.setdefault(normalized_raw_model(turn.model), {c: 0 for c in CLASSES})

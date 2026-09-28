@@ -10,10 +10,24 @@ commit probe rows and the publisher's price write-back straight to `main`). mast
 ```
 0 0,12 * * *  /home/jonathan/claude-usage-tracker/bin/probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-probe.log 2>&1
 0 6 * * 0     /home/jonathan/claude-usage-tracker/bin/output-probe.sh >> /home/jonathan/.paperclip/ops/claude-usage-output-probe.log 2>&1
-30 5 * * *    /home/jonathan/claude-usage-tracker/bin/daily.sh >> /home/jonathan/.paperclip/ops/claude-usage-daily.log 2>&1
+0,30 * * * *  /home/jonathan/claude-usage-tracker/bin/daily.sh >> /home/jonathan/.paperclip/ops/claude-usage-daily.log 2>&1
 ```
 
 Installed on gs 2026-09-06 (cron switchover, map ticket #6); the old 03:30/15:30 Sonnet-only slot is retired.
+The publisher line ran daily at 05:30, then hourly (`30 * * * *`, the line installed on
+2026-09-28). It is documented at every half hour (`0,30 * * * *`) so that the page's
+"Last sample" time (`meter_read_at`, the newest gs meter reading, sampled every minute by
+the meter timers) is never more than about half an hour old. `daily.sh` takes
+`.cron.lock` with a 600 s wait, so a run that overlaps a probe or a slow previous run
+waits instead of racing it, and the once-a-day rate refit keys on its own date, so the
+extra runs add no refits. Each publish that changes the JSON is one push to the site
+repo and one GitHub Actions run (about 40 to 55 s, `npm run build` then
+`wrangler pages deploy`, a direct upload): about 1,440 runs a month at this cadence.
+The site repo is public, so standard GitHub-hosted runner minutes are free, and
+Cloudflare Pages' 500 builds a month on the free plan counts builds Pages runs itself
+from a connected Git repository, which this project does not use (the hourly cadence has
+already deployed more than 500 times a month, every run successful).
+docs/findings-2026-09-29-five-hour-on-meters.md has the sources.
 
 Times are UTC. `probe.sh` is one rotation slot: `tracker/rotate.py` picks
 the model (Sonnet 5, Opus 5, Fable 5.1 in turn, from the last prose row in
@@ -159,8 +173,17 @@ together. This command is not a substitute for installing the two meter timers.
 ## Crontab on masterrig
 
 ```
-15 3 * * *  /home/grafe/code/claude-usage-tracker/bin/passive.sh >> /home/grafe/.paperclip/ops/claude-usage-passive.log 2>&1
+15 * * * *  /home/grafe/code/claude-usage-tracker/bin/passive.sh >> /home/grafe/.paperclip/ops/claude-usage-passive.log 2>&1
 ```
+
+Hourly, and `passive.sh` does the work at most once in 20 hours: it exits 0 at once
+while `.passive-last-ok` in the checkout (gitignored) is younger than that. The stamp is
+touched only after a commit that pushed, or a run with nothing to commit, so a run the
+machine slept through (2026-09-28: asleep 02:48 to 11:00 SAST, the 03:15 run missed) is
+made up at the first hourly tick after it wakes, and a failed push is retried the next
+hour. Because each run is at least 20 hours after the last, the run time moves about
+four hours earlier each day; it still runs at least once a day. `bin/passive.sh --force`
+runs it regardless of the stamp. The line before this was `15 3 * * *`.
 
 ## Keys and aliases on gs
 

@@ -1071,7 +1071,12 @@ class PublishCheckScopeTests(unittest.TestCase):
         "weekly_windows": {"current": 6.46, "history": [], "by_window": [
             {"window_ending": f"2026-08-{d:02d}T22:00:00+00:00", "windows": 6.5,
              "five_hour_pct": 65.0, "seven_day_pct": 10.0, "pieces": 1, "reset_verified": True}
-            for d in range(15, 27)]},
+            for d in range(15, 27)] + [
+            # The same level after the weekly change, so the newest regime has windows per
+            # week of its own and the hero week (the newest per-week regime) is a product.
+            {"window_ending": f"2026-09-{d:02d}T22:00:00+00:00", "windows": 6.5,
+             "five_hour_pct": 65.0, "seven_day_pct": 10.0, "pieces": 1, "reset_verified": True}
+            for d in range(15, 19)]},
     }
 
     def _root(self, stack, matrix=None):
@@ -1918,10 +1923,12 @@ class WindowTokensCutTests(unittest.TestCase):
 
 def announced_block(at: str, change_pct: float = 38.0, interval_pct=(14.0, 67.0),
                     state: str = "measured") -> dict:
-    """The one field `known_date_changes` reads: the announced_change candidates."""
+    """The one field `known_date_changes` reads: the five_hour_on_meters candidates."""
     return {"candidates": [{"family": "opus-5-5", "at": at, "state": state,
                             "change_pct": change_pct, "interval_pct": list(interval_pct),
-                            "interval_excludes_no_change": interval_pct[0] > 0 or interval_pct[1] < 0}]}
+                            "interval_excludes_no_change": interval_pct[0] > 0 or interval_pct[1] < 0,
+                            "applies": state == "measured"
+                                       and datetime.fromisoformat(at) > C.CUT_AT}]}
 
 
 class KnownDateRegimeTests(unittest.TestCase):
@@ -1940,7 +1947,7 @@ class KnownDateRegimeTests(unittest.TestCase):
         clean = C.clean_stretches({"jwork": self.BEFORE,
                                    "dave": self.AFTER if after is None else after}, [])
         return C.window_credits(clean, CREDITS, LABELS, five_hour_pct=five_hour_pct,
-                                announced=announced)
+                                meters=announced)
 
     def test_with_no_known_date_change_there_are_the_two_regimes_of_today(self):
         window = self.window()
@@ -1967,13 +1974,16 @@ class KnownDateRegimeTests(unittest.TestCase):
         self.assertIn("Known-date changes applied: from 2026-09-22T17:03:48+00:00",
                       window["current_method"])
 
-    def test_a_change_not_yet_measured_or_not_excluding_none_is_not_applied(self):
-        for block in (announced_block(self.AT, state="provisional"),
-                      announced_block(self.AT, change_pct=5.0, interval_pct=(-10.0, 20.0))):
-            with self.subTest(block=block):
-                window = self.window(block)
-                self.assertEqual(len(window["regimes"]), 2)
-                self.assertEqual(window["current_source"], "before_cluster_scaled_by_five_hour_change")
+    def test_a_change_not_yet_measured_is_not_applied(self):
+        window = self.window(announced_block(self.AT, state="provisional"))
+        self.assertEqual(len(window["regimes"]), 2)
+        self.assertEqual(window["current_source"], "before_cluster_scaled_by_five_hour_change")
+
+    def test_a_measured_change_applies_even_when_its_interval_includes_none(self):
+        # The announcement records that the change happened; the meters measure its size.
+        window = self.window(announced_block(self.AT, change_pct=5.0, interval_pct=(-10.0, 20.0)))
+        self.assertEqual(len(window["regimes"]), 3)
+        self.assertEqual(window["regimes"][-1]["value"], round(11_500_000 * 1.086 * 1.05))
 
     def test_a_change_before_the_cut_opens_no_regime(self):
         window = self.window(announced_block("2026-08-28T01:19:43+00:00"))
@@ -1994,7 +2004,7 @@ class KnownDateRegimeTests(unittest.TestCase):
     def test_the_token_figure_carries_the_same_regimes(self):
         clean = C.clean_stretches({"jwork": WindowTokensCutTests.BEFORE}, [])
         block = C.window_tokens(clean, CREDITS, LABELS, None, five_hour_pct=8.6,
-                                windows_per_week=5.0, announced=announced_block(self.AT))
+                                windows_per_week=5.0, meters=announced_block(self.AT))
         self.assertEqual(block["current_source"], C.KNOWN_DATE_SCALED_SOURCE)
         self.assertEqual([r["value"] for r in block["regimes"]],
                          [174_000, round(174_000 * 1.086), round(174_000 * 1.086 * 1.38)])
@@ -2138,3 +2148,128 @@ class PricedModelsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RegimeFiguresTests(unittest.TestCase):
+    """`per_week_regimes` and `account_regimes`: each regime's own window times its own
+    windows per week, pooled and per account, never one regime's figure held across another."""
+
+    AT = datetime(2026, 9, 22, 17, tzinfo=timezone.utc)
+
+    def regimes(self, values, intervals=None):
+        bounds = [(None, C.CUT_AT.isoformat()), (C.CUT_AT.isoformat(), self.AT.isoformat()),
+                  (self.AT.isoformat(), None)]
+        return [{"from": f, "until": u, "value": v,
+                 "interval": (intervals or [None] * 3)[k], "source": "x"}
+                for k, ((f, u), v) in enumerate(zip(bounds, values))]
+
+    def row(self, label, ending, d5, d7):
+        return {"account": label, "window_ending": ending.isoformat(), "five_hour_pct": d5,
+                "seven_day_pct": d7, "pieces": 1}
+
+    def st(self, start, hours, v):
+        return {"start": start.isoformat(), "end": (start + timedelta(hours=hours)).isoformat(),
+                "delta_pct": 10.0, "tokens": {"v": v}}
+
+    def meters(self, ratio=0.8, interval=(0.7, 0.9)):
+        return {"candidates": [{"at": self.AT.isoformat(), "applies": True,
+                                "windows_per_week_ratio": ratio,
+                                "windows_per_week_ratio_interval": list(interval)}]}
+
+    def figures(self, meters=None):
+        cut, day = C.CUT_AT, timedelta(days=1)
+        max20 = {"by_window": [
+            self.row("a1", cut - 5 * day, 60.0, 10.0),
+            # a1 stepped three days before the cut: this reading is already after the change.
+            self.row("a1", cut - 2 * day, 50.0, 10.0),
+            self.row("a1", cut + day, 50.0, 10.0),
+            self.row("a1", self.AT + day, 40.0, 10.0),
+            self.row("a2", self.AT + 2 * day, 30.0, 10.0),
+        ], "by_account": {"a1": {"step": {"percent": -17}, "regimes": [
+            {"start": (cut - 9 * day).isoformat(), "end": (cut - 3 * day).isoformat()},
+            {"start": (cut - 3 * day + timedelta(hours=1)).isoformat(), "end": self.AT.isoformat()}]}}}
+        tokens = {"regimes": self.regimes([1000, 1100, 1200], [[800, 1200], [900, 1300], [1000, 1400]]),
+                  "all": {"value": 1200, "interval": [1000, 1400], "status": None},
+                  "per_family": {"opus": {"all": {"value": 1200, "interval": [1000, 1400]}},
+                                 "sonnet": {"all": {"value": 2400, "interval": [2000, 2800]}}}}
+        credits = {"regimes": self.regimes([10_000, 11_000, 12_000])}
+        stretches = {"one": [self.st(cut - 5 * day, 2, 1000.0),       # 100 per 1%
+                             self.st(self.AT - timedelta(hours=1), 3, 5.0),  # spans AT: neither
+                             self.st(self.AT + day, 2, 1320.0)],       # 132 per 1%
+                     "two": []}
+        return C.regime_figures(credits, tokens, max20, stretches, {"one": "a1", "two": "a2"},
+                                lambda t: t["v"], meters=meters)
+
+    def test_every_regime_has_its_own_window_and_windows_per_week(self):
+        per_week = self.figures()["per_week_regimes"]
+        self.assertEqual([(r["from"], r["until"]) for r in per_week],
+                         [(None, C.CUT_AT.isoformat()), (C.CUT_AT.isoformat(), self.AT.isoformat()),
+                          (self.AT.isoformat(), None)])
+        self.assertEqual([r["window"] for r in per_week], [1000, 1100, 1200])
+        self.assertEqual([r["windows_per_week"] for r in per_week], [6.0, 5.0, 3.5])
+        self.assertEqual([r["value"] for r in per_week], [6000, 5500, 4200])
+        for r in per_week:
+            self.assertEqual(r["value"], round(r["window"] * r["windows_per_week"]))
+
+    def test_each_account_uses_its_own_readings_and_nulls_where_it_has_none(self):
+        a1, a2 = self.figures()["account_regimes"]["a1"], self.figures()["account_regimes"]["a2"]
+        # 100 credits per 1% is a window of 10,000 credits, the pooled window: 1000 tokens.
+        self.assertEqual(a1[0]["window"], 1000)
+        self.assertEqual((a1[0]["windows_per_week"], a1[0]["per_week"]), (6.0, 6000))
+        # No stretch lies wholly in the middle regime (one spans the change): no window.
+        self.assertEqual((a1[1]["window"], a1[1]["n_window"], a1[1]["per_week"]), (None, 0, None))
+        self.assertEqual((a1[1]["windows_per_week"], a1[1]["n_wpw"]), (5.0, 2))
+        # 132 per 1% over a pooled 120 per 1%: 1.1 times the regime's 1200 tokens.
+        self.assertEqual(a1[2]["window"], 1320)
+        self.assertEqual(a1[2]["per_week"], 1320 * 4)
+        self.assertEqual([r["window"] for r in a2], [None, None, None])
+        self.assertEqual(a2[2]["windows_per_week"], 3.0)
+
+    def test_a_five_hour_regime_chains_windows_per_week_on_the_paired_ratio(self):
+        # Pooled after the change the week reads 3.5 windows (a1 at 4, a2 at 3 with nothing
+        # before): account mix, not the limit. Chained, it is the previous regime's 5.0
+        # times the paired ratio 0.8, the pooled figure kept beside it.
+        last = self.figures(self.meters())["per_week_regimes"][-1]
+        self.assertEqual(last["windows_per_week_source"], "previous_regime_times_paired_ratio")
+        self.assertEqual(last["windows_per_week"], 4.0)
+        self.assertEqual(last["windows_per_week_pooled"], 3.5)
+        first, middle, _ = self.figures(self.meters())["per_week_regimes"]
+        lo, hi = middle["windows_per_week_interval"]
+        self.assertEqual(last["windows_per_week_interval"], [round(lo * 0.7, 4), round(hi * 0.9, 4)])
+        self.assertEqual(middle["windows_per_week_source"], "pooled_all_accounts")
+        self.assertEqual(middle["windows_per_week"], middle["windows_per_week_pooled"])
+
+    def test_the_chained_week_is_one_measurement_not_two_intervals(self):
+        # The window rose 1100 to 1200 and windows per week fell by the paired 0.8: one change,
+        # so the week is the previous week times 1200 / 1100 x 0.8, value and both ends, never
+        # the window interval times the chained windows-per-week interval.
+        _, middle, last = self.figures(self.meters())["per_week_regimes"]
+        factor = round(1200 / 1100 * 0.8, 4)
+        self.assertEqual(last["per_week_factor"], factor)
+        self.assertEqual(last["value"], round(middle["value"] * factor))
+        self.assertEqual(last["interval"], [round(x * factor) for x in middle["interval"]])
+        self.assertNotEqual(last["interval"], [round(1000 * last["windows_per_week_interval"][0]),
+                                               round(1400 * last["windows_per_week_interval"][1])])
+        self.assertIsNone(middle["per_week_factor"])
+
+    def test_a_change_that_does_not_apply_leaves_the_pooled_figure(self):
+        meters = self.meters()
+        meters["candidates"][0]["applies"] = False
+        last = self.figures(meters)["per_week_regimes"][-1]
+        self.assertEqual((last["windows_per_week"], last["windows_per_week_source"]),
+                         (3.5, "pooled_all_accounts"))
+
+    def test_the_hero_week_is_the_newest_regimes_figure(self):
+        figures = self.figures(self.meters())
+        newest, week = figures["per_week_regimes"][-1], figures["per_week"]
+        self.assertEqual(week["all"]["value"], newest["value"])
+        self.assertEqual(week["all"]["interval"], newest["interval"])
+        self.assertEqual(week["per_family"]["opus"]["all"], {"value": newest["value"],
+                                                              "interval": newest["interval"]})
+        # Every family's week moves from its window as the anchor's does, end by end.
+        self.assertEqual(week["per_family"]["sonnet"]["all"]["value"], 2 * newest["value"])
+        self.assertEqual(week["per_family"]["sonnet"]["all"]["interval"],
+                         [round(2000 / 1000 * newest["interval"][0]),
+                          round(2800 / 1400 * newest["interval"][1])])
+        self.assertEqual(week["windows_per_week"]["value"], newest["windows_per_week"])
+        self.assertIn("newest regime", week["windows_per_week"]["source"])

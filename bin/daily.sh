@@ -163,10 +163,10 @@ notify_change() {
   # dated within a day of each other, and never when it is within a day of a date
   # already announced. New evidence means a newer window in weekly_windows.passive,
   # or a newer stretch on any account (account_feeds[].newest_stretch_end): this
-  # script publishes hourly but the histories arrive daily, and an hourly re-read of
+  # script publishes every half hour but the histories arrive daily, and a re-read of
   # the same windows and stretches is not a second look. Stretches count as well as
-  # windows because a five-hour change (the known-date test, last_change.scope
-  # "five_hour") is measured on stretches, and the weekly windows can stall for days
+  # windows because a five-hour change (last_change.scope "five_hour") is dated by a
+  # model's first turn in the stretches, and the weekly windows can stall for days
   # while stretches keep arriving -- keyed on windows alone, the 2026-09-22 five-hour
   # change waited four days on a window list stuck at 2026-09-24. The observation is
   # recorded before the env file is checked, so it never skips a day.
