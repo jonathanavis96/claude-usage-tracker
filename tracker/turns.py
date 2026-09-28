@@ -83,8 +83,36 @@ def _json_lines(fh: Iterable[str]) -> Iterator[dict]:
             yield d
 
 
+def _usage_counts(u: dict) -> tuple[int, int, int, int, int]:
+    """(input, output, cache_read, cache_write, cache_write_1h) of one line's `usage`."""
+    cache_detail = u.get("cache_creation") or {}
+    if not isinstance(cache_detail, dict):
+        cache_detail = {}
+    cache_write_1h = int(cache_detail.get("ephemeral_1h_input_tokens") or 0)
+    cache_write = int(u.get("cache_creation_input_tokens") or 0)
+    # Some producers expose only the duration breakdown.  Preserve
+    # the compatible aggregate rather than dropping those writes.
+    if not cache_write:
+        cache_write = int(cache_detail.get("ephemeral_5m_input_tokens") or 0) + cache_write_1h
+    return (int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+            int(u.get("cache_read_input_tokens") or 0), cache_write, cache_write_1h)
+
+
 def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
-    """The turns of one transcript's parsed lines: each message id's first line, once across `seen`."""
+    """The turns of one transcript's parsed lines: one per message id, once across `seen`.
+
+    Claude Code writes one line per content block of a response, each with a `usage`, and
+    the lines of one message do not all carry the same numbers. A response that opens with
+    a thinking block writes that block's line from the stream's start, when `output_tokens`
+    is the handful counted so far (2 to 30); the final count arrives on a later line of the
+    same id. Reading the first line undercounted output by 3.5x on Sonnet 5 and 1.5x on Opus
+    5 over 2026-08-25..09-28 on gs; with each field's largest value over the id's lines, the
+    per-session totals match Claude Code's own `cost-state` accounting (median ratio 1.00;
+    docs/findings-2026-09-28-scatter.md). A line whose usage reads zero (a later echo of the
+    message) cannot lower a count either. The turn keeps the first line's timestamp and model.
+    """
+    first: dict[str, tuple[datetime, str]] = {}
+    counts: dict[str, tuple[int, ...]] = {}
     for d in lines:
         if d.get("type") != "assistant":
             continue
@@ -93,18 +121,16 @@ def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
         mid = m.get("id")
         if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
             continue
+        now = _usage_counts(u)
+        if mid in counts:
+            counts[mid] = tuple(max(a, b) for a, b in zip(counts[mid], now))
+        else:
+            first[mid] = (_parse_ts(d["timestamp"]), m.get("model") or "unknown")
+            counts[mid] = now
+    for mid, (ts, model) in first.items():
         seen.add(mid)
-        cache_detail = u.get("cache_creation") or {}
-        cache_write_1h = int(cache_detail.get("ephemeral_1h_input_tokens") or 0)
-        cache_write = int(u.get("cache_creation_input_tokens") or 0)
-        # Some producers expose only the duration breakdown.  Preserve
-        # the compatible aggregate rather than dropping those writes.
-        if not cache_write and isinstance(cache_detail, dict):
-            cache_write = (int(cache_detail.get("ephemeral_5m_input_tokens") or 0)
-                           + cache_write_1h)
-        yield Turn(_parse_ts(d["timestamp"]), m.get("model") or "unknown",
-                   int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
-                   int(u.get("cache_read_input_tokens") or 0), cache_write, cache_write_1h, mid)
+        inp, out, read, write, write_1h = counts[mid]
+        yield Turn(ts, model, inp, out, read, write, write_1h, mid)
 
 
 def normalize_model(model_id: str) -> str | None:

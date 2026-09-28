@@ -32,6 +32,27 @@ class TurnTests(unittest.TestCase):
         self.assertEqual(t.total, 2 + 96 + 24483 + 41398)
         self.assertEqual(t.ts, datetime(2026, 9, 5, 20, 20, 48, 817000, tzinfo=timezone.utc))
 
+    def test_final_usage_of_a_streamed_message_not_its_first_line(self):
+        # The shape Claude Code writes for a response that opens with a thinking block: the
+        # thinking block's line carries the stream's opening usage (output 5), the tool-use
+        # line the final one (output 1921), and a later echo reads zero. Reading the first
+        # line counted 5 output tokens for a message that spent 1921.
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "a.jsonl")
+            p.write_text("\n".join([
+                rec("m1", ts="2026-09-23T10:00:00Z", model="claude-sonnet-5", output_tokens=5),
+                rec("m1", ts="2026-09-23T10:00:09Z", model="claude-sonnet-5", output_tokens=1921,
+                    output_tokens_details={"thinking_tokens": 1665}),
+                rec("m1", ts="2026-09-23T10:00:10Z", model="claude-sonnet-5", input_tokens=0,
+                    output_tokens=0, cache_read_input_tokens=0, cache_creation_input_tokens=0),
+                rec("m2", ts="2026-09-23T10:01:00Z", output_tokens=96),
+            ]) + "\n")
+            turns = list(iter_turns([p]))
+        self.assertEqual([(t.id, t.output) for t in turns], [("m1", 1921), ("m2", 96)])
+        t = turns[0]
+        self.assertEqual((t.input, t.cache_read, t.cache_write), (2, 24483, 41398))
+        self.assertEqual(t.ts, datetime(2026, 9, 23, 10, 0, tzinfo=timezone.utc))
+
     def test_paths_filtered_by_mtime(self):
         with tempfile.TemporaryDirectory() as d:
             old = Path(d, "sub", "old.jsonl")
