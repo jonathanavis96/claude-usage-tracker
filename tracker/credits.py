@@ -1746,11 +1746,9 @@ def combine_log_ratios(per_account: dict[str, dict]) -> dict:
             "interval": (math.exp(log_lo), math.exp(log_hi))}
 
 
-#: How many stretches after a change candidate an account needs before the known-date
-#: test (`announced_change`) calls the candidate provisional, and measured. Measured needs
-#: this many on at least one account that has stretches on both sides.
-ANNOUNCED_PROVISIONAL_N = 5
-ANNOUNCED_MEASURED_N = 10
+#: A change is `measured` once its 95% interval excludes no change and is no wider than this
+#: many percentage points either side of its centre (`change_state`).
+CHANGE_MEASURED_HALF_WIDTH_PCT = 10.0
 #: How many stretches before a candidate an account needs before its own after side is
 #: compared with it. The before side also supplies most of the scatter the interval uses.
 ANNOUNCED_MIN_BEFORE = 5
@@ -1919,14 +1917,20 @@ def combine_inverse_variance(per_account: dict[str, dict]) -> dict | None:
             "interval": (math.exp(d - h), math.exp(d + h))}
 
 
-def announced_state(n_after_paired: list[int]) -> str:
-    """measuring / provisional / measured, from the after counts of the paired accounts."""
-    most = max(n_after_paired, default=0)
-    if most >= ANNOUNCED_MEASURED_N:
-        return "measured"
-    if most >= ANNOUNCED_PROVISIONAL_N:
-        return "provisional"
-    return "measuring"
+def change_state(interval_pct: list[float] | tuple[float, float] | None) -> str:
+    """measuring / provisional / measured, from a change's 95% interval in percent.
+
+    `measuring` while there is no interval or it includes no change (0), `provisional` once
+    it excludes 0, `measured` once it also has a half-width of CHANGE_MEASURED_HALF_WIDTH_PCT
+    points or less. Nothing else sets it: not the number of stretches after the candidate,
+    and not the notify step's 24 and 48 hour email rules, which time the email only.
+    """
+    if not interval_pct or interval_pct[0] is None or interval_pct[1] is None:
+        return "measuring"
+    lo, hi = interval_pct
+    if lo <= 0 <= hi:
+        return "measuring"
+    return "measured" if (hi - lo) / 2 <= CHANGE_MEASURED_HALF_WIDTH_PCT else "provisional"
 
 
 def announced_change_stretches(by_account: dict[str, list[dict]],
@@ -2114,7 +2118,8 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
                             "combined": True})
             per_account[label] = row
         combined = combine_inverse_variance(paired)
-        state = announced_state([per_account[k]["n_after"] for k in paired])
+        interval_pct = [round((x - 1) * 100, 1) for x in combined["interval"]] if combined else None
+        state = change_state(interval_pct)
         excludes = bool(combined and not combined["interval"][0] <= 1 <= combined["interval"][1])
         for k, w in (combined or {}).get("weights", {}).items():
             per_account[k]["weight"] = round(w, 4)
@@ -2128,8 +2133,7 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "after_until": _utc(hi) if hi else None,
             "state": state,
             "change_pct": round((combined["ratio"] - 1) * 100, 1) if combined else None,
-            "interval_pct": ([round((x - 1) * 100, 1) for x in combined["interval"]]
-                             if combined else None),
+            "interval_pct": interval_pct,
             "interval_excludes_no_change": excludes,
             "accounts_combined": sorted(paired),
             "per_account": per_account,
@@ -2140,8 +2144,7 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
     return {
         "candidates": out,
         "unit": "credits per 1% of the five-hour meter",
-        "thresholds": {"provisional_after": ANNOUNCED_PROVISIONAL_N,
-                       "measured_after": ANNOUNCED_MEASURED_N,
+        "thresholds": {"measured_half_width_pct": CHANGE_MEASURED_HALF_WIDTH_PCT,
                        "min_before": ANNOUNCED_MIN_BEFORE},
         "method": (
             "candidates are each model family's first use across every account; the candidate "
@@ -2158,10 +2161,10 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "include the account's fitted share (`unclaimed_share`, 0 to 1) of the work no login "
             "claims on the pooled projects root in its span. Accounts with at least "
             f"{ANNOUNCED_MIN_BEFORE} stretches before and 1 after are combined as a weighted "
-            "mean of log ratios, weights 1 / se squared. The state is measuring below "
-            f"{ANNOUNCED_PROVISIONAL_N} stretches after on every combined account, provisional "
-            f"at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
-            f"{ANNOUNCED_MEASURED_N} or more on at least one. `joint_fit` is the candidate "
+            "mean of log ratios, weights 1 / se squared. The state is measuring while the "
+            "interval includes no change, provisional once it excludes it, and measured once "
+            f"it also has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less "
+            "(`change_state`). `joint_fit` is the candidate "
             "family's rate fitted jointly with the five-hour limit change "
             "(`joint_rate_fit`); `five_hour_on_meters` reads it to decide the change's scope. "
             "`announcement` is reference metadata and changes no figure."),
@@ -2326,8 +2329,7 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
         if len(before) >= ANNOUNCED_MIN_BEFORE and after:
             per_account[label]["combined"] = True
             groups.append((label, before, after))
-    state = announced_state([per_account[g[0]]["n_after"] for g in groups])
-    out = {"family": fam, "base_family": base_family(fam, credits), "state": state,
+    out = {"family": fam, "base_family": base_family(fam, credits), "state": "measuring",
            "separable": False, "rate_relative_to_base": None, "rate_relative_interval": None,
            "times_opus": None, "times_opus_interval": None,
            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
@@ -2375,6 +2377,8 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
         "log_residual_sd": round(sd, 4),
         "scatter_sd": round(math.sqrt(s2), 4),
         "rounding_sd": round(math.sqrt(sum(rounding) / len(rounding)), 4),
+        # An inseparable fit's g is not a reading of the limit, so it stays measuring.
+        "state": change_state([_pct_of(g_lo), _pct_of(g_hi)]) if separable else "measuring",
         "reason": (None if separable else
                    f"the new family's share of the work varies too little to separate its rate "
                    f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "
@@ -2640,10 +2644,12 @@ WINDOWS_PER_WEEK_METHOD = (
     "describes which intervals exclude no change: `five_hour` g's alone, `weekly` the weekly "
     "one alone, `both` both, `undetermined` neither. While the fit cannot separate the rate "
     "from g (the mix too uniform), `change_pct` is null, the regimes carry the previous "
-    "window and week, and `scope.reason` says why. The state is "
-    f"measuring below {ANNOUNCED_PROVISIONAL_N} readings after on every combined account, "
-    f"provisional at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
-    f"{ANNOUNCED_MEASURED_N} or more on at least one, and says how settled the figure is. A "
+    "window and week, and `scope.reason` says why. The state says how settled the headline "
+    "figure is, from its own 95% interval (`change_state`): the five-hour limit change once "
+    "the fit separates it, else the windows-per-week change. It is measuring while that "
+    "interval includes no change, provisional once it excludes it, and measured once it also "
+    f"has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less; the notify step's "
+    "24 and 48 hour rules time the email and never set it. A "
     "candidate after the weekly change `applies` as soon as it can be measured at all (one "
     "reading after on a combined account): it opens a window regime and enters `events` and "
     "`last_change` at its measured size, however small, and every publish recomputes it. "
@@ -2815,7 +2821,6 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
         combined = combine_log_ratios(paired) if paired else None
         for k, w in (combined or {}).get("weights", {}).items():
             per_account[k]["weight"] = w
-        state = announced_state([per_account[k]["n_after"] for k in paired])
         readings = scope = rho_boot = None
         pct = interval = wpw_pct = wpw_interval = None
         if combined:
@@ -2829,6 +2834,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                 # interval and whichever way `scope` labels it.
                 pct = scope["five_hour_limit_change_pct"]
                 interval = scope["five_hour_limit_change_interval_pct"]
+        state = change_state(interval if pct is not None else wpw_interval)
         out.append({
             "family": cand["family"], "at": cand["at"], "at_source": cand.get("at_source"),
             "first_seen_account": cand.get("first_seen_account"),
@@ -2855,8 +2861,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
             "method": "windows_per_week_ratio",
         })
     return {"candidates": out, "unit": "percent",
-            "thresholds": {"provisional_after": ANNOUNCED_PROVISIONAL_N,
-                           "measured_after": ANNOUNCED_MEASURED_N,
+            "thresholds": {"measured_half_width_pct": CHANGE_MEASURED_HALF_WIDTH_PCT,
                            "min_before": ANNOUNCED_MIN_BEFORE},
             "method": WINDOWS_PER_WEEK_METHOD}
 
