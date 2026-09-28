@@ -487,6 +487,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     series = sorted(verified_readings if verified_readings else all_readings)
     # The measured per-family credit rates, needed here and again for the credits block.
     model_rates = credit_model.load_model_rates() if model_rates is None else model_rates
+    # Every new family's rate is fitted at its first use jointly with any five-hour limit
+    # change there, and absorbed into the rates everything below values stretches at, so no
+    # figure prices a new model at a rate the limit change is confounded with.
+    model_rates, joint_fits = credit_model.absorb_new_family_rates(
+        credit_model.stretches_by_account(gs_passive, masterrig_passive),
+        credit_model.harness_runs(), credits, model_rates, dict(ACCOUNT_LABELS),
+        lambda rates: (lambda tokens: stretch_credits(tokens, credits, rates)[0]))
     # Detection runs per account, on that account's own stretches valued in meter
     # credits and weighted by the meter movement each one carries, and publishes only
     # what two accounts agree on (_agreeing_credit_events). The list-dollar daily
@@ -708,7 +715,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         gs_passive, masterrig_passive, all_probe_rows, effort_meta, credits, prices,
         session_split, session_split_source, passive.get("session_tokens", {}),
         weekly_windows, weekly_events,
-        model_rates)
+        model_rates, joint_fits)
     # Accounts behind the passive evidence: those with an accepted stretch (the rates)
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
@@ -1282,7 +1289,8 @@ def _reference_block(weekly: dict) -> dict:
 def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, probe_rows: list[dict],
                    effort_meta: dict | None, credits: dict, prices: dict, split: dict,
                    split_source: str, session_tokens: dict, weekly: dict,
-                   weekly_events: list, model_rates: dict | None = None) -> tuple[dict, dict]:
+                   weekly_events: list, model_rates: dict | None = None,
+                   joint_fits: dict | None = None) -> tuple[dict, dict]:
     """(the published `credits` block, the across-the-cut figures the event row carries).
 
     Everything here is computed from the history files at publish time. Nothing is
@@ -1324,11 +1332,13 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # window regime, and the current window is the newest one (credits.window_regimes).
     announced = credit_model.announced_change(
         by_account, runs, credits,
-        lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels)
+        lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels,
+        joint_fits=joint_fits)
     # The same candidates measured on the two meters, with no model rate in the figure: the
-    # windows per week either side, under the announced scope (weekly cap unchanged). This,
-    # not the credits test above, is the five-hour change the window regimes, `events` and
-    # `last_change` use; the credits test stays published as a cross-check.
+    # windows per week either side, and the scope decided from data (the credits test on work
+    # the candidate did not reprice), never from an announcement. This, not the credits test
+    # above, is the change the window regimes, `events` and `last_change` use; the credits
+    # test stays published as a cross-check.
     meters = credit_model.five_hour_on_meters(announced, weekly["max20"])
     window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct,
                                          meters=meters)
@@ -2089,37 +2099,71 @@ def _build_events(window_events: list, weekly_events: list,
 
 
 def _announced_event_record(cand: dict) -> dict:
-    """One meter-measured five-hour candidate as a change event, in the event record's shape.
+    """One meter-measured change candidate as a change event, in the event record's shape.
 
-    Only candidates `credit_model.five_hour_meter_events` passes reach here: an announced
-    five-hour candidate after the weekly change, measured on the windows-per-week ratio
-    (`credit_model.five_hour_on_meters`). The date is the candidate instant, known from the
-    data, so onset earliest and latest are that same day.
+    Only candidates `credit_model.five_hour_meter_events` passes reach here: a candidate
+    after the weekly change that can be measured at all (`credit_model.five_hour_on_meters`).
+    It enters at once and is recomputed every publish; `state` (measuring, provisional,
+    measured) says how settled it is, and `at` is the candidate instant the notify step
+    times its 24 and 48 hour rules from. The date is that instant's day, so onset earliest
+    and latest are that same day.
+    The headline is the best measured estimate, at once. Once the joint fit separates the
+    new family's rate from the limit change it is the five-hour limit change g, with the
+    weekly limit change (g times the windows-per-week ratio) beside it, each with its
+    interval, whatever `scope` labels them; `interval_excludes_no_change` is read on
+    whichever of the two moved more. Before that it is the windows-per-week change itself.
+    Windows per week and `readings` stay as secondary figures either way.
     """
-    pct = cand["change_pct"]
+    scope_test = cand.get("scope") or {}
+    scope = scope_test.get("state") or "undetermined"
+    weekly = weekly_iv = None
+    if cand.get("change_pct") is not None:
+        pct, interval, metric = cand["change_pct"], cand["interval_pct"], "five_hour_limit"
+        weekly = scope_test.get("weekly_limit_change_pct")
+        weekly_iv = scope_test.get("weekly_limit_change_interval_pct")
+        larger = (weekly_iv if weekly is not None and weekly_iv and abs(weekly) > abs(pct)
+                  else interval)
+        excludes = bool(larger and not larger[0] <= 0 <= larger[1])
+        label = (f"Five-hour limit {pct:+g}%"
+                 + (f", weekly limit {weekly:+g}%" if weekly is not None else "")
+                 + f" ({cand['state']})")
+    else:
+        pct = cand["windows_per_week_change_pct"]
+        interval = cand["windows_per_week_change_interval_pct"]
+        metric = "windows_per_week"
+        excludes = bool(interval and not interval[0] <= 0 <= interval[1])
+        label = (f"Windows per week {pct:+g}% ({cand['state']}; the new model's rate and the "
+                 "limit change not yet separable)")
     direction = "increased" if pct > 0 else "decreased"
     day = cand["at"][:10]
     return {
-        "date": day, "direction": direction, "percent": round(abs(pct)), "model": None,
-        "scope": "five_hour", "metric": "windows_per_week_ratio",
+        "date": day, "at": cand["at"], "state": cand["state"],
+        "direction": direction, "percent": round(abs(pct)), "model": None,
+        "scope": scope, "metric": metric,
         "method": "windows_per_week_ratio",
         "observation_scope": "account",
-        "attribution": "announced_five_hour_scope_windows_per_week_ratio",
+        "attribution": f"windows_per_week_ratio_scope_{scope}",
         "known_date_test": True,
         "family": cand["family"],
         "onset": {"earliest": day, "latest": day},
         "confirmation": {"at": None, "evidence_points": sum(
             cand["per_account"][k]["n_after"] for k in cand["accounts_combined"]),
             "seven_day_pct": None},
-        "change_pct": pct, "interval_pct": cand["interval_pct"],
-        "interval_excludes_no_change": cand["interval_excludes_no_change"],
+        "change_pct": pct, "interval_pct": interval,
+        "weekly_limit_change_pct": weekly, "weekly_limit_change_interval_pct": weekly_iv,
+        "interval_excludes_no_change": excludes,
+        "windows_per_week_change_pct": cand["windows_per_week_change_pct"],
+        "windows_per_week_change_interval_pct": cand["windows_per_week_change_interval_pct"],
         "windows_per_week_ratio": cand["windows_per_week_ratio"],
         "windows_per_week_ratio_interval": cand["windows_per_week_ratio_interval"],
+        "readings": cand["readings"],
+        "scope_test": cand.get("scope"),
         "rounding_interval_before": None, "rounding_interval_after": None,
-        "evidence_quality": "measured", "provisional": False, "legacy_uncertain": False,
-        "announced": cand["announcement"],
+        "evidence_quality": cand["state"], "provisional": False, "legacy_uncertain": False,
+        # Reference metadata only: nothing above is computed from it.
+        "announced": cand.get("announcement"),
         "kind": "change",
-        "label": f"Five-hour window {'+' if pct > 0 else ''}{pct}% at {day}",
+        "label": label,
     }
 
 
