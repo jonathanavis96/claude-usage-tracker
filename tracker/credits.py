@@ -1835,24 +1835,67 @@ def change_candidates(by_account: dict[str, list[dict]], credits: dict,
     return sorted(out, key=lambda c: (c["at"], c["family"]))
 
 
-def log_ratio_side(before: list[float], after: list[float]) -> dict | None:
+def rounding_variance(st: dict) -> float:
+    """The variance whole-percent rounding alone puts on a stretch's log credits per 1%.
+
+    Each window piece's movement is the difference of two whole-percent readings, each off
+    by up to half a point either way, so a piece carries 1/6 of a point squared; the pieces
+    add, and the log divides by the movement: windows / (6 x delta_pct squared). At the
+    10% a stretch closes on that is 0.0017 for one piece, against a residual variance near
+    0.1 (docs/findings-2026-09-28-scatter.md).
+    """
+    delta = st.get("delta_pct") or 0
+    return (st.get("windows") or 1) / (6 * delta * delta) if delta > 0 else 0.0
+
+
+def scatter_variance(ss: float, df: int, rounding: list[float]) -> float:
+    """The stretch-to-stretch variance left once rounding is taken out, by moments.
+
+    `ss` over `df` is the observed residual variance; each stretch's rounding share of it
+    is known (`rounding_variance`), so their mean comes off. Never below zero.
+    """
+    total = ss / df if df > 0 else 0.0
+    return max(total - (sum(rounding) / len(rounding) if rounding else 0.0), 0.0)
+
+
+def _weights(rounding: list[float], s2: float) -> list[float]:
+    """Inverse-variance weights, 1 / (scatter + the stretch's own rounding)."""
+    return [1 / (s2 + v) if s2 + v > 0 else 1.0 for v in rounding]
+
+
+def _wmean(xs: list[float], ws: list[float]) -> float:
+    return sum(x * w for x, w in zip(xs, ws)) / sum(ws)
+
+
+def log_ratio_side(before: list[float], after: list[float],
+                   before_rounding: list[float] | None = None,
+                   after_rounding: list[float] | None = None) -> dict | None:
     """One account's own change across a candidate, from log credits per 1% on each side.
 
-    The ratio is the ratio of the two sides' geometric means. Its interval is a two-sample
-    t interval on the logs with the scatter pooled over both sides, so an after side of one
-    or two stretches borrows the before side's scatter rather than having none. None when
-    the before side is under ANNOUNCED_MIN_BEFORE or the after side is empty.
+    The ratio is the ratio of the two sides' weighted geometric means. Each stretch's
+    variance is the scatter shared by all of them plus its own rounding
+    (`rounding_variance`, zero when not given); the scatter is the residual variance pooled
+    over both sides less the mean rounding (`scatter_variance`), and each stretch is weighted
+    by the inverse of its variance. With no rounding given, or all of it equal, the weights
+    are equal and this is the plain two-sample t interval on the logs. The after side
+    borrows the pooled scatter, so one or two stretches after still get an interval. None
+    when the before side is under ANNOUNCED_MIN_BEFORE or the after side is empty.
     """
     nb, na = len(before), len(after)
     if nb < ANNOUNCED_MIN_BEFORE or na < 1:
         return None
+    vb = list(before_rounding) if before_rounding is not None else [0.0] * nb
+    va = list(after_rounding) if after_rounding is not None else [0.0] * na
     mb, ma = sum(before) / nb, sum(after) / na
     df = nb + na - 2
     ss = sum((x - mb) ** 2 for x in before) + sum((x - ma) ** 2 for x in after)
-    sd = math.sqrt(ss / df)
-    se = sd * math.sqrt(1 / nb + 1 / na)
+    s2 = scatter_variance(ss, df, vb + va)
+    wb, wa = _weights(vb, s2), _weights(va, s2)
+    mb, ma = _wmean(before, wb), _wmean(after, wa)
+    se = math.sqrt(1 / sum(wb) + 1 / sum(wa))
     d, h = ma - mb, _t975(df) * se
-    return {"log_ratio": d, "se": se, "df": df, "sd": sd,
+    return {"log_ratio": d, "se": se, "df": df, "sd": math.sqrt(ss / df),
+            "scatter_sd": math.sqrt(s2), "rounding_sd": math.sqrt(sum(vb + va) / (nb + na)),
             "ratio": math.exp(d), "interval": (math.exp(d - h), math.exp(d + h))}
 
 
@@ -1933,8 +1976,10 @@ def split_at_candidate(stretches: list[dict], at: datetime, lo: datetime | None,
 
     Before: start at or after `lo` and end at or before `at`. After: start at or after
     `at` and end at or before `hi`. A stretch spanning either boundary is on neither side.
+    `rounding` holds each kept stretch's `rounding_variance`, in the same order as `sides`.
     """
     sides: dict[str, list[float]] = {"before": [], "after": []}
+    rounding: dict[str, list[float]] = {"before": [], "after": []}
     unverified = {"before": 0, "after": 0}
     unpriced = {"before": 0, "after": 0}
     for st in stretches:
@@ -1946,9 +1991,10 @@ def split_at_candidate(stretches: list[dict], at: datetime, lo: datetime | None,
             unpriced[side] += 1
             continue
         sides[side].append(math.log(amount / st["delta_pct"]))
+        rounding[side].append(rounding_variance(st))
         if st.get("reset_verified") is not True:
             unverified[side] += 1
-    return {"sides": sides, "unverified": unverified, "unpriced": unpriced}
+    return {"sides": sides, "rounding": rounding, "unverified": unverified, "unpriced": unpriced}
 
 
 def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], credits: dict,
@@ -1986,7 +2032,8 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
                    "n_before_unpriced": split["unpriced"]["before"],
                    "n_after_unpriced": split["unpriced"]["after"],
                    "change_pct": None, "interval_pct": None, "combined": False}
-            pair = log_ratio_side(sides["before"], sides["after"])
+            pair = log_ratio_side(sides["before"], sides["after"],
+                                  split["rounding"]["before"], split["rounding"]["after"])
             if pair is not None:
                 paired[label] = pair
                 row.update({"change_pct": round((pair["ratio"] - 1) * 100, 1),
@@ -2031,8 +2078,9 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "the before side starts at the previous boundary (the 14 September weekly change or "
             "an earlier candidate) and the after side ends at the next one, and a stretch that "
             "spans a boundary is on neither side. Each account's change is the ratio of the "
-            "geometric means of its credits per 1% on the two sides, with a 95% t interval on "
-            "the logs using the scatter pooled over both sides; accounts with at least "
+            "weighted geometric means of its credits per 1% on the two sides, each stretch "
+            "weighted by 1 / (scatter + its own whole-percent rounding variance), with a 95% t "
+            "interval on the logs using the scatter pooled over both sides; accounts with at least "
             f"{ANNOUNCED_MIN_BEFORE} stretches before and 1 after are combined as a weighted "
             "mean of log ratios, weights 1 / se squared. The state is measuring below "
             f"{ANNOUNCED_PROVISIONAL_N} stretches after on every combined account, provisional "
@@ -2081,9 +2129,10 @@ def _merge_bundles(bundles: list[dict]) -> dict:
 
 
 def _joint_rows(stretches: list[dict], fam: str, at: datetime, lo: datetime | None,
-                hi: datetime | None, value, credits: dict) -> tuple[list[float], list[tuple]]:
-    """One account's before side as log known credits per 1%, and its after side as
-    (known credits, new-family credits at its base family's rate, meter %) triples."""
+                hi: datetime | None, value, credits: dict) -> tuple[list[tuple], list[tuple]]:
+    """One account's before side as (log known credits per 1%, rounding variance) pairs, and
+    its after side as (known credits, new-family credits at its base family's rate, meter %,
+    rounding variance) rows. The rounding variance is `rounding_variance`."""
     base = _base_model(base_family(fam, credits), credits)
     before, after = [], []
     for st in stretches:
@@ -2101,26 +2150,35 @@ def _joint_rows(stretches: list[dict], fam: str, at: datetime, lo: datetime | No
             continue
         if side == "before":
             if known > 0 and not new:
-                before.append(math.log(known / st["delta_pct"]))
+                before.append((math.log(known / st["delta_pct"]), rounding_variance(st)))
         elif known + new > 0:
-            after.append((known, new, st["delta_pct"]))
+            after.append((known, new, st["delta_pct"], rounding_variance(st)))
     return before, after
 
 
-def _joint_solve(groups: list[tuple[list[float], list[tuple]]]) -> tuple[float, float, float] | None:
+def _joint_solve(groups: list[tuple[list[tuple], list[tuple]]],
+                 s2: float | None = None) -> tuple[float, float, float] | None:
     """(rate relative to base, log limit change, residual spread) minimising the squared log
-    residuals of (known + rate x new) / meter % against each account's own before level."""
+    residuals of (known + rate x new) / meter % against each account's own before level.
+
+    With `s2` (the scatter left once rounding is out, `scatter_variance`) each stretch is
+    weighted by 1 / (s2 + its rounding variance), in the before levels and the residuals
+    alike; without it every stretch weighs the same. The spread returned is the unweighted
+    standard deviation of the after side's residuals either way, so it stays comparable."""
     rows = []
     for before, after in groups:
-        level = sum(before) / len(before)
-        rows += [(k, u, d, level) for k, u, d in after]
+        wb = _weights([v for _, v in before], s2) if s2 is not None else [1.0] * len(before)
+        level = _wmean([x for x, _ in before], wb)
+        rows += [(k, u, d, level, 1 / (s2 + v) if s2 is not None and s2 + v > 0 else 1.0)
+                 for k, u, d, v in after]
     if not rows:
         return None
 
-    def ss(r: float) -> tuple[float, float]:
-        e = [math.log((k + r * u) / d) - level for k, u, d, level in rows]
-        m = sum(e) / len(e)
-        return sum((x - m) ** 2 for x in e), m
+    def ss(r: float) -> tuple[float, float, list[float]]:
+        e = [math.log((k + r * u) / d) - level for k, u, d, level, _ in rows]
+        w = [x[4] for x in rows]
+        m = _wmean(e, w)
+        return sum(wi * (x - m) ** 2 for x, wi in zip(e, w)), m, e
 
     lo, hi = (math.log(b) for b in JOINT_RATE_BOUNDS)
     grid = [lo + (hi - lo) * i / 40 for i in range(41)]
@@ -2134,8 +2192,23 @@ def _joint_solve(groups: list[tuple[list[float], list[tuple]]]) -> tuple[float, 
         else:
             a = c
     r = math.exp((a + b) / 2)
-    total, m = ss(r)
-    return r, m, math.sqrt(total / max(len(rows) - 1, 1))
+    _, m, e = ss(r)
+    plain = sum(e) / len(e)
+    return r, m, math.sqrt(sum((x - plain) ** 2 for x in e) / max(len(rows) - 1, 1))
+
+
+def _joint_scatter(groups: list[tuple[list[tuple], list[tuple]]], r: float, m: float) -> float:
+    """The joint fit's scatter with rounding taken out (`scatter_variance`): the before
+    sides' residuals about each account's level and the after sides' about the fit, pooled,
+    less the mean rounding variance of every stretch in them."""
+    ss, n, rounding = 0.0, 0, []
+    for before, after in groups:
+        level = sum(x for x, _ in before) / len(before)
+        ss += sum((x - level) ** 2 for x, _ in before)
+        ss += sum((math.log((k + r * u) / d) - level - m) ** 2 for k, u, d, _ in after)
+        n += len(before) + len(after)
+        rounding += [v for _, v in before] + [v for *_, v in after]
+    return scatter_variance(ss, n - len(groups) - 2, rounding)
 
 
 def _pct_of(x: float) -> float:
@@ -2153,14 +2226,17 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     at its base family's rate (`base_family`), L the account's own credits per 1% from its
     before side (known work only), and g the limit change. Mixed stretches vary the new
     family's share, and that variation separates r from g; a mix too uniform leaves r
-    unpinned and the fit says so. Intervals are a percentile bootstrap, stretches resampled
-    within each account and side. `value(tokens)` prices a bundle in credits.
+    unpinned and the fit says so. Each stretch is weighted by 1 / (scatter + its own
+    whole-percent rounding variance): the fit runs once unweighted to measure the scatter
+    (`_joint_scatter`), then again weighted. Intervals are a percentile bootstrap, stretches
+    resampled within each account and side, at that scatter. `value(tokens)` prices a bundle
+    in credits.
     """
     per_account, groups = {}, []
     for name in sorted(selected, key=lambda n: _label_for(labels, n, names)):
         label = _label_for(labels, name, names)
         before, after = _joint_rows(selected[name], fam, at, lo, hi, value, credits)
-        shares = sorted(u / (k + u) for k, u, _ in after)
+        shares = sorted(u / (k + u) for k, u, *_ in after)
         per_account[label] = {"n_before": len(before), "n_after": len(after),
                               "new_family_share_median": round(median(shares), 3) if shares else None,
                               "combined": False}
@@ -2172,18 +2248,20 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
            "separable": False, "rate_relative_to_base": None, "rate_relative_interval": None,
            "times_opus": None, "times_opus_interval": None,
            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
-           "log_residual_sd": None, "accounts_combined": [g[0] for g in groups],
+           "log_residual_sd": None, "scatter_sd": None, "rounding_sd": None,
+           "accounts_combined": [g[0] for g in groups],
            "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP}
     fit = _joint_solve([(b, a) for _, b, a in groups])
-    if fit is None or not any(u for _, _, a in groups for _, u, _ in a):
+    if fit is None or not any(u for _, _, a in groups for _, u, *_ in a):
         out["reason"] = "no stretch after the candidate on an account with a before side"
         return out
-    r, logg, sd = fit
+    s2 = _joint_scatter([(b, a) for _, b, a in groups], fit[0], fit[1])
+    r, logg, sd = _joint_solve([(b, a) for _, b, a in groups], s2)
     rng = random.Random(f"{JOINT_SEED}:{fam}:{_utc(at)}")
     draws = []
     for _ in range(JOINT_BOOTSTRAP):
         sample = [([rng.choice(b) for _ in b], [rng.choice(a) for _ in a]) for _, b, a in groups]
-        got = _joint_solve(sample)
+        got = _joint_solve(sample, s2)
         if got is not None:
             draws.append(got[:2])
     rs = sorted(d[0] for d in draws)
@@ -2197,9 +2275,11 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     lo_b, hi_b = JOINT_RATE_BOUNDS
     separable = (r_lo > lo_b * 1.05 and r_hi < hi_b / 1.05 and r_hi / r_lo <= JOINT_SEPARABLE_SPAN)
     for label, b, a in groups:
-        level = sum(b) / len(b)
-        e = [math.log((k + r * u) / d) - level for k, u, d in a]
-        per_account[label]["five_hour_limit_change_pct"] = _pct_of(math.exp(sum(e) / len(e)))
+        level = _wmean([x for x, _ in b], _weights([v for _, v in b], s2))
+        e = [math.log((k + r * u) / d) - level for k, u, d, _ in a]
+        per_account[label]["five_hour_limit_change_pct"] = _pct_of(
+            math.exp(_wmean(e, _weights([v for *_, v in a], s2))))
+    rounding = [v for _, b, a in groups for v in [x[1] for x in b] + [x[3] for x in a]]
     out.update({
         "separable": separable,
         "rate_relative_to_base": round(r, 4),
@@ -2210,6 +2290,8 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
         "five_hour_limit_change_pct": _pct_of(math.exp(logg)),
         "five_hour_limit_change_interval_pct": [_pct_of(g_lo), _pct_of(g_hi)],
         "log_residual_sd": round(sd, 4),
+        "scatter_sd": round(math.sqrt(s2), 4),
+        "rounding_sd": round(math.sqrt(sum(rounding) / len(rounding)), 4),
         "reason": (None if separable else
                    f"the new family's share of the work varies too little to separate its rate "
                    f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "

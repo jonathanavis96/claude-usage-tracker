@@ -452,6 +452,53 @@ class JointFitTests(unittest.TestCase):
         self.assertIs(rates, given)
 
 
+class RoundingWeightTests(unittest.TestCase):
+    """Each stretch weighs 1 / (scatter + its own whole-percent rounding variance)."""
+
+    def test_rounding_variance_is_windows_over_six_delta_squared(self):
+        self.assertAlmostEqual(C.rounding_variance({"delta_pct": 10.0, "windows": 1}), 1 / 600)
+        self.assertAlmostEqual(C.rounding_variance({"delta_pct": 5.0, "windows": 3}), 3 / 150)
+        self.assertEqual(C.rounding_variance({"delta_pct": 0}), 0.0)
+
+    def test_equal_rounding_is_the_plain_two_sample_interval(self):
+        rng = random.Random(3)
+        before = [rng.gauss(0, 0.2) for _ in range(12)]
+        after = [rng.gauss(0.2, 0.2) for _ in range(6)]
+        plain = C.log_ratio_side(before, after)
+        same = C.log_ratio_side(before, after, [0.002] * 12, [0.002] * 6)
+        self.assertAlmostEqual(same["log_ratio"], plain["log_ratio"])
+        for a, b in zip(same["interval"], plain["interval"]):
+            self.assertAlmostEqual(a, b)
+
+    def test_a_stretch_that_is_mostly_rounding_counts_for_less(self):
+        # Nine before stretches at level 0, one whose 3% over four window pieces read half a
+        # log point high: an error its rounding alone (4 / 54 = 0.074) can make. After: 0.2.
+        before = [0.01 * (-1) ** i for i in range(9)] + [0.5]
+        rounding_before = [1 / 600] * 9 + [4 / (6 * 3 ** 2)]
+        after = [0.2 + 0.01 * (-1) ** i for i in range(6)]
+        plain = C.log_ratio_side(before, after)
+        weighted = C.log_ratio_side(before, after, rounding_before, [1 / 600] * 6)
+        self.assertLess(abs(weighted["log_ratio"] - 0.2), abs(plain["log_ratio"] - 0.2) / 3)
+        self.assertLess(weighted["scatter_sd"], weighted["sd"])
+
+    def test_the_joint_fit_weights_a_rounding_heavy_after_stretch_down(self):
+        # _mixed at a known 20% limit change, then three after stretches spread over six window
+        # pieces each with their meter reading 40% high -- inside what six pieces of rounding
+        # allow on a small movement, and far outside the fixture's own scatter.
+        by = _mixed(g=1.2, r=0.6, sd=0.02)
+        after = [st for st in by["acct_one"] if datetime.fromisoformat(st["start"]) >= CAND]
+        for st in sorted(after, key=lambda s: s["delta_pct"])[:3]:
+            st["delta_pct"] *= 1.4
+            st["windows"] = 6
+        groups = [C._joint_rows(by[n], "opus-5-5", CAND, C.CUT_AT, None, _output_value, CREDITS)
+                  for n in sorted(by)]
+        plain = C._joint_solve(groups)
+        fit = _joint(by)
+        self.assertLess(abs(fit["five_hour_limit_change_pct"] - 20.0),
+                        abs((math.exp(plain[1]) - 1) * 100 - 20.0) / 2)
+        self.assertLess(abs(fit["rate_relative_to_base"] - 0.6), abs(plain[0] - 0.6) / 2)
+
+
 class AnnouncementIndependenceTests(unittest.TestCase):
     """No announcement changes any computed figure: the committed history rebuilt with
     ANNOUNCEMENTS emptied publishes identical numbers, only the reference metadata gone."""
