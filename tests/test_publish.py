@@ -1421,9 +1421,9 @@ class RealLogTests(unittest.TestCase):
         self.assertEqual((c["onset"], c["confirmation"]),
                          ({"earliest": "2026-09-14", "latest": "2026-09-14",
                            "from_windows": {"earliest": "2026-09-13", "latest": "2026-09-14"}},
-                          {"at": "2026-09-15", "evidence_points": 118, "seven_day_pct": 31.0}))
+                          {"at": "2026-09-15", "evidence_points": 117, "seven_day_pct": 31.0}))
         self.assertEqual((c["rounding_interval_before"], c["rounding_interval_after"]),
-                         ([6.1892, 6.8754], [3.9284, 5.695]))
+                         ([6.1725, 6.8558], [3.9284, 5.695]))
         max20 = j["weekly_windows"]["max20"]
         self.assertEqual((max20["current"], max20["availability"]), (4.68, {"status": "measured", "reason": None}))
         est = max20["current_estimate"]
@@ -1448,7 +1448,7 @@ class RealLogTests(unittest.TestCase):
                 j = self._publish(day + "T02:31", datetime.fromisoformat(day + "T03:30:00+00:00"))
                 self.assertEqual((j["events"], j["last_change"]), ([], None))
         j = self._publish("2026-09-14T02:31", datetime(2026, 9, 14, 3, 30, tzinfo=timezone.utc))
-        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.3)
+        self.assertEqual(j["weekly_windows"]["max20"]["current"], 6.27)
         j = self._publish("2026-09-15T02:31", datetime(2026, 9, 15, 3, 30, tzinfo=timezone.utc))
         self.assertEqual([(e["date"], e["percent"]) for e in j["events"]], [])
         j = self._publish("2026-09-16T02:31", datetime(2026, 9, 16, 3, 30, tzinfo=timezone.utc))
@@ -2132,9 +2132,21 @@ class CreditValuedDetectionTests(unittest.TestCase):
     def test_opus_5_5_is_valued_at_its_list_price_ratio_not_dropped(self):
         tok = {"input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}
         opus = stretch_credits({"claude-opus-5": tok}, self.credits, self.model_rates)[0]
-        value, source = stretch_credits({"claude-opus-5-5": tok}, self.credits, self.model_rates)
+        # With no Opus 5.5 row in the fit (the file before #93), the list-price ratio values it.
+        unmeasured = {**self.model_rates, "per_family": {
+            fam: row for fam, row in self.model_rates["per_family"].items() if fam != "opus-5-5"}}
+        value, source = stretch_credits({"claude-opus-5-5": tok}, self.credits, unmeasured)
         self.assertEqual(source, "inferred_list_price")
         self.assertAlmostEqual(value / opus, 0.8)
+        # Once the fit's interval passes the published-rate rule the row is no longer
+        # provisional and the measured rate replaces the list ratio, as stretch_credits
+        # documents; the committed fit has read so since the 2026-09-25 daily refit.
+        final = {"per_family": {"opus": {"anchor": True, "input": 10 / 15, "rate_source": "reference"},
+                                "opus-5-5": {"input": 0.4, "interval": [0.37, 0.44],
+                                             "rate_source": "measured", "provisional": False}}}
+        value, source = stretch_credits({"claude-opus-5-5": tok}, self.credits, final)
+        self.assertEqual(source, "measured")
+        self.assertAlmostEqual(value / opus, 0.4 / (10 / 15), places=6)
         # A provisional measured rate is published but does not value the stretch: every
         # Opus 5.5 stretch is post-change, so its fitted rate would absorb the change.
         provisional = {"per_family": {"opus": {"anchor": True, "input": 10 / 15, "rate_source": "reference"},

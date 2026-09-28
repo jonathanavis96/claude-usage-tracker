@@ -593,6 +593,20 @@ class HarnessRunFileTests(unittest.TestCase):
         self.assertGreater(len(runs), len(probes))
 
 
+#: Opus 5.5's row as #93 committed it to history/model-rates.json (c182e29): an 80% interval
+#: 1.75x wide end to end, over the 1.5x published-rate rule and inside the provisional limit.
+OPUS_5_5_PROVISIONAL_FIT = {
+    "input": 0.5822334873013093, "interval": [0.4177156966837888, 0.7295185922968599],
+    "output_multiplier": 5,
+    "status": ("provisional: Opus 5.5 0.873x Opus, 80% interval [0.627x, 1.094x], 1.75x wide end"
+               " to end; a rate is final when its interval is under 1.5x"),
+    "rate_source": "measured", "anchor": False, "provisional": True, "reference_input": None,
+    "times_opus": 0.873350230951964, "times_opus_interval": [0.6265735450256832, 1.09427788844529],
+    "inferred": {"input": 0.5333333333333333, "times_opus": 0.8, "output_multiplier": 5,
+                 "inferred_from": "list_price"},
+}
+
+
 class PublishedBlockTests(unittest.TestCase):
     """What build_public_json writes: the block, and what it refuses to write."""
 
@@ -652,11 +666,16 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertEqual(haiku["reference_rate"]["input"], 2 / 15)
 
     def test_opus_5_5_publishes_its_fitted_rate_as_provisional(self):
-        # The committed fit puts Opus 5.5's interval between the published-rate rule and the
-        # provisional limit, so the row carries the fitted value, its interval, and a status
-        # sentence that says it is provisional; the list-price rate stays in model-rates.json.
-        rates = C.load_model_rates()["per_family"]["opus-5-5"]
-        row = self.credits["per_model"]["opus-5-5"]
+        # A fit whose interval sits between the published-rate rule and the provisional limit
+        # -- the fit #93 committed, OPUS_5_5_PROVISIONAL_FIT -- publishes the fitted value, its
+        # interval, and a status sentence that says it is provisional; the list-price rate
+        # stays in model-rates.json. The committed file stopped being that case when the
+        # 2026-09-25 daily refit narrowed the interval under 1.5x, so the case is planted.
+        model_rates = C.load_model_rates()
+        model_rates = {**model_rates, "per_family": {**model_rates["per_family"],
+                                                     "opus-5-5": OPUS_5_5_PROVISIONAL_FIT}}
+        rates = model_rates["per_family"]["opus-5-5"]
+        row = _published(gs=self.gs, model_rates=model_rates)["credits"]["per_model"]["opus-5-5"]
         self.assertTrue(rates["provisional"])
         self.assertEqual(row["rate_source"], "measured")
         self.assertTrue(row["measured_rate"]["provisional"])
