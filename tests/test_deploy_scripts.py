@@ -724,6 +724,24 @@ class TestPassiveShGuard(unittest.TestCase):
         self.assertNotEqual(self._run().returncode, 0)
         self.assertFalse((self.repo / self.STAMP).exists())
 
+    def test_the_joins_run_on_the_code_main_holds_now(self) -> None:
+        # A commit lands on main after this checkout's last pull. The joins must run on it:
+        # a pull only before the commit left each record counted by the previous day's code.
+        other = self.repo.parent / "other"
+        self._git(self.repo.parent, "clone", "-q", str(self.repo.parent / "origin.git"), str(other))
+        (other / "code-version").write_text("main now")
+        self._git(other, "add", "code-version")
+        self._git(other, "-c", "user.name=t", "-c", "user.email=t", "commit", "-q", "-m", "new code")
+        self._git(other, "push", "-q", "origin", "HEAD:main")
+        (self.repo / "tracker" / "gs_passive.py").write_text(
+            "import pathlib\n"
+            "v = pathlib.Path('code-version')\n"
+            "pathlib.Path('ran').open('a').write('gs_passive ' + (v.read_text() if v.exists() else 'old') + '\\n')\n"
+            "pathlib.Path('history/masterrig-passive.json').write_text('{}')\n")
+        proc = self._run()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("gs_passive main now", (self.repo / "ran").read_text())
+
     def test_a_failed_push_writes_no_stamp(self) -> None:
         self._git(self.repo, "remote", "set-url", "origin", str(self.repo.parent / "gone.git"))
         proc = self._run()
