@@ -1075,6 +1075,23 @@ def _times_windows(figure: dict, windows: float | None,
             "status": None if value is not None else figure.get("status")}
 
 
+def per_week_block(all_figure: dict, families: dict, windows_per_week: float | None,
+                   windows_per_week_interval: list | None, source: str) -> dict:
+    """`window_tokens.per_week`: the current window, and every family's, times one week."""
+    return {
+        "windows_per_week": {"value": windows_per_week,
+                             "interval": (list(windows_per_week_interval)
+                                          if windows_per_week_interval else None),
+                             "source": source},
+        "all": _times_windows(all_figure, windows_per_week, windows_per_week_interval),
+        "per_family": {name: {"all": _times_windows(row["all"], windows_per_week,
+                                                    windows_per_week_interval)}
+                       for name, row in families.items()},
+        "status": None if windows_per_week is not None else
+                  "no measured windows per week to multiply by",
+    }
+
+
 def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
                   model_rates: dict | None = None, *, windows_per_week: float | None = None,
                   windows_per_week_interval: list | None = None,
@@ -1210,18 +1227,8 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
             "conversion": _conversion_sentence(fam, name, source),
         }
 
-    windows_figure = {"value": windows_per_week,
-                      "interval": list(windows_per_week_interval) if windows_per_week_interval else None,
-                      "source": windows_per_week_source}
-    per_week = {
-        "windows_per_week": windows_figure,
-        "all": _times_windows(all_figure, windows_per_week, windows_per_week_interval),
-        "per_family": {name: {"all": _times_windows(row["all"], windows_per_week,
-                                                    windows_per_week_interval)}
-                       for name, row in families.items()},
-        "status": None if windows_per_week is not None else
-                  "no measured windows per week to multiply by",
-    }
+    per_week = per_week_block(all_figure, families, windows_per_week, windows_per_week_interval,
+                              windows_per_week_source)
     method = (f"median over the pure-{fam} clean stretches of the tokens the stretch carried per 1% "
               f"of the five-hour meter, times 100, taken per token class and over all four classes "
               f"together -- `all` over the current side of the cut alone (`current_method`), "
@@ -2350,10 +2357,18 @@ PER_REGIME_METHOD = (
     "The regimes are the window's own (`regimes`): the 14 September weekly change and every "
     "five-hour change measured on the meters, so every weekly and every five-hour boundary. "
     "`per_week_regimes` multiplies each regime's window (reference-mix tokens per full window) "
-    "by that regime's windows per week: five-hour over seven-day meter movement pooled over "
-    "every account's `weekly_windows.max20.by_window` readings in the regime, with its rounding "
-    "interval; the interval multiplies the two intervals' ends. A reading belongs to the regime "
-    "it ended in, the weekly change reaching each account at its own certified step. "
+    "by that regime's windows per week, and the interval multiplies the two intervals' ends. "
+    "Up to the weekly change's regime, windows per week is five-hour over seven-day meter "
+    "movement pooled over every account's `weekly_windows.max20.by_window` readings in the "
+    "regime, with its rounding interval; a reading belongs to the regime it ended in, the "
+    "weekly change reaching each account at its own certified step. A regime a five-hour "
+    "change opened chains instead, as the window regimes do: the previous regime's windows "
+    "per week times the change's combined paired ratio (`five_hour_on_meters`, "
+    "`windows_per_week_ratio`), each interval end times the ratio interval's same end. Pooling "
+    "there would compare different sets of accounts either side (an account with readings on "
+    "one side only moves the pool through account mix), so the pooled figure is published "
+    "beside it as `windows_per_week_pooled`, for reference. `per_week` is the newest regime's "
+    "figure. "
     "`account_regimes` gives each account's own two factors in each regime and never another "
     "account's: its windows per week from its own readings, and its window from its own "
     "stretches that lie wholly in the regime, valued as `five_hour_window_across_cut` values "
@@ -2363,12 +2378,18 @@ PER_REGIME_METHOD = (
 
 
 def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None,
-                   stretches: dict[str, list[dict]], labels: dict[str, str], value) -> dict:
-    """`per_week_regimes` and `account_regimes` for the `window_tokens` block.
+                   stretches: dict[str, list[dict]], labels: dict[str, str], value,
+                   meters: dict | None = None) -> dict:
+    """`per_week_regimes`, `account_regimes` and the matching `per_week` for `window_tokens`.
 
-    `stretches` is the across-the-cut selection by account name (`rate_fit_stretches`) and
-    `value(tokens)` its valuation (`across_cut_value`). See PER_REGIME_METHOD.
+    `stretches` is the across-the-cut selection by account name (`rate_fit_stretches`),
+    `value(tokens)` its valuation (`across_cut_value`), and `meters` the
+    `five_hour_on_meters` block whose paired ratios chain the five-hour regimes' windows per
+    week. `per_week` replaces the block's own: the newest regime's windows per week times the
+    current window, so the hero figure equals the newest `per_week_regimes` value. See
+    PER_REGIME_METHOD.
     """
+    ratios = {datetime.fromisoformat(c["at"]): c for c in five_hour_meter_events(meters)}
     regimes = window_tokens["regimes"]
     credit_regimes = window_credits.get("regimes") or []
     by_window = (max20 or {}).get("by_window") or []
@@ -2387,7 +2408,19 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
 
     per_week = []
     for k, reg in enumerate(regimes):
-        wpw = _pooled_windows_per_week([r for by_k in rows_in.values() for r in by_k.get(k, [])])
+        pooled = _pooled_windows_per_week([r for by_k in rows_in.values() for r in by_k.get(k, [])])
+        wpw, source = pooled, "pooled_all_accounts"
+        change = ratios.get(datetime.fromisoformat(reg["from"])) if k >= 2 and reg["from"] else None
+        prev = per_week[-1] if per_week else None
+        if change is not None and prev is not None:
+            r_lo, r_hi = change["windows_per_week_ratio_interval"]
+            chained = (round(prev["windows_per_week"] * change["windows_per_week_ratio"], 4)
+                       if prev["windows_per_week"] else None)
+            wpw = {"value": chained,
+                   "interval": ([round(prev["windows_per_week_interval"][0] * r_lo, 4),
+                                 round(prev["windows_per_week_interval"][1] * r_hi, 4)]
+                                if chained and prev["windows_per_week_interval"] else None)}
+            source = "previous_regime_times_paired_ratio"
         window = reg["value"]
         product = round(window * wpw["value"]) if window is not None and wpw["value"] else None
         interval = ([round(reg["interval"][0] * wpw["interval"][0]),
@@ -2396,7 +2429,10 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
         per_week.append({"from": reg["from"], "until": reg["until"], "value": product,
                          "interval": interval, "window": window,
                          "windows_per_week": wpw["value"], "windows_per_week_interval": wpw["interval"],
-                         "n_windows_per_week": wpw["n"]})
+                         "windows_per_week_source": source,
+                         "windows_per_week_pooled": pooled["value"],
+                         "windows_per_week_pooled_interval": pooled["interval"],
+                         "n_windows_per_week": pooled["n"]})
 
     accounts = {}
     for name, label in labels.items():
@@ -2421,5 +2457,9 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                                       if window is not None and wpw["value"] else None),
                          "n_window": len(readings), "n_wpw": wpw["n"]})
         accounts[label] = rows
-    return {"per_week_regimes": per_week, "account_regimes": accounts,
+    newest = per_week[-1]
+    week = per_week_block(window_tokens["all"], window_tokens["per_family"],
+                          newest["windows_per_week"], newest["windows_per_week_interval"],
+                          f"per_week_regimes, newest regime ({newest['windows_per_week_source']})")
+    return {"per_week_regimes": per_week, "account_regimes": accounts, "per_week": week,
             "per_regime_method": PER_REGIME_METHOD}

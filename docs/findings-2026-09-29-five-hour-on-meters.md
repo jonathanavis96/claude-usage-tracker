@@ -137,8 +137,9 @@ account.
   29% that a real +41% would need.
 
 The consequence on the page: tokens per week read 604M x 4.86 = 2.9B, back at the pre-14
-September level. On the meters the current window is 461M and the week is below the 14
-September regime (below).
+September level. On the meters the current window is 461M and the week is 2.18B, level with
+the 14 to 22 September regime, as a five-hour-only change under an unchanged weekly cap
+should leave it (below).
 
 ## B and C. Per-regime figures
 
@@ -149,9 +150,23 @@ step: a1 from 11 September, a2 from 14 September. `credits.window_tokens` now pu
 
 - `regimes` (existing shape): values from part A.
 - `per_week_regimes`: `{from, until, value, interval, window, windows_per_week}`, plus
-  `windows_per_week_interval` and `n_windows_per_week`. `value` = `window` x
-  `windows_per_week`. Windows per week is pooled over every account's readings that ended in
-  the regime. The interval multiplies the two intervals' ends.
+  `windows_per_week_interval`, `windows_per_week_source`, `windows_per_week_pooled`,
+  `windows_per_week_pooled_interval` and `n_windows_per_week`. `value` = `window` x
+  `windows_per_week`, and the interval multiplies the two intervals' ends.
+  - Up to the weekly change's regime, windows per week is pooled over every account's
+    readings that ended in the regime (`pooled_all_accounts`).
+  - A regime opened by a five-hour change chains, the way the window regimes chain: the
+    previous regime's windows per week times the combined paired ratio from
+    `five_hour_on_meters` (`windows_per_week_ratio`), each interval end times the ratio
+    interval's same end (`previous_regime_times_paired_ratio`). Pooling there compares
+    different accounts either side: a4 has readings only after the change, at 3.94, and a3
+    has 2. That gave a spurious 11% drop. The pooled figure stays beside it as
+    `windows_per_week_pooled`, for reference.
+- `per_week` (the hero, including every `per_family.*`) now equals the newest
+  `per_week_regimes` figure: the current window times the newest regime's windows per week,
+  with `windows_per_week.source` naming it. Before, it was the current window times
+  `weekly_windows.max20.current`, pooled since 14 September. A file whose newest regime has no
+  windows per week of its own publishes a null week with a status.
 - `account_regimes`: `{aN: [{from, until, window, windows_per_week, per_week, n_window,
   n_wpw}]}`. Each factor comes from that account's own readings in that regime, and is null
   where the account has none. `window` uses the site #106 conversion: the account's median
@@ -181,10 +196,21 @@ the last was 26,009,591 before.
 |---|---|---|---|---|---|
 | — | 2026-09-14T12:00Z | 450,593,800 | 6.4843 (6.2238 to 6.7642, 136) | 2,921,785,377 | 1.080B to 3.669B |
 | 2026-09-14T12:00Z | 2026-09-22T17:03:48Z | 429,866,485 | 5.0649 (4.7881 to 5.3696, 88) | 2,177,230,760 | 0.793B to 2.779B |
-| 2026-09-22T17:03:48Z | — | 460,816,872 | 4.2065 (3.6508 to 4.9131, 42) | 1,938,426,172 | 0.422B to 3.989B |
+| 2026-09-22T17:03:48Z | — | 460,816,872 | **4.7225** (3.0510 to 7.6844), chained: 5.0649 x 0.9324 | **2,176,207,678** | 0.353B to 6.239B |
 
-The last regime's pooled windows per week (4.21) includes a4 (3.94, all after the change) and
-a3's 2 readings. The paired accounts alone read 4.72 (a1) and 4.26 (a2).
+The first two rows are pooled. In the last row, `windows_per_week_pooled` is 4.2065 (3.6508 to
+4.9131, 42 readings), which would give 1,938,426,172. That pool includes a4 (3.94, all after
+the change) and a3's 2 readings. The paired accounts alone read 4.72 (a1) and 4.26 (a2).
+
+The chained week, 2.176B, is within 0.05% of the previous regime's 2.177B. That is expected:
+the window was scaled up by the five-hour change (x1.072) and windows per week down by its
+paired ratio (x0.9324), and 1.072 x 0.9324 = 0.9995. A five-hour-only change under an
+unchanged weekly cap leaves tokens per week where they were.
+
+The last interval (0.353B to 6.239B) is wide. It multiplies the window interval, which already
+carries the five-hour change's interval, by a windows-per-week interval that carries the same
+measurement's ratio interval, so one rounding bound enters twice. It is published as specified;
+a tighter bound would treat the two factors as one measurement.
 
 **Account regimes** (window and per week in reference-mix tokens):
 
@@ -205,7 +231,7 @@ a3's 2 readings. The paired accounts alone read 4.72 (a1) and 4.26 (a2).
 
 One caveat on `account_regimes.window` after 22 September: those stretches are mostly Opus 5.5,
 valued at the fitted 0.776x rate. They carry the same rate uncertainty as the credits test. It
-is small here: a1 +17% on 2 stretches, a2 -7% on 9. The contract asks for each account's own
+is small here: a1 +17% on 2 stretches, a2 -7.5% on 9. The contract asks for each account's own
 readings in the regime, and these are them.
 
 **Hero figures** (Max 20x, Opus 5: `window_tokens.per_family.opus.all` and
@@ -214,12 +240,14 @@ readings in the regime, and these are them.
 | | window | per week |
 |---|---|---|
 | before (main) | 599,663,747 (198.6M to 839.3M) | 2,908,369,173 (0.912B to 4.305B) |
-| after | 460,816,872 (115.7M to 811.9M) | 2,234,961,829 (0.531B to 4.164B) |
+| after | 460,816,872 (115.7M to 811.9M) | 2,176,207,678 (0.353B to 6.239B) |
 
-`per_week` itself is unchanged in method: the current window times `weekly_windows.max20.current`
-(4.85, pooled from 14 September). It is therefore not equal to the last `per_week_regimes`
-value (1.94B, which uses 4.21 windows per week since 22 September). Choosing which one the
-hero shows is left to the site. Nothing here was renamed.
+`per_week.windows_per_week` is now 4.7225 (3.0510 to 7.6844), with source "per_week_regimes,
+newest regime (previous_regime_times_paired_ratio)". `per_week.all` and every
+`per_family.*.all` are the current window times it, so `per_week.per_family.opus.all` equals
+the newest `per_week_regimes` value. Nothing here was renamed. `credits.sessions` still reads
+`weekly_windows.max20.current` (4.85), unchanged. An earlier revision of this PR left the hero
+at 4.85 windows per week (2,234,961,829).
 
 ## D. masterrig's passive job catches up after sleep
 
