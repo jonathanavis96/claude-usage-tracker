@@ -747,3 +747,75 @@ class TestPassiveShGuard(unittest.TestCase):
         proc = self._run()
         self.assertIn("commit made locally only", proc.stderr)
         self.assertFalse((self.repo / self.STAMP).exists())
+
+
+class TestDailySiteSync(unittest.TestCase):
+    """Run bin/daily.sh's site_pull and site_push against a scratch bare origin.
+
+    On 2026-09-29 a site PR merged while the publisher's checkout held unpushed data
+    commits; a plain pull refused the divergent branches and every push after it was
+    rejected, so the live page stopped updating.
+    """
+
+    functions: ClassVar[str]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        text = (BIN / "daily.sh").read_text()
+        found = [re.search(rf"^{name}\(\) \{{.*?^\}}$", text, re.DOTALL | re.MULTILINE)
+                 for name in ("site_pull", "site_push")]
+        assert all(found), "site_pull/site_push not found in bin/daily.sh"
+        cls.functions = "\n".join(m.group(0) for m in found)
+
+    def _git(self, *args: str, cwd: Path) -> str:
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+        return subprocess.run(["git", *args], cwd=cwd, env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def _commit(self, repo: Path, name: str, body: str) -> None:
+        (repo / name).write_text(body)
+        self._git("add", name, cwd=repo)
+        self._git("commit", "-q", "-m", name, cwd=repo)
+
+    def _diverged(self, tmp: Path, *, conflict: bool = False) -> tuple[Path, Path]:
+        """A site checkout one data commit ahead of origin, and origin one merge ahead of it."""
+        origin, site, other = tmp / "origin.git", tmp / "site", tmp / "other"
+        self._git("init", "-q", "--bare", "-b", "main", str(origin), cwd=tmp)
+        self._git("clone", "-q", str(origin), str(site), cwd=tmp)
+        self._commit(site, "data.json", "0")
+        self._git("push", "-q", "origin", "main", cwd=site)
+        self._git("clone", "-q", str(origin), str(other), cwd=tmp)
+        self._commit(site, "data.json", "1")  # the publisher's unpushed data commit
+        self._commit(other, "data.json" if conflict else "article.txt", "merged")
+        self._git("push", "-q", "origin", "main", cwd=other)
+        return origin, site
+
+    def _run(self, site: Path, call: str) -> subprocess.CompletedProcess:
+        script = f'SITE="{site}"\n{self.functions}\n{call}\n'
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+
+    def test_pull_rebases_local_data_commits_onto_a_site_merge(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            origin, site = self._diverged(Path(d))
+            self.assertEqual(self._run(site, "site_pull").returncode, 0)
+            self.assertEqual(self._git("rev-list", "--count", "HEAD..origin/main", cwd=site), "0")
+            self.assertTrue((site / "article.txt").exists())
+            self.assertEqual((site / "data.json").read_text(), "1")
+
+    def test_rejected_push_rebases_once_and_lands(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            origin, site = self._diverged(Path(d))  # no site_pull first: the push is rejected
+            result = self._run(site, "site_push")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self._git("rev-parse", "main", cwd=origin),
+                             self._git("rev-parse", "HEAD", cwd=site))
+
+    def test_a_conflicting_rebase_is_aborted_and_the_push_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            origin, site = self._diverged(Path(d), conflict=True)
+            result = self._run(site, "site_push")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("git push to site repo failed", result.stderr)
+            self.assertFalse((site / ".git" / "rebase-merge").exists())
+            self.assertFalse((site / ".git" / "rebase-apply").exists())
