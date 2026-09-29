@@ -36,8 +36,29 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
 
 SITE="$HOME/all-done-sites-platform"
+
+# The site checkout only ever holds this script's own claude-usage.json commits,
+# so they are rebased onto whatever the site repo merged meanwhile (a plain pull
+# refuses divergent branches, and every later push is then rejected). A rebase
+# that stops is aborted, so the checkout is never left mid-rebase.
+site_pull() {
+  git -C "$SITE" pull -q --rebase origin main && return 0
+  git -C "$SITE" rebase --abort 2>/dev/null
+  echo "warning: site repo pull failed, continuing with local state" >&2
+  return 1
+}
+
+# Push the data commit; a site PR merged since site_pull rejects it, so rebase
+# once and retry.
+site_push() {
+  git -C "$SITE" push -q origin main && return 0
+  site_pull && git -C "$SITE" push -q origin main && return 0
+  echo "warning: git push to site repo failed, commit made locally only" >&2
+  return 1
+}
+
 if [ -d "$SITE" ]; then
-  git -C "$SITE" pull -q origin main || echo "warning: site repo pull failed, continuing with local state" >&2
+  site_pull
 else
   git clone -q git@github-cut-site:jonathanavis96/all-done-sites-platform.git "$SITE" \
     || { echo "error: could not clone site repo" >&2; exit 1; }
@@ -123,9 +144,7 @@ fi
   fi
   git -c user.name="All Done Sites bot" -c user.email="bot@alldonesites.com" \
     commit -q -m "data: refresh claude usage"
-  if ! git push -q origin main; then
-    echo "warning: git push to site repo failed, commit made locally only" >&2
-  fi
+  site_push
 )
 publish_rc=$?
 
