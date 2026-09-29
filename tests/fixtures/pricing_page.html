@@ -1,0 +1,48 @@
+<!doctype html>
+<!--
+  A cut-down copy of the pricing tables on
+  https://docs.anthropic.com/en/docs/about-claude/pricing as the page served them on
+  2026-09-29 (it redirects to platform.claude.com/docs/en/about-claude/pricing), for
+  tests/test_list_prices.py. The markup keeps the page's shape: a two-row header in the
+  main table, a model cell holding the name and a one-line description, and each price
+  split across a value and a "/ MTok" span.
+
+  The Claude Sonnet 5.5 row in the main table is INVENTED FOR THE TEST: its figures
+  ($3 / $15 / $3.75 / $6 / $0.30) are chosen so that a test can tell them from every
+  other row, and are not Anthropic's price for the model. The same model's rows in the
+  batch and fast-mode tables are invented too, and are there to be ignored.
+-->
+<html><body>
+<h2>Batch processing</h2>
+<table>
+<tr><th>Model</th><th>Batch tokens</th></tr>
+<tr><th>Name</th><th>Input</th><th>Output</th></tr>
+<tr><td><a>Claude Sonnet 5.5</a><span>The best combination of speed and intelligence</span></td><td>$1.50 <span>/ MTok</span></td><td>$7.50 <span>/ MTok</span></td></tr>
+<tr><td><a>Claude Opus 5.5</a></td><td>$2 <span>/ MTok</span></td><td>$10 <span>/ MTok</span></td></tr>
+</table>
+
+<h2>Fast mode</h2>
+<table>
+<tr><th>Model</th><th>Input</th><th>5m cache writes</th><th>1h cache writes</th><th>Cache hits</th><th>Output</th></tr>
+<tr><td>Claude Sonnet 5.5</td><td>$18 / MTok</td><td>$22.50 / MTok</td><td>$36 / MTok</td><td>$1.80 / MTok</td><td>$90 / MTok</td></tr>
+</table>
+
+<h2>Model pricing</h2>
+<table>
+<tr><th>Model</th><th colspan="2">Base tokens</th><th colspan="3">Prompt caching</th></tr>
+<tr><th>Name</th><th>Input</th><th>Output</th><th><span>5m writes</span></th><th><span>1h writes</span></th><th><span>Hits and refreshes</span></th></tr>
+<tr><td><div><a href="/docs/en/models/fable-5-1/overview">Claude Fable 5.1</a><span>For demanding reasoning and long-horizon agentic work</span></div></td><td>$10<!-- --> <span>/ <button>MTok</button></span></td><td>$50 <span>/ MTok</span></td><td>$12.50 <span>/ MTok</span></td><td>$20 <span>/ MTok</span></td><td>$0.25 <span>/ MTok</span></td></tr>
+<tr><td><div><a>Claude Opus 5.5</a><span>For long-running agentic coding and knowledge work</span></div></td><td>$4 <span>/ MTok</span></td><td>$20 <span>/ MTok</span></td><td>$5 <span>/ MTok</span></td><td>$8 <span>/ MTok</span></td><td>$0.20 <span>/ MTok</span></td></tr>
+<!-- Invented for the test: not Anthropic's price for Sonnet 5.5. -->
+<tr><td><div><a>Claude Sonnet 5.5</a><span>The best combination of speed and intelligence</span></div></td><td>$3 <span>/ MTok</span></td><td>$15 <span>/ MTok</span></td><td>$3.75 <span>/ MTok</span></td><td>$6 <span>/ MTok</span></td><td>$0.30 <span>/ MTok</span></td></tr>
+<tr><td><div><a>Claude Haiku 4.5</a><span>The fastest model with near-frontier intelligence</span></div></td><td>$1 <span>/ MTok</span></td><td>$5 <span>/ MTok</span></td><td>$1.25 <span>/ MTok</span></td><td>$2 <span>/ MTok</span></td><td>$0.10 <span>/ MTok</span></td></tr>
+<tr><td colspan="6"><span>&#xe02a;</span>Additional models</td></tr>
+<tr><td><div><a>Claude Mythos 5.1</a><span>&#xe0a1;</span></div></td><td>$10 <span>/ MTok</span></td><td>$50 <span>/ MTok</span></td><td>$12.50 <span>/ MTok</span></td><td>$20 <span>/ MTok</span></td><td>$0.25 <span>/ MTok</span></td></tr>
+<tr><td><a>Claude Opus 5</a></td><td>$5 <span>/ MTok</span></td><td>$25 <span>/ MTok</span></td><td>$6.25 <span>/ MTok</span></td><td>$10 <span>/ MTok</span></td><td>$0.50 <span>/ MTok</span></td></tr>
+<tr><td><a>Claude Opus 4.8</a></td><td>$5 <span>/ MTok</span></td><td>$25 <span>/ MTok</span></td><td>$6.25 <span>/ MTok</span></td><td>$10 <span>/ MTok</span></td><td>$0.50 <span>/ MTok</span></td></tr>
+<tr><td><a>Claude Opus 4.1</a><span>&#xe0f0;</span></td><td>$15 <span>/ MTok</span></td><td>$75 <span>/ MTok</span></td><td>$18.75 <span>/ MTok</span></td><td>$30 <span>/ MTok</span></td><td>$1.50 <span>/ MTok</span></td></tr>
+<tr><td><a>Claude Sonnet 5</a></td><td>$2 <span>/ MTok</span></td><td>$10 <span>/ MTok</span></td><td>$2.50 <span>/ MTok</span></td><td>$4 <span>/ MTok</span></td><td>$0.20 <span>/ MTok</span></td></tr>
+<tr><td><a>Claude Sonnet 4.6</a></td><td>$3 <span>/ MTok</span></td><td>$15 <span>/ MTok</span></td><td>$3.75 <span>/ MTok</span></td><td>$6 <span>/ MTok</span></td><td>$0.30 <span>/ MTok</span></td></tr>
+<tr><td><a>Claude Haiku 3.5</a><span>&#xe0f0;</span></td><td>$0.80 <span>/ MTok</span></td><td>$4 <span>/ MTok</span></td><td>$1 <span>/ MTok</span></td><td>$1.60 <span>/ MTok</span></td><td>$0.08 <span>/ MTok</span></td></tr>
+</table>
+</body></html>

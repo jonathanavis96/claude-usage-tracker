@@ -64,6 +64,18 @@ else
     || { echo "error: could not clone site repo" >&2; exit 1; }
 fi
 
+# List prices for new models (tracker/list_prices.py, issue #130): a model the
+# stretch histories carry with no row in data/prices.json gets the row the pricing
+# page lists, so its stretches stop being dropped as unpriced. Runs before every
+# step below that reads data/prices.json -- gs_passive values its stretches at
+# build time -- and the commit further down already picks the file up. Never
+# changes an existing row. Advisory: a failed fetch or an unreadable table is one
+# warning line and no change.
+python3 -m tracker.list_prices \
+  --prices data/prices.json \
+  --stretches history/gs-passive.json history/masterrig-passive.json \
+  || echo "warning: tracker.list_prices failed with exit $?, publishing with the current price table" >&2
+
 # Contributed meter samples (tracker/contributed.py): pull every stored sample
 # from the site's export endpoint (bearer secret from the notify env file, never
 # printed), append the new ones to history/contributed.jsonl, and aggregate the
@@ -126,7 +138,8 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 # The publisher rewrites data/prices.json when the weekly output run supplied a
-# new output class weight (tracker/weight.py), or to record one it refused, and
+# new output class weight (tracker/weight.py), or to record one it refused,
+# tracker.list_prices above adds a row for a new model in use, and
 # tracker.contributed above appends to history/contributed.jsonl and rewrites
 # data/contributed.json. That is tracker state, so it goes back to this repo's
 # branch in one commit; the site gets the published JSON below. Advisory: a

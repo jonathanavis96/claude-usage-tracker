@@ -97,6 +97,20 @@ class TestDeployScriptsSyntax(unittest.TestCase):
         commit = text.index('git -c user.name=publisher')
         self.assertIn("history/gs-passive.json", text[publish:commit])
 
+    def test_daily_adds_list_prices_before_anything_reads_the_price_table(self) -> None:
+        # Issue #130: a new model's row must be in data/prices.json before gs_passive
+        # values its stretches, and the step is advisory like the others.
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        step = text.index("python3 -m tracker.list_prices")
+        self.assertLess(text.index("flock -w 600 9"), step)
+        for reader in ("python3 -m tracker.contributed", "python3 -m tracker.gs_passive",
+                       "python3 -m tracker.publish"):
+            self.assertLess(step, text.index(reader))
+        block = text[step:text.index("python3 -m tracker.contributed")]
+        self.assertIn("--prices data/prices.json", block)
+        self.assertIn("|| echo \"warning: tracker.list_prices failed", block)
+        self.assertLess(text.index("git add data/prices.json"), text.index('git -c user.name=publisher'))
+
     def test_daily_runs_contributed_before_publish_and_never_lets_it_stop_the_publish(self) -> None:
         text = (BIN / "daily.sh").read_text(encoding="utf-8")
         contributed = text.index("python3 -m tracker.contributed")
