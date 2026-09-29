@@ -22,7 +22,11 @@ pooled fit's whole coefficient vector (`pooled_fit_prices`) -- every family, Hai
 unpublished point estimate included, and the fitted cache-read weight -- because a
 before-and-after ratio needs the fit's own model on both sides, and the fit was measured on
 the same stretches (`rate_fit_stretches`). It falls back to the reference table with one
-held Fable rate only where no pooled fit exists. `fable_interval` states the pooled fit's
+held Fable rate only where no pooled fit exists. Every other change figure -- the joint fit
+(`absorb_new_family_rates`) and the known-date test (`announced_change`) -- prices at the
+same point estimates through `comparison_value`, never at the published rates: a family's
+interval crossing the publish limit is not a change in anything the meter did.
+`fable_interval` states the pooled fit's
 Fable rate and keeps the per-stretch solve against the reference table as working
 (docs/findings-2026-09-23-pooled-rates.md).
 
@@ -1549,6 +1553,81 @@ def across_cut_value(credits: dict, weight: float | None = None,
     return value
 
 
+def comparison_rate(fam: str, credits: dict, model_rates: dict | None = None,
+                    prices: dict | None = None) -> tuple[float, float] | None:
+    """(input, output) credits per token a family is priced at inside a comparison, or None.
+
+    Never the published rate. A before-and-after or change figure needs the fit's own model
+    on both sides, and whether a family's interval is narrow enough to publish is not part
+    of that model: Sonnet's pooled interval crossing 1.5x on 2026-09-29 repriced every Sonnet
+    token from the fit's 0.24 to the reference table's 0.4 through `family_rate`, and moved
+    the joint fit's 22 September five-hour change from +27.7% to +43.4% with no new stretch
+    across it. So, in order:
+
+    - a family `absorb_new_family_rates` fitted at its first use (`joint_fit_at_first_use`):
+      that fitted rate, which was fitted against this same valuation;
+    - the pooled fit's point estimate (`pooled_fit_prices`), published or not;
+    - where there is no pooled fit or it has no coefficient for the family, the reference
+      table, and for Fable, which has no row there, the one held rate `across_cut` holds on
+      both sides (`across_cut_fable_rate`);
+    - a family on none of those, the list-price ratio to the Opus anchor (`list_price_ratio`),
+      as detection prices a family nobody has measured.
+    """
+    row = ((model_rates or {}).get("per_family") or {}).get(fam) or {}
+    if row.get("rate_source") == "joint_fit_at_first_use" and row.get("input") is not None:
+        return float(row["input"]), float(row["input"]) * float(row.get("output_multiplier") or 5)
+    fit = pooled_fit_prices(model_rates)
+    if fit is not None and fam in fit["input"]:
+        return fit["input"][fam], fit["input"][fam] * fit["output_multiplier"]
+    pair = rates(fam, credits)
+    if pair is not None:
+        return pair
+    held = credits.get("across_cut_fable_rate") or {}
+    held_out = _rate(held.get("output"))
+    if fam == "fable" and held_out is not None:
+        return _rate(held.get("input")) or 0.0, held_out
+    ratio = list_price_ratio(fam, credits, prices)
+    anchor = rates("opus", credits)
+    return (ratio * anchor[0], ratio * anchor[1]) if ratio is not None and anchor else None
+
+
+def comparison_value(credits: dict, model_rates: dict | None = None,
+                     weight: float | None = None, prices: dict | None = None):
+    """The valuation every change figure prices a stretch's tokens with, as `value(tokens)`.
+
+    Each family at `comparison_rate`, so a family's published or unpublished state moves no
+    change figure. With a pooled fit every cache read is at its one fitted cache-read rate,
+    the fit's own design (`_pooled_stretch_credits`); without one, at `weight` of the
+    family's input rate (`price_tokens`). A bundle of no tokens is skipped, as
+    `gs_passive.stretch_credits` skips Claude Code's `<synthetic>` rows; a model in no
+    family, or a family with no rate at all, leaves the stretch unpriced (None).
+    """
+    fit = pooled_fit_prices(model_rates)
+    weight = cache_read_weight(credits) if weight is None else weight
+    cache = {}
+
+    def value(tokens: dict) -> float | None:
+        total = 0.0
+        for model, tok in tokens.items():
+            if not isinstance(tok, dict) or not raw_tokens(tok):
+                continue
+            fam = family(model, credits)
+            if fam is None:
+                return None
+            if fam not in cache:
+                cache[fam] = comparison_rate(fam, credits, model_rates, prices)
+            pair = cache[fam]
+            if pair is None:
+                return None
+            if fit is not None:
+                total += (input_side(tok, 0.0) * pair[0] + tok.get("output", 0) * pair[1]
+                          + tok.get("cache_read", 0) * fit["cache_read_rate"])
+            else:
+                total += input_side(tok, weight) * pair[0] + tok.get("output", 0) * pair[1]
+        return total
+    return value
+
+
 def side_between(st: dict, at: datetime, bounds: list[datetime]) -> str | None:
     """"before" or "after" a change at `at` within its own two regimes, or None.
 
@@ -2182,8 +2261,8 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
                      joint_fits: dict | None = None) -> dict:
     """A known-date test of every change candidate, per account and combined.
 
-    `value(tokens)` is a stretch's credits (the publisher passes
-    `gs_passive.stretch_credits`), or None where it cannot be priced; such a stretch is
+    `value(tokens)` is a stretch's credits (the publisher passes `comparison_value`, so a
+    family's published state moves no figure here), or None where it cannot be priced; such a stretch is
     counted and left out. Each candidate's before side runs from the previous boundary --
     the weekly change (CUT_AT) or an earlier candidate, whichever is later -- to the
     candidate; its after side from the candidate to the next boundary. Each account is
@@ -2515,7 +2594,11 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
 
 
 def _base_input_rate(fam: str, credits: dict, model_rates: dict | None) -> tuple[float, float] | None:
-    """(input rate, output multiplier) of a family as stretches are valued at it now."""
+    """(input rate, output multiplier) of a family as the joint fit values stretches at it:
+    `comparison_rate`, so the rate a fit is reported against is the one it was fitted with."""
+    fit = comparison_rate(fam, credits, model_rates)
+    if fit is not None and fit[0]:
+        return fit[0], fit[1] / fit[0]
     rate = family_rate(fam, credits, model_rates)
     if rate.input is not None and rate.output is not None:
         return rate.input, rate.output / rate.input
@@ -2527,15 +2610,21 @@ def _base_input_rate(fam: str, credits: dict, model_rates: dict | None) -> tuple
 
 def absorb_new_family_rates(by_account: dict[str, list[dict]], runs: list[HarnessRun],
                             credits: dict, model_rates: dict | None, labels: dict[str, str],
-                            value_for) -> tuple[dict, dict]:
+                            value_for=None) -> tuple[dict, dict]:
     """Every candidate family's rate fitted at its first use, and the pricing with it absorbed.
 
     Candidates are taken oldest first, and each one the fit separates replaces that family's
     row in the measured rates before the next is fitted, so a later candidate's known work
     is valued at the earlier ones' fitted rates. `value_for(rates)` is the stretch valuation
-    under a rates block. Returns (the rates block with the fitted rows, the fits keyed by
-    family and instant). A fitted row keeps the one it replaced under `replaced`.
+    under a rates block; by default, and as the publisher passes it, `comparison_value`: the
+    fit is a before-and-after comparison, so every known family is priced at the pooled
+    fit's point estimate whether the page publishes that family's rate or not. Returns (the
+    rates block with the fitted rows, the fits keyed by family and instant). A fitted row
+    keeps the one it replaced under `replaced`.
     """
+    if value_for is None:
+        def value_for(rates):
+            return comparison_value(credits, rates)
     rates_now = dict(model_rates or {})
     rates_now["per_family"] = dict(rates_now.get("per_family") or {})
     selected = announced_change_stretches(by_account, runs)

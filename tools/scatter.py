@@ -7,7 +7,7 @@ it each candidate source explains, on the stretches the fits use:
 
 - the selection is `credits.announced_change_stretches` (status accepted, harness runs out,
   at least MIN_DELTA_PCT of movement, masterrig from MASTERRIG_FROM), valued the way the
-  publisher values them (`gs_passive.stretch_credits` at the rates `absorb_new_family_rates`
+  publisher values them (`credits.comparison_value` at the rates `absorb_new_family_rates`
   settles on);
 - each stretch's log credits per 1% is taken from its own account's mean within a regime, the
   regimes split at the 14 September weekly change and at every change candidate, so account
@@ -42,7 +42,6 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tracker import credits as C
-from tracker.gs_passive import stretch_credits
 from tracker.publish import ACCOUNT_LABELS
 
 HISTORY = Path(__file__).resolve().parent.parent / "history"
@@ -65,7 +64,7 @@ def load() -> tuple[list[dict], dict, dict]:
     labels = dict(ACCOUNT_LABELS)
 
     def value_for(rates):
-        return lambda tokens: stretch_credits(tokens, credits, rates)[0]
+        return C.comparison_value(credits, rates)
 
     rates, fits = C.absorb_new_family_rates(by, runs, credits, C.load_model_rates(), labels, value_for)
     value = value_for(rates)
@@ -97,8 +96,9 @@ def features(st: dict, credit: float, credits: dict, rates: dict, start: datetim
         if not isinstance(tok, dict) or not C.raw_tokens(tok):
             continue
         fam = C.family(model, credits)
-        one = stretch_credits({model: {"input": 1}}, credits, rates)[0] or 0.0
-        out_rate = stretch_credits({model: {"output": 1}}, credits, rates)[0] or 0.0
+        value = C.comparison_value(credits, rates)
+        one = value({model: {"input": 1}}) or 0.0
+        out_rate = value({model: {"output": 1}}) or 0.0
         parts = {"output": tok.get("output", 0) * out_rate,
                  "cache_write_1h": tok.get("cache_write_1h", 0) * one,
                  "cache_write_5m": (tok.get("cache_write", 0) - tok.get("cache_write_1h", 0)) * one,

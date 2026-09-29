@@ -21,7 +21,6 @@ import random
 from pathlib import Path
 
 from tracker import credits as C
-from tracker.gs_passive import stretch_credits
 from tracker.publish import ACCOUNT_LABELS, CREDITS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,8 +39,7 @@ def before_sides(family: str = "opus-5-5", gs: Path | None = None,
     selected = C.announced_change_stretches(by_account, C.harness_runs())
     out = {}
     for name, rows in selected.items():
-        split = C.split_at_candidate(rows, at, lo, None,
-                                     lambda tok: stretch_credits(tok, CREDITS, rates)[0])
+        split = C.split_at_candidate(rows, at, lo, None, C.comparison_value(CREDITS, rates))
         if len(split["sides"]["before"]) >= C.ANNOUNCED_MIN_BEFORE:
             out[name] = split["sides"]["before"]
     return out
