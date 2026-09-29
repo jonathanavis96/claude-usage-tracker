@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-29T21:30:13.449109+00:00",
+ "generated_at": "2026-09-29T22:00:12.851523+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4514,
+    "reset_verified_samples": 4523,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 8043,
+    "samples": 8054,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-29T21:29:05+00:00"
+    "last": "2026-09-29T21:58:40+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,16 +32,16 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 2150,
-    "turns": 69353,
+    "files": 2151,
+    "turns": 69354,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 2150,
-     "dropped": 2565,
+     "kept": 2151,
+     "dropped": 2566,
      "subagent_files": 842,
      "dropped_to": {
       ".claude": 1,
-      ".claude-avis": 832
+      ".claude-avis": 833
      },
      "unclaimed": 1732
     }
@@ -9882,7 +9882,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-09-29T21:29:05+00:00",
+     "window_ending": "2026-09-29T21:36:15+00:00",
      "windows": 6.0,
      "five_hour_pct": 6.0,
      "seven_day_pct": 1.0,
@@ -9903,18 +9903,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 3628,
+    "reset_verified_samples": 3639,
     "since": null,
-    "samples": 5873,
+    "samples": 5887,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-29T21:29:05+00:00"
+    "last": "2026-09-29T21:58:40+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1099,
-    "turns": 35546,
+    "files": 1100,
+    "turns": 35547,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -13845,11 +13845,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 3653,
+    "reset_verified_samples": 3662,
     "since": null,
-    "samples": 3921,
+    "samples": 3930,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-09-29T21:30:10+00:00"
+    "last": "2026-09-29T21:39:30+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -13859,15 +13859,15 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 400,
-    "turns": 13514,
+    "files": 401,
+    "turns": 13515,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 400,
-     "dropped": 684,
+     "kept": 401,
+     "dropped": 685,
      "subagent_files": 218,
      "dropped_to": {
-      ".claude-javiswork": 361
+      ".claude-javiswork": 362
      },
      "unclaimed": 323
     }
@@ -14825,7 +14825,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-09-29T21:30:57.293143+00:00",
+  "generated_at": "2026-09-29T22:00:57.255636+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -50500,15 +50500,17 @@
     "model": "claude-haiku-4-5",
     "account": "a2",
     "entrypoint": "sdk-cli",
-    "n": 3,
+    "n": 4,
     "fast_session_requests": 0,
     "output_hist": {
      "211": 1,
+     "219": 1,
      "213": 1,
      "212": 1
     },
     "ttfb_hist": {
      "81": 1,
+     "91": 1,
      "79": 1,
      "109": 1
     },
@@ -50520,16 +50522,18 @@
     "model": "claude-haiku-4-5",
     "account": "a3",
     "entrypoint": "sdk-cli",
-    "n": 3,
+    "n": 4,
     "fast_session_requests": 0,
     "output_hist": {
      "212": 1,
-     "215": 2
+     "215": 2,
+     "210": 1
     },
     "ttfb_hist": {
      "77": 1,
      "84": 1,
-     "106": 1
+     "106": 1,
+     "73": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
@@ -50539,12 +50543,13 @@
     "model": "claude-haiku-4-5",
     "account": "a4",
     "entrypoint": "sdk-cli",
-    "n": 5,
+    "n": 6,
     "fast_session_requests": 0,
     "output_hist": {
      "209": 2,
      "208": 1,
      "211": 1,
+     "219": 1,
      "213": 1
     },
     "ttfb_hist": {
@@ -50552,6 +50557,7 @@
      "103": 1,
      "81": 1,
      "84": 1,
+     "107": 1,
      "104": 1
     },
     "fast_output_hist": {},
