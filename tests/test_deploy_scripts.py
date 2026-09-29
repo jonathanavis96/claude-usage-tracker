@@ -672,7 +672,10 @@ class TestPassiveShGuard(unittest.TestCase):
                 "pathlib.Path('ran').open('a').write('" + name + "\\n')\n"
                 f"pathlib.Path('{out}').write_text(str(time.time_ns()))\n")
         (self.repo / ".gitignore").write_text(f"{self.STAMP}\nran\ntracker/\n")
+        # One tracked file stands for the join code; the stubs stay untracked.
+        (pkg / "version").write_text("1")
         self._git(self.repo, "add", ".gitignore", "bin/passive.sh")
+        self._git(self.repo, "add", "-f", "tracker/version")
         self._git(self.repo, "-c", "user.name=t", "-c", "user.email=t", "commit", "-q", "-m", "init")
         self._git(self.repo, "push", "-q", "origin", "HEAD:main")
 
@@ -686,9 +689,13 @@ class TestPassiveShGuard(unittest.TestCase):
     def _ran(self) -> bool:
         return (self.repo / "ran").exists()
 
-    def _stamp_age(self, hours: float) -> None:
+    def _tracker_tree(self, rev: str = "HEAD") -> str:
+        return subprocess.run(["git", "rev-parse", f"{rev}:tracker"], cwd=self.repo,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def _stamp_age(self, hours: float, code: str | None = None) -> None:
         stamp = self.repo / self.STAMP
-        stamp.touch()
+        stamp.write_text(self._tracker_tree() if code is None else code)
         when = stamp.stat().st_mtime - hours * 3600
         os.utime(stamp, (when, when))
 
@@ -741,6 +748,54 @@ class TestPassiveShGuard(unittest.TestCase):
         proc = self._run()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("gs_passive main now", (self.repo / "ran").read_text())
+
+    def _push_from_other(self, path: str, body: str) -> None:
+        other = self.repo.parent / "other"
+        if not other.exists():
+            self._git(self.repo.parent, "clone", "-q", str(self.repo.parent / "origin.git"), str(other))
+        (other / path).parent.mkdir(parents=True, exist_ok=True)
+        (other / path).write_text(body)
+        self._git(other, "add", "-f", path)
+        self._git(other, "-c", "user.name=t", "-c", "user.email=t", "commit", "-q", "-m", path)
+        self._git(other, "push", "-q", "origin", "HEAD:main")
+
+    def test_the_stamp_records_the_join_code_it_ran_on(self) -> None:
+        self.assertEqual(self._run().returncode, 0)
+        self.assertEqual((self.repo / self.STAMP).read_text(), self._tracker_tree())
+
+    def test_new_join_code_on_main_runs_despite_a_fresh_stamp(self) -> None:
+        # 2026-09-29: PR #99 changed tracker/turns.py; gs's record took it at once, and
+        # masterrig's stayed on the old count for a day behind a fresh stamp.
+        self._stamp_age(1)
+        self._push_from_other("tracker/version", "2")
+        proc = self._run()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self._ran())
+        self.assertIn("tracker/ changed", proc.stderr)
+        self.assertEqual((self.repo / "tracker" / "version").read_text(), "2")
+        self.assertEqual((self.repo / self.STAMP).read_text(), self._tracker_tree())
+        # The next hourly tick finds the stamp matching main again and skips.
+        (self.repo / "ran").unlink()
+        self.assertEqual(self._run().returncode, 0)
+        self.assertFalse(self._ran())
+
+    def test_other_commits_on_main_do_not_run_a_fresh_stamp(self) -> None:
+        self._stamp_age(1)
+        self._push_from_other("history/probes.jsonl", "{}\n")
+        self.assertEqual(self._run().returncode, 0)
+        self.assertFalse(self._ran())
+
+    def test_a_stamp_from_before_the_code_check_runs_once(self) -> None:
+        self._stamp_age(1, code="")
+        self.assertEqual(self._run().returncode, 0)
+        self.assertTrue(self._ran())
+
+    def test_no_origin_tree_to_compare_keeps_the_age_rule(self) -> None:
+        self._stamp_age(1, code="stale")
+        self._git(self.repo, "remote", "set-url", "origin", str(self.repo.parent / "gone.git"))
+        self._git(self.repo, "update-ref", "-d", "refs/remotes/origin/main")
+        self.assertEqual(self._run().returncode, 0)
+        self.assertFalse(self._ran())
 
     def test_a_failed_push_writes_no_stamp(self) -> None:
         self._git(self.repo, "remote", "set-url", "origin", str(self.repo.parent / "gone.git"))
@@ -819,3 +874,94 @@ class TestDailySiteSync(unittest.TestCase):
             self.assertIn("git push to site repo failed", result.stderr)
             self.assertFalse((site / ".git" / "rebase-merge").exists())
             self.assertFalse((site / ".git" / "rebase-apply").exists())
+
+
+class TestDailyRatesDue(unittest.TestCase):
+    """Run bin/daily.sh's rates_due against a scratch repo.
+
+    On 2026-09-29 PR #101 changed tools/model_rates.py at 10:46Z and the 11:01Z publish
+    priced at the 00:01Z fit, because the refit ran once a day.
+    """
+
+    function: ClassVar[str]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        found = re.search(r"^rates_due\(\) \{.*?^\}$", (BIN / "daily.sh").read_text(),
+                          re.DOTALL | re.MULTILINE)
+        assert found, "rates_due not found in bin/daily.sh"
+        cls.function = found.group(0)
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self._git("init", "-q", "-b", "main")
+        (self.repo / "history").mkdir()
+        (self.repo / "tools").mkdir()
+        # Midday today, so a run near midnight never puts "a minute ago" on another day.
+        self.now = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _git(self, *args: str, when: datetime | None = None) -> None:
+        stamp = (when or datetime.now().astimezone()).isoformat()
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+               "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+        subprocess.run(["git", *args], cwd=self.repo, env=env, check=True, capture_output=True)
+
+    def _commit(self, path: str, when: datetime) -> None:
+        (self.repo / path).write_text(str(when))
+        self._git("add", path)
+        self._git("commit", "-q", "-m", path, when=when)
+
+    def _fit_at(self, when: datetime) -> None:
+        (self.repo / "history" / "model-rates.json").write_text(
+            json.dumps({"_meta": {"generated_at": when.isoformat()}}))
+
+    def _due(self) -> bool:
+        script = f"{self.function}\nrates_due\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.repo, check=False,
+                              capture_output=True).returncode == 0
+
+    def test_a_fit_from_today_with_nothing_newer_is_kept(self) -> None:
+        self._commit("tools/model_rates.py", self.now - timedelta(minutes=2))
+        self._fit_at(self.now - timedelta(minutes=1))
+        self.assertFalse(self._due())
+
+    def test_a_fit_from_an_earlier_day_is_refitted(self) -> None:
+        self._commit("tools/model_rates.py", self.now - timedelta(days=3))
+        self._fit_at(self.now - timedelta(days=1))
+        self.assertTrue(self._due())
+
+    def test_new_fit_code_after_todays_fit_is_refitted(self) -> None:
+        self._fit_at(self.now - timedelta(minutes=2))
+        self._commit("tools/model_rates.py", self.now - timedelta(minutes=1))
+        self.assertTrue(self._due())
+
+    def test_a_new_masterrig_record_after_todays_fit_is_refitted(self) -> None:
+        self._fit_at(self.now - timedelta(minutes=2))
+        self._commit("history/masterrig-passive.json", self.now - timedelta(minutes=1))
+        self.assertTrue(self._due())
+
+    def test_other_commits_after_todays_fit_do_not_refit(self) -> None:
+        self._commit("tools/model_rates.py", self.now - timedelta(minutes=3))
+        self._fit_at(self.now - timedelta(minutes=2))
+        self._commit("history/gs-passive.json", self.now - timedelta(minutes=1))
+        self.assertFalse(self._due())
+
+    def test_a_branch_committed_before_the_fit_and_merged_after_it_is_refitted(self) -> None:
+        # The branch's own commit predates the fit; only the merge follows it.
+        self._commit("history/gs-passive.json", self.now - timedelta(minutes=5))
+        self._git("checkout", "-q", "-b", "feature")
+        self._commit("tools/model_rates.py", self.now - timedelta(minutes=4))
+        self._git("checkout", "-q", "main")
+        self._fit_at(self.now - timedelta(minutes=3))
+        self._commit("history/probes.jsonl", self.now - timedelta(minutes=2))
+        self._git("merge", "-q", "--no-ff", "-m", "merge", "feature",
+                  when=self.now - timedelta(minutes=1))
+        self.assertTrue(self._due())
+
+    def test_a_missing_or_unreadable_fit_is_refitted(self) -> None:
+        self.assertTrue(self._due())

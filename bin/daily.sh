@@ -93,10 +93,20 @@ python3 -m tracker.gs_passive \
 # the passive histories so a new account, a new model family or a provisional rate
 # turning final reaches the page with no one running it by hand. About a minute,
 # so it runs under nice and only when history/model-rates.json was not already
-# generated today (its `generated_at` is local time, so is the date compared).
+# generated today (its `generated_at` is local time, so is the date compared), or
+# when the fit's code or masterrig's stretch record reached main after it was
+# generated: on 2026-09-29 PR #101's regime split merged at 10:46Z and the page
+# kept pricing at the 00:01Z fit (docs/findings-2026-09-29-fit-gap.md). Main's
+# first-parent history dates a merged change by its merge, not its branch commit.
 # Advisory: a failed refit publishes with the previous rates.
-rates_day="$(python3 -c 'import json; print(json.load(open("history/model-rates.json"))["_meta"]["generated_at"][:10])' 2>/dev/null || true)"
-if [ "$rates_day" != "$(date +%F)" ]; then
+rates_due() {
+  local gen changed
+  gen="$(python3 -c 'import datetime, json; g = json.load(open("history/model-rates.json"))["_meta"]["generated_at"]; print(g[:10], int(datetime.datetime.fromisoformat(g).timestamp()))' 2>/dev/null)" || return 0
+  [ "${gen% *}" != "$(date +%F)" ] && return 0
+  changed="$(git log -1 --first-parent --format=%ct -- tools/model_rates.py history/masterrig-passive.json 2>/dev/null)"
+  [ -n "$changed" ] && [ "$changed" -gt "${gen#* }" ]
+}
+if rates_due; then
   PYTHONPATH=. nice python3 -m tools.model_rates history/masterrig-passive.json \
     --json history/model-rates.json > /dev/null \
     || echo "warning: tools.model_rates failed with exit $?, publishing with the previous model-rates.json" >&2
