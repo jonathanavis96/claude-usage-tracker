@@ -2046,7 +2046,23 @@ class CreditValuedDetectionTests(unittest.TestCase):
         from tracker import credits as credit_model
         from tracker.publish import CREDITS
         cls.credits = CREDITS
-        cls.model_rates = credit_model.load_model_rates()
+        # A fixed rates block rather than the committed history/model-rates.json, which the
+        # daily refit rewrites. `mixed_report` sizes its Sonnet days by the Sonnet rate, so
+        # the size of the list-dollar step these tests rely on moves with every refit: at the
+        # fit of 2026-09-29 (Sonnet about 0.41x Opus) there was no step left to test. Sonnet
+        # is pinned at 0.55x Opus, the pooled fit of 2026-09-23, and every build_public_json
+        # call here is given this same block so the publisher values the stretches as they
+        # were sized.
+        cls.model_rates = {
+            "anchor": {"family": "opus", "input": 10 / 15, "output": 50 / 15},
+            "per_family": {
+                "opus": {"input": 10 / 15, "interval": None, "output_multiplier": 5, "status": None,
+                         "rate_source": "reference", "anchor": True, "provisional": False},
+                "sonnet": {"input": 0.55 * 10 / 15, "interval": [0.50 * 10 / 15, 0.60 * 10 / 15],
+                           "output_multiplier": 5, "status": None, "rate_source": "measured",
+                           "anchor": False, "provisional": False},
+            },
+        }
         cls.rates = {fam: credit_model.family_rate(fam, cls.credits, cls.model_rates)
                      for fam in ("sonnet", "opus")}
 
@@ -2082,16 +2098,18 @@ class CreditValuedDetectionTests(unittest.TestCase):
                                           PRICES, by="day")
         before = median([v for ts, v in dollars if ts.day <= 10])
         after = median([v for ts, v in dollars if ts.day > 10])
-        # How hard it steps depends on the measured Sonnet rate, because `mixed_report`
-        # sizes the Sonnet days by it: the cheaper Sonnet is measured to be, the more
-        # Sonnet tokens buy the same credits and the smaller the dollar step. The refit of
-        # 2026-09-23 moved it from 1.55 to 1.49, and the pooled fit of the same day (Sonnet
-        # 0.55x Opus) to about 1.38. The claim under test is that the dollar series steps
-        # hard while the credit series below does not move at all, so the bound is well
-        # clear of flat rather than tight against whatever the rate is today.
+        # How hard it steps depends on the Sonnet rate, because `mixed_report` sizes the
+        # Sonnet days by it: the cheaper Sonnet is, the more Sonnet tokens buy the same
+        # credits and the smaller the dollar step (2.5x list price times Sonnet/Opus rate).
+        # At the pinned 0.55x (setUpClass) it is about 1.38; at the committed fit of
+        # 2026-09-29, 0.41x, it was about 1.02, which is why the rate is pinned rather than
+        # read from the file. The claim under test is that the dollar series steps hard
+        # while the credit series below does not move at all, so the bound is well clear
+        # of flat rather than tight against the pinned rate.
         self.assertGreater(after / before, 1.3)
         # The credit series does not move, so nothing is published.
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report,
+                              model_rates=self.model_rates)
         self.assertIsNone(window_event(j))
 
     def test_the_same_shape_with_a_real_credit_step_does_publish(self):
@@ -2101,7 +2119,8 @@ class CreditValuedDetectionTests(unittest.TestCase):
             for st in account["stretches"]:
                 if st["end"][:10] > "2026-09-10":
                     st["tokens"]["claude-opus-5"]["cache_write"] //= 2
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report,
+                              model_rates=self.model_rates)
         event = window_event(j)
         self.assertIsNotNone(event)
         self.assertEqual((event["date"], event["direction"]), ("2026-09-11", "decreased"))
@@ -2178,7 +2197,8 @@ class CreditValuedDetectionTests(unittest.TestCase):
                          (None, "unpriced"))
         report = self.mixed_report(accounts=("dave",))
         report["accounts"]["dave"]["stretches"][-1]["tokens"]["claude-sonnet-5-5"] = tok
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report,
+                              model_rates=self.model_rates)
         block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
         self.assertEqual(block["unpriced_models"], ["claude-sonnet-5-5"])
 
@@ -2196,7 +2216,8 @@ class CreditValuedDetectionTests(unittest.TestCase):
         # With tokens in it, it cannot be valued: the stretch is dropped and the model named.
         stretches[1]["tokens"]["<synthetic>"] = tok
         self.assertEqual(len(passive_credit_points(report, PRICES, self.credits, self.model_rates)), 79)
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=report,
+                              model_rates=self.model_rates)
         block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
         self.assertEqual(block["unpriced_models"], ["<synthetic>"])
 
@@ -2215,7 +2236,8 @@ class CreditValuedDetectionTests(unittest.TestCase):
         self.assertEqual(sum(after.values()), sum(before.values()) - 1)
 
     def test_the_evidence_names_the_series_detection_ran_on(self):
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self.mixed_report())
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self.mixed_report(),
+                              model_rates=self.model_rates)
         block = j["rates"]["claude-sonnet-5"]["evidence"]["credit_detection"]
         self.assertEqual(block["series"], "credits_per_window")
         self.assertEqual((block["points"], block["meter_pct"]), (160, 1600.0))
