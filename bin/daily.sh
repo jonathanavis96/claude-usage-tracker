@@ -37,7 +37,7 @@ git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --r
 
 SITE="$HOME/all-done-sites-platform"
 if [ -d "$SITE" ]; then
-  git -C "$SITE" pull -q origin main || echo "warning: site repo pull failed, continuing with local state" >&2
+  git -C "$SITE" pull -q --rebase origin main || echo "warning: site repo pull failed, continuing with local state" >&2
 else
   git clone -q git@github-cut-site:jonathanavis96/all-done-sites-platform.git "$SITE" \
     || { echo "error: could not clone site repo" >&2; exit 1; }
@@ -123,7 +123,9 @@ fi
   fi
   git -c user.name="All Done Sites bot" -c user.email="bot@alldonesites.com" \
     commit -q -m "data: refresh claude usage"
-  if ! git push -q origin main; then
+  # A site PR merged since the pull above rejects the push; rebase this data
+  # commit onto it once and retry, so the checkout never falls behind for good.
+  if ! git push -q origin main && ! { git pull -q --rebase origin main && git push -q origin main; }; then
     echo "warning: git push to site repo failed, commit made locally only" >&2
   fi
 )
