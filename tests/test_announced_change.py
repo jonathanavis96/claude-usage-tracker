@@ -513,6 +513,164 @@ class JointFitTests(unittest.TestCase):
         self.assertIs(rates, given)
 
 
+#: A rates block with a pooled fit, Sonnet published at its point estimate. `_unpublished`
+#: is the same block after a few stretches widen Sonnet's interval past the publish limit.
+_OPUS_IN = 10 / 15
+_POOLED_RATES = {
+    "anchor": {"family": "opus", "input": _OPUS_IN, "output": 5 * _OPUS_IN},
+    "max_interval_ratio": 1.5,
+    "pooled_fit": {"times_opus": {"opus": 1.0, "sonnet": 0.3625, "haiku": 0.70},
+                   "interval": {"sonnet": [0.293, 0.434], "haiku": [0.28, 1.65]},
+                   "cache_read_weight": 0.0047, "output_multiplier": 5},
+    "per_family": {
+        "opus": {"input": _OPUS_IN, "anchor": True, "rate_source": "reference", "times_opus": 1.0},
+        "sonnet": {"input": 0.3625 * _OPUS_IN, "interval": [0.293 * _OPUS_IN, 0.434 * _OPUS_IN],
+                   "status": None, "rate_source": "measured", "times_opus": 0.3625},
+        "haiku": {"input": None, "interval": None, "rate_source": "measured",
+                  "status": "not measurable, the pooled fit cannot pin Haiku down",
+                  "inferred": {"input": 2 / 15, "times_opus": 0.2, "output_multiplier": 5,
+                               "inferred_from": "reference_table"}},
+    },
+}
+
+
+def _unpublished(rates):
+    """`rates` with Sonnet's interval 1.53x wide end to end: the same point estimate, no
+    published rate, and the reference table's 0.4 inferred for display."""
+    out = copy.deepcopy(rates)
+    out["pooled_fit"]["interval"]["sonnet"] = [0.286, 0.438]
+    out["per_family"]["sonnet"] = {
+        "input": None, "interval": None, "rate_source": "measured", "times_opus": None,
+        "status": "not measurable, the pooled fit cannot pin Sonnet down: its 80% interval "
+                  "is 1.53x wide end to end, and a published rate needs under 1.5x",
+        "inferred": {"input": 0.4, "times_opus": 0.6, "output_multiplier": 5,
+                     "inferred_from": "reference_table"}}
+    return out
+
+
+def _sonnet_mixed(g=1.25, r=0.8, n=24, sd=0.06, seed=11):
+    """`_mixed` with Sonnet in the known work on both sides of the candidate, its share varying
+    stretch to stretch, and cache reads beside it; the meter charges every family at the
+    pooled fit's rates (`comparison_value` of `_POOLED_RATES`)."""
+    rng = random.Random(seed)
+    true = C.comparison_value(CREDITS, _POOLED_RATES)
+    by = {}
+    for name, level in (("acct_one", 900.0), ("acct_two", 1300.0), ("acct_new", 1100.0)):
+        rows = []
+        for i in range(2 * n):
+            after = i >= n
+            start = (CAND if after else C.CUT_AT) + timedelta(hours=3 * (i % n + 1))
+            tokens = {"claude-opus-5": {"output": rng.uniform(100, 900),
+                                        "cache_read": rng.uniform(0, 2e5)},
+                      "claude-sonnet-5": {"output": rng.uniform(0, 3000),
+                                          "input": rng.uniform(0, 2e4)}}
+            new = 0.0
+            if after:
+                tokens["claude-opus-5-5"] = {"output": rng.uniform(50, 900)}
+                new = true({"claude-opus-5": tokens["claude-opus-5-5"]})
+            known = true({m: t for m, t in tokens.items() if m != "claude-opus-5-5"})
+            rows.append({"start": start.isoformat(), "end": (start + timedelta(hours=2)).isoformat(),
+                         "status": "accepted", "reset_verified": True, "capture_status": "accepted",
+                         "tokens": tokens,
+                         "delta_pct": (known + r * new) / (level * (g if after else 1.0))
+                         * math.exp(rng.gauss(0, sd))})
+        by[name] = rows
+    return by
+
+
+class PublishStateTests(unittest.TestCase):
+    """A family's rate crossing the publish limit moves no change figure (issue #132)."""
+
+    def setUp(self):
+        self.by = _sonnet_mixed()
+        self.published = copy.deepcopy(_POOLED_RATES)
+        self.unpublished = _unpublished(_POOLED_RATES)
+
+    def _fit(self, rates, value_for=None):
+        _, fits = C.absorb_new_family_rates(self.by, [], CREDITS, rates, LABELS, value_for)
+        (fit,) = fits.values()
+        return fit
+
+    def test_the_fixture_differs_only_in_sonnet_being_published(self):
+        self.assertIsNotNone(C.family_rate("sonnet", CREDITS, self.published).input)
+        self.assertEqual(C.family_rate("sonnet", CREDITS, self.unpublished).rate_source, "inferred")
+        self.assertEqual(C.pooled_fit_prices(self.published)["input"],
+                         C.pooled_fit_prices(self.unpublished)["input"])
+
+    def test_the_published_rate_valuation_does_move_the_fit(self):
+        # The fixture reaches the fault: valued at the published rates, Sonnet falls back to
+        # the reference table's 0.4 once unpublished, and the limit change moves with it.
+        def published_rates(rates):
+            return lambda t: stretch_credits(t, CREDITS, rates)[0]
+        before = self._fit(self.published, published_rates)["five_hour_limit_change_pct"]
+        after = self._fit(self.unpublished, published_rates)["five_hour_limit_change_pct"]
+        self.assertGreater(abs(after - before), 1.0)
+
+    def test_joint_fit_does_not_move_when_a_family_is_unpublished(self):
+        for value_for in (None, lambda rates: C.comparison_value(CREDITS, rates)):
+            one, two = self._fit(self.published, value_for), self._fit(self.unpublished, value_for)
+            for key in ("five_hour_limit_change_pct", "five_hour_limit_change_interval_pct",
+                        "rate_relative_to_base", "rate_relative_interval", "times_opus", "state"):
+                self.assertEqual(one[key], two[key], key)
+            for label in one["accounts_combined"]:
+                self.assertEqual(one["per_account"][label]["five_hour_limit_change_pct"],
+                                 two["per_account"][label]["five_hour_limit_change_pct"])
+        self.assertEqual(one["accounts_combined"], ["a1", "a2", "a3"])
+        self.assertAlmostEqual(one["rate_relative_to_base"], 0.8, delta=0.12)
+        self.assertAlmostEqual(one["five_hour_limit_change_pct"], 25.0, delta=6.0)
+
+    def test_per_account_credits_test_does_not_move_when_a_family_is_unpublished(self):
+        blocks = []
+        for rates in (self.published, self.unpublished):
+            absorbed, fits = C.absorb_new_family_rates(self.by, [], CREDITS, rates, LABELS)
+            blocks.append(C.announced_change(self.by, [], CREDITS,
+                                             C.comparison_value(CREDITS, absorbed), LABELS,
+                                             joint_fits=fits)["candidates"][0])
+        one, two = blocks
+        self.assertEqual(one["change_pct"], two["change_pct"])
+        self.assertEqual(one["per_account"], two["per_account"])
+        self.assertEqual(one["joint_fit"], two["joint_fit"])
+
+    def test_the_absorbed_rate_is_reported_against_the_pooled_base(self):
+        absorbed, fits = C.absorb_new_family_rates(self.by, [], CREDITS, self.unpublished, LABELS)
+        (fit,) = fits.values()
+        row = absorbed["per_family"]["opus-5-5"]
+        self.assertEqual(row["rate_source"], "joint_fit_at_first_use")
+        self.assertAlmostEqual(row["input"], _OPUS_IN * fit["rate_relative_to_base"])
+        # A later candidate values the absorbed family at its fitted rate.
+        self.assertAlmostEqual(C.comparison_rate("opus-5-5", CREDITS, absorbed)[0], row["input"])
+
+
+class ComparisonValueTests(unittest.TestCase):
+    def test_every_family_at_the_pooled_point_estimate_published_or_not(self):
+        value = C.comparison_value(CREDITS, _POOLED_RATES)
+        tok = {"input": 100, "cache_write": 50, "output": 10, "cache_read": 1000}
+        cache = 1000 * 0.0047 * _OPUS_IN
+        self.assertAlmostEqual(value({"claude-haiku-4-5": tok}),
+                               (150 + 50) * 0.70 * _OPUS_IN + cache)
+        self.assertAlmostEqual(value({"claude-sonnet-5": tok}),
+                               (150 + 50) * 0.3625 * _OPUS_IN + cache)
+        self.assertEqual(value({"claude-sonnet-5": tok}),
+                         C.comparison_value(CREDITS, _unpublished(_POOLED_RATES))({"claude-sonnet-5": tok}))
+
+    def test_without_a_pooled_fit_it_is_the_across_cut_fallback(self):
+        tok = {"input": 100, "cache_write": 50, "output": 10}
+        for model in ("claude-opus-5", "claude-sonnet-5", "claude-fable-5"):
+            self.assertAlmostEqual(C.comparison_value(CREDITS, {})({model: tok}),
+                                   C.across_cut_value(CREDITS)({model: tok}))
+        # A family on no table at all is priced at its list-price ratio, not dropped.
+        ratio = C.list_price_ratio("opus-5-5", CREDITS)
+        self.assertAlmostEqual(C.comparison_value(CREDITS, {})({"claude-opus-5-5": tok}),
+                               (150 + 50) * ratio * _OPUS_IN)
+
+    def test_empty_bundles_are_skipped_and_unknown_models_unpriced(self):
+        value = C.comparison_value(CREDITS, _POOLED_RATES)
+        tok = {"output": 10}
+        self.assertEqual(value({"claude-opus-5": tok, "<synthetic>": {"output": 0}}),
+                         value({"claude-opus-5": tok}))
+        self.assertIsNone(value({"some-other-vendor-model": tok}))
+
+
 class RoundingWeightTests(unittest.TestCase):
     """Each stretch weighs 1 / (scatter + its own whole-percent rounding variance)."""
 

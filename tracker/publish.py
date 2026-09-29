@@ -23,7 +23,7 @@ from .detect import (
     weighted_regimes,
 )
 from .gs_passive import (credit_rate_sources, passive_credit_points, passive_dollar_readings,
-                         stretch_credits, unpriced_credit_models)
+                         unpriced_credit_models)
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
@@ -493,7 +493,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     model_rates, joint_fits = credit_model.absorb_new_family_rates(
         credit_model.stretches_by_account(gs_passive, masterrig_passive),
         credit_model.harness_runs(), credits, model_rates, dict(ACCOUNT_LABELS),
-        lambda rates: (lambda tokens: stretch_credits(tokens, credits, rates)[0]))
+        lambda rates: credit_model.comparison_value(credits, rates))
     # Detection runs per account, on that account's own stretches valued in meter
     # credits and weighted by the meter movement each one carries, and publishes only
     # what two accounts agree on (_agreeing_credit_events). The list-dollar daily
@@ -1320,13 +1320,14 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     clean = credit_model.clean_stretches(by_account, runs, require="capture_status")
     priceable = credit_model.rate_fit_stretches(by_account, runs)
     # The known-date test of every change candidate (each family's first-seen stretch),
-    # beside the unknown-date detector. Stretches are valued by the same
-    # `stretch_credits` the credit detection uses (credit_model.announced_change). It is
+    # beside the unknown-date detector. Stretches are valued at the pooled fit's point
+    # estimates (credit_model.comparison_value), the same valuation the joint fit above
+    # used, so a family's rate crossing the publish limit moves no change figure. It is
     # read before the window too: a change it has measured after the cut opens a new
     # window regime, and the current window is the newest one (credits.window_regimes).
     announced = credit_model.announced_change(
         by_account, runs, credits,
-        lambda tokens: stretch_credits(tokens, credits, model_rates)[0], labels,
+        credit_model.comparison_value(credits, model_rates), labels,
         joint_fits=joint_fits)
     # The same candidates measured on the two meters, with no model rate in the figure: the
     # windows per week either side, and the scope decided from data (the credits test on work
