@@ -120,6 +120,21 @@ def daily_rates(intervals: list[Interval]) -> dict[date, DailyRate]:
     return out
 
 
+def priced_model(model: str, prices: dict) -> str | None:
+    """The `prices` row a model id is valued at, or None.
+
+    A known id normalises through tracker/turns.py `normalize_model`. An id that list has
+    not met is priced by its own row when `prices` carries one: tracker/list_prices.py adds
+    that row from the pricing page for a new model in use (issue #130), and without this
+    the row would never be read.
+    """
+    m = normalize_model(model)
+    if m is not None:
+        return m
+    raw = normalized_raw_model(model)
+    return raw if raw.startswith("claude-") and isinstance(prices.get(raw), dict) else None
+
+
 def bundle_meter_usd(model: str, tokens: dict, prices: dict) -> float | None:
     """Meter dollars of one model's token bundle, or None when the model has no price.
 
@@ -129,9 +144,9 @@ def bundle_meter_usd(model: str, tokens: dict, prices: dict) -> float | None:
     rather than imported because tracker/publish.py imports tracker/passive.py,
     which imports this module; tests/test_join.py pins the two together. The
     model id is normalised first (a date suffix or `[1m]` marker is the same
-    model); anything that is not one of the three priced models is None.
+    model); anything with no row in `prices` is None.
     """
-    m = normalize_model(model)
+    m = priced_model(model, prices)
     price = prices.get(m) if m else None
     if price is None:
         return None
@@ -216,7 +231,7 @@ class Stretch:
         usd = turn_meter_usd(turn, prices)
         # The first turn on each model, keyed the way `tokens` or `unpriced` keys it. Turns
         # arrive in time order (build_stretches), so the first one seen is the earliest.
-        key = normalized_raw_model(turn.model) if usd is None else normalize_model(turn.model)
+        key = normalized_raw_model(turn.model) if usd is None else priced_model(turn.model, prices)
         self.first_turns.setdefault(key, turn.ts)
         if usd is None:
             self.unpriced_tokens += turn.total
@@ -227,7 +242,7 @@ class Stretch:
                 by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
             return
         self.usd += usd
-        by_class = self.tokens.setdefault(normalize_model(turn.model), {c: 0 for c in CLASSES})
+        by_class = self.tokens.setdefault(priced_model(turn.model, prices), {c: 0 for c in CLASSES})
         for c in CLASSES:
             by_class[c] += getattr(turn, c)
         if turn.cache_write_1h:
