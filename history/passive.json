@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-29T12:17:04.706356+00:00",
+ "generated_at": "2026-09-29T13:15:37.865299+00:00",
  "plan_ratio_5x_to_20x": null,
  "split": {
   "input": 0.0,
@@ -178,10 +178,10 @@
   "claude-opus-5": 2052765,
   "claude-sonnet-5": 643727,
   "claude-fable-5-1": 6729076,
-  "claude-opus-4-7": 127145,
+  "claude-opus-4-7": 126923,
   "claude-opus-4-8": 9529314,
   "claude-haiku-4-5": 211871,
-  "claude-opus-5-5": 4803023
+  "claude-opus-5-5": 4197799
  },
  "weekly_windows": {
   "current": 5.01,
@@ -398,14 +398,14 @@
    },
    {
     "week_ending": "2026-10-02",
-    "windows": 4.55,
-    "five_hour_pct": 50.0,
+    "windows": 4.64,
+    "five_hour_pct": 51.0,
     "seven_day_pct": 11.0,
     "rounding_interval": [
-     2.4906,
-     12.4824
+     2.5101,
+     13.2967
     ],
-    "pieces": 17,
+    "pieces": 18,
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": true
@@ -4679,6 +4679,18 @@
     "seven_day_pct": 0.0,
     "rounding_interval": [
      0.2734,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-29T16:30:00.424129+00:00",
+    "windows": null,
+    "five_hour_pct": 1.0,
+    "seven_day_pct": 0.0,
+    "rounding_interval": [
+     0.0,
      null
     ],
     "pieces": 1,
