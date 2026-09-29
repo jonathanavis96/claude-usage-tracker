@@ -173,8 +173,26 @@ def inferred_rate(f: str) -> dict | None:
                       f"{ratio:g}x the Opus anchor")}
 
 
+#: The change candidates' instants (`tracker.credits.change_candidates`), set by `main` from
+#: the stretches it reads. The pooled fit gives each account a level of its own between every
+#: pair of neighbouring boundaries (the 14 September cut and each candidate), so a limit
+#: change at a candidate moves that level rather than any family's rate.
+CANDIDATE_BOUNDS: tuple[datetime, ...] = ()
+
+
+def regime_of(start: datetime, end: datetime) -> str | None:
+    """The stretch's regime label: its era, and the latest candidate it starts after within
+    that era (`pre/from-2026-08-21`), or None when a candidate falls inside the stretch."""
+    if any(start < b < end for b in CANDIDATE_BOUNDS):
+        return None
+    after = [b for b in CANDIDATE_BOUNDS if b <= start and (b < CUT) == (start < CUT)]
+    era = "pre" if start < CUT else "post"
+    return f"{era}/from-{max(after).date().isoformat()}" if after else era
+
+
 def prepare(account: str, kept: list[dict]) -> list[dict]:
-    """One record per clean stretch: its era, its per-family token counts and its meter movement."""
+    """One record per clean stretch: its era, its regime, its per-family token counts and its
+    meter movement."""
     out = []
     for s in kept:
         d, t = s["delta_pct"], s["tokens"]
@@ -193,6 +211,7 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
         total = sum(raw.values())
         out.append({"account": account, "start": s["start"], "end": s["end"], "delta": d,
                     "era": "pre" if P(s["start"]) < CUT else "post",
+                    "regime": regime_of(P(s["start"]), P(s["end"])),
                     "reset_verified": bool(s.get("reset_verified")),
                     "ie": ie, "raw": raw, "total_raw": total, "ok": raw["other"] == 0,
                     # Cache reads are kept out of `ie` and out of `raw` (both read the
@@ -827,12 +846,16 @@ def nelder_mead(f, x0: np.ndarray, step: float = 0.1, xatol: float = 1e-7, fatol
 
 
 def pooled_records(data: dict[str, list[dict]]) -> list[dict]:
-    """The stretches the pooled fit runs over: every priceable one that moved the meter."""
-    return [r for a in sorted(data) for r in data[a] if r["ok"] and r["delta"] > 0]
+    """The stretches the pooled fit runs over: every priceable one that moved the meter and
+    lies within one regime (`regime_of`)."""
+    return [r for a in sorted(data) for r in data[a]
+            if r["ok"] and r["delta"] > 0 and r.get("regime", r["era"]) is not None]
 
 
 def group_key(r: dict) -> str:
-    return f"{r['account']}/{r['era']}"
+    """The pooled fit's group: an account within one regime, split at the 14 September cut and
+    at every change candidate, so no rate can take up a limit change at any of them."""
+    return f"{r['account']}/{r.get('regime', r['era'])}"
 
 
 def pooled_families(recs: list[dict]) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -1470,6 +1493,8 @@ def main(argv: list[str] | None = None) -> int:
     S = C.stretches_by_account(json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8")),
                                json.loads(a.masterrig.read_text(encoding="utf-8")))
     register_families(S)
+    global CANDIDATE_BOUNDS
+    CANDIDATE_BOUNDS = tuple(sorted(c["at"] for c in C.change_candidates(S, CREDITS, [])))
     lists = {"probes-only": probes_only_runs(), "harness-runs": C.harness_runs()}
     excl = exclusion_report(S, lists)
     win = window_check(S, lists)
