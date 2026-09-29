@@ -16,18 +16,30 @@
 # Safe to run every hour: it exits 0 at once unless its last successful run is more than
 # 20 hours old, so a run the machine slept through is made up at the next hourly tick
 # rather than the next day. `.passive-last-ok` in the checkout (gitignored) is the stamp:
-# touched only after a commit that pushed, or a run with nothing to commit. `--force`
-# skips the check.
+# written only after a commit that pushed, or a run with nothing to commit, and it holds
+# the git tree of tracker/ the joins ran on. A fresh stamp still runs when origin's
+# tracker/ differs from that tree: the join code changed on main, and the record must be
+# recounted now, not up to 20 hours later. On 2026-09-29 PR #99's token count reached gs's
+# record at once and masterrig's not for a day, and the page's 22 September figure read
+# +6.3% where the same data counted one way reads +29.8% (docs/findings-2026-09-29-fit-gap.md).
+# A failed fetch keeps the plain age rule. `--force` skips the check.
 set -euo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.."
 STAMP=.passive-last-ok
 MAX_AGE=$((20 * 3600))
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# The tree of tracker/ at a commit, or nothing when it has none.
+join_code() { git rev-parse -q --verify "$1:tracker" 2>/dev/null || true; }
 if [ "${1:-}" != "--force" ] && [ -f "$STAMP" ] \
     && [ $(( $(date +%s) - $(stat -c %Y "$STAMP") )) -lt "$MAX_AGE" ]; then
-  exit 0
+  git fetch -q origin "$BRANCH" 2>/dev/null || true
+  main_code="$(join_code "origin/$BRANCH")"
+  if [ -z "$main_code" ] || [ "$main_code" = "$(cat "$STAMP")" ]; then
+    exit 0
+  fi
+  echo "tracker/ changed on origin/$BRANCH since the last record: joining again now" >&2
 fi
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 # Take main's code before the joins, not only before the commit: the joins run whatever
 # tracker/ this checkout holds, and a pull only after them left each day's masterrig
 # record one run behind main. PR #99 changed how tracker/turns.py counts a message's
@@ -35,6 +47,7 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 # gs's were counted the new way, in one before-and-after comparison. A failed pull is
 # advisory: the day's history is still written, on the code already here.
 git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase before the joins failed, joining with the local code" >&2
+joined_with="$(join_code HEAD)"
 python3 -m tracker.passive --out history/passive.json
 # Never let the stretch record's failure cost the day's passive.json, which the page reads.
 python3 -m tracker.gs_passive --masterrig --out history/masterrig-passive.json \
@@ -49,13 +62,13 @@ git add history/passive.json
 git add history/masterrig-passive.json 2>/dev/null || true
 git add history/masterrig-speed.json 2>/dev/null || true
 if git diff --cached --quiet; then
-  touch "$STAMP"
+  printf '%s' "$joined_with" > "$STAMP"
   exit 0
 fi
 git -c user.name=tracker -c user.email=tracker@local commit -q -m "Passive history $(date -u +%F)" || exit 0
 if git push -q origin "$BRANCH" \
     || { git pull -q --rebase origin "$BRANCH" && git push -q origin "$BRANCH"; }; then
-  touch "$STAMP"
+  printf '%s' "$joined_with" > "$STAMP"
 else
   echo "warning: git push failed after a rebase retry, commit made locally only" >&2
 fi
