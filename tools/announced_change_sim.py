@@ -48,7 +48,7 @@ def before_sides(family: str = "opus-5-5", gs: Path | None = None,
 
 
 def trial(before: dict[str, list[float]], step: float, n_after: int, rng: random.Random) -> bool:
-    """One seeded trial: True when the test reads measured with 1.0 outside the interval."""
+    """One seeded trial: True when the combined interval excludes 1.0 (no longer measuring)."""
     paired = {}
     for name in sorted(before):
         xs = before[name]
@@ -59,7 +59,7 @@ def trial(before: dict[str, list[float]], step: float, n_after: int, rng: random
         if pair is not None:
             paired[name] = pair
     combined = C.combine_inverse_variance(paired)
-    if combined is None or C.announced_state([n_after] * len(paired)) != "measured":
+    if combined is None:
         return False
     lo, hi = combined["interval"]
     return not lo <= 1 <= hi

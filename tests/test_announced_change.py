@@ -72,6 +72,31 @@ class CandidateTests(unittest.TestCase):
         self.assertNotIn("@", five[0]["source"])
 
 
+class ChangeStateTests(unittest.TestCase):
+    """measuring while the interval includes 0; provisional once it excludes it; measured once
+    its half-width is 10 points or less. Nothing else sets it."""
+
+    def test_each_state(self):
+        self.assertEqual(C.change_state(None), "measuring")
+        self.assertEqual(C.change_state([-10.9, 38.1]), "measuring")   # the live 22 Sep figure
+        self.assertEqual(C.change_state([0.0, 12.0]), "measuring")     # touching 0 includes it
+        self.assertEqual(C.change_state([0.6, 34.1]), "provisional")
+        self.assertEqual(C.change_state([-40.0, -15.0]), "provisional")
+        self.assertEqual(C.change_state([10.0, 30.0]), "measured")     # half-width exactly 10
+        self.assertEqual(C.change_state([-18.5, -0.5]), "measured")
+
+    def test_the_email_rules_do_not_set_it(self):
+        # The notify step's 24 and 48 hour rules read an event's age and its
+        # `interval_excludes_no_change`; the state has no clock in it. The same candidate
+        # published as one hour old and as five days old carries the same state.
+        fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11))
+        cand = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())["candidates"][0]
+        young = P._announced_event_record(cand)
+        old = P._announced_event_record({**cand, "at": (CAND - timedelta(days=5)).isoformat()})
+        self.assertEqual(young["state"], "measuring")
+        self.assertEqual(old["state"], young["state"])
+
+
 class AnnouncedChangeTests(unittest.TestCase):
     def _block(self, **kw):
         return C.announced_change(_fixture(**kw), [], CREDITS, _output_value, LABELS)
@@ -88,14 +113,33 @@ class AnnouncedChangeTests(unittest.TestCase):
         self.assertEqual(rows["a3"]["n_after"], 4)
         self.assertFalse(rows["a3"]["combined"])
         self.assertEqual(cand["accounts_combined"], ["a1", "a2"])
-        self.assertEqual(cand["state"], "measured")
+        self.assertEqual(cand["state"], C.change_state(cand["interval_pct"]))
         self.assertEqual(cand["before_from"], C.CUT_AT.isoformat())
 
-    def test_states_follow_after_counts(self):
-        self.assertEqual(self._block(n_after_one=4)["candidates"][0]["state"], "measuring")
-        self.assertEqual(self._block(n_after_one=5)["candidates"][0]["state"], "provisional")
-        self.assertEqual(self._block(n_after_one=9)["candidates"][0]["state"], "provisional")
-        self.assertEqual(self._block(n_after_one=10)["candidates"][0]["state"], "measured")
+    def test_states_follow_the_interval_not_the_after_counts(self):
+        # No change: the interval includes 0, so measuring however many stretches follow.
+        flat = self._block(step=1.0)["candidates"][0]
+        self.assertLessEqual(flat["interval_pct"][0], 0)
+        self.assertEqual(flat["state"], "measuring")
+        # +20% at the fixture's 20% scatter: excludes 0, but wider than 10 points a side.
+        wide = self._block(n_after_one=40)["candidates"][0]
+        self.assertGreater(wide["interval_pct"][0], 0)
+        self.assertGreater(wide["interval_pct"][1] - wide["interval_pct"][0], 20)
+        self.assertEqual(wide["state"], "provisional")
+        # +20% at 2% scatter on two accounts: narrow enough to be measured.
+        rng = random.Random(4)
+        tight = {"acct_one": (_series(T0, 20, "claude-opus-5", 1000.0, rng, sd=0.02)
+                              + _series(CAND, 6, "claude-opus-5", 1200.0, rng, sd=0.02)),
+                 "acct_two": (_series(T0, 15, "claude-opus-5", 500.0, rng, sd=0.02)
+                              + _series(CAND, 6, "claude-opus-5", 600.0, rng, sd=0.02))}
+        # The new family's first token is on the first stretch after the step.
+        tight["acct_one"][20]["tokens"] = {"claude-opus-5-5": {"output": 1.0},
+                                           **tight["acct_one"][20]["tokens"]}
+        cands = C.announced_change(tight, [], CREDITS, _output_value, LABELS)["candidates"]
+        (cand,) = [c for c in cands if c["family"] == "opus-5-5"]
+        lo, hi = cand["interval_pct"]
+        self.assertTrue(0 < lo and (hi - lo) / 2 <= 10, cand["interval_pct"])
+        self.assertEqual(cand["state"], "measured")
 
     def test_spanning_stretch_is_on_neither_side(self):
         by = _fixture()
@@ -324,7 +368,8 @@ class MeterTests(unittest.TestCase):
         self.assertAlmostEqual(change["ratio"], 1 + fit["five_hour_limit_change_pct"] / 100)
         (ev,) = P._announced_events(meters)
         g, w = cand["change_pct"], cand["scope"]["weekly_limit_change_pct"]
-        self.assertEqual(ev["label"], f"Five-hour limit {g:+g}%, weekly limit {w:+g}% (measured)")
+        # Its interval includes no change, so it applies at once but stays measuring.
+        self.assertEqual(ev["label"], f"Five-hour limit {g:+g}%, weekly limit {w:+g}% (measuring)")
         self.assertFalse(ev["interval_excludes_no_change"])
         self.assertNotIn("announce", ev["label"].lower())
 
@@ -335,14 +380,29 @@ class MeterTests(unittest.TestCase):
         self.assertFalse(change["window_scaled"])
         self.assertEqual(change["ratio"], 1.0)
 
-    def test_states_follow_readings_after_and_every_state_applies(self):
-        # A change applies as soon as it can be measured at all; `state` says how settled.
-        for n, state in ((1, "measuring"), (4, "measuring"), (5, "provisional"),
-                         (9, "provisional"), (10, "measured")):
-            with self.subTest(n=n):
-                cand = C.five_hour_on_meters(_announced(), _max20(n_after=n))["candidates"][0]
-                self.assertEqual(cand["state"], state)
+    def test_states_follow_the_headline_interval_and_every_state_applies(self):
+        # A change applies as soon as it can be measured at all; `state` says how settled,
+        # read off the windows-per-week interval while the fit cannot separate g.
+        for n, wpw, state in ((1, 4.5, "measuring"), (5, 4.5, "measuring"),
+                              (1, 3.8, "provisional"), (10, 4.5, "measured")):
+            with self.subTest(n=n, wpw=wpw):
+                cand = C.five_hour_on_meters(_announced(), _max20(n_after=n, after_wpw=wpw))["candidates"][0]
+                self.assertEqual(cand["state"], state, cand["windows_per_week_change_interval_pct"])
+                self.assertEqual(cand["state"], C.change_state(cand["windows_per_week_change_interval_pct"]))
                 self.assertTrue(cand["applies"])
+
+    def test_a_separable_fit_sets_the_state_from_the_five_hour_interval(self):
+        for g, sd, state in ((1.08, 0.25, "measuring"), (1.3, 0.2, "provisional"),
+                             (1.2, 0.02, "measured")):
+            with self.subTest(g=g, sd=sd):
+                fit = _joint(_mixed(g=g, r=0.6, sd=sd, seed=11))
+                self.assertTrue(fit["separable"])
+                self.assertEqual(fit["state"], state, fit["five_hour_limit_change_interval_pct"])
+                cand = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())["candidates"][0]
+                self.assertEqual(cand["interval_pct"], fit["five_hour_limit_change_interval_pct"])
+                self.assertEqual(cand["state"], state)
+                (ev,) = P._announced_events({"candidates": [cand]})
+                self.assertEqual((ev["state"], ev["evidence_quality"]), (state, state))
 
     def test_no_reading_after_on_a_combined_account_does_not_apply(self):
         cand = C.five_hour_on_meters(_announced(), _max20(n_after=0))["candidates"][0]
@@ -477,9 +537,10 @@ class RoundingWeightTests(unittest.TestCase):
         before = [0.01 * (-1) ** i for i in range(9)] + [0.5]
         rounding_before = [1 / 600] * 9 + [4 / (6 * 3 ** 2)]
         after = [0.2 + 0.01 * (-1) ** i for i in range(6)]
-        plain = C.log_ratio_side(before, after)
+        # Both the rounding weight and the Huber weight (`huber_location`) now count it for
+        # less, so the unweighted call is no longer a foil; either way the step stays 0.2.
         weighted = C.log_ratio_side(before, after, rounding_before, [1 / 600] * 6)
-        self.assertLess(abs(weighted["log_ratio"] - 0.2), abs(plain["log_ratio"] - 0.2) / 3)
+        self.assertLess(abs(weighted["log_ratio"] - 0.2), 0.02)
         self.assertLess(weighted["scatter_sd"], weighted["sd"])
 
     def test_the_joint_fit_weights_a_rounding_heavy_after_stretch_down(self):
@@ -547,6 +608,34 @@ class UnclaimedShareTests(unittest.TestCase):
         self.assertEqual(C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by)), {})
         st = by["acct_one"][3]
         self.assertEqual(C.stretch_amount(st, _output_value, 1.0), _output_value(st["tokens"]))
+
+
+class MissingWorkTests(unittest.TestCase):
+    """Stretches whose transcripts missed work the meter counted read far low of their level;
+    the Huber weights keep a few of them from moving the change."""
+
+    def test_the_known_date_test_is_not_pulled_by_missing_work(self):
+        rng = random.Random(8)
+        before = [rng.gauss(0, 0.1) for _ in range(30)]
+        after = [0.2 + rng.gauss(0, 0.1) for _ in range(12)]
+        # A burst of four after-side stretches that lost 60% of their work.
+        hit = after[:8] + [x + math.log(0.4) for x in after[8:]]
+        clean, got = C.log_ratio_side(before, after), C.log_ratio_side(before, hit)
+        naive = sum(hit) / len(hit) - sum(before) / len(before)
+        self.assertLess(abs(got["log_ratio"] - clean["log_ratio"]), abs(naive - clean["log_ratio"]) / 2)
+        self.assertGreaterEqual(got["n_downweighted"], 4)
+        self.assertLess(got["scatter_sd"], got["sd"])
+
+    def test_the_joint_fit_is_not_pulled_by_missing_work(self):
+        by = _mixed(g=1.2, r=0.6, sd=0.05, seed=5)
+        after = [st for st in by["acct_one"] if datetime.fromisoformat(st["start"]) >= CAND]
+        for st in after[:4]:
+            st["delta_pct"] /= 0.5     # the meter moved twice what the tokens explain
+        groups = [C._joint_rows(by[n], "opus-5-5", CAND, C.CUT_AT, None, _output_value, CREDITS)
+                  for n in sorted(by)]
+        plain = (math.exp(C._joint_solve(groups)[1]) - 1) * 100
+        fit = _joint(by)
+        self.assertLess(abs(fit["five_hour_limit_change_pct"] - 20.0), abs(plain - 20.0) / 2)
 
 
 class AnnouncementIndependenceTests(unittest.TestCase):

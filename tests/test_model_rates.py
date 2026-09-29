@@ -1,9 +1,11 @@
 import random
 import unittest
+from datetime import datetime
 from typing import ClassVar
 
 import numpy as np
 
+import tools.model_rates as M
 from tools.model_rates import (DOMINANCE, DOMINANCE_MIN_N, DOMINANCE_SHARE, fit_accounts,
                                MASTERRIG_FROM, MAX_INTERVAL_RATIO, MIN_N, SHELLAC, adopt, agree,
                                clean, fit, fit_bootstrap, group_fits, measurable,
@@ -468,6 +470,64 @@ class PoolingTests(unittest.TestCase):
         self.assertEqual(out["cache_read_weight"], 0.0)
         self.assertAlmostEqual(out["joint"]["cache_read_weight"],
                                JointCacheReadFitTests.WEIGHT, places=6)
+
+
+class RegimeSplitTests(unittest.TestCase):
+    """The pooled fit gives each account a level between neighbouring change candidates, so a
+    limit step at a candidate is read as a step, never folded into a family's rate."""
+
+    SONNET = 2.2          # times Opus: the rate the stretches are built with
+    STEP = 1.2            # +20% five-hour limit at the candidate: 1.2x the credits per 1%
+    CAND = "2026-09-22T12:00:00+00:00"
+
+    def _data(self, seed=3):
+        rng = random.Random(seed)
+        rows = []
+        for i in range(40):
+            after = i >= 20
+            day = f"2026-09-{16 + i // 5 if not after else 23 + (i - 20) // 5:02d}T{(i % 5) * 4:02d}:00:00+00:00"
+            # Sonnet's share rises after the step, so a fit with one level across it would
+            # load the step onto Sonnet's rate.
+            son = rng.uniform(0.5, 0.9) if after else rng.uniform(0.0, 0.4)
+            o, s_ = (1 - son) * 4_000_000, son * 4_000_000
+            credits = SHELLAC["opus"] * (o + self.SONNET * s_)
+            per_pct = 100_000.0 * (self.STEP if after else 1.0)
+            tokens = _tokens(0, opus=(o, 0), sonnet=(s_, 0))
+            rows.append(_kept(day, credits / per_pct * rng.uniform(0.99, 1.01), tokens,
+                              end=day))
+        return rows
+
+    def _fit(self, bounds):
+        saved = M.CANDIDATE_BOUNDS
+        M.CANDIDATE_BOUNDS = tuple(datetime.fromisoformat(b) for b in bounds)
+        try:
+            return pooled_fit(pooled_records({"jwork": prepare("jwork", self._data())}))
+        finally:
+            M.CANDIDATE_BOUNDS = saved
+
+    def test_the_split_fit_returns_the_sonnet_rate_and_the_step(self):
+        out = self._fit([self.CAND])
+        self.assertAlmostEqual(out["times_opus"]["sonnet"], self.SONNET, delta=0.1)
+        levels = out["credits_per_pct"]
+        self.assertEqual(sorted(levels), ["jwork/post", "jwork/post/from-2026-09-22"])
+        self.assertAlmostEqual(levels["jwork/post/from-2026-09-22"] / levels["jwork/post"],
+                               self.STEP, delta=0.02)
+
+    def test_without_the_split_the_step_is_read_as_sonnet_rate(self):
+        out = self._fit([])
+        # One level across a step up: the Sonnet-heavy after side reads as Sonnet being cheap.
+        self.assertLess(out["times_opus"]["sonnet"], self.SONNET - 0.3)
+
+    def test_a_stretch_across_a_candidate_is_in_no_regime(self):
+        saved = M.CANDIDATE_BOUNDS
+        M.CANDIDATE_BOUNDS = (datetime.fromisoformat(self.CAND),)
+        try:
+            self.assertIsNone(M.regime_of(datetime.fromisoformat("2026-09-22T10:00:00+00:00"),
+                                          datetime.fromisoformat("2026-09-22T14:00:00+00:00")))
+            self.assertEqual(M.regime_of(datetime.fromisoformat("2026-09-10T10:00:00+00:00"),
+                                         datetime.fromisoformat("2026-09-10T14:00:00+00:00")), "pre")
+        finally:
+            M.CANDIDATE_BOUNDS = saved
 
 
 class PooledFitTests(unittest.TestCase):

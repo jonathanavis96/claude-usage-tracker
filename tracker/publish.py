@@ -1319,12 +1319,6 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # (docs/findings-2026-09-23-pooled-rates.md).
     clean = credit_model.clean_stretches(by_account, runs, require="capture_status")
     priceable = credit_model.rate_fit_stretches(by_account, runs)
-    # The five-hour change across the cut is read first: the pure-family cluster is mostly
-    # pre-cut, so the current window is the after cluster where there is one and the before
-    # cluster scaled by this change where there is not (credits.current_cluster_rule).
-    cut = credit_model.across_cut(priceable, credits, labels, model_rates=model_rates)
-    five_hour = credit_model.five_hour_window_change(cut)
-    five_hour_pct = five_hour["pct"] if five_hour else None
     # The known-date test of every change candidate (each family's first-seen stretch),
     # beside the unknown-date detector. Stretches are valued by the same
     # `stretch_credits` the credit detection uses (credit_model.announced_change). It is
@@ -1340,6 +1334,15 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # above, is the change the window regimes, `events` and `last_change` use; the credits
     # test stays published as a cross-check.
     meters = credit_model.five_hour_on_meters(announced, weekly["max20"])
+    # The five-hour change across the cut, its after side ending at the first measured
+    # change after it (`credit_model.side_between`): a later change opens its own regime, so
+    # its stretches are not this one's. The pure-family cluster is mostly pre-cut, so the
+    # current window is the after cluster where there is one and the before cluster scaled
+    # by this change where there is not (credits.current_cluster_rule).
+    cut = credit_model.across_cut(priceable, credits, labels, model_rates=model_rates,
+                                  changes=[c["at"] for c in credit_model.known_date_changes(meters)])
+    five_hour = credit_model.five_hour_window_change(cut)
+    five_hour_pct = five_hour["pct"] if five_hour else None
     window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct,
                                          meters=meters)
     fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels,

@@ -379,6 +379,37 @@ class AcrossCutTests(unittest.TestCase):
         self.assertEqual(a2["before"], a2["after"])
         self.assertEqual(a2["change_pct"], 0.0)
 
+    def test_three_regimes_the_middle_figure_takes_nothing_from_the_third(self):
+        # Before the cut at 1x, between the cut and a change on 22 September at 1.25x, after
+        # that change at 2x. The cut's after side is the middle regime alone.
+        opus = {"claude-opus-5": tok(input=3_000_000)}
+        rows = ([stretch(f"2026-09-{d:02d}T00:00:00+00:00", opus) for d in (8, 9, 10)]
+                + [stretch(f"2026-09-{d:02d}T00:00:00+00:00", opus, delta_pct=8.0) for d in (16, 18, 20)]
+                + [stretch(f"2026-09-{d:02d}T00:00:00+00:00", opus, delta_pct=5.0) for d in (23, 24, 25, 26)])
+        change = datetime(2026, 9, 22, 19, tzinfo=timezone.utc)
+        bounded = C.across_cut({"jwork": rows}, CREDITS, LABELS, changes=[change])
+        a2 = bounded["per_account"]["a2"]
+        self.assertEqual((a2["n_before"], a2["n_after"]), (3, 3))
+        self.assertEqual(a2["change_pct"], 25.0)
+        self.assertEqual(bounded["after_until"], change.isoformat())
+        # Unbounded, the third regime's stretches outnumber the middle's and set the median.
+        loose = C.across_cut({"jwork": rows}, CREDITS, LABELS)["per_account"]["a2"]
+        self.assertEqual(loose["n_after"], 7)
+        self.assertEqual(loose["change_pct"], 100.0)
+
+    def test_side_between_bounds_every_regime_by_its_neighbours(self):
+        bounds = [C.CUT_AT, datetime(2026, 9, 22, tzinfo=timezone.utc),
+                  datetime(2026, 10, 5, tzinfo=timezone.utc)]
+        def st(start, hours=2):
+            s = datetime.fromisoformat(start)
+            return {"start": s.isoformat(), "end": (s + timedelta(hours=hours)).isoformat()}
+        at = bounds[1]
+        self.assertIsNone(C.side_between(st("2026-09-10T00:00:00+00:00"), at, bounds))   # regime 0
+        self.assertEqual(C.side_between(st("2026-09-18T00:00:00+00:00"), at, bounds), "before")
+        self.assertEqual(C.side_between(st("2026-09-30T00:00:00+00:00"), at, bounds), "after")
+        self.assertIsNone(C.side_between(st("2026-10-06T00:00:00+00:00"), at, bounds))   # regime 3
+        self.assertIsNone(C.side_between(st("2026-09-21T23:00:00+00:00"), at, bounds))   # spans it
+
     def test_an_account_with_one_side_only_reports_no_change(self):
         only_after = C.across_cut({"dave": [stretch("2026-09-16T00:00:00+00:00",
                                                     {"claude-opus-5": tok(input=3_000_000)})]},

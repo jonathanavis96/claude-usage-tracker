@@ -1549,9 +1549,33 @@ def across_cut_value(credits: dict, weight: float | None = None,
     return value
 
 
+def side_between(st: dict, at: datetime, bounds: list[datetime]) -> str | None:
+    """"before" or "after" a change at `at` within its own two regimes, or None.
+
+    `bounds` are every change instant known (the 14 September cut, each measured change in
+    `known_date_changes`, any later one). The before side runs from the latest of them
+    before `at`, the after side to the earliest after it, so a regime's figure never takes
+    stretches from the next one or the one before; a stretch that crosses any of them is on
+    no side.
+    """
+    start = datetime.fromisoformat(st["start"])
+    end = datetime.fromisoformat(st["end"]) if st.get("end") else start
+    lo = max((b for b in bounds if b < at), default=None)
+    hi = min((b for b in bounds if b > at), default=None)
+    if lo is not None and start < lo or hi is not None and end > hi:
+        return None
+    if end <= at:
+        return "before"
+    return "after" if start >= at else None
+
+
 def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
-               weight: float | None = None, model_rates: dict | None = None) -> dict:
+               weight: float | None = None, model_rates: dict | None = None,
+               changes: list[datetime] | None = None) -> dict:
     """Each account's five-hour window in credits before and after the announced change.
+
+    The after side ends at the first later change (`changes`, the `known_date_changes`
+    instants), which opens a regime of its own: `side_between`.
 
     Every clean stretch is priced, not only the pure ones, so there is enough on both
     sides of 14 September to compare. Where `model_rates` carries the pooled fit
@@ -1584,6 +1608,7 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
     comparison, and the gate on PR #64 caught it.
     """
     fit = pooled_fit_prices(model_rates)
+    until = min((c for c in changes or [] if c > CUT_AT), default=None)
     held = credits.get("across_cut_fable_rate") or {}
     fable_in, fable_out = _rate(held.get("input")), _rate(held.get("output"))
     value = across_cut_value(credits, weight, model_rates)
@@ -1596,8 +1621,9 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
                 continue
             if not st.get("start"):
                 continue  # unplaceable: no stamp to put it on one side of the change
-            side = "before" if datetime.fromisoformat(st["start"]) < CUT_AT else "after"
-            sides[side].append(total / st["delta_pct"])
+            side = side_between(st, CUT_AT, [CUT_AT, *(changes or [])])
+            if side is not None:
+                sides[side].append(total / st["delta_pct"])
         before = round(median(sides["before"])) if sides["before"] else None
         after = round(median(sides["after"])) if sides["after"] else None
         out[label] = {
@@ -1641,6 +1667,7 @@ def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, st
         "unresolved": ACROSS_CUT_UNRESOLVED,
         "unit": "credits per 1% of the five-hour meter",
         "cut_at": CUT_AT.isoformat(),
+        "after_until": _utc(until) if until else None,
         "rates_used": rates_used,
         "fable_rate_held": {"input": fable_in, "output": fable_out,
                             "why": held.get("why")} if fit is None and fable_out is not None else None,
@@ -1746,11 +1773,9 @@ def combine_log_ratios(per_account: dict[str, dict]) -> dict:
             "interval": (math.exp(log_lo), math.exp(log_hi))}
 
 
-#: How many stretches after a change candidate an account needs before the known-date
-#: test (`announced_change`) calls the candidate provisional, and measured. Measured needs
-#: this many on at least one account that has stretches on both sides.
-ANNOUNCED_PROVISIONAL_N = 5
-ANNOUNCED_MEASURED_N = 10
+#: A change is `measured` once its 95% interval excludes no change and is no wider than this
+#: many percentage points either side of its centre (`change_state`).
+CHANGE_MEASURED_HALF_WIDTH_PCT = 10.0
 #: How many stretches before a candidate an account needs before its own after side is
 #: compared with it. The before side also supplies most of the scatter the interval uses.
 ANNOUNCED_MIN_BEFORE = 5
@@ -1867,35 +1892,112 @@ def _wmean(xs: list[float], ws: list[float]) -> float:
     return sum(x * w for x, w in zip(xs, ws)) / sum(ws)
 
 
+#: Huber's tuning constant: residuals within this many standard deviations of their level
+#: count in full, beyond it their weight falls as 1 / |z|. 1.345 keeps 95% of the efficiency
+#: of a plain mean on normal scatter (docs/findings-2026-09-29-rates-and-missing-work.md).
+HUBER_K = 1.345
+
+
+def _huber_weight(z: float) -> float:
+    return 1.0 if abs(z) <= HUBER_K else HUBER_K / abs(z)
+
+
+def _huber_rho(z: float) -> float:
+    return z * z / 2 if abs(z) <= HUBER_K else HUBER_K * abs(z) - HUBER_K * HUBER_K / 2
+
+
+def robust_variance(residuals: list[float]) -> float:
+    """The squared normal-consistent median absolute deviation of residuals about their median.
+
+    A stretch whose transcripts miss work the meter counted, or hold work it did not, lands
+    far from its account's level on one side or the other; the median absolute deviation
+    reads the scatter of the rest, so a handful of those does not set the width.
+    """
+    if len(residuals) < 2:
+        return 0.0
+    mid = median(residuals)
+    return (1.4826 * median(abs(e - mid) for e in residuals)) ** 2
+
+
+def huber_location(xs: list[float], variances: list[float], iters: int = 50,
+                   start: float | None = None) -> tuple[float, list[float]]:
+    """(Huber M-estimate of the level, each point's final weight), by reweighting.
+
+    Each point's standardised residual is (x - level) / sqrt(its variance); the weight is
+    1 / variance times `_huber_weight` of it. Starts from `start`, else the median.
+    """
+    m = median(xs) if start is None else start
+    inv = [1 / v if v > 0 else 1.0 for v in variances]
+    cut = [HUBER_K * math.sqrt(v) if v > 0 else HUBER_K for v in variances]
+    ws = inv
+    for _ in range(iters):
+        ws = [w if abs(x - m) <= c else w * c / abs(x - m) for x, w, c in zip(xs, inv, cut)]
+        total = sum(ws)
+        new = sum(x * w for x, w in zip(xs, ws)) / total
+        if abs(new - m) < 1e-9:
+            return new, ws
+        m = new
+    return m, ws
+
+
+def _huber_efficiency(z: list[float]) -> float:
+    """E[psi squared] / E[psi'] squared over standardised residuals: the Huber estimate's
+    variance as a multiple of a plain weighted mean's at the same scale."""
+    psi2 = sum(min(abs(x), HUBER_K) ** 2 for x in z) / len(z)
+    slope = sum(1 for x in z if abs(x) <= HUBER_K) / len(z)
+    return psi2 / (slope * slope) if slope > 0 else float("inf")
+
+
 def log_ratio_side(before: list[float], after: list[float],
                    before_rounding: list[float] | None = None,
                    after_rounding: list[float] | None = None) -> dict | None:
     """One account's own change across a candidate, from log credits per 1% on each side.
 
-    The ratio is the ratio of the two sides' weighted geometric means. Each stretch's
-    variance is the scatter shared by all of them plus its own rounding
-    (`rounding_variance`, zero when not given); the scatter is the residual variance pooled
-    over both sides less the mean rounding (`scatter_variance`), and each stretch is weighted
-    by the inverse of its variance. With no rounding given, or all of it equal, the weights
-    are equal and this is the plain two-sample t interval on the logs. The after side
-    borrows the pooled scatter, so one or two stretches after still get an interval. None
-    when the before side is under ANNOUNCED_MIN_BEFORE or the after side is empty.
+    Each side's level is a Huber M-estimate (`huber_location`) of its log credits per 1%, and
+    the ratio is the ratio of the two. Each stretch's variance is the scatter shared by all
+    of them plus its own rounding (`rounding_variance`, zero when not given); the scatter is
+    read robustly off both sides' residuals (`robust_variance`) less the mean rounding. A
+    stretch within HUBER_K standard deviations of its side's level counts at 1 / variance; one
+    further out, which is what a stretch whose transcripts missed work the meter counted (or
+    hold work it did not) looks like, counts for less the further it lands. The standard
+    error is the inverse-variance one scaled by the Huber efficiency of the standardised
+    residuals pooled over both sides, so the after side borrows the pooled scatter and one or
+    two stretches after still get an interval; `n_downweighted` counts the stretches beyond
+    HUBER_K. None when the before side is under ANNOUNCED_MIN_BEFORE or the after side is
+    empty.
     """
     nb, na = len(before), len(after)
     if nb < ANNOUNCED_MIN_BEFORE or na < 1:
         return None
     vb = list(before_rounding) if before_rounding is not None else [0.0] * nb
     va = list(after_rounding) if after_rounding is not None else [0.0] * na
-    mb, ma = sum(before) / nb, sum(after) / na
+    mb, ma = median(before), median(after)
     df = nb + na - 2
-    ss = sum((x - mb) ** 2 for x in before) + sum((x - ma) ** 2 for x in after)
-    s2 = scatter_variance(ss, df, vb + va)
-    wb, wa = _weights(vb, s2), _weights(va, s2)
-    mb, ma = _wmean(before, wb), _wmean(after, wa)
-    se = math.sqrt(1 / sum(wb) + 1 / sum(wa))
+    plain_b, plain_a = sum(before) / nb, sum(after) / na
+    ss = sum((x - plain_b) ** 2 for x in before) + sum((x - plain_a) ** 2 for x in after)
+    # The scatter is read robustly (`robust_variance`) off both sides' residuals about their
+    # medians, less the mean rounding; a zero spread falls back to the plain moments.
+    resid = [x - mb for x in before] + [x - ma for x in after]
+    s2 = max(robust_variance(resid) - sum(vb + va) / (nb + na), 0.0)
+    if s2 <= 0:
+        s2 = scatter_variance(ss, df, vb + va)
+    varb, vara = [s2 + v for v in vb], [s2 + v for v in va]
+    if s2 > 0:
+        mb, wb = huber_location(before, varb)
+        ma, wa = huber_location(after, vara)
+        z = ([(x - mb) / math.sqrt(v) for x, v in zip(before, varb)]
+             + [(x - ma) / math.sqrt(v) for x, v in zip(after, vara)])
+        eff = _huber_efficiency(z)
+        se = math.sqrt(eff * (1 / sum(_weights(vb, s2)) + 1 / sum(_weights(va, s2))))
+        down = sum(1 for x in z if abs(x) > HUBER_K)
+    else:
+        wb, wa = _weights(vb, s2), _weights(va, s2)
+        mb, ma = _wmean(before, wb), _wmean(after, wa)
+        se, down = math.sqrt(1 / sum(wb) + 1 / sum(wa)), 0
     d, h = ma - mb, _t975(df) * se
     return {"log_ratio": d, "se": se, "df": df, "sd": math.sqrt(ss / df),
             "scatter_sd": math.sqrt(s2), "rounding_sd": math.sqrt(sum(vb + va) / (nb + na)),
+            "n_downweighted": down,
             "ratio": math.exp(d), "interval": (math.exp(d - h), math.exp(d + h))}
 
 
@@ -1919,14 +2021,20 @@ def combine_inverse_variance(per_account: dict[str, dict]) -> dict | None:
             "interval": (math.exp(d - h), math.exp(d + h))}
 
 
-def announced_state(n_after_paired: list[int]) -> str:
-    """measuring / provisional / measured, from the after counts of the paired accounts."""
-    most = max(n_after_paired, default=0)
-    if most >= ANNOUNCED_MEASURED_N:
-        return "measured"
-    if most >= ANNOUNCED_PROVISIONAL_N:
-        return "provisional"
-    return "measuring"
+def change_state(interval_pct: list[float] | tuple[float, float] | None) -> str:
+    """measuring / provisional / measured, from a change's 95% interval in percent.
+
+    `measuring` while there is no interval or it includes no change (0), `provisional` once
+    it excludes 0, `measured` once it also has a half-width of CHANGE_MEASURED_HALF_WIDTH_PCT
+    points or less. Nothing else sets it: not the number of stretches after the candidate,
+    and not the notify step's 24 and 48 hour email rules, which time the email only.
+    """
+    if not interval_pct or interval_pct[0] is None or interval_pct[1] is None:
+        return "measuring"
+    lo, hi = interval_pct
+    if lo <= 0 <= hi:
+        return "measuring"
+    return "measured" if (hi - lo) / 2 <= CHANGE_MEASURED_HALF_WIDTH_PCT else "provisional"
 
 
 def announced_change_stretches(by_account: dict[str, list[dict]],
@@ -2114,7 +2222,8 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
                             "combined": True})
             per_account[label] = row
         combined = combine_inverse_variance(paired)
-        state = announced_state([per_account[k]["n_after"] for k in paired])
+        interval_pct = [round((x - 1) * 100, 1) for x in combined["interval"]] if combined else None
+        state = change_state(interval_pct)
         excludes = bool(combined and not combined["interval"][0] <= 1 <= combined["interval"][1])
         for k, w in (combined or {}).get("weights", {}).items():
             per_account[k]["weight"] = round(w, 4)
@@ -2128,8 +2237,7 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "after_until": _utc(hi) if hi else None,
             "state": state,
             "change_pct": round((combined["ratio"] - 1) * 100, 1) if combined else None,
-            "interval_pct": ([round((x - 1) * 100, 1) for x in combined["interval"]]
-                             if combined else None),
+            "interval_pct": interval_pct,
             "interval_excludes_no_change": excludes,
             "accounts_combined": sorted(paired),
             "per_account": per_account,
@@ -2140,8 +2248,7 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
     return {
         "candidates": out,
         "unit": "credits per 1% of the five-hour meter",
-        "thresholds": {"provisional_after": ANNOUNCED_PROVISIONAL_N,
-                       "measured_after": ANNOUNCED_MEASURED_N,
+        "thresholds": {"measured_half_width_pct": CHANGE_MEASURED_HALF_WIDTH_PCT,
                        "min_before": ANNOUNCED_MIN_BEFORE},
         "method": (
             "candidates are each model family's first use across every account; the candidate "
@@ -2152,16 +2259,18 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             "the before side starts at the previous boundary (the 14 September weekly change or "
             "an earlier candidate) and the after side ends at the next one, and a stretch that "
             "spans a boundary is on neither side. Each account's change is the ratio of the "
-            "weighted geometric means of its credits per 1% on the two sides, each stretch "
-            "weighted by 1 / (scatter + its own whole-percent rounding variance), with a 95% t "
-            "interval on the logs using the scatter pooled over both sides. A stretch's credits "
+            "Huber M-estimates of its log credits per 1% on the two sides, each stretch's "
+            "variance the robust scatter (median absolute deviation) plus its own whole-percent "
+            "rounding variance, so a stretch with work the transcripts missed or the meter did "
+            "not count weighs less the further it lands; a 95% t interval on the logs uses the "
+            "scatter pooled over both sides. A stretch's credits "
             "include the account's fitted share (`unclaimed_share`, 0 to 1) of the work no login "
             "claims on the pooled projects root in its span. Accounts with at least "
             f"{ANNOUNCED_MIN_BEFORE} stretches before and 1 after are combined as a weighted "
-            "mean of log ratios, weights 1 / se squared. The state is measuring below "
-            f"{ANNOUNCED_PROVISIONAL_N} stretches after on every combined account, provisional "
-            f"at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
-            f"{ANNOUNCED_MEASURED_N} or more on at least one. `joint_fit` is the candidate "
+            "mean of log ratios, weights 1 / se squared. The state is measuring while the "
+            "interval includes no change, provisional once it excludes it, and measured once "
+            f"it also has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less "
+            "(`change_state`). `joint_fit` is the candidate "
             "family's rate fitted jointly with the five-hour limit change "
             "(`joint_rate_fit`); `five_hour_on_meters` reads it to decide the change's scope. "
             "`announcement` is reference metadata and changes no figure."),
@@ -2241,24 +2350,35 @@ def _joint_solve(groups: list[tuple[list[tuple], list[tuple]]],
     """(rate relative to base, log limit change, residual spread) minimising the squared log
     residuals of (known + rate x new) / meter % against each account's own before level.
 
-    With `s2` (the scatter left once rounding is out, `scatter_variance`) each stretch is
-    weighted by 1 / (s2 + its rounding variance), in the before levels and the residuals
-    alike; without it every stretch weighs the same. The spread returned is the unweighted
-    standard deviation of the after side's residuals either way, so it stays comparable."""
+    With `s2` (the scatter left once rounding is out, `_joint_scatter`) each stretch's
+    variance is s2 plus its own rounding variance, and the fit is a Huber M-estimate: each
+    account's before level is `huber_location`, the after side's log change m is the Huber
+    location of the residuals, and r minimises the Huber loss (`_huber_rho`) of the
+    standardised residuals, so a stretch with missing or extra work counts for less the
+    further it lands. Without `s2` it is plain least squares, every stretch weighing the
+    same. The spread returned is the unweighted standard deviation of the after side's
+    residuals either way, so it stays comparable."""
     rows = []
+    robust = s2 is not None
     for before, after in groups:
-        wb = _weights([v for _, v in before], s2) if s2 is not None else [1.0] * len(before)
-        level = _wmean([x for x, _ in before], wb)
-        rows += [(k, u, d, level, 1 / (s2 + v) if s2 is not None and s2 + v > 0 else 1.0)
+        if robust and all(s2 + v > 0 for _, v in before):
+            level = huber_location([x for x, _ in before], [s2 + v for _, v in before])[0]
+        else:
+            level = sum(x for x, _ in before) / len(before)
+        rows += [(k, u, d, level, s2 + v if s2 is not None and s2 + v > 0 else 1.0)
                  for k, u, d, v in after]
     if not rows:
         return None
+    var = [x[4] for x in rows]
+    last = {"m": None}
 
     def ss(r: float) -> tuple[float, float, list[float]]:
         e = [math.log((k + r * u) / d) - level for k, u, d, level, _ in rows]
-        w = [x[4] for x in rows]
-        m = _wmean(e, w)
-        return sum(wi * (x - m) ** 2 for x, wi in zip(e, w)), m, e
+        if robust:
+            m = last["m"] = huber_location(e, var, start=last["m"])[0]
+            return sum(_huber_rho((x - m) / math.sqrt(v)) for x, v in zip(e, var)), m, e
+        m = sum(e) / len(e)
+        return sum((x - m) ** 2 for x in e), m, e
 
     lo, hi = (math.log(b) for b in JOINT_RATE_BOUNDS)
     grid = [lo + (hi - lo) * i / 40 for i in range(41)]
@@ -2278,17 +2398,24 @@ def _joint_solve(groups: list[tuple[list[tuple], list[tuple]]],
 
 
 def _joint_scatter(groups: list[tuple[list[tuple], list[tuple]]], r: float, m: float) -> float:
-    """The joint fit's scatter with rounding taken out (`scatter_variance`): the before
-    sides' residuals about each account's level and the after sides' about the fit, pooled,
-    less the mean rounding variance of every stretch in them."""
-    ss, n, rounding = 0.0, 0, []
+    """The joint fit's scatter with rounding taken out: the before sides' residuals about
+    each account's median and the after sides' about the fit, pooled, read robustly
+    (`robust_variance`) less the mean rounding variance of every stretch in them. Falls back
+    to the plain moments (`scatter_variance`) when the robust spread is zero."""
+    ss, n, rounding, resid = 0.0, 0, [], []
     for before, after in groups:
         level = sum(x for x, _ in before) / len(before)
+        mid = median(x for x, _ in before)
         ss += sum((x - level) ** 2 for x, _ in before)
         ss += sum((math.log((k + r * u) / d) - level - m) ** 2 for k, u, d, _ in after)
+        resid += [x - mid for x, _ in before]
+        after_e = [math.log((k + r * u) / d) - mid for k, u, d, _ in after]
+        amid = median(after_e)
+        resid += [e - amid for e in after_e]
         n += len(before) + len(after)
         rounding += [v for _, v in before] + [v for *_, v in after]
-    return scatter_variance(ss, n - len(groups) - 2, rounding)
+    robust = robust_variance(resid) - sum(rounding) / len(rounding)
+    return robust if robust > 0 else scatter_variance(ss, n - len(groups) - 2, rounding)
 
 
 def _pct_of(x: float) -> float:
@@ -2306,9 +2433,12 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     at its base family's rate (`base_family`), L the account's own credits per 1% from its
     before side (known work only), and g the limit change. Mixed stretches vary the new
     family's share, and that variation separates r from g; a mix too uniform leaves r
-    unpinned and the fit says so. Each stretch is weighted by 1 / (scatter + its own
-    whole-percent rounding variance): the fit runs once unweighted to measure the scatter
-    (`_joint_scatter`), then again weighted. Each pooled account's measured share of the work
+    unpinned and the fit says so. The fit runs once by plain least squares to measure the
+    scatter robustly (`_joint_scatter`), then again as a Huber M-estimate at that scatter
+    plus each stretch's own rounding variance (`_joint_solve`), so a stretch with missing or
+    extra work counts for less. Its interval is set mostly by how well the mix separates r
+    from g, not by the scatter: held at its point estimate, r leaves g an interval about a
+    third as wide (docs/findings-2026-09-29-rates-and-missing-work.md). Each pooled account's measured share of the work
     no login claims (`unclaimed_shares`) is added to its stretches' known work. Intervals are
     a percentile bootstrap, stretches resampled within each account and side, at that
     scatter. `value(tokens)` prices a bundle in credits.
@@ -2326,8 +2456,7 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
         if len(before) >= ANNOUNCED_MIN_BEFORE and after:
             per_account[label]["combined"] = True
             groups.append((label, before, after))
-    state = announced_state([per_account[g[0]]["n_after"] for g in groups])
-    out = {"family": fam, "base_family": base_family(fam, credits), "state": state,
+    out = {"family": fam, "base_family": base_family(fam, credits), "state": "measuring",
            "separable": False, "rate_relative_to_base": None, "rate_relative_interval": None,
            "times_opus": None, "times_opus_interval": None,
            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
@@ -2358,10 +2487,10 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     lo_b, hi_b = JOINT_RATE_BOUNDS
     separable = (r_lo > lo_b * 1.05 and r_hi < hi_b / 1.05 and r_hi / r_lo <= JOINT_SEPARABLE_SPAN)
     for label, b, a in groups:
-        level = _wmean([x for x, _ in b], _weights([v for _, v in b], s2))
+        level = huber_location([x for x, _ in b], [s2 + v or 1.0 for _, v in b])[0]
         e = [math.log((k + r * u) / d) - level for k, u, d, _ in a]
-        per_account[label]["five_hour_limit_change_pct"] = _pct_of(
-            math.exp(_wmean(e, _weights([v for *_, v in a], s2))))
+        per_account[label]["five_hour_limit_change_pct"] = _pct_of(math.exp(
+            huber_location(e, [s2 + v or 1.0 for *_, v in a])[0]))
     rounding = [v for _, b, a in groups for v in [x[1] for x in b] + [x[3] for x in a]]
     out.update({
         "separable": separable,
@@ -2375,6 +2504,8 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
         "log_residual_sd": round(sd, 4),
         "scatter_sd": round(math.sqrt(s2), 4),
         "rounding_sd": round(math.sqrt(sum(rounding) / len(rounding)), 4),
+        # An inseparable fit's g is not a reading of the limit, so it stays measuring.
+        "state": change_state([_pct_of(g_lo), _pct_of(g_hi)]) if separable else "measuring",
         "reason": (None if separable else
                    f"the new family's share of the work varies too little to separate its rate "
                    f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "
@@ -2640,10 +2771,12 @@ WINDOWS_PER_WEEK_METHOD = (
     "describes which intervals exclude no change: `five_hour` g's alone, `weekly` the weekly "
     "one alone, `both` both, `undetermined` neither. While the fit cannot separate the rate "
     "from g (the mix too uniform), `change_pct` is null, the regimes carry the previous "
-    "window and week, and `scope.reason` says why. The state is "
-    f"measuring below {ANNOUNCED_PROVISIONAL_N} readings after on every combined account, "
-    f"provisional at {ANNOUNCED_PROVISIONAL_N} to {ANNOUNCED_MEASURED_N - 1}, measured at "
-    f"{ANNOUNCED_MEASURED_N} or more on at least one, and says how settled the figure is. A "
+    "window and week, and `scope.reason` says why. The state says how settled the headline "
+    "figure is, from its own 95% interval (`change_state`): the five-hour limit change once "
+    "the fit separates it, else the windows-per-week change. It is measuring while that "
+    "interval includes no change, provisional once it excludes it, and measured once it also "
+    f"has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less; the notify step's "
+    "24 and 48 hour rules time the email and never set it. A "
     "candidate after the weekly change `applies` as soon as it can be measured at all (one "
     "reading after on a combined account): it opens a window regime and enters `events` and "
     "`last_change` at its measured size, however small, and every publish recomputes it. "
@@ -2815,7 +2948,6 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
         combined = combine_log_ratios(paired) if paired else None
         for k, w in (combined or {}).get("weights", {}).items():
             per_account[k]["weight"] = w
-        state = announced_state([per_account[k]["n_after"] for k in paired])
         readings = scope = rho_boot = None
         pct = interval = wpw_pct = wpw_interval = None
         if combined:
@@ -2829,6 +2961,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                 # interval and whichever way `scope` labels it.
                 pct = scope["five_hour_limit_change_pct"]
                 interval = scope["five_hour_limit_change_interval_pct"]
+        state = change_state(interval if pct is not None else wpw_interval)
         out.append({
             "family": cand["family"], "at": cand["at"], "at_source": cand.get("at_source"),
             "first_seen_account": cand.get("first_seen_account"),
@@ -2855,8 +2988,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
             "method": "windows_per_week_ratio",
         })
     return {"candidates": out, "unit": "percent",
-            "thresholds": {"provisional_after": ANNOUNCED_PROVISIONAL_N,
-                           "measured_after": ANNOUNCED_MEASURED_N,
+            "thresholds": {"measured_half_width_pct": CHANGE_MEASURED_HALF_WIDTH_PCT,
                            "min_before": ANNOUNCED_MIN_BEFORE},
             "method": WINDOWS_PER_WEEK_METHOD}
 
