@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-29T05:30:12.298311+00:00",
+ "generated_at": "2026-09-29T06:00:12.693392+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 4179,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 7685,
+    "samples": 7694,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-29T05:28:20+00:00"
+    "last": "2026-09-29T05:58:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -9668,9 +9668,9 @@
     "note": null,
     "reset_verified_samples": 3254,
     "since": null,
-    "samples": 5469,
+    "samples": 5481,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-29T05:28:20+00:00"
+    "last": "2026-09-29T05:58:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -14022,7 +14022,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-09-29T05:30:50.305021+00:00",
+  "generated_at": "2026-09-29T06:00:51.797482+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
