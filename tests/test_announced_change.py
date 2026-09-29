@@ -132,8 +132,9 @@ class AnnouncedChangeTests(unittest.TestCase):
                               + _series(CAND, 6, "claude-opus-5", 1200.0, rng, sd=0.02)),
                  "acct_two": (_series(T0, 15, "claude-opus-5", 500.0, rng, sd=0.02)
                               + _series(CAND, 6, "claude-opus-5", 600.0, rng, sd=0.02))}
-        tight["acct_one"][6]["tokens"] = {"claude-opus-5-5": {"output": 1.0},
-                                          **tight["acct_one"][6]["tokens"]}
+        # The new family's first token is on the first stretch after the step.
+        tight["acct_one"][20]["tokens"] = {"claude-opus-5-5": {"output": 1.0},
+                                           **tight["acct_one"][20]["tokens"]}
         cands = C.announced_change(tight, [], CREDITS, _output_value, LABELS)["candidates"]
         (cand,) = [c for c in cands if c["family"] == "opus-5-5"]
         lo, hi = cand["interval_pct"]
@@ -536,9 +537,10 @@ class RoundingWeightTests(unittest.TestCase):
         before = [0.01 * (-1) ** i for i in range(9)] + [0.5]
         rounding_before = [1 / 600] * 9 + [4 / (6 * 3 ** 2)]
         after = [0.2 + 0.01 * (-1) ** i for i in range(6)]
-        plain = C.log_ratio_side(before, after)
+        # Both the rounding weight and the Huber weight (`huber_location`) now count it for
+        # less, so the unweighted call is no longer a foil; either way the step stays 0.2.
         weighted = C.log_ratio_side(before, after, rounding_before, [1 / 600] * 6)
-        self.assertLess(abs(weighted["log_ratio"] - 0.2), abs(plain["log_ratio"] - 0.2) / 3)
+        self.assertLess(abs(weighted["log_ratio"] - 0.2), 0.02)
         self.assertLess(weighted["scatter_sd"], weighted["sd"])
 
     def test_the_joint_fit_weights_a_rounding_heavy_after_stretch_down(self):
@@ -606,6 +608,34 @@ class UnclaimedShareTests(unittest.TestCase):
         self.assertEqual(C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by)), {})
         st = by["acct_one"][3]
         self.assertEqual(C.stretch_amount(st, _output_value, 1.0), _output_value(st["tokens"]))
+
+
+class MissingWorkTests(unittest.TestCase):
+    """Stretches whose transcripts missed work the meter counted read far low of their level;
+    the Huber weights keep a few of them from moving the change."""
+
+    def test_the_known_date_test_is_not_pulled_by_missing_work(self):
+        rng = random.Random(8)
+        before = [rng.gauss(0, 0.1) for _ in range(30)]
+        after = [0.2 + rng.gauss(0, 0.1) for _ in range(12)]
+        # A burst of four after-side stretches that lost 60% of their work.
+        hit = after[:8] + [x + math.log(0.4) for x in after[8:]]
+        clean, got = C.log_ratio_side(before, after), C.log_ratio_side(before, hit)
+        naive = sum(hit) / len(hit) - sum(before) / len(before)
+        self.assertLess(abs(got["log_ratio"] - clean["log_ratio"]), abs(naive - clean["log_ratio"]) / 2)
+        self.assertGreaterEqual(got["n_downweighted"], 4)
+        self.assertLess(got["scatter_sd"], got["sd"])
+
+    def test_the_joint_fit_is_not_pulled_by_missing_work(self):
+        by = _mixed(g=1.2, r=0.6, sd=0.05, seed=5)
+        after = [st for st in by["acct_one"] if datetime.fromisoformat(st["start"]) >= CAND]
+        for st in after[:4]:
+            st["delta_pct"] /= 0.5     # the meter moved twice what the tokens explain
+        groups = [C._joint_rows(by[n], "opus-5-5", CAND, C.CUT_AT, None, _output_value, CREDITS)
+                  for n in sorted(by)]
+        plain = (math.exp(C._joint_solve(groups)[1]) - 1) * 100
+        fit = _joint(by)
+        self.assertLess(abs(fit["five_hour_limit_change_pct"] - 20.0), abs(plain - 20.0) / 2)
 
 
 class AnnouncementIndependenceTests(unittest.TestCase):
