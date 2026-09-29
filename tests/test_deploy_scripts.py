@@ -914,7 +914,7 @@ class TestDailyRatesDue(unittest.TestCase):
     def _commit(self, path: str, when: datetime) -> None:
         (self.repo / path).write_text(str(when))
         self._git("add", path)
-        self._git("commit", "-q", "-m", path, when=when)
+        self._git("commit", "-q", "--no-verify", "-m", path, when=when)  # placeholder files, not code: skip any local hooks
 
     def _fit_at(self, when: datetime) -> None:
         (self.repo / "history" / "model-rates.json").write_text(
