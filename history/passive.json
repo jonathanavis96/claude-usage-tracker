@@ -1,15 +1,15 @@
 {
- "generated_at": "2026-09-28T15:15:26.612375+00:00",
+ "generated_at": "2026-09-29T12:17:04.706356+00:00",
  "plan_ratio_5x_to_20x": null,
  "split": {
   "input": 0.0,
-  "output": 0.0035,
-  "cache_read": 0.9717,
-  "cache_write": 0.0248
+  "output": 0.0049,
+  "cache_read": 0.9699,
+  "cache_write": 0.0251
  },
  "history": {
   "2026-08-20": {
-   "tokens_per_pct": 2510063,
+   "tokens_per_pct": 2512805,
    "interpolated": false
   },
   "2026-08-21": {
@@ -21,15 +21,15 @@
    "interpolated": false
   },
   "2026-08-23": {
-   "tokens_per_pct": 5365947,
+   "tokens_per_pct": 5367685,
    "interpolated": false
   },
   "2026-08-24": {
-   "tokens_per_pct": 6946980,
+   "tokens_per_pct": 6947013,
    "interpolated": false
   },
   "2026-08-25": {
-   "tokens_per_pct": 7572955,
+   "tokens_per_pct": 7573163,
    "interpolated": false
   },
   "2026-08-26": {
@@ -37,11 +37,11 @@
    "interpolated": false
   },
   "2026-08-27": {
-   "tokens_per_pct": 4017963,
+   "tokens_per_pct": 4024021,
    "interpolated": false
   },
   "2026-08-28": {
-   "tokens_per_pct": 3830475,
+   "tokens_per_pct": 3830801,
    "interpolated": false
   },
   "2026-08-29": {
@@ -65,27 +65,27 @@
    "interpolated": false
   },
   "2026-09-03": {
-   "tokens_per_pct": 845840,
+   "tokens_per_pct": 845974,
    "interpolated": false
   },
   "2026-09-04": {
-   "tokens_per_pct": 1761240,
+   "tokens_per_pct": 1761727,
    "interpolated": false
   },
   "2026-09-05": {
-   "tokens_per_pct": 3488902,
+   "tokens_per_pct": 3489926,
    "interpolated": false
   },
   "2026-09-06": {
-   "tokens_per_pct": 3251222,
+   "tokens_per_pct": 3251347,
    "interpolated": false
   },
   "2026-09-07": {
-   "tokens_per_pct": 1733816,
+   "tokens_per_pct": 1734566,
    "interpolated": false
   },
   "2026-09-08": {
-   "tokens_per_pct": 3084828,
+   "tokens_per_pct": 3090004,
    "interpolated": false
   },
   "2026-09-09": {
@@ -93,7 +93,7 @@
    "interpolated": false
   },
   "2026-09-10": {
-   "tokens_per_pct": 3459370,
+   "tokens_per_pct": 3460390,
    "interpolated": false
   },
   "2026-09-11": {
@@ -101,7 +101,7 @@
    "interpolated": false
   },
   "2026-09-12": {
-   "tokens_per_pct": 2313037,
+   "tokens_per_pct": 2317904,
    "interpolated": false
   },
   "2026-09-13": {
@@ -121,11 +121,11 @@
    "interpolated": false
   },
   "2026-09-17": {
-   "tokens_per_pct": 5881275,
+   "tokens_per_pct": 5889845,
    "interpolated": false
   },
   "2026-09-18": {
-   "tokens_per_pct": 3847328,
+   "tokens_per_pct": 3849837,
    "interpolated": false
   },
   "2026-09-19": {
@@ -133,11 +133,11 @@
    "interpolated": false
   },
   "2026-09-20": {
-   "tokens_per_pct": 4115488,
+   "tokens_per_pct": 4120160,
    "interpolated": false
   },
   "2026-09-21": {
-   "tokens_per_pct": 10882296,
+   "tokens_per_pct": 10924253,
    "interpolated": false
   },
   "2026-09-22": {
@@ -145,39 +145,43 @@
    "interpolated": false
   },
   "2026-09-23": {
-   "tokens_per_pct": 9701072,
+   "tokens_per_pct": 9705156,
    "interpolated": false
   },
   "2026-09-24": {
-   "tokens_per_pct": 7286258,
+   "tokens_per_pct": 7352142,
    "interpolated": false
   },
   "2026-09-25": {
-   "tokens_per_pct": 7286258,
+   "tokens_per_pct": 7352142,
    "interpolated": true
   },
   "2026-09-26": {
-   "tokens_per_pct": 7286258,
+   "tokens_per_pct": 7352142,
    "interpolated": true
   },
   "2026-09-27": {
-   "tokens_per_pct": 7286258,
+   "tokens_per_pct": 7352142,
    "interpolated": true
   },
   "2026-09-28": {
-   "tokens_per_pct": 8857943,
+   "tokens_per_pct": 9523707,
    "interpolated": false
+  },
+  "2026-09-29": {
+   "tokens_per_pct": 9523707,
+   "interpolated": true
   }
  },
  "session_tokens": {
-  "claude-sonnet-4-6": 255187,
-  "claude-opus-5": 1669074,
-  "claude-sonnet-5": 636738,
+  "claude-sonnet-4-6": 268987,
+  "claude-opus-5": 2052765,
+  "claude-sonnet-5": 643727,
   "claude-fable-5-1": 6729076,
-  "claude-opus-4-7": 128394,
+  "claude-opus-4-7": 127145,
   "claude-opus-4-8": 9529314,
-  "claude-haiku-4-5": 188484,
-  "claude-opus-5-5": 4793904
+  "claude-haiku-4-5": 211871,
+  "claude-opus-5-5": 4803023
  },
  "weekly_windows": {
   "current": 5.01,
@@ -391,6 +395,20 @@
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": false
+   },
+   {
+    "week_ending": "2026-10-02",
+    "windows": 4.55,
+    "five_hour_pct": 50.0,
+    "seven_day_pct": 11.0,
+    "rounding_interval": [
+     2.4906,
+     12.4824
+    ],
+    "pieces": 17,
+    "source": "paired_meter_deltas",
+    "reset_verified": true,
+    "partial": true
    }
   ],
   "by_window": [
@@ -4632,11 +4650,35 @@
    },
    {
     "window_ending": "2026-09-28T19:10:00.301608+00:00",
-    "windows": 6.0,
-    "five_hour_pct": 6.0,
+    "windows": 4.33,
+    "five_hour_pct": 13.0,
+    "seven_day_pct": 3.0,
+    "rounding_interval": [
+     2.5007,
+     10.1932
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-29T00:09:59.971104+00:00",
+    "windows": 4.0,
+    "five_hour_pct": 4.0,
     "seven_day_pct": 1.0,
     "rounding_interval": [
-     1.7231,
+     0.9451,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-29T11:29:59.817303+00:00",
+    "windows": null,
+    "five_hour_pct": 2.0,
+    "seven_day_pct": 0.0,
+    "rounding_interval": [
+     0.2734,
      null
     ],
     "pieces": 1,
