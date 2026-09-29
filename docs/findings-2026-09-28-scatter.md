@@ -113,10 +113,20 @@ The family rates are a different matter. Model-family shares explain 30.4%, and 
 multiplier on the rate the publisher uses fits at 2.19 (2.25, 1.78, 2.61, 2.22 leaving out
 each account in turn; 3.28 and 1.80 on the two time halves) and lowers held-out variance in 5
 of 6 splits (for example 0.1235 to 0.0982 with Max account 2 held out). Sonnet work costs the
-meter about twice what its fitted credit rate says. The history has too few pure-Sonnet
-stretches for `tools/model_rates.py` to measure its rate directly (every account/period in
-`history/model-rates.json` reads "NOT MEASURABLE" for Sonnet), so it falls back to a list
-price ratio. This is not fixed here; see "What is left".
+meter about twice what its fitted credit rate says.
+
+**Correction, 2026-09-29 (issue #126).** Both halves of that paragraph were wrong. Sonnet's
+rate is not a list-price fallback: the "NOT MEASURABLE" lines are the pure-family ratios in
+`tools/model_rates.py`'s section 2, and the rate the publisher uses comes from its pooled fit
+(section 6), which measures Sonnet from mixed stretches at about 0.40x Opus. And the 2.2x is
+not a Sonnet price. It comes from which stretches the regression ran over: this note used
+every status-accepted stretch, including the ones the capture check flags because the meter
+moved more (or less) than their transcripts explain. On the same stretches the pooled fit
+reads Sonnet at 0.37x Opus on capture-accepted stretches only, 0.57x with only the
+"meter moved without tokens" stretches left out, and 0.97x on all of them, and Fable and Opus
+5.5 rise with it. Those flagged stretches also come in runs (14 adjacent pairs on Max account
+2 against 5.8 by chance), which is what bursts of unseen work look like. The fix is in the
+change tests, not the rates: docs/findings-2026-09-29-rates-and-missing-work.md.
 
 ### 4. Fast sessions
 
@@ -202,7 +212,6 @@ About half the residual variance is not explained by anything measured, and it i
 (autocorrelated within an account's regime). The largest measured candidate still in it is
 the Sonnet rate: fitting a Sonnet multiplier in the joint fit (on the data before fix 3) moved
 the residual sd from 0.294 to 0.285, r to 0.926 [0.597, 1.374] and the five-hour change to
-+49.2% [+15.6, +82.3]. That is a family-rate question for `tools/model_rates.py` and the joint
-fit together, and big enough to move the headline, so it is left for its own issue rather
-than folded in here. The security plugin's reviews are unmeasured, and the fast-session and
++49.2% [+15.6, +82.3]. (Corrected 2026-09-29: that multiplier is the unseen-work stretches,
+not Sonnet's rate; see the correction under section 3.) The security plugin's reviews are unmeasured, and the fast-session and
 time-of-day terms are small candidates for covariates once there is more data.
