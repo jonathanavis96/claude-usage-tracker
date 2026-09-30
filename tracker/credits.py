@@ -2192,7 +2192,9 @@ def _unclaimed_caps(rows: dict[str, list[tuple]]) -> list[frozenset[str]]:
     of it must sum to at most 1.
     """
     # An end sorts before a start at the same instant: stretches that only meet do not overlap.
-    events = sorted((t, kind, name) for name, rs in rows.items() for r in rs if r[1]
+    # So a zero-length stretch overlaps nothing, and is skipped: its end would sort before its
+    # own start.
+    events = sorted((t, kind, name) for name, rs in rows.items() for r in rs if r[1] and r[3] < r[4]
                     for t, kind in ((r[3], 1), (r[4], 0)))
     active: dict[str, int] = {}
     caps: set[frozenset[str]] = set()
@@ -2209,35 +2211,81 @@ def _unclaimed_caps(rows: dict[str, list[tuple]]) -> list[frozenset[str]]:
     return [c for c in caps if not any(c < d for d in caps)]
 
 
+#: The most accounts one group of overlapping caps is searched exactly for. One solve is a
+#: depth-first search over the 51-point grid per account: measured 2026-09-30 on gs at 1.7 ms
+#: for 2 accounts, 16 ms for 3 and 257 ms for 4, run 101 times per call (the fit and
+#: UNCLAIMED_BOOTSTRAP resamples) and 8 calls per publish. Today's data has one group of 2
+#: (Max accounts 2 and 4): 0.83 s of a 2.5 s credits pass. A group of 4 would add about
+#: 3.5 minutes, so from 4 accounts `_one_budget` solves it instead.
+CAPPED_EXACT_MAX = 3
+
+
+def _one_budget(ss: dict[str, list[float]], members: list[str], n: int) -> dict[str, int]:
+    """Grid indices for `members` minimising their summed scatter with all their shares summing
+    to at most 1: a knapsack over the n grid steps, O(members x n^2). Exact when the group is one
+    cap; for a chain of caps ({a, b} and {b, c}) it is stricter than required, since it also
+    holds a + c to 1."""
+    inf = float("inf")
+    best = [0.0] + [inf] * n
+    picks: list[list[int]] = []
+    for m in members:
+        nxt, pick = [inf] * (n + 1), [0] * (n + 1)
+        for used, total in enumerate(best):
+            if total == inf:
+                continue
+            for i in range(n + 1 - used):
+                t = total + ss[m][i]
+                if t < nxt[used + i]:
+                    nxt[used + i], pick[used + i] = t, i
+        best = nxt
+        picks.append(pick)
+    used = min(range(n + 1), key=lambda b: best[b])
+    out = {}
+    for m, pick in zip(reversed(members), reversed(picks)):
+        out[m] = pick[used]
+        used -= pick[used]
+    return out
+
+
 def _capped_best(ss: dict[str, list[float]], caps: list[frozenset[str]], grid: list[float]) -> dict[str, float]:
     """The grid shares minimising the summed scatter, every set in `caps` summing to at most 1.
 
-    The scatter is separable by account, so an account in no cap is fitted on its own and the
-    accounts in a cap are searched together. Ties go to the smaller shares.
+    The scatter is separable by account, so an account in no cap is fitted on its own and each
+    group of overlapping caps is solved together: searched exactly up to CAPPED_EXACT_MAX
+    accounts, ties going to the smaller shares, and by `_one_budget` above that.
     """
     out: dict[str, float] = {}
     capped = set().union(*caps) if caps else set()
     for name, values in ss.items():
         if name not in capped:
             out[name] = grid[min(range(len(grid)), key=lambda i: values[i])]
-    members = sorted(capped)
-    best: tuple[float, tuple[int, ...]] | None = None
+    groups: list[set[str]] = []
+    for cap in caps:
+        joined = [g for g in groups if g & cap]
+        merged = set(cap).union(*joined)
+        groups = [g for g in groups if not g & cap] + [merged]
+    for group in groups:
+        members = sorted(group)
+        if len(members) > CAPPED_EXACT_MAX:
+            out.update({m: grid[i] for m, i in _one_budget(ss, members, len(grid) - 1).items()})
+            continue
+        group_caps = [c for c in caps if c <= group]
+        best: tuple[float, tuple[int, ...]] | None = None
 
-    def search(k: int, picked: tuple[int, ...], total: float) -> None:
-        nonlocal best
-        if best is not None and total >= best[0]:
-            return
-        if k == len(members):
-            best = (total, picked)
-            return
-        chosen = dict(zip(members, picked))
-        for i in range(len(grid)):
-            trial = {**chosen, members[k]: i}
-            if any(sum(grid[trial[m]] for m in cap if m in trial) > 1 + 1e-9 for cap in caps):
-                break
-            search(k + 1, picked + (i,), total + ss[members[k]][i])
+        def search(k: int, picked: tuple[int, ...], total: float) -> None:
+            nonlocal best
+            if best is not None and total >= best[0]:
+                return
+            if k == len(members):
+                best = (total, picked)
+                return
+            chosen = dict(zip(members, picked))
+            for i in range(len(grid)):
+                trial = {**chosen, members[k]: i}
+                if any(sum(grid[trial[m]] for m in cap if m in trial) > 1 + 1e-9 for cap in group_caps):
+                    break
+                search(k + 1, picked + (i,), total + ss[members[k]][i])
 
-    if members:
         search(0, (), 0.0)
         assert best is not None
         out.update({m: grid[i] for m, i in zip(members, best[1])})
