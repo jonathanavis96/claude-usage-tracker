@@ -761,6 +761,31 @@ class UnclaimedShareTests(unittest.TestCase):
         shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
         self.assertLessEqual(shares["a1"]["share"], 0.04)
 
+    def test_two_accounts_reading_one_pool_share_at_most_all_of_it(self):
+        # Issue #133: Max accounts 2 and 4 read the same pooled root, so the same unclaimed
+        # turns sit in both accounts' overlapping stretches. Fitted apart, each took nearly
+        # all of them (1.0 and 0.82 live); fitted together they sum to at most 1.
+        one = self._pooled()["acct_one"]
+        two = copy.deepcopy(one)
+        by = {"acct_one": one, "acct_two": two}
+        alone = C.unclaimed_shares({"acct_two": two}, _output_value, CAND, C.CUT_AT, None, LABELS, ["acct_two"])
+        self.assertGreaterEqual(alone["a2"]["share"], 0.9)
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertLessEqual(shares["a1"]["share"] + shares["a2"]["share"], 1.0 + 1e-9)
+        self.assertEqual((shares["a1"]["capped_with"], shares["a2"]["capped_with"]), (["a2"], ["a1"]))
+
+    def test_accounts_whose_unclaimed_work_never_coincides_are_fitted_alone(self):
+        one = self._pooled()["acct_one"]
+        two = copy.deepcopy(one)
+        for st in two:  # the same pattern, each in the hour between two of acct_one's stretches
+            start = datetime.fromisoformat(st["start"]) + timedelta(minutes=135)
+            st["start"], st["end"] = start.isoformat(), (start + timedelta(minutes=30)).isoformat()
+        by = {"acct_one": one, "acct_two": two}
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertGreaterEqual(shares["a1"]["share"], 0.9)
+        self.assertGreaterEqual(shares["a2"]["share"], 0.9)
+        self.assertEqual(shares["a1"]["capped_with"], [])
+
     def test_an_account_with_no_unclaimed_work_is_not_listed(self):
         by = _fixture()
         self.assertEqual(C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by)), {})

@@ -573,7 +573,8 @@ def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *
     """The stretches that are evidence about ordinary use, per account (see module docstring).
 
     `require` names the acceptance column a stretch must read "accepted" in;
-    accounts in `exempt` skip that test. `None` skips it everywhere.
+    accounts in `exempt` skip that test. `None` skips it everywhere. A stretch overlapping
+    a harness run, or marked `cloud_session`, is left out whatever its columns say.
     """
     kept: dict[str, list[dict]] = {}
     for account, stretches in by_account.items():
@@ -588,6 +589,11 @@ def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *
             start, end = st.get("start"), st.get("end")
             if start and end and overlapping_run(runs, account, datetime.fromisoformat(start),
                                                  datetime.fromisoformat(end)) is not None:
+                continue
+            # Cloud-session work (tracker/cloud_sessions.py) is left out like a harness run:
+            # its turns ran in Anthropic's cloud, teleported back or never seen here, so the
+            # stretch is not a reading of this host's ordinary use (issue #133).
+            if st.get("cloud_session"):
                 continue
             if require and account not in exempt and st.get(require) != "accepted":
                 continue
@@ -2177,53 +2183,134 @@ def stretch_amount(st: dict, value, share: float = 0.0) -> float | None:
     return amount + share * extra if extra else amount
 
 
+def _unclaimed_caps(rows: dict[str, list[tuple]]) -> list[frozenset[str]]:
+    """The sets of accounts whose unclaimed work coincides at some instant.
+
+    `rows` holds, per account, (own, unclaimed, meter %, start, end) for each stretch. Two
+    accounts reading one pooled root see the same unclaimed turns over the span they share,
+    so wherever several accounts' stretches carrying unclaimed work overlap, their shares
+    of it must sum to at most 1.
+    """
+    # An end sorts before a start at the same instant: stretches that only meet do not overlap.
+    events = sorted((t, kind, name) for name, rs in rows.items() for r in rs if r[1]
+                    for t, kind in ((r[3], 1), (r[4], 0)))
+    active: dict[str, int] = {}
+    caps: set[frozenset[str]] = set()
+    for _, kind, name in events:
+        if kind == 1:
+            active[name] = active.get(name, 0) + 1
+            if len(active) > 1:
+                caps.add(frozenset(active))
+        else:
+            active[name] -= 1
+            if not active[name]:
+                del active[name]
+    # Only the largest sets constrain: a subset's sum is at most its superset's.
+    return [c for c in caps if not any(c < d for d in caps)]
+
+
+def _capped_best(ss: dict[str, list[float]], caps: list[frozenset[str]], grid: list[float]) -> dict[str, float]:
+    """The grid shares minimising the summed scatter, every set in `caps` summing to at most 1.
+
+    The scatter is separable by account, so an account in no cap is fitted on its own and the
+    accounts in a cap are searched together. Ties go to the smaller shares.
+    """
+    out: dict[str, float] = {}
+    capped = set().union(*caps) if caps else set()
+    for name, values in ss.items():
+        if name not in capped:
+            out[name] = grid[min(range(len(grid)), key=lambda i: values[i])]
+    members = sorted(capped)
+    best: tuple[float, tuple[int, ...]] | None = None
+
+    def search(k: int, picked: tuple[int, ...], total: float) -> None:
+        nonlocal best
+        if best is not None and total >= best[0]:
+            return
+        if k == len(members):
+            best = (total, picked)
+            return
+        chosen = dict(zip(members, picked))
+        for i in range(len(grid)):
+            trial = {**chosen, members[k]: i}
+            if any(sum(grid[trial[m]] for m in cap if m in trial) > 1 + 1e-9 for cap in caps):
+                break
+            search(k + 1, picked + (i,), total + ss[members[k]][i])
+
+    if members:
+        search(0, (), 0.0)
+        assert best is not None
+        out.update({m: grid[i] for m, i in zip(members, best[1])})
+    return out
+
+
 def unclaimed_shares(selected: dict[str, list[dict]], value, at: datetime, lo: datetime | None,
                      hi: datetime | None, labels: dict[str, str], names: list[str]) -> dict[str, dict]:
     """How much of the unclaimed work each pooled account's meter carried, measured.
 
-    The work no login claims on the pooled projects root (`stretch_amount`) was spent on some
-    account, and nothing on disk says which: the auto-mail filing judge picks a seat per run
-    and the airlock bench inherits its caller's config dir. Left out, it is meter movement with
-    no tokens, and the stretch reads low; added whole to every pooled account, it is counted
-    once per account. So the share is fitted: per account, the s in [0, 1] that minimises the
-    squared scatter of log((credits + s x unclaimed credits) / meter %) about each side's own
-    mean, either side of `at` as the known-date test splits them. Its 95% interval is a
-    percentile bootstrap, stretches resampled within side, with a fixed seed. An account whose
+    The work no login claims on the pooled projects root (`stretch_amount`) is the headless
+    `claude -p` runs no durable record attributes (tracker/unclaimed.py): since 21 September
+    the auto-mail filing judge's seat is picked per run and not written down. Left out, it
+    is meter movement with no tokens, and the stretch reads low; added whole to every pooled
+    account, it is counted once per account. So the share is fitted: the s in [0, 1] per
+    account that minimises the squared scatter of log((credits + s x unclaimed credits) /
+    meter %) about each side's own mean, either side of `at` as the known-date test splits
+    them, summed over the accounts. Accounts whose stretches carrying unclaimed work overlap
+    in time read the same unclaimed turns there, so they are fitted together with their
+    shares summing to at most 1 (`_unclaimed_caps`, listed as `capped_with`); an account that
+    overlaps no other is fitted on its own. The 95% interval is a percentile bootstrap,
+    stretches resampled within account and side, with a fixed seed. An account whose
     stretches carry no unclaimed work is not listed and adds nothing.
     """
-    out = {}
     grid = [i / UNCLAIMED_GRID for i in range(UNCLAIMED_GRID + 1)]
+    rows: dict[str, list[tuple]] = {}
+    sides: dict[str, list[list[tuple]]] = {}
     for name in sorted(selected, key=lambda n: _label_for(labels, n, names)):
-        sides: dict[str, list[tuple[float, float, float]]] = {"before": [], "after": []}
+        by_side: dict[str, list[tuple]] = {"before": [], "after": []}
         for st in selected[name]:
             side = _side_of(st, at, lo, hi)
             own = value(st["tokens"]) if side else None
             if not own or own <= 0:
                 continue
             extra = value(st["unclaimed_tokens"]) if st.get("unclaimed_tokens") else 0.0
-            sides[side].append((own, extra or 0.0, st["delta_pct"]))
-        rows = [r for rs in sides.values() for r in rs]
-        if not any(u for _, u, _ in rows):
+            by_side[side].append((own, extra or 0.0, st["delta_pct"],
+                                  datetime.fromisoformat(st["start"]), datetime.fromisoformat(st["end"])))
+        account_rows = [r for rs in by_side.values() for r in rs]
+        if not any(r[1] for r in account_rows):
             continue
+        rows[name] = account_rows
+        sides[name] = [g for g in by_side.values() if g]
+    if not rows:
+        return {}
+    caps = _unclaimed_caps(rows)
 
-        def best(groups: list[list[tuple[float, float, float]]]) -> float:
-            def ss(s: float) -> float:
-                total = 0.0
-                for g in groups:
-                    ys = [math.log((c + s * u) / d) for c, u, d in g]
-                    m = sum(ys) / len(ys) if ys else 0.0
-                    total += sum((y - m) ** 2 for y in ys)
-                return total
-            return min(grid, key=ss)
+    def scatter(groups: list[list[tuple]]) -> list[float]:
+        out = []
+        for s in grid:
+            total = 0.0
+            for g in groups:
+                ys = [math.log((r[0] + s * r[1]) / r[2]) for r in g]
+                m = sum(ys) / len(ys)
+                total += sum((y - m) ** 2 for y in ys)
+            out.append(total)
+        return out
 
-        groups = [g for g in sides.values() if g]
-        share = best(groups)
-        rng = random.Random(f"{JOINT_SEED}:unclaimed:{name}:{_utc(at)}")
-        draws = sorted(best([[rng.choice(g) for _ in g] for g in groups])
-                       for _ in range(UNCLAIMED_BOOTSTRAP))
+    shares = _capped_best({n: scatter(g) for n, g in sides.items()}, caps, grid)
+    rng = random.Random(f"{JOINT_SEED}:unclaimed:{_utc(at)}")
+    draws: dict[str, list[float]] = {n: [] for n in rows}
+    for _ in range(UNCLAIMED_BOOTSTRAP):
+        drawn = _capped_best({n: scatter([[rng.choice(g) for _ in g] for g in gs]) for n, gs in sides.items()},
+                             caps, grid)
+        for n, v in drawn.items():
+            draws[n].append(v)
+    out = {}
+    for name in rows:
+        d = sorted(draws[name])
         out[_label_for(labels, name, names)] = {
-            "share": share, "interval": [draws[int(0.025 * len(draws))], draws[int(0.975 * len(draws)) - 1]],
-            "n_with_unclaimed": sum(1 for _, u, _ in rows if u), "n": len(rows)}
+            "share": shares[name], "interval": [d[int(0.025 * len(d))], d[int(0.975 * len(d)) - 1]],
+            "capped_with": sorted(_label_for(labels, m, names) for cap in caps if name in cap
+                                  for m in cap if m != name),
+            "n_with_unclaimed": sum(1 for r in rows[name] if r[1]), "n": len(rows[name])}
     return out
 
 

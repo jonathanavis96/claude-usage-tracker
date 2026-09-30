@@ -187,6 +187,11 @@ class Stretch:
 
     `first_turns` is each model's earliest turn in the stretch (model -> timestamp), so a
     reader can date a model's first use to the turn rather than to the stretch's start.
+
+    `remote_sourced_turns` counts the turns that are copies of a cloud session's work
+    (tracker/turns.py `Turn.remote`). They count in `tokens` like any other turn; the count
+    is what marks the stretch as holding cloud-session work (tracker/gs_passive.py
+    `cloud_session`), which no measurement reads.
     """
     start: datetime
     end: datetime
@@ -201,6 +206,7 @@ class Stretch:
     fast_session_tokens: dict = field(default_factory=dict)
     fast_session_turns: int = 0
     first_turns: dict = field(default_factory=dict)
+    remote_sourced_turns: int = 0
 
     @property
     def usd_per_pct(self) -> float:
@@ -228,6 +234,8 @@ class Stretch:
             if turn.cache_write_1h:
                 by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
         self.turns += 1
+        if turn.remote:
+            self.remote_sourced_turns += 1
         usd = turn_meter_usd(turn, prices)
         # The first turn on each model, keyed the way `tokens` or `unpriced` keys it. Turns
         # arrive in time order (build_stretches), so the first one seen is the earliest.

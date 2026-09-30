@@ -170,6 +170,17 @@ class SelectionTests(unittest.TestCase):
         later = opus_stretch("2026-09-09T20:00:00+00:00", 200_000, end="2026-09-09T21:00:00+00:00")
         self.assertEqual(len(self.clean([later])), 1)
 
+    def test_a_stretch_holding_cloud_session_work_is_left_out(self):
+        # Issue #133: a teleported cloud turn or a recorded cloud session in the span
+        # (tracker/gs_passive.py `cloud_session`) takes the stretch out like a harness run.
+        cloud = opus_stretch("2026-09-26T12:00:00+00:00", 200_000, end="2026-09-26T13:00:00+00:00",
+                             cloud_session=True, remote_sourced_turns=40)
+        local = opus_stretch("2026-09-26T14:00:00+00:00", 200_000, end="2026-09-26T15:00:00+00:00",
+                             cloud_session=False, remote_sourced_turns=0)
+        self.assertEqual([st["start"] for st in self.clean([cloud, local])], [local["start"]])
+        self.assertEqual([st["start"] for st in self.clean([cloud, local], require="status")],
+                         [local["start"]])
+
     def test_a_stretch_that_barely_moved_the_meter_is_mostly_rounding_and_is_left_out(self):
         self.assertEqual(self.clean([opus_stretch("2026-09-01T00:00:00+00:00", 200_000, delta_pct=2)]), [])
 

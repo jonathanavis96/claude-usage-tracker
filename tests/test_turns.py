@@ -53,6 +53,17 @@ class TurnTests(unittest.TestCase):
         self.assertEqual((t.input, t.cache_read, t.cache_write), (2, 24483, 41398))
         self.assertEqual(t.ts, datetime(2026, 9, 23, 10, 0, tzinfo=timezone.utc))
 
+    def test_a_teleported_cloud_turn_is_marked_remote(self):
+        # The line shape `claude --teleport` writes into the local transcript for a cloud
+        # session's turn (gs, 2026-09-27, anonymised): `remoteSourced` set, no `requestId`.
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "a.jsonl")
+            cloud = json.loads(rec("m1", ts="2026-09-27T12:41:55.472Z", model="claude-opus-5-5"))
+            cloud.update({"remoteSourced": True, "entrypoint": "cli", "cwd": "/tmp/claude-1000/cgrab.x"})
+            p.write_text("\n".join([json.dumps(cloud), rec("m2", ts="2026-09-27T12:50:00Z")]) + "\n")
+            turns = list(iter_turns([p]))
+        self.assertEqual([(t.id, t.remote) for t in turns], [("m1", True), ("m2", False)])
+
     def test_paths_filtered_by_mtime(self):
         with tempfile.TemporaryDirectory() as d:
             old = Path(d, "sub", "old.jsonl")
