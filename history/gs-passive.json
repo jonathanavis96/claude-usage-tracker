@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-30T02:00:13.347053+00:00",
+ "generated_at": "2026-09-30T02:30:12.724619+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4606,
+    "reset_verified_samples": 4616,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 8137,
+    "samples": 8147,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-30T01:58:10+00:00"
+    "last": "2026-09-30T02:28:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -9894,7 +9894,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-30T01:58:10+00:00",
+     "window_ending": "2026-09-30T02:28:45+00:00",
      "windows": 2.0,
      "five_hour_pct": 2.0,
      "seven_day_pct": 1.0,
@@ -9915,11 +9915,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 3735,
+    "reset_verified_samples": 3747,
     "since": null,
-    "samples": 5983,
+    "samples": 5995,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-30T01:58:10+00:00"
+    "last": "2026-09-30T02:28:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -13899,7 +13899,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-30T01:58:10+00:00",
+     "window_ending": "2026-09-30T02:28:45+00:00",
      "windows": 6.0,
      "five_hour_pct": 6.0,
      "seven_day_pct": 1.0,
@@ -13920,11 +13920,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 3758,
+    "reset_verified_samples": 3770,
     "since": null,
-    "samples": 4026,
+    "samples": 4038,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-09-30T01:58:10+00:00"
+    "last": "2026-09-30T02:28:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -14900,7 +14900,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-09-30T02:00:58.038205+00:00",
+  "generated_at": "2026-09-30T02:30:55.523494+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
