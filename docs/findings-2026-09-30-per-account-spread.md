@@ -318,21 +318,171 @@ lines, Sonnet, Haiku or Fable rates, the cache-read weight, the Claude Code vers
 Max account 1 transcript work billed elsewhere. The seat work is on the before side and would
 widen the spread if moved.
 
-## Decisions needed
+## Decisions taken, 2026-09-30
 
-None of the four has a contained fix that is not a judgement call.
+Jonathan's decisions on the four questions this doc first ended with:
 
-1. **Opus sub-agent valuation.** Should sub-agent tokens be recorded apart from main-session
-   tokens per stretch (collector change on both hosts, `tracker/gs_passive.py`), and given
-   their own coefficient in the pooled fit? The data put Opus sub-agents at about half their
-   credit value. Why the meter charges them less is not known, so a fixed 0.5 would be a
-   guess. A fitted coefficient would be a measurement.
-2. **Interval method.** Should `log_ratio_side` (and the joint fit's bootstrap) resample
-   blocks of neighbouring stretches, by UTC day or by session, instead of single stretches?
-   This roughly doubles the per-account standard errors. It moves the combined interval from
-   [40.4, 67.1] towards [27, 77], and with it the published state.
-3. **Cloud sessions.** Should `remoteSourced` turns be recorded separately per stretch, like
-   `unclaimed_tokens`, with a fitted share, instead of counted in full?
-4. **Unclaimed shares.** Should the shares be fitted jointly across the accounts that read one
-   pooled root, constrained to sum to at most 1? Max account 1's logins on gs also draw on
-   that pool.
+1. **Opus sub-agent valuation: no separate rate.** Anthropic bills a sub-agent at its model's
+   rate, the same as its parent. So a reading of about 2x would mean too many sub-agent tokens
+   are being counted. Section 6 looks for where, and does not find it.
+2. **Interval method: unchanged.**
+3. **Cloud sessions: left out of the measurement on every account** (section 8).
+4. **Unclaimed work: attributed from records where they exist**, and otherwise fitted jointly
+   with a cap (section 7).
+
+## 6. Where the sub-agent tokens could be over-counted: not in the transcripts
+
+**An independent account of the same runs.** Claude Code keeps its own per-session token
+totals, by model, in each config dir's `.claude.json` (`projects.<dir>.lastModelUsage`, for
+the last session run in that directory). Those totals include every sub-agent the session
+ran. For every such session whose transcript is still on disk, the counts below compare that
+total with what `tracker/turns.py` reads from the session's parent transcript plus its
+`subagents/*.jsonl` files. That is the same per-message-id, largest-value-per-field count the
+stretches use.
+
+On gs, 33 sessions were compared, 8 of them with sub-agents. The rows are models that only
+sub-agents ran:
+
+| session | sub-agent files | model | output | cache write | cache read |
+|---|---|---|---|---|---|
+| Max account 3, 14 Sep | 80 | Opus 5 | 0.98 | 0.91 | 0.79 |
+| | | Sonnet 5 | 0.98 | 0.97 | 0.83 |
+| | | Haiku 4.5 | 0.87 | 0.87 | 0.89 |
+| Max account 4, 22 Sep | 33 | Opus 5 | 0.97 | 0.96 | 0.75 |
+| | | Sonnet 5 | 0.99 | 0.94 | 0.83 |
+| Max account 4, 23 Sep | 51 | Sonnet 5 | 0.99 | 0.96 | 0.82 |
+| Max account 2, 29 Sep | 5 | Sonnet 5 | 0.99 | 0.97 | 0.83 |
+| Max account 2, 12 Sep | 2 | Opus 5 | 0.99 | 0.95 | 0.74 |
+| Max account 3, 21 Sep | 1 | Opus 5 | 0.98 | 1.00 | 0.50 |
+
+Each cell is transcript count over Claude Code's own count. On masterrig, 31 sessions were
+compared, 3 of them with sub-agents. Over models only sub-agents ran, the ratios are output
+0.927, cache write 0.979 and cache read 0.727. Over models only main sessions ran, they are
+0.939, 0.994 and 0.955.
+
+So the transcripts never hold more sub-agent tokens than Claude Code itself counted for the
+same session. They hold slightly fewer, most of all cache reads. Whatever makes Opus sub-agent
+work read about 2x against the meter, it is not the tracker counting tokens that the session
+did not spend.
+
+**The parent's Agent tool result is not a total.** A synchronous Agent result carries
+`totalTokens` and `usage`, but they describe the sub-agent's last request only. In one gs
+example, `totalTokens` 37,406 is exactly that request's 2 input + 37,201 cache write + 0 cache
+read + 203 output. It cannot be compared with the run's total.
+
+**The specific mechanisms, each checked:**
+
+- **Largest value per field over one message's lines.** If this inflated anything, the
+  transcript count would exceed Claude Code's own. It does not, for output or cache fields,
+  on either host.
+- **Cache writes where the sub-agent read its parent's cache.** The API reports each request's
+  cache write and read, and Claude Code's totals agree with the transcripts' to within the
+  ratios above. A forked sub-agent (the `*.forked-skill.json` marker, 114 on gs) reads its
+  parent's prefix as a cache read, and that is what is recorded.
+- **Sub-agent files holding the parent's turns, or resumed or forked copies.** On gs, 1 of
+  1,236 repeated message ids is shared between a sub-agent file and its parent (section 2).
+  Jonathan's masterrig check found 0 of 1,513. Any repeat inside one account is dropped by the
+  per-read dedup in any case.
+- **One sub-agent written as several files with different ids.** gs's `subagents`
+  directories (1,855 sessions) hold only `agent-<id>.jsonl` (4,590), `agent-<id>.meta.json`
+  (4,589) and the forked-skill marker and record (114 each). Only the `.jsonl` files are read.
+  Across different files of one session, 44 of 128,317 usage records share a timestamp to the
+  second and identical usage under different message ids.
+- **The 1h and 5m write split.** Sub-agents write their cache with the five-minute TTL (0.00
+  one-hour share on both hosts) and main sessions with the one-hour TTL (0.99 to 1.00). At
+  list price a one-hour write costs 1.6x a five-minute one, and the valuation prices both as
+  input. This is a pricing difference the API itself reports, not a counting error. Fitted to
+  the within-side scatter, it explains only a small part (section 5a).
+
+No counting cause was found, so there is no counting fix. The Opus sub-agent effect in
+section 5a stands as measured and unexplained.
+
+## 7. The unclaimed pooled work: what it is, and whose
+
+**Why no config dir claims it.** A transcript on the pooled root belongs to the config dir
+whose `session-env` holds its session. Claude Code writes that entry only for a session that
+starts a shell. Every unclaimed transcript from 14 September 12:00Z to 30 September is a
+headless `claude -p` run (`entrypoint: sdk-cli`, one turn per session). None is an
+interactive session whose `session-env` entry was deleted. By launcher:
+
+| launcher | turns | credits | share | record of the account |
+|---|---|---|---|---|
+| airlock bench's tuning judge (systemd timer, 19-30 Sep) | 253 | 4.81M | 51.0% | `~/.config/airlock/tune.env`, written 2026-09-19T17:51:31Z: `AIRLOCK_TUNE_CLAUDE_CONFIG_DIR` is `~/.claude-javiswork`. The first unclaimed run is 18:11Z that day. |
+| auto-mail filing judge (cron), before its seat picker | 326 | 1.10M | 11.7% | auto-mail 510c222 (2026-09-21T21:44Z) introduced the seat picker. Before it nothing set `CLAUDE_CONFIG_DIR` and the crontab sets none, so it ran on the default `~/.claude` login, which is Max account 1's. |
+| auto-mail filing judge, after its seat picker | 236 | 1.16M | 12.3% | none: the picked seat is not written to any log or audit file |
+| this tracker's own probe (14-16 Sep) | 358 | 2.14M | 22.7% | history/harness-runs.jsonl: Max account 2's runs, whose stretches are already excluded |
+| one prose-writing test run (15 Sep) | 4 | 0.23M | 2.4% | none |
+
+**What the collector now does** (`tracker/unclaimed.py`, one module holding the rules):
+
+- The airlock, pre-picker filing-judge and probe runs are attributed from those records.
+  Work that belongs to the account being joined is added to its own transcripts; work that
+  belongs to another config dir is dropped from this account and counted under `dropped_to`.
+- Only the post-picker filing judge and the one test run remain unclaimed. Those are fitted
+  as before, but now jointly: accounts whose stretches with unclaimed work overlap in time
+  are fitted together, with shares that sum to at most 1 (`credits._unclaimed_caps`,
+  `_capped_best`).
+
+On the 23:31Z history, the cap alone moves Max account 4's share from 0.82 to 0.00 and leaves
+Max account 2's at 1.00. Max account 4 has no before side, so no change figure moves.
+
+The 1.10M credits of pre-picker filing-judge work belong to Max account 1's meter. They are
+not added to its stretches, which are built on masterrig. They are at most 1.2% of that
+account's before-side credits (about 89M over 14-22 September).
+
+## 8. Cloud sessions left out
+
+A stretch holding cloud-session work is now marked `cloud_session` by the collector, and
+`clean_stretches` leaves it out of every fit and change figure, as it does a harness run. A
+stretch is marked on either of two grounds:
+
+- **Teleported turns.** It holds turns marked `remoteSourced`, which are cloud-session turns
+  copied onto the host by `claude --teleport` (`remote_sourced_turns`). On gs that is 2,443
+  turns from 25 September; on masterrig, 325 from 28 September.
+- **A recorded cloud session.** A cloud session of the account ran in its span. The durable
+  record is each host's `~/private/cloud/sessions.tsv`, the launch log written by
+  `~/bin/cloud-build`, together with the transcripts `cloud-grab` saves beside it
+  (`tracker/cloud_sessions.py`).
+  - masterrig has one login, so its 8 launches (28 September) are all Max account 1's. A
+    launch with a grabbed transcript spans from launch to its last cloud turn. One without
+    counts at its launch instant only; no end is guessed.
+  - gs's log names no login, so a launch counts as Max account 2's only if its transcript was
+    grabbed. `cloud-grab` teleports under `~/.claude-javiswork` alone, and only the owning
+    account can teleport a session. That covers 21 of 39 launches. The other 18 lost their
+    grabbed transcript when a later grab of the same worktree overwrote it. All 18 still
+    show `remoteSourced` turns within two hours of launch.
+  - `~/bin/cloud-session-review` logs nothing. The 143 teleported turns from before the first
+    logged launch (25 September, 13:50Z) are its reviews, caught by the `remoteSourced` test.
+  - A cloud session that was neither logged nor teleported leaves no record on either host.
+
+## 9. The figures with sections 7 and 8 applied
+
+The rebuild was run on 2026-09-30:
+
+- Both hosts' stretch records were regenerated with `--until 2026-09-30T12:00Z`, once with
+  main's code and once with this branch's.
+- The rates were refitted on each set (`tools.model_rates`).
+- The publish was built at 12:00Z.
+
+Main's rebuild reproduces the live figures exactly.
+
+| | Max account 1 | Max account 2 | Max account 3 | combined (known-date) | joint fit g | Opus 5.5 r |
+|---|---|---|---|---|---|---|
+| main | +74.4% [54.0, 97.4] | +45.8% [24.3, 71.1] | +16.6% [-4.9, 42.9] | +53.2% [40.4, 67.1] | +38.8% [-4.6, 78.4] | 0.946 |
+| + unclaimed attribution and cap | +79.7% | +52.4% | +22.2% | +58.6% | +46.6% [0.7, 90.1] | 1.007 |
+| + cloud stretches out | +76.4% | +49.9% | +29.9% | +58.5% | +47.9% [3.3, 89.3] | 1.089 |
+| + rates refitted (this branch) | +78.0% [57.4, 101.3] | +51.6% [27.0, 81.0] | +31.9% [7.9, 61.4] | +60.8% [47.1, 75.7] | +49.2% [3.5, 90.1] | 1.101 |
+
+How the steps move the figures:
+
+- **Cloud exclusion** takes 2 after-side stretches from Max account 1 (11 to 9) and 4 from
+  Max account 2 (17 to 13).
+- **Attribution** removes the pre-picker filing-judge work from Max account 2's before side,
+  which raises its change. It also leaves Max account 2 only post-picker unclaimed work, and
+  the capped fit gives Max account 2 0.0 of that and Max account 4 1.0.
+- **Max account 3 moves although its own stretches did not change.** Each step moves the
+  Opus 5.5 rate the joint fit absorbs, and Max account 3's after side is 78% Opus 5.5.
+- **The spread between Max accounts 1 and 3 narrows** from 57.8 to 46.1 points. The two
+  intervals now overlap: [57.4, 101.3] and [7.9, 61.4].
+- **The five-hour change now excludes no change.** It is +49.2% [3.5, 90.1], and the scope
+  reading goes from undetermined to "both" (weekly +42.0% [1.5, 98.8]).

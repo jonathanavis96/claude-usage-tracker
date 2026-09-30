@@ -604,6 +604,12 @@ class CloudSessionTests(unittest.TestCase):
             marked = [(i, st["remote_sourced_turns"]) for i, st in enumerate(r["stretches"]) if st["cloud_session"]]
             self.assertEqual(marked, [(1, 1), (4, 0)])
             self.assertEqual(r["cloud_sessions"]["spans"][0]["source"], "launch")
+            # Both leave every measurement, as a harness run's stretch does.
+            from tracker import credits as C
+            kept = C.clean_stretches({"dave": r["stretches"]}, [], require=None)["dave"]
+            self.assertEqual(len(kept), len(r["stretches"]) - 2)
+            self.assertNotIn(r["stretches"][1]["start"], [st["start"] for st in kept])
+            self.assertNotIn(r["stretches"][4]["start"], [st["start"] for st in kept])
 
 
 class UnclaimedAttributionTests(unittest.TestCase):
@@ -659,3 +665,16 @@ class UnclaimedAttributionTests(unittest.TestCase):
             self.assertEqual(meta["attributed_by_record"], {"auto_mail_default_login": 1})
             # The picked seat is written down nowhere: that run stays unclaimed, for the fit.
             self.assertEqual(meta["unclaimed"], 1)
+
+    def test_a_probe_run_is_its_harness_runs_account_unless_two_accounts_ran_at_once(self):
+        from tracker.unclaimed import attribute
+        with tempfile.TemporaryDirectory() as d:
+            home, shared = self._home(Path(d))
+            at = datetime(2026, 9, 9, 11, 30, tzinfo=timezone.utc)
+            self._headless(shared, "probe", at, f"{home}/claude-usage-tracker")
+            path = next(shared.rglob("probe.jsonl"))
+            one = [(".claude-javiswork", at - timedelta(hours=1), at + timedelta(hours=1))]
+            self.assertEqual(attribute(path, home, one).config_dir, ".claude-javiswork")
+            both = one + [(".claude-dave", at - timedelta(minutes=10), at + timedelta(minutes=10))]
+            self.assertIsNone(attribute(path, home, both))
+            self.assertIsNone(attribute(path, home, []))

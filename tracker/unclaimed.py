@@ -101,10 +101,10 @@ def attribute(path: Path, home: Path, harness: Sequence[tuple[str, datetime, dat
     if ts is None or not cwd:
         return None
     if Path(cwd).name == TRACKER_CHECKOUT_NAME:
-        for config_dir, start, end in harness:
-            if start <= ts <= end:
-                return Attribution(config_dir, "harness_run")
-        return None
+        # Inside one account's run, that account's; inside two accounts' runs at once (the
+        # dave and jwork probes overlapped on 9 September), no record says which.
+        during = {config_dir for config_dir, start, end in harness if start <= ts <= end}
+        return Attribution(during.pop(), "harness_run") if len(during) == 1 else None
     releases = str(home / AIRLOCK_RELEASES)
     if cwd == releases or cwd.startswith(releases + "/"):
         if airlock is not None and ts >= airlock[1]:
