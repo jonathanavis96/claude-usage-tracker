@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-30T10:00:13.507744+00:00",
+ "generated_at": "2026-09-30T10:30:13.233409+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4726,
+    "reset_verified_samples": 4736,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 8360,
+    "samples": 8370,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-09-30T09:53:35+00:00"
+    "last": "2026-09-30T10:29:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,18 +32,18 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 2165,
-    "turns": 69634,
+    "files": 2170,
+    "turns": 69770,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 2165,
-     "dropped": 2570,
-     "subagent_files": 845,
+     "kept": 2170,
+     "dropped": 2573,
+     "subagent_files": 847,
      "dropped_to": {
       ".claude": 1,
-      ".claude-avis": 834
+      ".claude-avis": 835
      },
-     "unclaimed": 1735
+     "unclaimed": 1737
     }
    },
    "stretches": [
@@ -9906,12 +9906,12 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-30T09:53:35+00:00",
+     "window_ending": "2026-09-30T10:29:45+00:00",
      "windows": null,
-     "five_hour_pct": 2.0,
+     "five_hour_pct": 3.0,
      "seven_day_pct": 0.0,
      "rounding_interval": [
-      0.2734,
+      0.9101,
       null
      ],
      "pieces": 1,
@@ -9927,11 +9927,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 3944,
+    "reset_verified_samples": 3956,
     "since": null,
-    "samples": 6234,
+    "samples": 6246,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-09-30T09:57:55+00:00"
+    "last": "2026-09-30T10:23:19+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -13932,11 +13932,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 3924,
+    "reset_verified_samples": 3935,
     "since": null,
-    "samples": 4269,
+    "samples": 4282,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-09-30T09:51:25+00:00"
+    "last": "2026-09-30T10:29:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -13946,17 +13946,17 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 402,
-    "turns": 13516,
+    "files": 403,
+    "turns": 13517,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 402,
-     "dropped": 702,
+     "kept": 403,
+     "dropped": 709,
      "subagent_files": 218,
      "dropped_to": {
-      ".claude-javiswork": 376
+      ".claude-javiswork": 381
      },
-     "unclaimed": 326
+     "unclaimed": 328
     }
    },
    "stretches": [
@@ -14912,7 +14912,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-09-30T10:01:02.942549+00:00",
+  "generated_at": "2026-09-30T10:31:07.731443+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -51785,13 +51785,15 @@
     "model": "claude-haiku-4-5",
     "account": "a4",
     "entrypoint": "sdk-cli",
-    "n": 1,
+    "n": 2,
     "fast_session_requests": 0,
     "output_hist": {
-     "223": 1
+     "223": 1,
+     "216": 1
     },
     "ttfb_hist": {
-     "123": 1
+     "123": 1,
+     "109": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
@@ -51801,82 +51803,115 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 57,
+    "n": 116,
     "fast_session_requests": 0,
     "output_hist": {
-     "236": 3,
-     "240": 1,
-     "225": 1,
-     "230": 2,
-     "239": 1,
-     "233": 6,
-     "238": 5,
-     "234": 2,
-     "235": 1,
+     "236": 6,
+     "240": 3,
+     "225": 3,
+     "230": 5,
+     "239": 3,
+     "233": 10,
+     "238": 7,
+     "234": 3,
+     "235": 4,
      "222": 1,
-     "221": 3,
-     "229": 4,
-     "223": 2,
-     "226": 7,
-     "237": 2,
-     "243": 1,
+     "221": 4,
+     "229": 6,
+     "223": 5,
+     "226": 10,
+     "237": 3,
+     "243": 3,
      "244": 2,
-     "228": 3,
-     "231": 2,
+     "228": 9,
+     "231": 5,
      "247": 1,
      "216": 1,
      "242": 2,
-     "227": 1,
+     "227": 7,
      "248": 1,
      "232": 1,
-     "241": 1
+     "241": 2,
+     "224": 4,
+     "219": 2,
+     "220": 1,
+     "245": 2
     },
     "ttfb_hist": {
      "30": 1,
      "74": 1,
      "123": 1,
-     "101": 1,
+     "101": 2,
      "34": 2,
      "105": 1,
-     "111": 1,
+     "111": 2,
      "98": 2,
      "142": 1,
-     "67": 2,
-     "37": 2,
-     "63": 1,
+     "67": 3,
+     "37": 4,
+     "63": 5,
      "75": 1,
-     "110": 1,
-     "60": 2,
+     "110": 2,
+     "60": 3,
      "61": 1,
      "127": 1,
      "76": 1,
      "84": 2,
      "56": 2,
      "124": 1,
-     "106": 1,
-     "94": 1,
+     "106": 2,
+     "94": 3,
      "68": 1,
      "48": 2,
-     "64": 2,
+     "64": 3,
      "43": 1,
      "50": 2,
      "92": 1,
-     "45": 1,
+     "45": 3,
      "38": 1,
      "104": 2,
-     "55": 2,
+     "55": 5,
      "88": 1,
-     "47": 1,
+     "47": 2,
      "44": 1,
-     "100": 1,
+     "100": 2,
      "121": 1,
-     "40": 1,
+     "40": 2,
      "85": 1,
      "31": 1,
-     "53": 1,
+     "53": 2,
      "62": 1,
      "66": 1,
-     "51": 1
+     "51": 3,
+     "83": 2,
+     "69": 1,
+     "58": 1,
+     "59": 1,
+     "41": 1,
+     "33": 1,
+     "109": 1,
+     "52": 2,
+     "103": 1,
+     "21": 1,
+     "54": 2,
+     "35": 1,
+     "72": 1,
+     "80": 1,
+     "93": 1,
+     "77": 1,
+     "5": 1,
+     "28": 1,
+     "29": 2,
+     "15": 1,
+     "12": 1,
+     "135": 1,
+     "57": 1,
+     "22": 1,
+     "122": 1,
+     "19": 1,
+     "65": 1,
+     "39": 1,
+     "79": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
