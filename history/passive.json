@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-30T00:15:29.538033+00:00",
+ "generated_at": "2026-09-30T21:15:31.897350+00:00",
  "plan_ratio_5x_to_20x": null,
  "split": {
   "input": 0.0,
@@ -171,17 +171,21 @@
   "2026-09-29": {
    "tokens_per_pct": 7610861,
    "interpolated": false
+  },
+  "2026-09-30": {
+   "tokens_per_pct": 8790833,
+   "interpolated": false
   }
  },
  "session_tokens": {
   "claude-sonnet-4-6": 264267,
-  "claude-opus-5": 2610955,
+  "claude-opus-5": 2625626,
   "claude-sonnet-5": 789264,
   "claude-fable-5-1": 6716800,
-  "claude-opus-4-7": 127145,
+  "claude-opus-4-7": 125965,
   "claude-opus-4-8": 9529314,
   "claude-haiku-4-5": 211871,
-  "claude-opus-5-5": 3872754
+  "claude-opus-5-5": 4197799
  },
  "weekly_windows": {
   "current": 5.01,
@@ -398,14 +402,14 @@
    },
    {
     "week_ending": "2026-10-02",
-    "windows": 4.82,
-    "five_hour_pct": 53.0,
-    "seven_day_pct": 11.0,
+    "windows": 4.54,
+    "five_hour_pct": 59.0,
+    "seven_day_pct": 13.0,
     "rounding_interval": [
-     2.5509,
-     15.0956
+     2.4792,
+     12.5699
     ],
-    "pieces": 20,
+    "pieces": 24,
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": true
@@ -4713,6 +4717,42 @@
     "windows": null,
     "five_hour_pct": 1.0,
     "seven_day_pct": 0.0,
+    "rounding_interval": [
+     0.0,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-30T14:30:00.943407+00:00",
+    "windows": 1.0,
+    "five_hour_pct": 1.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     0.0,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-09-30T19:30:00.306895+00:00",
+    "windows": null,
+    "five_hour_pct": 4.0,
+    "seven_day_pct": 0.0,
+    "rounding_interval": [
+     1.5469,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-01T00:30:00.240521+00:00",
+    "windows": 1.0,
+    "five_hour_pct": 1.0,
+    "seven_day_pct": 1.0,
     "rounding_interval": [
      0.0,
      null
