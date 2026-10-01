@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-01T08:30:13.467433+00:00",
+ "generated_at": "2026-10-01T09:00:13.060179+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5240,
+    "reset_verified_samples": 5254,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 8877,
+    "samples": 8891,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-01T08:27:40+00:00"
+    "last": "2026-10-01T08:58:11+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -37,13 +37,13 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2356,
-     "dropped": 2799,
+     "dropped": 2800,
      "subagent_files": 942,
      "dropped_to": {
       ".claude": 1,
       ".claude-avis": 914
      },
-     "unclaimed": 1884
+     "unclaimed": 1885
     }
    },
    "stretches": [
@@ -10329,11 +10329,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4488,
+    "reset_verified_samples": 4500,
     "since": null,
-    "samples": 6821,
+    "samples": 6833,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-01T08:28:45+00:00"
+    "last": "2026-10-01T08:58:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -14439,11 +14439,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4484,
+    "reset_verified_samples": 4496,
     "since": null,
-    "samples": 4844,
+    "samples": 4856,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-01T08:28:45+00:00"
+    "last": "2026-10-01T08:58:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -14454,16 +14454,16 @@
      ".claude-jono"
     ],
     "files": 482,
-    "turns": 15917,
+    "turns": 15924,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 482,
-     "dropped": 1042,
+     "dropped": 1043,
      "subagent_files": 245,
      "dropped_to": {
       ".claude-javiswork": 567
      },
-     "unclaimed": 475
+     "unclaimed": 476
     }
    },
    "stretches": [
@@ -15720,7 +15720,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-01T08:28:45+00:00",
+     "window_ending": "2026-10-01T08:58:10+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -15737,7 +15737,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-01T08:31:05.629652+00:00",
+  "generated_at": "2026-10-01T09:01:04.421669+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -53675,7 +53675,7 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 138,
+    "n": 142,
     "fast_session_requests": 0,
     "output_hist": {
      "211": 3,
@@ -53683,11 +53683,11 @@
      "220": 4,
      "213": 3,
      "225": 5,
-     "229": 6,
+     "229": 7,
      "216": 9,
      "219": 6,
      "212": 7,
-     "218": 6,
+     "218": 7,
      "230": 4,
      "228": 8,
      "208": 4,
@@ -53696,7 +53696,7 @@
      "223": 7,
      "215": 8,
      "210": 4,
-     "231": 2,
+     "231": 3,
      "222": 2,
      "209": 4,
      "227": 7,
@@ -53705,7 +53705,7 @@
      "232": 4,
      "226": 2,
      "204": 3,
-     "233": 2,
+     "233": 3,
      "239": 1,
      "198": 1,
      "203": 1,
@@ -53776,7 +53776,7 @@
      "119": 1,
      "66": 1,
      "70": 1,
-     "81": 1,
+     "81": 2,
      "58": 2,
      "84": 2,
      "67": 1,
@@ -53784,7 +53784,10 @@
      "75": 1,
      "150": 1,
      "122": 1,
-     "47": 1
+     "47": 1,
+     "105": 1,
+     "92": 1,
+     "86": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
