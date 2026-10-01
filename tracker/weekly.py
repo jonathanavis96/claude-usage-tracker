@@ -66,31 +66,36 @@ def parse_row(d: dict) -> dict | None:
         return None
     fh = d.get("five_hour") or {}
     sd = d.get("seven_day") or {}
-    if (not d.get("ts") or fh.get("utilization") is None or fh.get("resets_at") is None
-            or sd.get("utilization") is None or sd.get("resets_at") is None):
+    try:
+        row = {
+            "ts": d["ts"],
+            "five_hour": float(fh["utilization"]),
+            "five_resets_at": fh["resets_at"],
+            "seven_day": float(sd["utilization"]),
+            "seven_resets_at": sd["resets_at"],
+        }
+        # Every stamp is parsed downstream; a row that cannot be is a gap, not a crash.
+        for k in ("ts", "five_resets_at", "seven_resets_at"):
+            datetime.fromisoformat(row[k])
+    except (KeyError, TypeError, ValueError, AttributeError):
         return None
-    return {
-        "ts": d["ts"],
-        "five_hour": float(fh["utilization"]),
-        "five_resets_at": fh["resets_at"],
-        "seven_day": float(sd["utilization"]),
-        "seven_resets_at": sd["resets_at"],
-    }
+    return row
+
+
+def _close(prev: dict, cur: dict, key: str) -> bool:
+    p, c = datetime.fromisoformat(prev[key]), datetime.fromisoformat(cur[key])
+    return abs((c - p).total_seconds()) < _FIVE_HOUR_TOLERANCE.total_seconds()
 
 
 def _same_five_hour_window(prev: dict, cur: dict) -> bool:
-    p = datetime.fromisoformat(prev["five_resets_at"])
-    c = datetime.fromisoformat(cur["five_resets_at"])
-    return abs((c - p).total_seconds()) < _FIVE_HOUR_TOLERANCE.total_seconds()
+    return _close(prev, cur, "five_resets_at")
 
 
 def _same_weekly_window(prev: dict, cur: dict) -> bool:
     # The endpoint jitters resets_at by a second or so between reads, across the hour:
     # 03:59:59.9 and 04:00:00.3 are one weekly window. Comparing the hour prefix split
     # them and silently dropped every pair across the jitter, movement on both meters.
-    p = datetime.fromisoformat(prev["seven_resets_at"])
-    c = datetime.fromisoformat(cur["seven_resets_at"])
-    return abs((c - p).total_seconds()) < _FIVE_HOUR_TOLERANCE.total_seconds()
+    return _close(prev, cur, "seven_resets_at")
 
 
 def _week_key(resets_at: str) -> str:
