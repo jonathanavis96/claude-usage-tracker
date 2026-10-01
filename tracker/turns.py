@@ -55,6 +55,11 @@ class Turn:
     #: The response's `message.id`, which tracker/speed.py keys requests by: how a
     #: stretch tells a fast-session request's tokens from the rest (tracker/join.py).
     id: str = ""
+    #: True when the message's lines carry `remoteSourced`: a cloud session's turn
+    #: (`claude --cloud`) copied onto this host by `claude --teleport`. Its tokens were
+    #: spent in Anthropic's cloud at the cloud session's own time, and a stretch holding
+    #: one is left out of every measurement (tracker/join.py `remote_sourced_turns`).
+    remote: bool = False
 
     @property
     def total(self) -> int:
@@ -109,10 +114,12 @@ def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
     5 over 2026-08-25..09-28 on gs; with each field's largest value over the id's lines, the
     per-session totals match Claude Code's own `cost-state` accounting (median ratio 1.00;
     docs/findings-2026-09-28-scatter.md). A line whose usage reads zero (a later echo of the
-    message) cannot lower a count either. The turn keeps the first line's timestamp and model.
+    message) cannot lower a count either. The turn keeps the first line's timestamp and model,
+    and is `remote` if any of its lines is marked `remoteSourced`.
     """
     first: dict[str, tuple[datetime, str]] = {}
     counts: dict[str, tuple[int, ...]] = {}
+    remote: set[str] = set()
     for d in lines:
         if d.get("type") != "assistant":
             continue
@@ -122,6 +129,8 @@ def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
         if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
             continue
         now = _usage_counts(u)
+        if d.get("remoteSourced"):
+            remote.add(mid)
         if mid in counts:
             counts[mid] = tuple(max(a, b) for a, b in zip(counts[mid], now))
         else:
@@ -130,7 +139,7 @@ def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
     for mid, (ts, model) in first.items():
         seen.add(mid)
         inp, out, read, write, write_1h = counts[mid]
-        yield Turn(ts, model, inp, out, read, write, write_1h, mid)
+        yield Turn(ts, model, inp, out, read, write, write_1h, mid, mid in remote)
 
 
 def normalize_model(model_id: str) -> str | None:

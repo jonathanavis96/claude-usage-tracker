@@ -92,10 +92,13 @@ from statistics import mean, median, stdev
 from . import credits as credit_model
 from . import speed
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
+from .cloud_sessions import CloudSpan, cloud_spans, overlaps
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
 from .rows import usable_rows
 from .samples import Sample, infer_resets, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
+from .unclaimed import airlock_record
+from .unclaimed import attribute as attribute_unclaimed
 
 JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
 #: When True, only stretches the capture check accepts are published (the
@@ -141,6 +144,12 @@ class Account:
     #: What a reader of this account's stretches has to know about its meter. Recorded
     #: in the report's `meter` meta, not used in any arithmetic.
     meter_note: str | None = None
+    #: Where the cloud tooling on this account's host logs `claude --cloud` launches
+    #: (tracker/cloud_sessions.py), and whether a launch is this account's only once its
+    #: teleported transcript has been grabbed (a host with several logins, whose log does
+    #: not name one). None: no cloud sessions are recorded for this account.
+    cloud_dir: Path | None = None
+    cloud_requires_grab: bool = False
 
 
 def gs_accounts(home: Path | None = None) -> dict[str, Account]:
@@ -148,8 +157,11 @@ def gs_accounts(home: Path | None = None) -> dict[str, Account]:
     home = Path(home) if home is not None else Path.home()
     ops = home / ".paperclip" / "ops"
     return {
+        # jwork: `~/bin/cloud-grab` teleports under ~/.claude-javiswork alone, so a grabbed
+        # cloud session is this account's (tracker/cloud_sessions.py).
         "jwork": Account("jwork", home / ".claude-javiswork", ops / "claude-usage-meter-jwork.log", "meter",
-                         JWORK_CEILING_SINCE, legacy_meter_log=ops / "gs-usage-ceiling.log"),
+                         JWORK_CEILING_SINCE, legacy_meter_log=ops / "gs-usage-ceiling.log",
+                         cloud_dir=home / "private" / "cloud", cloud_requires_grab=True),
         "dave": Account("dave", home / ".claude-dave", ops / "claude-usage-meter-dave.log", "meter"),
         # avis: Max 20x, sampled since 2026-09-23 09:47Z. Its projects/ is a symlink into
         # the same pooled ~/.claude/projects as jwork's (see transcript_files), and it has
@@ -186,8 +198,10 @@ def masterrig_account(home: Path | None = None) -> Account:
     """
     home = Path(home) if home is not None else Path.home()
     ceiling = home / ".paperclip" / "ops" / "mis-usage-ceiling-systemd.log"
+    # One login on masterrig, so every `claude --cloud` it logs is this account's.
     return Account("masterrig", home / ".claude", home / ".moonlighter" / "usage_log.jsonl", "moonlighter",
-                   extra_meter_logs=(MeterLog(ceiling, "ceiling"),), meter_note=MASTERRIG_METER_NOTE)
+                   extra_meter_logs=(MeterLog(ceiling, "ceiling"),), meter_note=MASTERRIG_METER_NOTE,
+                   cloud_dir=home / "private" / "cloud")
 
 
 def _read(path: Path, fmt: str, since: datetime | None) -> list[Sample]:
@@ -314,7 +328,9 @@ def _split_transcripts(account: Account, since: datetime | None, withhold: Itera
     kept = [p for p in paths if transcript_session_id(p) in own_ids]
     claims = {name: _session_ids(home / name) for name in others}
     dropped_to: dict[str, int] = {}
+    attributed: dict[str, int] = {}
     unclaimed_paths: list[Path] = []
+    harness, airlock = _attribution_records(home)
     for p in paths:
         sid = transcript_session_id(p)
         if sid in own_ids:
@@ -322,11 +338,33 @@ def _split_transcripts(account: Account, since: datetime | None, withhold: Itera
         claimed = [name for name, ids in claims.items() if sid in ids]
         if claimed:
             dropped_to[claimed[0]] = dropped_to.get(claimed[0], 0) + 1
-        else:
+            continue
+        # No session-env claims it: a headless `claude -p` run. Where a launcher's own
+        # record says which config dir it ran under (tracker/unclaimed.py), it is that
+        # dir's work -- kept here if it is this account's, dropped if another's. Only the
+        # rest stays unclaimed, for `unclaimed_shares` to fit.
+        who = attribute_unclaimed(p, home, harness, airlock)
+        if who is None:
             unclaimed_paths.append(p)
-    return kept, {"kept": len(kept), "dropped": len(paths) - len(kept),
-                  "subagent_files": sum(1 for p in kept if p.parent.name == "subagents"),
-                  "dropped_to": dict(sorted(dropped_to.items())), "unclaimed": len(unclaimed_paths)}, unclaimed_paths
+            continue
+        attributed[who.rule] = attributed.get(who.rule, 0) + 1
+        if who.config_dir == account.config_dir.name:
+            kept.append(p)
+        else:
+            dropped_to[who.config_dir] = dropped_to.get(who.config_dir, 0) + 1
+    return sorted(kept), {"kept": len(kept), "dropped": len(paths) - len(kept),
+                          "subagent_files": sum(1 for p in kept if p.parent.name == "subagents"),
+                          "dropped_to": dict(sorted(dropped_to.items())),
+                          "attributed_by_record": dict(sorted(attributed.items())),
+                          "unclaimed": len(unclaimed_paths)}, unclaimed_paths
+
+
+def _attribution_records(home: Path) -> tuple[list[tuple[str, datetime, datetime]], tuple[str, datetime] | None]:
+    """The records `tracker.unclaimed.attribute` reads: the tracker's own runs as (config
+    dir, start, end), and airlock's `tune.env`."""
+    dirs = {name: acct.config_dir.name for name, acct in gs_accounts(home).items()}
+    harness = [(dirs[r.account], r.start, r.end) for r in credit_model.harness_runs() if r.account in dirs]
+    return harness, airlock_record(home)
 
 
 def shared_with(account: Account, home: Path) -> list[str]:
@@ -424,7 +462,8 @@ INFERRED_RESET_VERIFIED = False
 
 
 def _stretch_record(v: Verdict, reset_source: str = "logged",
-                    unclaimed: dict[datetime, dict] | None = None) -> dict:
+                    unclaimed: dict[datetime, dict] | None = None,
+                    cloud: list[CloudSpan] | None = None) -> dict:
     s = v.stretch
     lo, hi = s.bounds
     # Unpriced work is kept by raw model id beside the priced models, so the record
@@ -453,6 +492,12 @@ def _stretch_record(v: Verdict, reset_source: str = "logged",
             "reference": _r(v.reference), "capture": _r(v.capture),
             "fast_session_tokens": s.fast_session_tokens, "fast_session_turns": s.fast_session_turns,
             "first_turns": {m: ts.isoformat() for m, ts in sorted(s.first_turns.items())},
+            # Cloud-session work in the stretch: turns teleported back from a cloud session,
+            # or a recorded cloud session of this account running in its span
+            # (tracker/cloud_sessions.py). tracker/credits.py `clean_stretches` leaves such a
+            # stretch out of every fit and change figure.
+            "remote_sourced_turns": s.remote_sourced_turns,
+            "cloud_session": bool(s.remote_sourced_turns or overlaps(cloud or [], s.start, s.end)),
             # Only where the pooled-projects filter ran: the work no login claims, in this
             # stretch's pairs (`unclaimed_transcripts`); an empty dict when there was none.
             **({"unclaimed_tokens": unclaimed.get(s.start, {})} if unclaimed is not None else {})}
@@ -568,6 +613,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
     withhold = withhold or {}
     stretches, meta, weekly, reset_sources = {}, {}, {}, {}
     unclaimed: dict[str, dict[datetime, dict]] = {}
+    cloud: dict[str, list[CloudSpan]] = {}
     for name, account in accounts.items():
         samples = load_samples(account, until)
         # Until inferred resets are certified, nothing is computed from them: the join,
@@ -586,6 +632,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
             others = [t for t in iter_turns(unclaimed_files) if until is None or t.ts <= until]
             unclaimed[name] = {s.start: {**s.tokens, **s.unpriced}
                                for s in build_stretches(joined, others, prices)}
+        cloud[name], unattributed = cloud_spans(account.cloud_dir, account.cloud_requires_grab)
         reset_sources[name] = {s.start: _reset_source(s, samples) for s in stretches[name]}
         weekly[name] = window_points(joined)
         root = account.config_dir / "projects"
@@ -602,20 +649,25 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                             "shared_with": shared_with(account, home or account.config_dir.parent),
                             "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
                             "own_sessions": own_sessions},
+            "cloud_sessions": {"log": str(account.cloud_dir / "sessions.tsv") if account.cloud_dir else None,
+                               "spans": [c.record() for c in cloud[name]],
+                               "launches_unattributed": unattributed},
         }
-    return summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until, unclaimed)
+    return summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until, unclaimed, cloud)
 
 
 def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict[datetime, str]], meta: dict,
               weekly: dict, probe_rows: Iterable[dict], prices: dict, now: datetime,
-              until: datetime | None = None, unclaimed: dict[str, dict[datetime, dict]] | None = None) -> dict:
+              until: datetime | None = None, unclaimed: dict[str, dict[datetime, dict]] | None = None,
+              cloud: dict[str, list[CloudSpan]] | None = None) -> dict:
     """The capture check and everything read off it, from built stretches: `report`'s second half.
 
     Split out so a stretch file can be re-judged from its own records after they are
     corrected (tools/fast_session_restore.py), by the same code that wrote it.
     `reset_sources` is each account's `_reset_source` per stretch, keyed by its start.
     `unclaimed` is, for an account whose pooled-projects filter ran, the unclaimed work in
-    each stretch keyed by its start; its records carry it as `unclaimed_tokens`.
+    each stretch keyed by its start; its records carry it as `unclaimed_tokens`. `cloud` is
+    each account's recorded cloud-session spans (tracker/cloud_sessions.py).
     """
     checked = check(stretches, probe_readings(list(probe_rows), prices))
     out_accounts = {}
@@ -626,7 +678,7 @@ def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict
         out_accounts[name] = {
             "account": name, **meta[name],
             "stretches": [_stretch_record(v, reset_sources[name][v.stretch.start],
-                                          (unclaimed or {}).get(name)) for v in vs],
+                                          (unclaimed or {}).get(name), (cloud or {}).get(name)) for v in vs],
             "runs": [_run_record(r) for r in rs],
             "daily": daily,
             "split": _split([v.stretch for v in accepted]),

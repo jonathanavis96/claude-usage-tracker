@@ -51,6 +51,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tracker import speed
+from tracker.cloud_sessions import CloudSpan
 from tracker.gs_passive import load_samples, masterrig_account, summarise
 from tracker.join import CLASSES, Stretch, build_stretches, bundle_meter_usd
 from tracker.turns import Turn, normalize_model, turns_in
@@ -123,13 +124,19 @@ def to_stretch(rec: dict, prices: dict) -> Stretch:
                    delta_pct=rec["delta_pct"], windows=rec["windows"], usd=usd,
                    tokens=copy.deepcopy(tokens), unpriced_tokens=rec["unpriced_tokens"],
                    unpriced=copy.deepcopy(rec["unpriced"]), turns=rec["turns"],
-                   reset_verified=rec["reset_verified"])
+                   reset_verified=rec["reset_verified"],
+                   first_turns={m: datetime.fromisoformat(ts) for m, ts in (rec.get("first_turns") or {}).items()},
+                   remote_sourced_turns=rec.get("remote_sourced_turns", 0))
 
 
-def add_back(s: Stretch, taken: dict, turns: int, prices: dict) -> None:
+def add_back(s: Stretch, taken: dict, turns: int, prices: dict, first_turns: dict | None = None) -> None:
     """Put `taken` (model -> class -> count) and `turns` back into `s`, record them as its
     fast-session tokens, and revalue it. A model goes where tracker/join.py would put it:
-    `tokens` when it has a price, `unpriced` when not."""
+    `tokens` when it has a price, `unpriced` when not. `first_turns` are the put-back turns'
+    earliest per model; a model's stamp becomes the earlier of theirs and the stretch's."""
+    for model, ts in (first_turns or {}).items():
+        if model not in s.first_turns or ts < s.first_turns[model]:
+            s.first_turns[model] = ts
     for model, by_class in taken.items():
         key = normalize_model(model)
         priced = key is not None and bundle_meter_usd(model, by_class, prices) is not None
@@ -148,10 +155,19 @@ def add_back(s: Stretch, taken: dict, turns: int, prices: dict) -> None:
 def _summarise(body: dict, stretches: list[Stretch], probe_rows: list[dict], prices: dict) -> dict:
     a = body["accounts"][ACCOUNT]
     meta = {"meter": a["meter"], "transcripts": a["transcripts"]}
+    # The cloud-session record is carried through and each stretch re-marked by the code that
+    # marked it (tracker/gs_passive.py `_stretch_record`): its recorded spans, and the stretch's
+    # own `remote_sourced_turns` (`to_stretch`). Dropped, every `cloud_session` would come back
+    # false and the stretch would re-enter every fit.
+    if "cloud_sessions" in a:
+        meta["cloud_sessions"] = a["cloud_sessions"]
+    spans = [CloudSpan(c["session"], datetime.fromisoformat(c["start"]), datetime.fromisoformat(c["end"]),
+                       c["source"]) for c in (a.get("cloud_sessions") or {}).get("spans", [])]
     sources = {ACCOUNT: {s.start: rec["reset_source"] for s, rec in zip(stretches, a["stretches"])}}
     until = datetime.fromisoformat(body["until"]) if body.get("until") else None
     return summarise({ACCOUNT: stretches}, sources, {ACCOUNT: meta}, {ACCOUNT: a["weekly_by_window"]},
-                     probe_rows, prices, datetime.fromisoformat(body["generated_at"]), until)
+                     probe_rows, prices, datetime.fromisoformat(body["generated_at"]), until,
+                     cloud={ACCOUNT: spans})
 
 
 def same(a, b) -> bool:
@@ -212,7 +228,7 @@ def restore(body: dict, fast: list[Turn], samples: list, prices: dict, probe_row
         if (f.fast_session_tokens, f.fast_session_turns) != (taken, turns):
             raise ValueError(f"stretch {s.start.isoformat()}: the extract's fast-session tokens are not "
                              "the ones #88 recorded as taken out")
-        add_back(s, taken, turns, prices)
+        add_back(s, taken, turns, prices, f.first_turns)
     out = _summarise(body, stretches, probe_rows, prices)
     out["fast_session_restore"] = {
         **note, "stretches_changed": sum(1 for s in stretches if s.fast_session_turns),

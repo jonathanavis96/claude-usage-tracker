@@ -114,7 +114,7 @@ class TranscriptFilesTests(unittest.TestCase):
             files, own_sessions = transcript_files(self._account(cfg), None)
             self.assertEqual([p.stem for p in files], ["own-session"])
             self.assertEqual(own_sessions, {"kept": 1, "dropped": 1, "subagent_files": 0,
-                                            "dropped_to": {}, "unclaimed": 1})
+                                            "dropped_to": {}, "attributed_by_record": {}, "unclaimed": 1})
 
     def test_a_sub_agent_transcript_belongs_to_its_parent_session(self):
         # Real jwork data, 2026-09-16: `<session>/subagents/agent-<id>.jsonl` has no
@@ -135,7 +135,7 @@ class TranscriptFilesTests(unittest.TestCase):
             files, own_sessions = transcript_files(self._account(cfg), None)
             self.assertEqual(sorted(p.name for p in files), ["agent-abc.jsonl", "own-session.jsonl"])
             self.assertEqual(own_sessions, {"kept": 2, "dropped": 2, "subagent_files": 1,
-                                            "dropped_to": {}, "unclaimed": 2})
+                                            "dropped_to": {}, "attributed_by_record": {}, "unclaimed": 2})
 
     def test_non_symlink_root_is_untouched_even_with_a_session_env_dir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -169,7 +169,8 @@ class TranscriptFilesTests(unittest.TestCase):
             files, own_sessions = transcript_files(self._account(cfg), None, home=d)
             self.assertEqual([p.stem for p in files], ["mine"])
             self.assertEqual(own_sessions, {"kept": 1, "dropped": 2, "subagent_files": 0,
-                                            "dropped_to": {".claude-avis": 1}, "unclaimed": 1})
+                                            "dropped_to": {".claude-avis": 1}, "attributed_by_record": {},
+                                            "unclaimed": 1})
 
     def test_a_shared_root_is_filtered_even_when_this_account_owns_the_directory(self):
         # The condition that matters is that another config dir writes into the same
@@ -190,7 +191,8 @@ class TranscriptFilesTests(unittest.TestCase):
             files, own_sessions = transcript_files(self._account(cfg), None, home=d)
             self.assertEqual([p.stem for p in files], ["mine"])
             self.assertEqual(own_sessions, {"kept": 1, "dropped": 1, "subagent_files": 0,
-                                            "dropped_to": {".claude-jono": 1}, "unclaimed": 0})
+                                            "dropped_to": {".claude-jono": 1}, "attributed_by_record": {},
+                                            "unclaimed": 0})
 
     def test_symlinked_root_with_no_session_env_is_a_no_op(self):
         with tempfile.TemporaryDirectory() as d:
@@ -537,3 +539,142 @@ class UtcArgTests(unittest.TestCase):
     def test_an_explicit_datetime_is_kept_as_given(self):
         from tracker.gs_passive import _utc_until
         self.assertEqual(_utc_until("2026-09-15T12:00:00+00:00"), datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc))
+
+
+def cloud_line(ts, mid):
+    """A cloud session's turn as `claude --teleport` copies it into a local transcript."""
+    line = json.loads(turn_line(ts, mid))
+    line.update({"remoteSourced": True, "entrypoint": "cli"})
+    return json.dumps(line)
+
+
+class CloudSessionTests(unittest.TestCase):
+    """Issue #133: a stretch holding cloud-session work is marked, whichever way it is known."""
+
+    SHA = "0" * 40
+
+    def test_a_grabbed_transcript_gives_the_span_and_the_launch_its_account(self):
+        from tracker.cloud_sessions import cloud_spans
+        with tempfile.TemporaryDirectory() as d:
+            cloud = Path(d)
+            launched = T0 + timedelta(minutes=3)
+            rows = [f"{launched.isoformat()}\tticket-app\t{self.SHA}\tsession_01AbCdEfGh\tbrief.md",
+                    f"{(T0 + timedelta(hours=2)).isoformat()}\tticket-be\t{self.SHA}\tsession_01XyZ\tbrief.md"]
+            (cloud / "sessions.tsv").write_text("\n".join(rows) + "\n")
+            (cloud / "j-ticket-app.jsonl").write_text("\n".join(
+                [cloud_line(T0 + timedelta(minutes=m), f"c{m}") for m in (1, 20, 40)]
+                + [turn_line(T0 + timedelta(minutes=45), "local-ok")]) + "\n")
+            spans, unattributed = cloud_spans(cloud, require_grab=True)
+            self.assertEqual([(s.session, s.start, s.end, s.source) for s in spans],
+                             [("session_01AbCdEfGh", T0 + timedelta(minutes=1), T0 + timedelta(minutes=40),
+                               "transcript")])
+            # The second launch was never grabbed: on a host with several logins it is nobody's.
+            self.assertEqual(unattributed, 1)
+            # On a host with one login it is this account's, at its launch instant only.
+            spans, unattributed = cloud_spans(cloud)
+            self.assertEqual([(s.start, s.end, s.source) for s in spans][1],
+                             (T0 + timedelta(hours=2), T0 + timedelta(hours=2), "launch"))
+            self.assertEqual(unattributed, 0)
+
+    def test_a_masterrig_row_names_its_transcript_by_repo_and_task(self):
+        from tracker.cloud_sessions import cloud_spans
+        with tempfile.TemporaryDirectory() as d:
+            cloud = Path(d)
+            (cloud / "sessions.tsv").write_text(
+                f"{(T0 + timedelta(minutes=2)).isoformat()}\tsite\tr9-home\t{self.SHA}\tsession_01Q\tb.md\n")
+            (cloud / "j-site-r9-home.jsonl").write_text(cloud_line(T0 + timedelta(minutes=30), "c1") + "\n")
+            spans, _ = cloud_spans(cloud)
+            self.assertEqual([(s.start, s.end) for s in spans],
+                             [(T0 + timedelta(minutes=2), T0 + timedelta(minutes=30))])
+
+    def test_teleported_turns_and_a_recorded_session_each_mark_their_stretch(self):
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            # Stretch 2 (minutes 25-50) holds a teleported cloud turn.
+            (home / ".claude-dave/projects/-proj-a/cloud.jsonl").write_text(
+                cloud_line(T0 + timedelta(minutes=33), "cloud-1") + "\n")
+            # Stretch 5 (minutes 100-125) had a cloud session launched in it.
+            cloud = home / "private" / "cloud"
+            cloud.mkdir(parents=True)
+            (cloud / "sessions.tsv").write_text(
+                f"{(T0 + timedelta(minutes=110)).isoformat()}\tx\t{self.SHA}\tsession_01Z\tb.md\n")
+            account = replace(gs_accounts(home)["dave"], cloud_dir=cloud)
+            r = report({"dave": account}, PRICES, now=T0 + timedelta(days=1))["accounts"]["dave"]
+            marked = [(i, st["remote_sourced_turns"]) for i, st in enumerate(r["stretches"]) if st["cloud_session"]]
+            self.assertEqual(marked, [(1, 1), (4, 0)])
+            self.assertEqual(r["cloud_sessions"]["spans"][0]["source"], "launch")
+            # Both leave every measurement, as a harness run's stretch does.
+            from tracker import credits as C
+            kept = C.clean_stretches({"dave": r["stretches"]}, [], require=None)["dave"]
+            self.assertEqual(len(kept), len(r["stretches"]) - 2)
+            self.assertNotIn(r["stretches"][1]["start"], [st["start"] for st in kept])
+            self.assertNotIn(r["stretches"][4]["start"], [st["start"] for st in kept])
+
+
+class UnclaimedAttributionTests(unittest.TestCase):
+    """Task C of issue #133: a headless run's launcher record says whose meter it spent on."""
+
+    def _home(self, d: Path) -> tuple[Path, Path]:
+        home = d / "home"
+        shared = home / ".claude" / "projects"
+        shared.mkdir(parents=True)
+        (home / ".claude" / "session-env").mkdir()
+        for name in (".claude-javiswork", ".claude-avis"):
+            (home / name / "session-env").mkdir(parents=True)
+            (home / name / "projects").symlink_to(shared)
+        return home, shared
+
+    def _headless(self, shared: Path, stem: str, ts: datetime, cwd: str) -> None:
+        line = json.loads(turn_line(ts, stem))
+        line.update({"cwd": cwd, "entrypoint": "sdk-cli"})
+        proj = shared / ("-" + cwd.strip("/").replace("/", "-").replace(".", "-"))
+        proj.mkdir(exist_ok=True)
+        (proj / f"{stem}.jsonl").write_text(json.dumps(line) + "\n")
+
+    def test_the_airlock_judge_bills_the_dir_its_tune_env_names_from_when_it_was_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            home, shared = self._home(Path(d))
+            (home / ".config" / "airlock").mkdir(parents=True)
+            (home / ".config" / "airlock" / "tune.env").write_text(
+                "# Written by install/install.sh --tuning on 2026-09-19T17:51:31Z.\n"
+                f"AIRLOCK_TUNE_CLAUDE_CONFIG_DIR={home}/.claude-javiswork\n")
+            releases = f"{home}/.local/share/airlock/releases/abc1234"
+            self._headless(shared, "bench-after", datetime(2026, 9, 20, tzinfo=timezone.utc), releases)
+            self._headless(shared, "bench-before", datetime(2026, 9, 19, 12, tzinfo=timezone.utc), releases)
+            jwork = gs_accounts(home)["jwork"]
+            files, meta = transcript_files(jwork, None, home=home)
+            self.assertEqual([p.stem for p in files], ["bench-after"])
+            self.assertEqual(meta["attributed_by_record"], {"airlock_tune_env": 1})
+            self.assertEqual(meta["unclaimed"], 1)  # before the file was written: no record
+            avis_files, avis_meta = transcript_files(gs_accounts(home)["avis"], None, home=home)
+            self.assertEqual(avis_files, [])
+            self.assertEqual(avis_meta["dropped_to"], {".claude-javiswork": 1})
+
+    def test_the_filing_judge_ran_on_the_default_login_until_the_seat_picker(self):
+        from tracker.unclaimed import AUTO_MAIL_SEAT_PICKER_FROM
+        with tempfile.TemporaryDirectory() as d:
+            home, shared = self._home(Path(d))
+            self._headless(shared, "judge-before", AUTO_MAIL_SEAT_PICKER_FROM - timedelta(hours=1),
+                           "/tmp/filing-judge-abc")
+            self._headless(shared, "judge-after", AUTO_MAIL_SEAT_PICKER_FROM + timedelta(hours=1),
+                           "/tmp/filing-judge-def")
+            files, meta = transcript_files(gs_accounts(home)["jwork"], None, home=home)
+            self.assertEqual(files, [])
+            self.assertEqual(meta["dropped_to"], {".claude": 1})
+            self.assertEqual(meta["attributed_by_record"], {"auto_mail_default_login": 1})
+            # The picked seat is written down nowhere: that run stays unclaimed, for the fit.
+            self.assertEqual(meta["unclaimed"], 1)
+
+    def test_a_probe_run_is_its_harness_runs_account_unless_two_accounts_ran_at_once(self):
+        from tracker.unclaimed import attribute
+        with tempfile.TemporaryDirectory() as d:
+            home, shared = self._home(Path(d))
+            at = datetime(2026, 9, 9, 11, 30, tzinfo=timezone.utc)
+            self._headless(shared, "probe", at, f"{home}/claude-usage-tracker")
+            path = next(shared.rglob("probe.jsonl"))
+            one = [(".claude-javiswork", at - timedelta(hours=1), at + timedelta(hours=1))]
+            self.assertEqual(attribute(path, home, one).config_dir, ".claude-javiswork")
+            both = one + [(".claude-dave", at - timedelta(minutes=10), at + timedelta(minutes=10))]
+            self.assertIsNone(attribute(path, home, both))
+            self.assertIsNone(attribute(path, home, []))

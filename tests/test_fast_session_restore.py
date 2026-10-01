@@ -109,6 +109,23 @@ class FastSessionRestoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.restore(self.original)
 
+    def test_cloud_session_marks_survive_a_restore_unchanged(self):
+        # Review round 1 on #108: the restore rewrote every record through `summarise` without
+        # the cloud record, so `cloud_session: true` came back false and the stretch re-entered
+        # every fit. One stretch holds teleported turns, the other had a launch recorded in it.
+        body = copy.deepcopy(self.corrected)
+        a = body["accounts"][ACCOUNT]
+        first, second = a["stretches"][0], a["stretches"][1]
+        at = first["start"]
+        a["cloud_sessions"] = {"log": "x/sessions.tsv", "launches_unattributed": 0,
+                               "spans": [{"session": "session_01Z", "start": at, "end": at, "source": "launch"}]}
+        first["cloud_session"] = True
+        second["remote_sourced_turns"], second["cloud_session"] = 3, True
+        out = self.restore(body)["accounts"][ACCOUNT]
+        self.assertEqual([(r["cloud_session"], r["remote_sourced_turns"]) for r in out["stretches"][:2]],
+                         [(True, 0), (True, 3)])
+        self.assertEqual(out["cloud_sessions"], a["cloud_sessions"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -761,6 +761,56 @@ class UnclaimedShareTests(unittest.TestCase):
         shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
         self.assertLessEqual(shares["a1"]["share"], 0.04)
 
+    def test_two_accounts_reading_one_pool_share_at_most_all_of_it(self):
+        # Issue #133: Max accounts 2 and 4 read the same pooled root, so the same unclaimed
+        # turns sit in both accounts' overlapping stretches. Fitted apart, each took nearly
+        # all of them (1.0 and 0.82 live); fitted together they sum to at most 1.
+        one = self._pooled()["acct_one"]
+        two = copy.deepcopy(one)
+        by = {"acct_one": one, "acct_two": two}
+        alone = C.unclaimed_shares({"acct_two": two}, _output_value, CAND, C.CUT_AT, None, LABELS, ["acct_two"])
+        self.assertGreaterEqual(alone["a2"]["share"], 0.9)
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertLessEqual(shares["a1"]["share"] + shares["a2"]["share"], 1.0 + 1e-9)
+        self.assertEqual((shares["a1"]["capped_with"], shares["a2"]["capped_with"]), (["a2"], ["a1"]))
+
+    def test_accounts_whose_unclaimed_work_never_coincides_are_fitted_alone(self):
+        one = self._pooled()["acct_one"]
+        two = copy.deepcopy(one)
+        for st in two:  # the same pattern, each in the hour between two of acct_one's stretches
+            start = datetime.fromisoformat(st["start"]) + timedelta(minutes=135)
+            st["start"], st["end"] = start.isoformat(), (start + timedelta(minutes=30)).isoformat()
+        by = {"acct_one": one, "acct_two": two}
+        shares = C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by))
+        self.assertGreaterEqual(shares["a1"]["share"], 0.9)
+        self.assertGreaterEqual(shares["a2"]["share"], 0.9)
+        self.assertEqual(shares["a1"]["capped_with"], [])
+
+    def test_a_zero_length_stretch_with_unclaimed_work_overlaps_nothing(self):
+        # Review round 1 on #108: its end sorted before its start and raised KeyError.
+        at = datetime(2026, 9, 25, tzinfo=timezone.utc)
+        rows = {"acct_one": [(1.0, 1.0, 10.0, at, at)],
+                "acct_two": [(1.0, 1.0, 10.0, at - timedelta(hours=1), at + timedelta(hours=1))]}
+        self.assertEqual(C._unclaimed_caps(rows), [])
+        rows["acct_one"].append((1.0, 1.0, 10.0, at, at + timedelta(minutes=5)))
+        self.assertEqual(C._unclaimed_caps(rows), [frozenset({"acct_one", "acct_two"})])
+
+    def test_four_overlapping_accounts_are_solved_by_one_budget(self):
+        # Review round 1 on #108: the exact search took ~26 s per call for a group of 4. Above
+        # CAPPED_EXACT_MAX the group shares one budget; where the whole group is one cap that is
+        # the exact answer, found by both methods.
+        import itertools
+        grid = [i / 10 for i in range(11)]
+        best = {"a": 0.9, "b": 0.5, "c": 0.3, "d": 0.1}
+        ss = {n: [(g - b) ** 2 + 0.001 * k * g for g in grid] for k, (n, b) in enumerate(best.items())}
+        solved = C._capped_best(ss, [frozenset(best)], grid)
+        self.assertLessEqual(sum(solved.values()), 1.0 + 1e-9)
+        brute = min(sum(ss[m][i] for m, i in zip("abcd", idx))
+                    for idx in itertools.product(range(11), repeat=4) if sum(idx) <= 10)
+        self.assertAlmostEqual(sum(ss[m][round(v * 10)] for m, v in solved.items()), brute)
+        exact = C._capped_best({k: ss[k] for k in "abc"}, [frozenset("abc")], grid)
+        self.assertEqual({m: grid[i] for m, i in C._one_budget(ss, list("abc"), 10).items()}, exact)
+
     def test_an_account_with_no_unclaimed_work_is_not_listed(self):
         by = _fixture()
         self.assertEqual(C.unclaimed_shares(by, _output_value, CAND, C.CUT_AT, None, LABELS, sorted(by)), {})
