@@ -200,3 +200,16 @@ class InferResetsTests(unittest.TestCase):
                    rl("2026-09-16T22:31:00+00:00", 1.0)]
         infer_resets(samples)
         self.assertTrue(all(s.resets_at is None for s in samples))
+
+
+class MalformedMoonlighterLineTests(unittest.TestCase):
+    def test_bad_lines_are_skipped_not_fatal(self):
+        from tracker.samples import parse_moonlighter
+        good = '{"ts": "2026-09-01T10:00:00+00:00", "five_hour": {"utilization": 5}}'
+        lines = ["42\n", '"text"\n', '{"ts": "not a time", "five_hour": {"utilization": 5}}',
+                 '{"ts": "2026-09-01T10:05:00+00:00", "five_hour": {"utilization": "n/a"}}',
+                 '{"ts": "2026-09-01T10:06:00+00:00", "five_hour": "broken"}', good]
+        out = parse_moonlighter(lines)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].five_hour, 5.0)
+

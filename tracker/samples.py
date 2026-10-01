@@ -43,18 +43,20 @@ class Sample:
 def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list[Sample]:
     out = []
     for line in lines:
+        # One corrupt line (a torn write, a hand edit) skips that line, never the whole log.
         try:
             d = json.loads(line)
-        except (json.JSONDecodeError, TypeError):
+            fh = d.get("five_hour") or {}
+            seven = d.get("seven_day") or {}
+            if fh.get("utilization") is None or not d.get("ts"):
+                continue
+            sd = seven.get("utilization")
+            sample = Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),
+                            float(sd) if sd is not None else None, fh.get("resets_at"), source,
+                            seven.get("resets_at"))
+        except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
             continue
-        fh = (d.get("five_hour") or {})
-        if fh.get("utilization") is None or not d.get("ts"):
-            continue
-        seven = d.get("seven_day") or {}
-        sd = seven.get("utilization")
-        out.append(Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),
-                          float(sd) if sd is not None else None, fh.get("resets_at"), source,
-                          seven.get("resets_at")))
+        out.append(sample)
     return out
 
 
