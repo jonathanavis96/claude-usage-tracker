@@ -64,7 +64,7 @@ def read_env_file(path: Path) -> dict[str, str]:
     be read as its value (the same anchoring daily.sh's sed uses)."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return {}
     out: dict[str, str] = {}
     for raw in text.splitlines():
@@ -111,11 +111,11 @@ def _default_post(url: str, headers: Mapping[str, str], body: bytes) -> tuple[in
 
 
 def alert_body(subject: str, text: str, to: str, *, source: str, now: datetime) -> dict:
-    """The JSON the send endpoint's admin mode takes. The subject is prefixed so the
+    """The JSON the send endpoint's admin mode takes. The subject is folded onto one line and prefixed so the
     mail is recognisable in an inbox, and the text ends with where and when it came
     from, because a cron mail with no origin is a mystery a week later."""
     stamp = now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    return {"to": to, "subject": SUBJECT_PREFIX + subject.strip(),
+    return {"to": to, "subject": SUBJECT_PREFIX + " ".join(subject.split()),
             "text": text.rstrip() + f"\n\n-- claude-usage-tracker on {source}, {stamp}"}
 
 
