@@ -139,13 +139,15 @@ class TestDailyNotifyChange(unittest.TestCase):
         assert match, "notify_change not found in bin/daily.sh"
         cls.func = match.group(0)
 
-    def _publishes(self, *publishes, notified=None, env_file=True, generated_at=None):
+    def _publishes(self, *publishes, notified=None, env_file=True, generated_at=None, days=None):
         """Run notify_change once per publish, in order, in one repo checkout.
 
         Each publish is (last_change, newest weekly window[, curl status[, feeds]]): the
         public JSON that publish wrote, where feeds maps an account label to its
         newest_stretch_end. `generated_at`, one stamp per publish, is each publish's own
-        time, which the 24 and 48 hour rules measure from. Returns (procs, requests, alerts), one entry per
+        time, which the 24 and 48 hour rules measure from. `days`, one per publish, is
+        the UTC day a stub `date` reports (2026-10-01 for every publish by default), which
+        the once-a-day failed-send rule keys on. Returns (procs, requests, alerts), one entry per
         publish, and sets self.state to the announced dates recorded, or None.
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -187,6 +189,11 @@ class TestDailyNotifyChange(unittest.TestCase):
                     encoding="utf-8",
                 )
                 curl.chmod(0o755)
+                # A stub date, so the UTC day is the test's and never the wall clock's.
+                day = days[i] if days is not None else "2026-10-01"
+                date_stub = stub / "date"
+                date_stub.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' '{day}'\n", encoding="utf-8")
+                date_stub.chmod(0o755)
                 request_log, alert_log = root / "request.log", root / "alert.log"
                 request_log.unlink(missing_ok=True)
                 alert_log.unlink(missing_ok=True)
@@ -214,6 +221,9 @@ class TestDailyNotifyChange(unittest.TestCase):
                 alerts.append(alert_log.read_text(encoding="utf-8") if alert_log.exists() else "")
             state_path = cwd / ".notified-change"
             self.state = state_path.read_text(encoding="utf-8").split() if state_path.exists() else None
+            attempts_path = cwd / ".notify-attempts"
+            self.attempts = (attempts_path.read_text(encoding="utf-8").splitlines()
+                             if attempts_path.exists() else None)
             return procs, requests, alerts
 
     @staticmethod
@@ -344,16 +354,42 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIsNone(self.state)
         self.assertEqual(requests, ["", ""])
 
-    def test_a_non_2xx_answer_is_a_warning_and_retries_on_the_next_publish(self) -> None:
+    def test_a_non_2xx_answer_is_a_warning_and_retries_on_the_next_utc_day(self) -> None:
         procs, requests, alerts = self._publishes(
-            (self.CHANGE, self.W1), (self.CHANGE, self.W2, "500"), (self.CHANGE, self.W2))
+            (self.CHANGE, self.W1), (self.CHANGE, self.W2, "500"), (self.CHANGE, self.W2),
+            days=["2026-10-01", "2026-10-01", "2026-10-02"])
         self.assertIn("will retry tomorrow", procs[1].stderr)
         # The alert still goes out, and says the list send failed.
         self.assertIn("Observed change: increased 7% on 2026-09-11 (claude-opus-5)", alerts[1])
         self.assertIn("HTTP 500", alerts[1])
-        # Not recorded as announced, so the next publish sends it again and records it.
+        # Not recorded as announced, so the next day's publish sends it again and records it.
         self.assertEqual(self._payload(requests[2])["date"], "2026-09-11")
         self.assertEqual(self.state, ["2026-09-11"])
+        self.assertEqual(self.attempts, ["2026-09-11 2026-10-01", "2026-09-11 2026-10-02"])
+
+    def test_a_failed_send_is_posted_and_alerted_once_per_utc_day(self) -> None:
+        # The 2026-10-01 incident: the site answered 400 on every half-hourly publish
+        # and each one POSTed and alerted again.
+        procs, requests, alerts = self._publishes(
+            (self.CHANGE, self.W1, "400"), (self.CHANGE, self.W2, "400"),
+            (self.CHANGE, self.W2, "400"), (self.CHANGE, self.W2, "400"))
+        self.assertEqual(sum(1 for r in requests if r), 1)
+        self.assertEqual(sum(1 for a in alerts if a), 1)
+        self.assertIn("HTTP 400", alerts[1])
+        for proc in procs[2:]:
+            self.assertIn("notify: send for 2026-09-11 already attempted today, waiting", proc.stderr)
+        self.assertIsNone(self.state)
+        self.assertEqual(self.attempts, ["2026-09-11 2026-10-01"])
+
+    def test_a_failed_send_tries_and_alerts_again_on_a_new_utc_day(self) -> None:
+        _procs, requests, alerts = self._publishes(
+            (self.CHANGE, self.W1, "400"), (self.CHANGE, self.W2, "400"),
+            (self.CHANGE, self.W2, "400"), (self.CHANGE, self.W2, "400"), (self.CHANGE, self.W2, "400"),
+            days=["2026-10-01", "2026-10-01", "2026-10-01", "2026-10-02", "2026-10-02"])
+        self.assertEqual([bool(r) for r in requests], [False, True, False, True, False])
+        self.assertEqual([bool(a) for a in alerts], [False, True, False, True, False])
+        self.assertIsNone(self.state)
+        self.assertEqual(self.attempts, ["2026-09-11 2026-10-01", "2026-09-11 2026-10-02"])
 
     #: A meter-measured change as the publisher writes it: its instant, state and interval.
     MEASURED: ClassVar[dict] = {"date": "2026-09-22", "at": "2026-09-22T19:41:49+00:00",
