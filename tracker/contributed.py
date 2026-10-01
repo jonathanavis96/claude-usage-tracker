@@ -379,7 +379,14 @@ def _iso_z(ts) -> str | None:
         dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    if dt.tzinfo is None:  # contrib/sample.py writes UTC; never read a naive stamp as host-local
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _by_time(rows: list[dict]) -> list[dict]:
+    """Rows in time order by instant: a string sort misorders stamps with different offsets."""
+    return sorted(rows, key=lambda r: _iso_z(r.get("ts")) or "")
 
 
 def _per_pct_both_windows(row: dict, prices: dict) -> tuple[dict | None, dict | None]:
@@ -498,9 +505,7 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
 
 def _contributor_weeks(rows: list[dict], now: datetime) -> list[float]:
     """The `windows` figure of each complete week one contributor's samples pair into."""
-    ordered = sorted(rows, key=lambda r: r.get("ts") or "")
-    parsed = [parse_row(r) for r in ordered]
-    result = weekly_windows(parsed, now=now)
+    result = weekly_windows([parse_row(r) for r in _by_time(rows)], now=now)
     return [h["windows"] for h in result["history"] if not h.get("partial")]
 
 
@@ -517,8 +522,7 @@ def _weekly(rows_by_contributor: dict[str, list[dict]], now: datetime) -> dict:
     estimates = []
     complete = weeks = 0
     for rows in rows_by_contributor.values():
-        ordered = sorted(rows, key=lambda r: r.get("ts") or "")
-        history = weekly_windows([parse_row(r) for r in ordered], now=now).get("history", [])
+        history = weekly_windows([parse_row(r) for r in _by_time(rows)], now=now).get("history", [])
         closed = [h for h in history if not h.get("partial")]
         weeks += len(closed)
         complete += bool(closed)
