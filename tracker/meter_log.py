@@ -111,17 +111,26 @@ def _append(log: Path, line: dict) -> None:
         fh.write(json.dumps(line) + "\n")
 
 
-def _last_line(log: Path) -> dict | None:
-    """The most recent parseable line in `log`, or None for a new, empty or unparseable log."""
+def _last_line(log: Path, tail_bytes: int = 8192) -> dict | None:
+    """The most recent parseable object line in `log`, or None for a new, empty or unparseable log.
+
+    Reads only the file's tail: the log gains a line every tick and is never rotated,
+    so reading it whole each minute grows without bound.
+    """
     try:
-        lines = log.read_text(encoding="utf-8").splitlines()
+        with open(log, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - tail_bytes))
+            lines = fh.read().decode("utf-8", errors="replace").splitlines()
     except FileNotFoundError:
         return None
     for line in reversed(lines):
         try:
-            return json.loads(line)
+            d = json.loads(line)
         except ValueError:
             continue
+        if isinstance(d, dict):
+            return d
     return None
 
 
