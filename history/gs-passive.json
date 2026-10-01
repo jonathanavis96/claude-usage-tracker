@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-01T13:30:20.357673+00:00",
+ "generated_at": "2026-10-01T14:00:32.017357+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5355,
+    "reset_verified_samples": 5362,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 8996,
+    "samples": 9003,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-01T13:26:14+00:00"
+    "last": "2026-10-01T13:54:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 2367,
-    "turns": 73190,
+    "files": 2369,
+    "turns": 73191,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 2367,
+     "kept": 2369,
      "dropped": 2911,
      "subagent_files": 946,
      "dropped_to": {
@@ -10341,11 +10341,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4624,
+    "reset_verified_samples": 4635,
     "since": null,
-    "samples": 6957,
+    "samples": 6968,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-01T13:29:15+00:00"
+    "last": "2026-10-01T13:55:50+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -14490,14 +14490,14 @@
      ".claude-jono"
     ],
     "files": 487,
-    "turns": 16305,
+    "turns": 16309,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 487,
-     "dropped": 1160,
+     "dropped": 1162,
      "subagent_files": 246,
      "dropped_to": {
-      ".claude-javiswork": 578
+      ".claude-javiswork": 580
      },
      "unclaimed": 582
     }
@@ -16044,7 +16044,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-01T13:31:15.057517+00:00",
+  "generated_at": "2026-10-01T14:01:26.814265+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -54065,7 +54065,7 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 400,
+    "n": 403,
     "fast_session_requests": 0,
     "output_hist": {
      "232": 15,
@@ -54098,13 +54098,13 @@
      "211": 7,
      "217": 10,
      "214": 12,
-     "213": 7,
+     "213": 8,
      "216": 13,
      "219": 14,
      "218": 14,
-     "208": 10,
+     "208": 11,
      "215": 11,
-     "210": 6,
+     "210": 7,
      "209": 9,
      "241": 2,
      "204": 7,
@@ -54130,7 +54130,7 @@
     "ttfb_hist": {
      "47": 2,
      "51": 2,
-     "140": 2,
+     "140": 3,
      "84": 4,
      "52": 4,
      "23": 1,
@@ -54234,7 +54234,7 @@
      "120": 4,
      "127": 1,
      "132": 2,
-     "145": 2,
+     "145": 3,
      "170": 1,
      "129": 1,
      "49": 1,
@@ -54247,7 +54247,8 @@
      "169": 1,
      "158": 1,
      "121": 1,
-     "144": 1
+     "144": 1,
+     "48": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
@@ -54279,13 +54280,15 @@
     "model": "claude-sonnet-5",
     "account": "a2",
     "entrypoint": "sdk-cli",
-    "n": 2,
+    "n": 3,
     "fast_session_requests": 0,
     "output_hist": {
+     "229": 1,
      "228": 1,
      "224": 1
     },
     "ttfb_hist": {
+     "184": 1,
      "192": 1,
      "171": 1
     },
