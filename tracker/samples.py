@@ -81,6 +81,13 @@ def parse_meter_log(lines: Iterable[str]) -> list[Sample]:
     return parse_moonlighter(lines, source="meter")
 
 
+def _iso_or_none(s: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
 def parse_gs_ceiling_log(lines: Iterable[str], since: datetime | None = None) -> list[Sample]:
     """Reading lines of gs's usage-ceiling.py log (`ok`, `warn` and `HARD CEILING`).
 
@@ -95,8 +102,8 @@ def parse_gs_ceiling_log(lines: Iterable[str], since: datetime | None = None) ->
         m = _GS_CEIL.match(line)
         if not m:
             continue
-        ts = datetime.fromisoformat(m.group(1))
-        if since is not None and ts < since:
+        ts = _iso_or_none(m.group(1))
+        if ts is None or (since is not None and ts < since):
             continue
         out.append(Sample(ts, float(m.group(2)), float(m.group(3)), None, "gs-ceiling"))
     return out
@@ -108,7 +115,9 @@ def parse_ceiling_log(lines: Iterable[str]) -> list[Sample]:
         m = _CEIL.match(line)
         if not m:
             continue
-        out.append(Sample(datetime.fromisoformat(m.group(1)), float(m.group(2)), float(m.group(3)), None, "ceiling"))
+        ts = _iso_or_none(m.group(1))
+        if ts is not None:
+            out.append(Sample(ts, float(m.group(2)), float(m.group(3)), None, "ceiling"))
     return out
 
 

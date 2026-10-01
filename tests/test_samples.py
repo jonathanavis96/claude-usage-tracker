@@ -213,3 +213,11 @@ class MalformedMoonlighterLineTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0].five_hour, 5.0)
 
+
+
+class MalformedCeilingLineTests(unittest.TestCase):
+    def test_unparseable_timestamp_skips_the_line(self):
+        from tracker.samples import parse_ceiling_log, parse_gs_ceiling_log
+        self.assertEqual(parse_ceiling_log(["Starting 5-hour 8% / 7-day 18%\n",
+                                            "2026-10-02T01:40:00+02:00 5-hour 8% / 7-day 18%\n"])[0].five_hour, 8.0)
+        self.assertEqual(len(parse_gs_ceiling_log(["--- ok five_hour=1% seven_day=2%\n"])), 0)
