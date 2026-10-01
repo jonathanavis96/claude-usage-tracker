@@ -125,6 +125,11 @@ def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = Non
     return parse_usage(body, (now or (lambda: datetime.now(timezone.utc)))())
 
 
+def _as_utc(d: datetime) -> datetime:
+    """A stamp with no offset is UTC; without this, naive minus aware raises TypeError."""
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
 def same_reset(a: str | None, b: str | None, tol_s: float = 60) -> bool:
     """True unless both stamps are present and differ by more than tol_s.
 
@@ -134,7 +139,7 @@ def same_reset(a: str | None, b: str | None, tol_s: float = 60) -> bool:
     if not a or not b:
         return True
     try:
-        da, db = datetime.fromisoformat(a), datetime.fromisoformat(b)
+        da, db = (_as_utc(datetime.fromisoformat(x)) for x in (a, b))
     except ValueError:
         return a == b
     return abs((da - db).total_seconds()) <= tol_s
