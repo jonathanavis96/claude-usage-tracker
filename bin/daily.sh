@@ -191,6 +191,7 @@ notify_change() {
   # The script cd'd to the repo root on entry and the push above ran in a
   # subshell, so $PWD is still that root.
   local state="$PWD/.notified-change"
+  local attempts="$PWD/.notify-attempts"
   local seen="$PWD/.weekly-change-seen"
   local env_file="$HOME/.claude-usage-notify.env"
 
@@ -343,17 +344,30 @@ PYEOF
   local date
   date="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["date"])')"
 
+  # A failed send is tried, and alerted, at most once per UTC day for a given
+  # change date: one "DATE UTC_DAY" line per attempt, written after the POST
+  # whatever its status. Without this a failing endpoint was POSTed and alerted
+  # every half hour (six identical alerts for the 29 Sep change on 2026-10-01).
+  local today
+  today="$(date -u +%F)"
+  if [ -f "$attempts" ] && grep -qxF "$date $today" "$attempts"; then
+    echo "notify: send for $date already attempted today, waiting" >&2
+    return 0
+  fi
+
   local status
   status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --retry 2 --retry-delay 5 \
     -X POST "https://alldonesites.com/api/notify/send" \
     -H "authorization: Bearer $secret" \
     -H "content-type: application/json" \
     --data-binary "$body" 2>&1)" || true
+  printf '%s %s\n' "$date" "$today" >> "$attempts"
 
   case "$status" in
     2??)
-      # Recorded only on success, so a failed call simply retries on the next
-      # publish. One announced date per line: none is ever announced twice.
+      # Recorded only on success, so a failed call retries on the first publish
+      # of the next UTC day. One announced date per line: none is ever announced
+      # twice.
       printf '%s\n' "$date" >> "$state"
       echo "notify: announced $date (HTTP $status)"
       ;;
@@ -363,8 +377,10 @@ PYEOF
   esac
 
   # Jonathan hears about every confirmed change, whether or not the list send
-  # went through. A failed fan-out retries tomorrow and alerts again, which is
-  # the reminder wanted; a successful one is recorded above and never repeats.
+  # went through. A failed fan-out retries on the first publish of the next UTC
+  # day and alerts again, once, which is the reminder wanted; later publishes
+  # that day stop at the attempt check above. A successful one is recorded above
+  # and never repeats.
   local summary
   summary="$(BODY="$body" python3 - <<'PYEOF'
 import json, os
