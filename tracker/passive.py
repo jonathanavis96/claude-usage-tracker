@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
+from .atomic import write_text_atomic
 from .join import DailyRate, build_intervals, daily_rates
 from .samples import merge_samples, parse_ceiling_log, parse_moonlighter
 from .turns import iter_turns, session_tokens_by_model, transcript_paths
@@ -68,10 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     with open(moonlighter_path, encoding="utf-8") as f:
         weekly = weekly_windows(parse_weekly_rows(f))
     summary = passive_summary(rates, session_tokens=session_tokens, weekly=weekly)
-    a.out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = a.out.with_suffix(".tmp")
-    tmp.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
-    tmp.replace(a.out)  # atomic: a killed run never leaves a truncated file
+    write_text_atomic(a.out, json.dumps(summary, indent=1) + "\n")
     print(f"wrote {a.out}: {len(rates)} days, ratio {summary['plan_ratio_5x_to_20x']}")
     return 0
 

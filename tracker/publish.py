@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
+from .atomic import write_text_atomic
 from . import credits as credit_model
 from .capture import ACCEPTED
 from .detect import (
@@ -2271,10 +2272,7 @@ def rebuild_public_json(now: datetime, *, probes: Path, passive: Path, effort: P
 
 
 def write_json(path: Path, obj: dict) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    tmp = Path(path).with_suffix(".tmp")
-    tmp.write_text(json.dumps(obj, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(path)  # atomic: a crash mid-write never truncates the previous file
+    write_text_atomic(path, json.dumps(obj, indent=1, sort_keys=True) + "\n")
 
 
 def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetime | None = None) -> int:

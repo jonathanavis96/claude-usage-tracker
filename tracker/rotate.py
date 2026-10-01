@@ -62,6 +62,7 @@ from datetime import datetime
 from pathlib import Path
 from statistics import median
 
+from .atomic import write_text_atomic
 from .probe import payload_words_for, tokens_per_pct_for
 from .publish import load_probes, usd_per_pct
 from .rows import is_outlier, is_output
@@ -236,9 +237,7 @@ def mark_outlier(path: Path, ts: str) -> None:
             break
     if not hit:
         raise ValueError(f"no row with ts {ts} in {path}")
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text("".join(ln + "\n" for ln in lines), encoding="utf-8")
-    tmp.replace(path)
+    write_text_atomic(path, "".join(ln + "\n" for ln in lines))
 
 
 def _load(history: Path) -> list[dict]:
