@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-01T02:30:12.495401+00:00",
+ "generated_at": "2026-10-01T03:00:12.653836+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5111,
+    "reset_verified_samples": 5130,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 8746,
+    "samples": 8766,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-01T02:30:10+00:00"
+    "last": "2026-10-01T02:51:15+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 2348,
-    "turns": 73111,
+    "files": 2349,
+    "turns": 73112,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 2348,
+     "kept": 2349,
      "dropped": 2797,
      "subagent_files": 942,
      "dropped_to": {
@@ -10317,11 +10317,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4365,
+    "reset_verified_samples": 4377,
     "since": null,
-    "samples": 6661,
+    "samples": 6673,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-01T02:28:10+00:00"
+    "last": "2026-10-01T02:58:50+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -14427,11 +14427,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4347,
+    "reset_verified_samples": 4359,
     "since": null,
-    "samples": 4694,
+    "samples": 4706,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-01T02:28:10+00:00"
+    "last": "2026-10-01T02:58:50+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -14446,10 +14446,10 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 481,
-     "dropped": 1033,
+     "dropped": 1034,
      "subagent_files": 245,
      "dropped_to": {
-      ".claude-javiswork": 559
+      ".claude-javiswork": 560
      },
      "unclaimed": 474
     }
@@ -15619,7 +15619,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-01T02:31:02.940685+00:00",
+  "generated_at": "2026-10-01T03:01:03.365210+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
