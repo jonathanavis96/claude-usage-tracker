@@ -48,6 +48,9 @@ class DeadmanTest(unittest.TestCase):
         g = mock.patch.object(supervise, "whatsapp_sender", side_effect=AssertionError("real send"))
         g.start()
         self.addCleanup(g.stop)
+        ge = mock.patch.object(supervise, "email_sender", side_effect=AssertionError("real email"))
+        ge.start()
+        self.addCleanup(ge.stop)
         self.sent: list[str] = []
 
     def run_cmd(self, code: int, kuma_file: Path | None) -> dict:

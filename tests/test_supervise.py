@@ -42,6 +42,9 @@ class SuperviseTest(unittest.TestCase):
         guard = mock.patch.object(supervise, "whatsapp_sender", side_effect=AssertionError("real send"))
         guard.start()
         self.addCleanup(guard.stop)
+        guarde = mock.patch.object(supervise, "email_sender", side_effect=AssertionError("real email"))
+        guarde.start()
+        self.addCleanup(guarde.stop)
 
     def run_cmd(self, code: int, **kw) -> int:
         return supervise.supervise([PY, "-c", f"print('hi'); raise SystemExit({code})"], lock=self.lock,
@@ -160,8 +163,35 @@ class SuperviseTest(unittest.TestCase):
                 self.assertEqual(REAL_WA(out and "msg"), want)
                 self.assertEqual(r.call_args.kwargs["input"], out and "msg")
 
+    def test_default_falls_back_to_email_when_whatsapp_fails(self):
+        with mock.patch.dict(os.environ, {"CUT_ALERT_DRY_RUN": ""}):
+            self.assertIs(supervise.default_sender(), supervise.whatsapp_or_email_sender)
+        with mock.patch.object(supervise, "whatsapp_sender", return_value=False), \
+             mock.patch.object(supervise, "email_sender", return_value=True) as e:
+            self.assertTrue(supervise.whatsapp_or_email_sender("x"))
+            e.assert_called_once_with("x")
+        with mock.patch.object(supervise, "whatsapp_sender", return_value=True), \
+             mock.patch.object(supervise, "email_sender") as e:
+            self.assertTrue(supervise.whatsapp_or_email_sender("x"))
+            e.assert_not_called()
+
+    def test_email_sender_unconfigured_or_unreachable_is_false(self):
+        from tracker import alert
+        with mock.patch.object(alert, "alert_config", return_value="no secret"):
+            self.assertFalse(REAL_EMAIL("x"))
+        cfg = alert.AlertConfig(to="t@example.invalid", secret="s", url="http://127.0.0.1:9/")
+        with mock.patch.object(alert, "alert_config", return_value=cfg), \
+             mock.patch.object(alert, "send_alert", return_value=(200, "ok")) as s:
+            self.assertTrue(REAL_EMAIL("Claude usage tracker (gs) needs attention: x"))
+            self.assertEqual(s.call_args.args[0], "Claude usage tracker (gs) needs attention")
+        with mock.patch.object(alert, "alert_config", return_value=cfg), \
+             mock.patch.object(alert, "send_alert", side_effect=OSError):
+            self.assertFalse(REAL_EMAIL("x"))
+
 
 REAL_WA = supervise.whatsapp_sender
+REAL_EMAIL = supervise.email_sender
+
 
 class ProfileArgsTest(unittest.TestCase):
     def captured(self, *argv):

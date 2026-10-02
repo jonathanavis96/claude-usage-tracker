@@ -33,7 +33,9 @@ the gs health checks (tracker.health.gs_config), no retries (bin/daily.sh runs a
 failed runs in a row (an hour).
 
 The sender is a function (`Sender`): the default ships the text over ssh to the pihome
-WhatsApp bridge, `wa_send.py`, which prints OK or FAIL. Setting CUT_ALERT_DRY_RUN=1, or
+WhatsApp bridge, `wa_send.py`, which prints OK or FAIL, and falls back to the tracker's
+email alert (tracker.alert) when that fails, which is always the case on gs (no ssh route
+to pihome). Setting CUT_ALERT_DRY_RUN=1, or
 passing --dry-run, prints the message to stderr instead. Tests inject their own sender.
 An alert that fails to send leaves the incident unopened, so the next run tries again.
 
@@ -69,13 +71,31 @@ def whatsapp_sender(text: str) -> bool:
     return r.returncode == 0 and "OK" in r.stdout and "FAIL" not in r.stdout
 
 
+def email_sender(text: str) -> bool:
+    """The tracker's email path (tracker.alert, ~/.claude-usage-notify.env). gs has no
+    ssh route to pihome, so there WhatsApp fails and this is what reaches Jonathan."""
+    from tracker import alert
+    cfg = alert.alert_config()
+    if isinstance(cfg, str):
+        return False
+    try:
+        status, _ = alert.send_alert(text.split(":")[0], text, cfg)
+    except OSError:
+        return False
+    return 200 <= status < 300
+
+
+def whatsapp_or_email_sender(text: str) -> bool:
+    return whatsapp_sender(text) or email_sender(text)
+
+
 def dry_run_sender(text: str) -> bool:
     print(f"[alert dry-run] {text}", file=sys.stderr)
     return True
 
 
 def default_sender() -> Sender:
-    return dry_run_sender if os.environ.get("CUT_ALERT_DRY_RUN") else whatsapp_sender
+    return dry_run_sender if os.environ.get("CUT_ALERT_DRY_RUN") else whatsapp_or_email_sender
 
 
 def kuma_url_file() -> Path:

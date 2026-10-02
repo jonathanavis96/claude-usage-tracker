@@ -19,6 +19,9 @@ class GateTest(unittest.TestCase):
         g = mock.patch.object(supervise, "whatsapp_sender", side_effect=AssertionError("real send"))
         g.start()
         self.addCleanup(g.stop)
+        ge = mock.patch.object(supervise, "email_sender", side_effect=AssertionError("real email"))
+        ge.start()
+        self.addCleanup(ge.stop)
 
     def send(self, text):
         self.sent.append(text)
