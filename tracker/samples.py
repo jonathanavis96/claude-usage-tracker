@@ -221,7 +221,10 @@ def merge_samples(*lists: list[Sample]) -> list[Sample]:
     for s in sorted((s for lst in lists for s in lst), key=lambda s: s.ts):
         key = s.ts.replace(second=0, microsecond=0)
         cur = by_minute.get(key)
-        if cur is None or _PRIORITY[s.source] < _PRIORITY[cur.source]:
+        # A reading that carries its window's reset id wins the minute over one that does
+        # not (the ceiling log has none); source priority breaks the remaining ties.
+        rank = (s.resets_at is None, _PRIORITY[s.source])
+        if cur is None or rank < (cur.resets_at is None, _PRIORITY[cur.source]):
             by_minute[key] = s
     return [by_minute[k] for k in sorted(by_minute)]
 

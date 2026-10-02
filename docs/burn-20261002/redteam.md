@@ -56,6 +56,8 @@ One line each: where, impact, suggested fix.
 - `tracker/meter_log.py:105-108` (`test_new_bucket_is_kept_in_the_log`). `sample_line` keeps only `five_hour` and `seven_day`. `seven_day_sonnet` today, and a Fable weekly or a `limits[]` list tomorrow, are dropped at the source and cannot be recovered later. moonlighter keeps the whole body. Fix: store the raw body's other top-level keys under `extra`.
 - Control that passes: null five-hour utilization is already a gap (exit 4), never a zero.
 
+**Status (UT-I): fixed, markers removed.** `merge_samples` prefers the reading with a reset id in a shared minute; `_is_reset` splits when the later reading is past the earlier one's `resets_at` (+5 s). `tests/test_masterrig_passive.py` asserted the old, opposite behaviour and was corrected. These two change masterrig's published numbers; measured in INTEGRATION.md.
+
 ### Reset boundaries on masterrig's merged meter — `tests/redteam/test_reset_boundary_redteam.py`
 
 - `tracker/samples.py:20` (`test_merge_keeps_the_reset_bearing_reading`). `_PRIORITY` makes the reset-less ceiling reading win a shared minute over moonlighter's, the opposite of `tracker/gs_passive.py:142` ("reset-bearing sources winning"). On masterrig's real logs, 281 reset-bearing readings are dropped. Fix: `"moonlighter": 0, "ceiling": 1`, or prefer whichever sample has `resets_at`.

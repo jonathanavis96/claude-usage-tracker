@@ -122,7 +122,12 @@ class AccountTests(unittest.TestCase):
             ops.write_text("\n".join(_ceiling(i) for i in range(41)) + "\n")
             samples = load_samples(masterrig_account(home))
         self.assertEqual(len(samples), 41)
-        self.assertEqual({s.source for s in samples}, {"ceiling"})  # ceiling wins the minute
+        # The reset-bearing moonlighter reading wins each shared minute (red-team 2026-10-02:
+        # this used to assert the opposite of the comment above); the ceiling fills the rest.
+        sources = [s.source for s in samples]
+        self.assertGreater(sources.count("moonlighter"), 0)
+        self.assertTrue(all(s.resets_at is not None for s in samples if s.source == "moonlighter"))
+        self.assertEqual(sources.count("moonlighter") + sources.count("ceiling"), 41)
 
     def test_an_unknown_meter_format_is_refused_by_name(self):
         with tempfile.TemporaryDirectory() as d:
