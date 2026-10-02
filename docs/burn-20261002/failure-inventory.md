@@ -100,9 +100,11 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
   (`deploy/systemd/*.timer`, `OnUnitActiveSec=1min`). The endpoint lets about one call in two
   minutes through per account and answers the rest with a 429 carrying Retry-After 0. The
   backoff in `tracker/meter_log.py:_backoff_remaining_s` reads that 0 as "no wait".
-- Impact on data: none directly. `parse_meter_log` skips error lines. The cost is a
-  doubled call rate against a rate-limited endpoint, logs that are half noise, and runs of
-  2 or 3 failures in a row (4 to 6 minute gaps).
+- Impact on data: `parse_meter_log` skips error lines, so no wrong numbers, but there are real
+  gaps. A run of Retry-After 0 answers escalates to a Retry-After 3600 block. jwork on
+  2026-09-26 went from about one 429 every other minute (14:00 to 14:27Z) to a 3,600 s block
+  at 14:28Z, with no good read until 16:29Z. Gaps over 15 minutes since 2026-09-23: avis 26,
+  dave 25, jwork 18 (up to 123 min). Nearly all of them start with a run of 429s.
 - Fix: a tick within 110 s of the last good read or 429 skips the call (`MIN_READ_SPACING_S`).
   The timers stay at one minute, so a good read still comes about every 130 s.
 - Needs a deploy on gs (a `git pull` in `~/claude-usage-tracker`). Nothing to restart, since each tick is a oneshot.
