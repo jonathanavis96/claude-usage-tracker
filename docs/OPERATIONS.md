@@ -15,6 +15,8 @@ Install or update the masterrig schedule with `deploy/install-schedule.sh` (`--d
 
 On gs, run `deploy/install-gs.sh --dry-run`, then `deploy/install-gs.sh`, from `~/claude-usage-tracker`. It replaces the bare `bin/daily.sh` line with the supervised one and leaves every other line alone. The meter timers are not changed: the supervised publisher run checks their logs every 30 minutes (health check `meters`).
 
+Both installers refuse (exit 3) on a checkout that is dirty, off main or predates the supervisor, print the exact crontab diff on `--dry-run`, back the crontab up to `~/.local/state/claude-usage-tracker/deploy-backups/` before changing it (`deploy/rollback.sh <dir>` restores it), and end with a post-deploy check. `scripts/deploy.sh` runs both from masterrig. The procedure is `docs/burn-20261002/DEPLOY.md`; the details are in `deploy/lib.sh`.
+
 ## How it heals
 
 - **Overlap:** `tracker.supervise` takes an exclusive non-blocking `flock` on `.supervise.lock`. A run that finds it held exits 0 and does nothing. The kernel releases the lock when its holder dies, so it cannot go stale; a leftover `.supervise.pid` whose process is dead is removed before the next run.

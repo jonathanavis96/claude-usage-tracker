@@ -62,6 +62,8 @@ FULL_RESULTS
 - The `alldonesites` page (the only consumer of `claude-usage.json`) needs no change. The end-to-end run shows the same schema, and only the history series extends back further.
 
 ## Deploy steps (morning, for Jonathan)
+**Use [`DEPLOY.md`](DEPLOY.md) instead.** It is the single morning page: one dry run and one `--apply` for both hosts, with backups, rollback, the gs Kuma URL fix (gs cannot resolve `pihome`) and a table mapping each step below to its own. The list below is kept as UT-I wrote it.
+
 Every fix below that needs a live change takes effect through these steps: the gs pull, the two installers (they replace the bare cron lines, which fixes the discarded supervisor output) and the Kuma monitors. Nothing else needs a manual change.
 1. **Ship.** Say "ship it" to run `ship-to-main` on `burn/20261002-ut-integrate`.
 2. **gs.** `ssh gs 'cd ~/claude-usage-tracker && git pull'`. This takes the 110 s meter spacing (which ends the 429 storm), the gate and the Kuma push live. Then, on gs: `deploy/install-gs.sh --dry-run`. Check that it replaces the bare `bin/daily.sh` line with one managed block, then run `deploy/install-gs.sh`.
