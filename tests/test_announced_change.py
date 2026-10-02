@@ -351,8 +351,34 @@ class MeterTests(unittest.TestCase):
         self.assertAlmostEqual(ev["weekly_limit_change_pct"], -20.0, delta=5.0)
         # The weekly change moved more, so its interval decides whether the email may go early.
         self.assertTrue(ev["interval_excludes_no_change"])
+        # It is also the figure the plan-wide test refits, each account's g times the
+        # windows-per-week ratio without it, and the one whose interval lets it apply.
+        self.assertEqual(cand["headline"]["metric"], "weekly_limit")
+        pw = cand["plan_wide"]
+        self.assertEqual(pw["estimator"], "the weekly limit change, g times the windows-per-week ratio")
+        self.assertEqual((pw["state"], sorted(pw["without"])), ("passed", ["a1", "a2"]), pw["reason"])
+        self.assertTrue(cand["applies"])
 
-    def test_a_separable_fit_moves_the_regimes_at_once_whatever_its_intervals(self):
+    def test_a_separable_fit_moves_the_regimes_at_once_once_its_interval_excludes_no_change(self):
+        fit = _joint(_mixed(g=1.3, r=0.6, sd=0.2, seed=11))
+        self.assertTrue(fit["separable"])
+        self.assertGreater(fit["five_hour_limit_change_interval_pct"][0], 0.0)
+        meters = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())
+        cand = meters["candidates"][0]
+        self.assertEqual(cand["plan_wide"]["state"], "passed", cand["plan_wide"]["reason"])
+        self.assertTrue(cand["applies"])
+        self.assertIsNone(cand["withheld_reason"])
+        self.assertEqual(cand["change_pct"], fit["five_hour_limit_change_pct"])
+        (change,) = C.known_date_changes(meters)
+        self.assertTrue(change["window_scaled"])
+        self.assertAlmostEqual(change["ratio"], 1 + fit["five_hour_limit_change_pct"] / 100)
+        (ev,) = P._announced_events(meters)
+        g, w = cand["change_pct"], cand["scope"]["weekly_limit_change_pct"]
+        self.assertEqual(ev["label"], f"Five-hour limit {g:+g}%, weekly limit {w:+g}% (provisional)")
+        self.assertTrue(ev["interval_excludes_no_change"])
+        self.assertNotIn("announce", ev["label"].lower())
+
+    def test_a_separable_fit_whose_interval_includes_no_change_opens_no_regime(self):
         # A small, noisy +8% step: separable, but both intervals include no change.
         fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11))
         self.assertTrue(fit["separable"])
@@ -361,17 +387,13 @@ class MeterTests(unittest.TestCase):
         self.assertGreater(g_hi, 0.0)
         meters = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())
         cand = meters["candidates"][0]
-        self.assertEqual(cand["scope"]["state"], "undetermined")
-        self.assertEqual(cand["change_pct"], fit["five_hour_limit_change_pct"])
-        (change,) = C.known_date_changes(meters)
-        self.assertTrue(change["window_scaled"])
-        self.assertAlmostEqual(change["ratio"], 1 + fit["five_hour_limit_change_pct"] / 100)
-        (ev,) = P._announced_events(meters)
-        g, w = cand["change_pct"], cand["scope"]["weekly_limit_change_pct"]
-        # Its interval includes no change, so it applies at once but stays measuring.
-        self.assertEqual(ev["label"], f"Five-hour limit {g:+g}%, weekly limit {w:+g}% (measuring)")
-        self.assertFalse(ev["interval_excludes_no_change"])
-        self.assertNotIn("announce", ev["label"].lower())
+        self.assertEqual((cand["state"], cand["change_pct"]),
+                         ("measuring", fit["five_hour_limit_change_pct"]))
+        self.assertTrue(cand["measurable"])
+        self.assertFalse(cand["applies"])
+        self.assertIn("includes no change", cand["withheld_reason"])
+        self.assertEqual(C.known_date_changes(meters), [])
+        self.assertEqual(P._announced_events(meters), [])
 
     def test_a_fit_that_cannot_separate_carries_the_window(self):
         meters = C.five_hour_on_meters(_announced(joint_fit=_joint(_mixed(share=0.5))), _max20())
@@ -380,16 +402,17 @@ class MeterTests(unittest.TestCase):
         self.assertFalse(change["window_scaled"])
         self.assertEqual(change["ratio"], 1.0)
 
-    def test_states_follow_the_headline_interval_and_every_state_applies(self):
-        # A change applies as soon as it can be measured at all; `state` says how settled,
-        # read off the windows-per-week interval while the fit cannot separate g.
+    def test_states_follow_the_headline_interval_and_only_a_settled_one_applies(self):
+        # `state` says how settled, read off the windows-per-week interval while the fit
+        # cannot separate g; a change applies once that interval excludes no change.
         for n, wpw, state in ((1, 4.5, "measuring"), (5, 4.5, "measuring"),
                               (1, 3.8, "provisional"), (10, 4.5, "measured")):
             with self.subTest(n=n, wpw=wpw):
                 cand = C.five_hour_on_meters(_announced(), _max20(n_after=n, after_wpw=wpw))["candidates"][0]
                 self.assertEqual(cand["state"], state, cand["windows_per_week_change_interval_pct"])
                 self.assertEqual(cand["state"], C.change_state(cand["windows_per_week_change_interval_pct"]))
-                self.assertTrue(cand["applies"])
+                self.assertTrue(cand["measurable"])
+                self.assertEqual(cand["applies"], state != "measuring", cand["withheld_reason"])
 
     def test_a_separable_fit_sets_the_state_from_the_five_hour_interval(self):
         for g, sd, state in ((1.08, 0.25, "measuring"), (1.3, 0.2, "provisional"),
@@ -401,7 +424,11 @@ class MeterTests(unittest.TestCase):
                 cand = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())["candidates"][0]
                 self.assertEqual(cand["interval_pct"], fit["five_hour_limit_change_interval_pct"])
                 self.assertEqual(cand["state"], state)
-                (ev,) = P._announced_events({"candidates": [cand]})
+                events = P._announced_events({"candidates": [cand]})
+                if state == "measuring":
+                    self.assertEqual(events, [])
+                    continue
+                (ev,) = events
                 self.assertEqual((ev["state"], ev["evidence_quality"]), (state, state))
 
     def test_no_reading_after_on_a_combined_account_does_not_apply(self):
@@ -460,14 +487,26 @@ class MeterTests(unittest.TestCase):
         self.assertTrue(credits_block["candidates"][0]["interval_excludes_no_change"])
         self.assertEqual(P._announced_events(credits_block), [])
 
-    def test_a_measuring_change_enters_events_at_once_with_its_state_and_instant(self):
+    def test_a_measuring_change_is_not_an_event_and_not_last_change(self):
+        # Two accounts agree on -10% windows per week, but two readings after cannot yet
+        # exclude no change: the candidate stays published under its candidates only.
         block = C.five_hour_on_meters(_announced(), _max20(n_after=2))
-        (ev,) = P._announced_events(block)
-        self.assertEqual((ev["state"], ev["evidence_quality"]), ("measuring", "measuring"))
-        self.assertEqual(ev["at"], CAND.isoformat())
-        self.assertFalse(ev["provisional"])
-        last = P._with_announced_last_change({"date": "2026-09-11"}, block)
-        self.assertEqual((last["date"], last["state"]), ("2026-09-22", "measuring"))
+        cand = block["candidates"][0]
+        self.assertEqual(cand["state"], "measuring")
+        self.assertLessEqual(cand["windows_per_week_change_interval_pct"][0], 0.0)
+        self.assertGreaterEqual(cand["windows_per_week_change_interval_pct"][1], 0.0)
+        self.assertFalse(cand["applies"])
+        self.assertIn("includes no change", cand["withheld_reason"])
+        self.assertEqual(P._announced_events(block), [])
+        self.assertEqual(C.known_date_changes(block), [])
+        older = {"date": "2026-09-11"}
+        self.assertIs(P._with_announced_last_change(older, block), older)
+        self.assertIsNone(P._with_announced_last_change(None, block))
+        # The same candidate once the readings settle it is an event and the last change.
+        settled = C.five_hour_on_meters(_announced(), _max20(n_after=10))
+        (ev,) = P._announced_events(settled)
+        self.assertEqual((ev["at"], ev["state"]), (CAND.isoformat(), "measured"))
+        self.assertEqual(P._with_announced_last_change(older, settled)["date"], "2026-09-22")
 
     def test_nothing_measurable_stays_out_of_events(self):
         block = C.five_hour_on_meters(_announced(), _max20(n_after=0))

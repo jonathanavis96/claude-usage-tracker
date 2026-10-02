@@ -2130,10 +2130,11 @@ def _announced_event_record(cand: dict) -> dict:
     """One meter-measured change candidate as a change event, in the event record's shape.
 
     Only candidates `credit_model.five_hour_meter_events` passes reach here: a candidate
-    after the weekly change that can be measured at all (`credit_model.five_hour_on_meters`).
-    It enters at once and is recomputed every publish; `state` (measuring, provisional,
-    measured) says how settled it is, and `at` is the candidate instant the notify step
-    times its 24 and 48 hour rules from. The date is that instant's day, so onset earliest
+    after the weekly change whose headline figure is plan-wide (it holds with each account
+    left out in turn) and whose 95% interval excludes no change
+    (`credit_model.five_hour_on_meters`, `applies`). It enters at once and is recomputed every
+    publish; `state` (provisional, measured) says how settled it is, and `at` is the candidate
+    instant the notify step times its 24 and 48 hour rules from. The date is that instant's day, so onset earliest
     and latest are that same day.
     The headline is the best measured estimate, at once. Once the joint fit separates the
     new family's rate from the limit change it is the five-hour limit change g, with the
@@ -2200,7 +2201,14 @@ def _announced_events(block: dict | None) -> list[dict]:
 
 
 def _with_announced_last_change(last: dict | None, block: dict | None) -> dict | None:
-    """`last_change`, or a meter-measured five-hour change dated later than it."""
+    """`last_change`, or a meter-measured five-hour change dated later than it.
+
+    Only a candidate that `applies` can take it: a five-hour change that holds with every
+    account left out and whose interval excludes no change. A measuring candidate, or one that
+    rests on a single account, stays in `credits.five_hour_on_meters.candidates` only, which
+    keeps the rule `_latest_change_with_scope` states: a provisional reading is never the
+    headline.
+    """
     found = _announced_events(block)
     if not found:
         return last

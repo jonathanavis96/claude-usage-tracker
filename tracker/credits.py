@@ -769,12 +769,12 @@ UNDETERMINED_WEEK_SOURCE = "previous_regime_carried_fit_not_separable"
 KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
 
 KNOWN_DATE_METHOD = (
-    " After that, every change measured on the two meters (`five_hour_on_meters`, the "
-    "windows-per-week ratio across a change candidate; state measured, dated after cut_at) "
-    "opens a new regime in `regimes`, from the candidate's own instant. A regime's own cluster "
+    " After that, every change published from the two meters (`five_hour_on_meters`, a "
+    "candidate that `applies`: dated after cut_at, plan-wide, its interval excluding no "
+    "change) opens a new regime in `regimes`, from the candidate's own instant. A regime's own cluster "
     f"(stretches starting in it) states it once it holds {MIN_AFTER_CLUSTER} readings; below "
     "that it is the previous regime's value times the change's five-hour limit ratio g (the "
-    "joint fit's point estimate, whatever its interval), the interval's low edge times g's low "
+    "joint fit's point estimate), the interval's low edge times g's low "
     "edge and its high edge times g's high edge. Where the joint fit cannot yet separate the "
     "new family's rate from g, the regime carries the previous regime's value "
     f"(`{KNOWN_DATE_UNSCALED_SOURCE}`). The window interval "
@@ -785,12 +785,12 @@ KNOWN_DATE_METHOD = (
 def known_date_changes(meters: dict | None) -> list[dict]:
     """The measured changes that open window regimes, oldest first, with their window ratio.
 
-    The candidates of the `five_hour_on_meters` block that `apply` (measurable at all, dated
-    after CUT_AT: the 14 September split already stands for everything before it). Each
+    The candidates of the `five_hour_on_meters` block that `apply` (dated after CUT_AT, the
+    14 September split already standing for everything before it; plan-wide; a headline
+    interval that excludes no change). Each
     carries its instant, its scope, and the five-hour window ratio and interval, from the
     published rounded percents so a reader can redo the arithmetic. The ratio is the joint
-    fit's five-hour limit change g at its point estimate, whatever its interval or `scope`
-    label; a change whose fit is not separable (`change_pct` null) has none, and
+    fit's five-hour limit change g at its point estimate, whatever its `scope` label; a change whose fit is not separable (`change_pct` null) has none, and
     `window_scaled` False tells `window_regimes` to carry the previous regime. Nothing here
     names a date; the boundaries are the candidate records' own.
     """
@@ -3129,8 +3129,10 @@ WINDOWS_PER_WEEK_METHOD = (
     "tokens at its base family's rate) / (the account's own before level x g). The weekly "
     "limit's change is g times the windows-per-week ratio, its interval from g's bootstrap "
     "interval and the ratio's (`windows_per_week_ratio_bootstrap_interval`) as independent "
-    "log-normal ones. Once the fit separates the rate from g, `change_pct` is g at its point "
-    "estimate, whatever its interval: the regimes scale the window by g and the week by g "
+    "log-normal ones. The fit separates the rate from g only when the rate is pinned and its "
+    "interval reaches half to twice the new family's input list-price ratio to its base "
+    "family (`joint_fit.rate_check`). Once it does, `change_pct` is g at its point "
+    "estimate: a published change scales the window by g and the week by g "
     "times the ratio at once, and the figures move as readings arrive. `scope` only "
     "describes which intervals exclude no change: `five_hour` g's alone, `weekly` the weekly "
     "one alone, `both` both, `undetermined` neither. While the fit cannot separate the rate "
@@ -3140,11 +3142,15 @@ WINDOWS_PER_WEEK_METHOD = (
     "the fit separates it, else the windows-per-week change. It is measuring while that "
     "interval includes no change, provisional once it excludes it, and measured once it also "
     f"has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less; the notify step's "
-    "24 and 48 hour rules time the email and never set it. A "
-    "candidate after the weekly change `applies` as soon as it can be measured at all (one "
-    "reading after on a combined account): it opens a window regime and enters `events` and "
-    "`last_change` at its measured size, however small, and every publish recomputes it. "
-    "`announcement` is reference metadata and changes no figure, state or scope.")
+    "24 and 48 hour rules time the email and never set it. `headline` is the figure a "
+    "candidate would publish: g, or the weekly limit change where that moved more, or the "
+    "windows-per-week change while the fit cannot separate g. `plan_wide` refits that figure "
+    "with each combined account left out in turn (`plan_wide_method`). A candidate after the weekly change `applies` -- opens a "
+    "window regime, enters `events`, and can become `last_change` and reach the email -- at "
+    "once, as soon as its headline is plan-wide and its 95% interval excludes no change; every "
+    "publish recomputes it. Every other candidate stays here with its figures, state and "
+    "`withheld_reason`. `announcement` is reference metadata and changes no figure, state or "
+    "scope.")
 
 
 def own_weekly_step_start(block: dict | None) -> datetime | None:
@@ -3249,6 +3255,91 @@ def _bootstrap_ratio(sides: dict[str, tuple[list[dict], list[dict]]], weights: d
             round(draws[min(int(0.975 * len(draws)), len(draws) - 1)], 4)]
 
 
+def _candidate_plan_wide(cand: dict, headline: dict, paired: dict[str, dict],
+                         sides: dict[str, tuple[list[dict], list[dict]]],
+                         rho_boot: list[float] | None) -> dict:
+    """The plan-wide test (`plan_wide_verdict`) of the figure a candidate would publish.
+
+    That figure is `headline`: the joint fit's five-hour limit change g, or the weekly limit
+    change g times the windows-per-week ratio where that moved more (the event reads the same
+    one), or the combined windows-per-week change while the fit is not separable. g's refits
+    are the joint fit's own (`joint_rate_fit`, `plan_wide.without`). The weekly change without
+    an account is that account's g refit times the windows-per-week ratio recombined without
+    it, with its bootstrap interval resampled the same way (`_bootstrap_ratio`).
+    """
+    metric = headline["metric"]
+    joint_pw = (cand.get("joint_fit") or {}).get("plan_wide")
+    if metric in ("five_hour_limit", "weekly_limit") and not joint_pw:
+        return dict(plan_wide_verdict(None, [], {}, "the joint fit's five-hour limit change g"),
+                    reason="the joint fit carries no leave-one-out refits")
+    if metric == "five_hour_limit":
+        return joint_pw
+    if metric == "windows_per_week":
+        without = {}
+        for label in paired if len(paired) > 1 else ():
+            rest = combine_log_ratios({k: v for k, v in paired.items() if k != label})
+            without[label] = {"change_pct": _pct_of(rest["ratio"]),
+                              "interval_pct": _pct_interval(*rest["interval"])}
+        return plan_wide_verdict(headline["change_pct"], sorted(paired), without,
+                                 "the combined windows-per-week ratio")
+    if metric is None:
+        return plan_wide_verdict(None, [], {}, "none")
+    fit = cand["joint_fit"]
+    accounts = sorted(set(joint_pw["accounts"]) | set(paired))
+    without = {}
+    for label in accounts if len(accounts) > 1 else ():
+        g_row = joint_pw["without"].get(label) or {
+            "change_pct": fit["five_hour_limit_change_pct"],
+            "interval_pct": fit["five_hour_limit_change_interval_pct"]}
+        rest = {k: v for k, v in paired.items() if k != label}
+        if not rest or g_row.get("change_pct") is None:
+            without[label] = {"change_pct": None, "interval_pct": None}
+            continue
+        if label in paired:
+            combined = combine_log_ratios(rest)
+            rho = combined["ratio"]
+            boot = _bootstrap_ratio({k: sides[k] for k in rest}, combined["weights"],
+                                    f"{JOINT_SEED}:{cand['at']}:without:{label}")
+        else:
+            rho, boot = combine_log_ratios(paired)["ratio"], rho_boot
+        if not boot:
+            without[label] = {"change_pct": None, "interval_pct": None}
+            continue
+        w, (w_lo, w_hi) = _log_normal_product(1 + g_row["change_pct"] / 100,
+                                              [1 + x / 100 for x in g_row["interval_pct"]],
+                                              rho, boot)
+        without[label] = {"change_pct": _pct_of(w), "interval_pct": [_pct_of(w_lo), _pct_of(w_hi)]}
+    return plan_wide_verdict(headline["change_pct"], accounts, without,
+                             "the weekly limit change, g times the windows-per-week ratio")
+
+
+def _withheld_reason(cand: dict, at: datetime, combined: dict | None, headline: dict,
+                     plan_wide: dict) -> str | None:
+    """Why a candidate stays in the candidates only, or None when it is published.
+
+    Published (`applies`) means it opens a window regime, enters `events` and can become
+    `last_change` and reach the email. That needs a combined measurement dated after the
+    weekly change, a plan-wide figure (`plan_wide`), and a headline interval that excludes no
+    change. A joint fit that failed the rate check is not separable, so its g is never the
+    headline; that is named too.
+    """
+    if not combined:
+        return "no account has readings on both sides of it yet"
+    if at <= CUT_AT:
+        return "dated before the 14 September weekly change, which stands for everything before it"
+    why = []
+    if plan_wide["state"] != "passed":
+        why.append(f"not plan-wide: {plan_wide['reason']}")
+    iv = headline["interval_pct"]
+    if not iv or iv[0] <= 0 <= iv[1]:
+        why.append(f"the {headline['metric'].replace('_', ' ')} change's 95% interval "
+                   + (f"[{iv[0]:g}, {iv[1]:g}] includes no change" if iv else "is not measured"))
+    check = (cand.get("joint_fit") or {}).get("rate_check") or {}
+    if why and check.get("state") == "failed":
+        why.append(f"the joint fit is not separable: {check['reason']}")
+    return "; ".join(why) or None
+
+
 def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
     """Every change candidate measured on the two meters, per account and combined.
 
@@ -3326,20 +3417,19 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                 pct = scope["five_hour_limit_change_pct"]
                 interval = scope["five_hour_limit_change_interval_pct"]
         state = change_state(interval if pct is not None else wpw_interval)
+        headline = {"metric": None, "change_pct": None, "interval_pct": None}
         if pct is not None:
-            # The published figure is the joint fit's g: its own leave-one-out refits decide.
-            plan_wide = (cand.get("joint_fit") or {}).get("plan_wide") or plan_wide_verdict(
-                None, [], {}, "the joint fit's five-hour limit change g")
-            if plan_wide["state"] == "untested":
-                plan_wide = dict(plan_wide, reason="the joint fit carries no leave-one-out refits")
-        else:
-            without = {}
-            for label in paired if len(paired) > 1 else ():
-                rest = combine_log_ratios({k: v for k, v in paired.items() if k != label})
-                without[label] = {"change_pct": _pct_of(rest["ratio"]),
-                                  "interval_pct": _pct_interval(*rest["interval"])}
-            plan_wide = plan_wide_verdict(wpw_pct, sorted(paired), without,
-                                          "the combined windows-per-week ratio")
+            weekly = scope["weekly_limit_change_pct"]
+            if weekly is not None and abs(weekly) > abs(pct):
+                headline = {"metric": "weekly_limit", "change_pct": weekly,
+                            "interval_pct": scope["weekly_limit_change_interval_pct"]}
+            else:
+                headline = {"metric": "five_hour_limit", "change_pct": pct, "interval_pct": interval}
+        elif combined:
+            headline = {"metric": "windows_per_week", "change_pct": wpw_pct,
+                        "interval_pct": wpw_interval}
+        plan_wide = _candidate_plan_wide(cand, headline, paired, sides, rho_boot)
+        withheld = _withheld_reason(cand, at, combined, headline, plan_wide)
         out.append({
             "family": cand["family"], "at": cand["at"], "at_source": cand.get("at_source"),
             "first_seen_account": cand.get("first_seen_account"),
@@ -3360,7 +3450,10 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                                                 if combined else None),
             "windows_per_week_ratio_bootstrap_interval": rho_boot,
             "joint_fit": cand.get("joint_fit"),
-            "applies": bool(combined) and at > CUT_AT,
+            "headline": headline,
+            "measurable": bool(combined) and at > CUT_AT,
+            "applies": withheld is None,
+            "withheld_reason": withheld,
             "accounts_combined": sorted(paired),
             "per_account": per_account,
             "announcement": cand.get("announcement"),
@@ -3368,12 +3461,14 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
         })
     return {"candidates": out, "unit": "percent",
             "thresholds": {"measured_half_width_pct": CHANGE_MEASURED_HALF_WIDTH_PCT,
-                           "min_before": ANNOUNCED_MIN_BEFORE},
-            "method": WINDOWS_PER_WEEK_METHOD}
+                           "min_before": ANNOUNCED_MIN_BEFORE,
+                           "rate_plausible_times_list_ratio": list(JOINT_RATE_PLAUSIBLE)},
+            "method": WINDOWS_PER_WEEK_METHOD, "plan_wide_method": PLAN_WIDE_METHOD}
 
 
 def five_hour_meter_events(block: dict | None) -> list[dict]:
-    """The meter-measured five-hour candidates that open a regime and enter the events."""
+    """The meter-measured five-hour candidates that open a regime and enter the events: those
+    that `apply` (plan-wide, with a headline interval that excludes no change)."""
     return [c for c in (block or {}).get("candidates", []) if c.get("applies")]
 
 
