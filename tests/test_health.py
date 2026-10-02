@@ -91,6 +91,22 @@ class HealthTest(unittest.TestCase):
         meter.write_text("".join(json.dumps(r) + "\n" for r in rows))
         self.assertIsNone(self.reasons()["meters"], "a 429 in four, reads 130 s apart: healthy")
 
+    def test_publisher_reads_the_fetched_upstream_not_only_head(self):
+        # masterrig fetches hourly but pulls daily: gs's newer commit is only on origin/main.
+        up = self.tmp / "upstream"
+        subprocess.run(["git", "clone", "-q", str(self.repo), str(up)], check=True)
+        (up / "history" / "gs-passive.json").write_text("{\"n\": 1}")
+        env = {**os.environ, "GIT_COMMITTER_DATE": f"@{int(NOW - 60)} +0000", "GIT_AUTHOR_DATE": f"@{int(NOW - 60)} +0000"}
+        subprocess.run(["git", "-C", str(up), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "p"],
+                       check=True, env=env)
+        clone = self.tmp / "clone"
+        subprocess.run(["git", "clone", "-q", str(self.repo), str(clone)], check=True)
+        subprocess.run(["git", "-C", str(clone), "remote", "set-url", "origin", str(up)], check=True)
+        subprocess.run(["git", "-C", str(clone), "fetch", "-q", "origin"], check=True)
+        self.c.repo = clone
+        self.c.publisher_max_age_s = 300
+        self.assertIsNone(self.reasons()["publisher"])
+
     def test_stale_publisher(self):
         self.c.publisher_max_age_s = 300
         self.assertIn("publisher: history/gs-passive.json last committed 10m ago", self.reasons()["publisher"])

@@ -157,14 +157,21 @@ def check_run(c: Config, now: float) -> str | None:
 
 
 def check_publisher(c: Config, now: float) -> str | None:
-    try:
-        out = subprocess.run(["git", "-C", str(c.repo), "log", "-1", "--format=%ct", "--", c.publisher_path],
-                             capture_output=True, text=True, timeout=30, check=False).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return f"publisher: git log failed: {e}"
-    if not out.isdigit():
+    # The newest of HEAD and its upstream: on masterrig bin/passive.sh fetches origin every
+    # hour but pulls only about once a day, so HEAD alone would read gs's half-hourly
+    # publisher commits as a day old and alert every day.
+    stamps = []
+    for rev in ("HEAD", "@{upstream}"):
+        try:
+            out = subprocess.run(["git", "-C", str(c.repo), "log", "-1", "--format=%ct", rev, "--", c.publisher_path],
+                                 capture_output=True, text=True, timeout=30, check=False).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"publisher: git log failed: {e}"
+        if out.isdigit():
+            stamps.append(int(out))
+    if not stamps:
         return f"publisher: no commit touches {c.publisher_path}"
-    age = now - int(out)
+    age = now - max(stamps)
     if age > c.publisher_max_age_s:
         return f"publisher: {c.publisher_path} last committed {_age(age)} ago (limit {_age(c.publisher_max_age_s)})"
     return None
