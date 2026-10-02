@@ -71,6 +71,14 @@ def _parse_ts(s: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def parse_ts_or_none(s) -> datetime | None:
+    """`_parse_ts`, or None for a value that is not a readable stamp."""
+    try:
+        return _parse_ts(s)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
     seen: set[str] = set()
     for p in paths:
