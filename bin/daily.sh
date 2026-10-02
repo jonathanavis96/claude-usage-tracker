@@ -145,6 +145,14 @@ fi
 # branch in one commit; the site gets the published JSON below. Advisory: a
 # failed push is a warning, the files are still committed locally and the next
 # pull --rebase --autostash carries them.
+# Test gate (tracker/publish_gate.py): the tests that read the data this run is about
+# to commit, in one pytest process under 60 s. On 2026-09-29 a new price row broke 11
+# tests and was committed and published for days unnoticed. A failure does not block:
+# the numbers keep flowing and the gate sends one WhatsApp alert per incident (and one
+# when it passes again) through tracker.supervise's sender.
+nice python3 -m tracker.publish_gate \
+  || echo "warning: publish test gate failed (alerted), publishing anyway" >&2
+
 git add data/prices.json
 # None of these exist until their first successful run (contributed) or first
 # tick of usable transcript+meter data (gs-passive).
