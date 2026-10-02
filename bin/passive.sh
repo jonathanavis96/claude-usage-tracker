@@ -29,6 +29,14 @@ cd "$(dirname "$0")/.."
 STAMP=.passive-last-ok
 MAX_AGE=$((20 * 3600))
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# Every line this wrapper writes carries the UTC time: the cron log is otherwise undated.
+say() { printf '%s passive.sh: %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
+# The record belongs on main. A checkout left on a feature branch once had this cron
+# pull and push `crossing-detection`, and that day's record never reached main.
+if [ "$BRANCH" != "main" ]; then
+  say "checkout is on '$BRANCH', not main: refusing to join or push"
+  exit 3
+fi
 # The tree of tracker/ at a commit, or nothing when it has none.
 join_code() { git rev-parse -q --verify "$1:tracker" 2>/dev/null || true; }
 if [ "${1:-}" != "--force" ] && [ -f "$STAMP" ] \
@@ -38,7 +46,7 @@ if [ "${1:-}" != "--force" ] && [ -f "$STAMP" ] \
   if [ -z "$main_code" ] || [ "$main_code" = "$(cat "$STAMP")" ]; then
     exit 0
   fi
-  echo "tracker/ changed on origin/$BRANCH since the last record: joining again now" >&2
+  say "tracker/ changed on origin/$BRANCH since the last record: joining again now"
 fi
 # Take main's code before the joins, not only before the commit: the joins run whatever
 # tracker/ this checkout holds, and a pull only after them left each day's masterrig
@@ -46,18 +54,19 @@ fi
 # tokens, and masterrig's next record would still have been counted the old way while
 # gs's were counted the new way, in one before-and-after comparison. A failed pull is
 # advisory: the day's history is still written, on the code already here.
-git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase before the joins failed, joining with the local code" >&2
+git pull -q --rebase --autostash origin "$BRANCH" || say "warning: git pull --rebase before the joins failed, joining with the local code"
 joined_with="$(join_code HEAD)"
+say "joining on $BRANCH at $(git rev-parse --short HEAD)"
 python3 -m tracker.passive --out history/passive.json
 # Never let the stretch record's failure cost the day's passive.json, which the page reads.
 python3 -m tracker.gs_passive --masterrig --out history/masterrig-passive.json \
-  || echo "warning: masterrig stretch join failed, history/masterrig-passive.json not updated" >&2
+  || say "warning: masterrig stretch join failed, history/masterrig-passive.json not updated"
 # Model speed (tracker/speed.py): this host's transcripts are only here, so its daily rows
 # are appended here; old days are kept as stored, never recomputed. Advisory like the above.
 nice -n 10 python3 -m tracker.speed --masterrig --history history/masterrig-speed.json \
-  || echo "warning: speed rows failed, history/masterrig-speed.json not updated" >&2
+  || say "warning: speed rows failed, history/masterrig-speed.json not updated"
 # gs pushes probe rows to the same branch, so rebase onto them before committing.
-git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
+git pull -q --rebase --autostash origin "$BRANCH" || say "warning: git pull --rebase failed, continuing with local state"
 git add history/passive.json
 git add history/masterrig-passive.json 2>/dev/null || true
 git add history/masterrig-speed.json 2>/dev/null || true
@@ -70,5 +79,5 @@ if git push -q origin "$BRANCH" \
     || { git pull -q --rebase origin "$BRANCH" && git push -q origin "$BRANCH"; }; then
   printf '%s' "$joined_with" > "$STAMP"
 else
-  echo "warning: git push failed after a rebase retry, commit made locally only" >&2
+  say "warning: git push failed after a rebase retry, commit made locally only"
 fi

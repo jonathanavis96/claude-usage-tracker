@@ -36,7 +36,7 @@ inside one tick or hammering the endpoint again next minute).
     python3 -m tracker.meter_log --config-dir ~/.claude-dave --account dave \\
         --log ~/.paperclip/ops/claude-usage-meter-dave.log
 
-Exit codes: 0 sampled, 2 refused (the log belongs to another account, or the
+Exit codes: 0 sampled, or skipped by MIN_READ_SPACING_S, 2 refused (the log belongs to another account, or the
 config dir is signed out), 4 the usage read failed.
 """
 from __future__ import annotations
@@ -62,6 +62,13 @@ NO_RETRY_FETCH = functools.partial(_default_fetch, max_retries=0)
 #: sampling once a minute each, so 300s is what a real block from this endpoint looks
 #: like.
 DEFAULT_429_BACKOFF_S = 300
+#: Least time between two calls for one account. On gs from 2026-09-23 (the timers moved
+#: to one tick a minute) to 2026-10-01, every account drew a 429 with Retry-After: 0 on
+#: about every other tick -- 18,784 such lines, 55% of everything logged -- while a call
+#: about two minutes after the previous one went through. So a tick within this long of
+#: the last good read or 429 skips the call: the same readings, without the failures.
+#: Just under two of the timers' ~65 s ticks.
+MIN_READ_SPACING_S = 110
 
 
 def account_identity(config_dir: Path) -> str | None:
@@ -160,6 +167,23 @@ def _backoff_remaining_s(last: dict | None, now: datetime) -> float | None:
     return remaining if remaining > 0 else None
 
 
+def _since_last_call_s(last: dict | None, now: datetime) -> float | None:
+    """Seconds since `last`, when it is a good reading or a 429; None otherwise.
+
+    Other failures (a DNS error, an expired token) say nothing about the endpoint's
+    limit, so they never delay the next tick.
+    """
+    if not last or ("error" in last and last.get("reason") != "rate_limited"):
+        return None
+    try:
+        since = datetime.fromisoformat(last["ts"])
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        return (now - since).total_seconds()
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
 def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict], dict] | None = None,
            now: Callable[[], datetime] | None = None) -> int:
     """Read the meter once and append one line to `log`. Returns the exit code."""
@@ -175,13 +199,19 @@ def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict
         return EXIT_REFUSED
     clock = now or (lambda: datetime.now(timezone.utc))
     now_ts = clock()
-    remaining = _backoff_remaining_s(_last_line(log), now_ts)
+    last = _last_line(log)
+    remaining = _backoff_remaining_s(last, now_ts)
     if remaining is not None:
         # Still inside a previous tick's 429 backoff: skip the network call rather than
         # retrying inside this tick, and write nothing -- the gap line already on the
         # log carries the backoff the next tick will check.
         print(f"{account}: skipping tick, {remaining:.0f}s left in 429 backoff", file=sys.stderr)
         return EXIT_READ_FAILED
+    since_last = _since_last_call_s(last, now_ts)
+    if since_last is not None and 0 <= since_last < MIN_READ_SPACING_S:
+        print(f"{account}: skipping tick, last call {since_last:.0f}s ago (spacing {MIN_READ_SPACING_S}s)",
+              file=sys.stderr)
+        return EXIT_OK
     try:
         u = read_usage(config_dir, fetch=fetch or NO_RETRY_FETCH, now=clock)
         if u.five_hour is None:

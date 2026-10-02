@@ -32,6 +32,9 @@ if ! flock -w 600 9; then
   exit 6
 fi
 
+# One dated line per run: everything below writes undated lines into the cron log.
+echo "$(date -u +%FT%TZ) daily.sh: start" >&2
+
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
 
