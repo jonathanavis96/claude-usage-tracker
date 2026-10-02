@@ -44,6 +44,11 @@ Both trees ran the real `tracker.passive` and `tracker.publish` with the same in
 
 - `origin/main` and this branch produced identical `passive.json` (3191 leaves) and identical `claude-usage.json` (23340 leaves). Only `generated_at` differed.
 - The intended difference: seeded with this branch's restored `passive.json`, `passive.json` gains exactly the 21 restored days. `plan_ratio_5x_to_20x` goes from None to 0.2532. `claude-usage.json` changes only in its per-model `history` series, which starts on 2026-07-30 instead of 2026-08-20, and in `passive_generated_at`. Every other top-level key is identical..
+- The red-team reset-boundary fixes were rerun on fresh inputs, after `merge_samples` began preferring reset-bearing readings and `_is_reset` began splitting at a known reset. `passive.json` then differs on 5 days, the intended change:
+  - 2026-08-28: 3,830,801 to 4,410,225 tokens per %, +15%;
+  - 2026-09-03, 09-04, 09-09 and 09-29: within ±1.2% each.
+
+  `claude-usage.json` stays identical across all 23,340 leaves.
 - The supervisor (dry-run sender) and health CLI were run against a fake `passive.sh` that exits 3. Result: exit 3, no retry, one dry-run alert naming "checkout is off main", and `health` exit 1 with the same reason.
 
 ## Test results
