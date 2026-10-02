@@ -8,7 +8,7 @@ Branch `burn/20261002-ut-integrate`. It holds UT-2, UT-3, UT-4, UT-H, UT-1 and U
 - **UT-4**: the chaos soak harness in `tests/chaos/`.
 - **UT-H**: hardening against malformed input, `tracker/atomic.py`, and the 11 tests that also failed on main. They had treated the live price table as fixed data.
 - **UT-1**: the failure inventory. `passive.json` keeps days the transcripts no longer reach. `passive.sh` dates its lines and exits 3 when the checkout is off main. Meter reads are at least 110 s apart, and `daily.sh` writes a dated start line.
-- **UT-5**: STATUS_UT5
+- **UT-5**: the Uptime Kuma dead-man ping, `--profile gs` and `deploy/install-gs.sh`, the publisher test gate `tracker/publish_gate.py`, the `probe.py` fix for zero `meter_weight`, and the `passive_account_count` freshness fix. It conflicted in `tracker/health.py`, where UT-5's `meters` check and UT-I's meter check were folded into one. A conflict in `docs/OPERATIONS.md` was also resolved.
 
 The only conflict was in `tracker/passive.py` (UT-H's atomic write against UT-1's `_rebuild` split), and both sides were kept. A line-by-line check found every line each branch added in the final tree, except lines that a later fix replaced on purpose.
 
@@ -25,11 +25,19 @@ The only conflict was in `tracker/passive.py` (UT-H's atomic write against UT-1'
   - New `meter` check (`--meter-log`, repeatable). The limit is 180 s, which allows for the 110 s spacing, plus the Retry-After of a trailing 429. The check also fails when more than half of the last 40 or more lines are 429s. That rate went unseen for nine days in the 2026-09-23 storm.
 - **Lost days restored.** `history/passive.json` has 2026-07-30 to 2026-08-19 again, from 87aa061 and 9e40788. Where both commits hold a day, the newer one wins. No day already on main was overwritten. The test `tests/test_restore_passive_days.py` proves that a restored day survives a rebuild, and that the 5x-to-20x ratio becomes computable again.
 
+- **False alarms removed.**
+  - `health` judged the publisher by HEAD, but masterrig pulls only about once a day. It now also reads the fetched upstream, which before this fix would have alerted every day.
+  - An expired access token is no longer a failure while the refresh token is still valid, so a weekend away does not alert.
+  - masterrig's Kuma window allows for nights the machine is off.
+- **The publish gate catches bad data.** The new `tests/test_prices_data.py` runs in the gate and checks every price row for sanity. On this tree the gate passes (479 passed). A test feeds the gate a deliberately broken row (`output: "10"`, `cache_read: -1`), and the gate fails.
+- **The gs alerts reach Jonathan.** An incident is pushed to Kuma as `status=down&msg=<reason>`, and its recovery as `status=up`. This was tested against a fake server on 127.0.0.1.
+- **Two tests that failed on main and on every branch now pass.** They are in `tests/test_detect.py` and read the hourly-rebuilt `history/passive.json` (evidence 103 -> 102). They now read a frozen fixture, `tests/fixtures/weekly_windows_2026-09-16.json`, taken from 44471f4.
+
 ## End-to-end proof
 Both trees ran the real `tracker.passive` and `tracker.publish` with the same inputs: a temporary HOME, a copy of the moonlighter and ceiling logs, the real transcripts read-only, and main's committed `history/`. A `sitecustomize` guard blocked all network. No alert config was present.
 
 - `origin/main` and this branch produced identical `passive.json` (3191 leaves) and identical `claude-usage.json` (23340 leaves). Only `generated_at` differed.
-- The intended difference: seeded with this branch's restored `passive.json`, E2E_RESTORED.
+- The intended difference: seeded with this branch's restored `passive.json`, `passive.json` gains exactly the 21 restored days. `plan_ratio_5x_to_20x` goes from None to 0.2532. `claude-usage.json` changes only in its per-model `history` series, which starts on 2026-07-30 instead of 2026-08-20, and in `passive_generated_at`. Every other top-level key is identical..
 - The supervisor (dry-run sender) and health CLI were run against a fake `passive.sh` that exits 3. Result: exit 3, no retry, one dry-run alert naming "checkout is off main", and `health` exit 1 with the same reason.
 
 ## Test results
@@ -40,18 +48,23 @@ FULL_RESULTS
 - The supervisor's alert reads "1 runs in a row failed" for exit 3. The wording is cosmetic.
 - F8 (wide change intervals) is model work, out of scope.
 - `history/passive.json` changes on main about every hour. If the merge conflicts on it, take main's file and run `python3 tools/restore_passive_days.py` again. It is idempotent and only adds missing days.
-OPEN_UT5
+- Red-team (UT-R) items: see `docs/burn-20261002/redteam.md` if merged; anything left there is still open.
+- The `alldonesites` page (the only consumer of `claude-usage.json`) needs no change. The end-to-end run shows the same schema, and only the history series extends back further.
 
 ## Morning steps for Jonathan
 1. **Ship.** Say "ship it" to run `ship-to-main` on `burn/20261002-ut-integrate`.
-2. **gs.** `ssh gs 'cd ~/claude-usage-tracker && git pull'`. MORNING_GS
+2. **gs.** `ssh gs 'cd ~/claude-usage-tracker && git pull'`. This takes the 110 s meter spacing (which ends the 429 storm), the gate and the Kuma push live. Then, on gs: `deploy/install-gs.sh --dry-run`. Check that it replaces the bare `bin/daily.sh` line with one managed block, then run `deploy/install-gs.sh`.
 3. **masterrig.** `cd ~/code/claude-usage-tracker && git pull && deploy/install-schedule.sh --dry-run`. Check that it prints one managed block that replaces the bare `bin/passive.sh` line, then run `deploy/install-schedule.sh`.
-4. **Uptime Kuma.** MORNING_KUMA
-5. **Confirm health.** `python3 -m tracker.health --all` on masterrig should print `ok` on every line. KUMA_CONFIRM
+4. **Uptime Kuma.** Create two Push monitors, following `docs/OPERATIONS.md` → "Dead-man switch". **gs**: Heartbeat Interval 2700 s, Retries 2. **masterrig**: Heartbeat Interval 43200 s, Retries 1. masterrig is off or asleep some nights (gaps of 6 to 12 h, four times in the last 30 days), so a short window would raise a false alarm every such night. Write each push URL to `~/.config/claude-usage-tracker/kuma-push-url` (chmod 600) on its host.
+5. **Confirm health.** `python3 -m tracker.health --all` on masterrig should print `ok` on every line. On gs, run `python3 -m tracker.health --profile gs --all`. After the next scheduled run, check that `last_ping` is `"ok"` in each host's state file (`.supervise-state.json` on masterrig, `~/.paperclip/ops/claude-usage-daily-state.json` on gs) and that both Kuma monitors are UP.
 
 ### What alerts you afterwards, and how
 WhatsApp (pihome `wa_send.py`) sends one message when an incident opens and one when it recovers. Nothing repeats while an incident stays open. An incident opens on any of these:
 - three supervised runs fail in a row;
 - one run exits 3 because the checkout is off main;
 - a `health` failure lasts an hour: collection stale, publisher not committing for 2 h, token expired past 12 h or refresh token expired, a stale lock, oversized logs or history, a stale meter log, or a 429 storm.
-ALERT_KUMA
+On a host with a Kuma push URL, the incident goes to Kuma first as `status=down` with the reason, so Kuma's notification is the alert. Recovery is sent as `status=up`. WhatsApp, then email, are used only when Kuma is unreachable. gs cannot reach pihome, so there it is Kuma, then email.
+- **Kuma itself** alerts when a host's pings stop: about 2.25 h on gs, about 24 h on masterrig.
+- The gs **publish gate** sends one alert when the data tests start failing, for example a bad price row, and one when they pass again. It never blocks the publish.
+
+Nothing else alerts. Each message is something that is really broken and names the command to check it.
