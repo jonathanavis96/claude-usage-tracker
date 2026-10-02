@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "deploy" / "install-gs.sh"
 FAKE = """#!/bin/sh
 f="$HOME/crontab.txt"
-if [ "$1" = "-l" ]; then [ -f "$f" ] && cat "$f" || exit 1; else cat > "$f"; fi
+if [ "$1" = "-l" ]; then [ -f "$f" ] && cat "$f" || { echo "no crontab for $(id -un)" >&2; exit 1; }; else cat > "$f"; fi
 """
 # The shape of gs's crontab as read on 2026-10-02 (other jobs abridged).
 GS_TAB = """SHELL=/bin/bash

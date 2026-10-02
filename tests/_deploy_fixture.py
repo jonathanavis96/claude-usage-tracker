@@ -12,7 +12,9 @@ from pathlib import Path
 
 FAKE_CRONTAB = """#!/bin/sh
 f="$HOME/crontab.txt"
-if [ "$1" = "-l" ]; then [ -f "$f" ] && cat "$f" || exit 1; else cat > "$f"; fi
+if [ "$1" = "-l" ]; then
+  [ -f "$f" ] && cat "$f" || { echo "no crontab for $(id -un)" >&2; exit 1; }
+else cat > "$f"; fi
 """
 
 # Writes the state file the post-deploy check reads; SUPERVISE_EXIT sets its exit.

@@ -204,6 +204,50 @@ class DeployTest(unittest.TestCase):
         self.assertIn("RESULT: a real run would proceed", r.stderr)
         self.assertEqual(snapshot(self.home), before)
 
+    # -- an unreadable crontab is never replaced -------------------------------------
+
+    def test_no_crontab_yet_is_an_empty_crontab(self):
+        self.assertFalse(self.tab.exists())
+        r = self.install("--no-check")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("tracker.supervise", self.tab.read_text())
+
+    def test_unreadable_crontab_refuses_in_every_mode_and_writes_nothing(self):
+        fake = self.home / "fakebin" / "crontab"
+        fake.write_text('#!/bin/sh\n[ "$1" = "-l" ] && { echo "crontab: cannot open: Permission denied" >&2;'
+                        ' exit 1; }\necho w >> "$HOME/writes.txt"; cat > "$HOME/crontab.txt"\n')
+        self.tab.write_text(self.legacy)
+        for script in (SCHEDULE, GS):
+            for mode in ([], ["--no-check"], ["--dry-run"], ["--print"]):
+                with self.subTest(script=script.name, mode=mode):
+                    r = self.install(*mode, script=script)
+                    self.assertEqual(r.returncode, 3, r.stderr)
+                    self.assertIn("cannot read the current crontab", r.stderr)
+                    self.assertEqual(r.stdout, "")
+                    self.assertEqual(self.tab.read_text(), self.legacy)
+                    self.assertFalse((self.home / "writes.txt").exists())
+
+    def test_rollback_refuses_an_unreadable_crontab(self):
+        self.tab.write_text(self.legacy)
+        r = self.install("--no-check")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        backup = next(self.backups.iterdir())
+        (self.home / "fakebin" / "crontab").write_text(
+            '#!/bin/sh\n[ "$1" = "-l" ] && { echo "Permission denied" >&2; exit 1; }\ncat > "$HOME/crontab.txt"\n')
+        installed = self.tab.read_text()
+        r = self.run_script(ROLLBACK, str(backup), "--apply", "--force")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertEqual(self.tab.read_text(), installed)
+
+    def test_lost_lines_guard_names_any_other_dropped_line(self):
+        script = (f'. "{ROOT}/deploy/lib.sh"\n'
+                  'cur=$(printf "%s\\n" "0 0 * * * other" "# c" "B" "x old" "E" "5 * * * * /r/bin/passive.sh")\n'
+                  'printf "lost:%s\\n" "$(cut_lost_lines "$cur" "$(printf "%s\\n" "B" "new" "E")" B E /r/bin/passive.sh)"\n'
+                  'printf "kept:%s\\n" "$(cut_lost_lines "$cur" "$(printf "%s\\n" "0 0 * * * other" "# c" "B" "new" "E")" B E /r/bin/passive.sh)"\n')
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30).stdout
+        self.assertIn("lost:0 0 * * * other\n# c\n", out)
+        self.assertIn("kept:\n", out)
+
 
 if __name__ == "__main__":
     unittest.main()

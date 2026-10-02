@@ -14,6 +14,9 @@
 #      whether the host reaches Kuma, the alert env file's key names, and the host hook
 #      (cut_host_checks: WhatsApp bridge on masterrig, meter units on gs).
 #   2. The crontab: the merge below over the current one, and its exact `diff -u`.
+#      A `crontab -l` that fails for any reason other than "no crontab for <user>"
+#      refuses (exit 3) in every mode, and so does a merge that would drop any line
+#      other than the tracker's own: an install never loses another job.
 #   3. Dry run: `tracker.health --all` from the checkout, read-only, when it has the
 #      code. Real run, only when the crontab differs: back up the current crontab to
 #      $CUT_BACKUP_ROOT/<UTC stamp>-<host>/ (crontab.before, crontab.after,
@@ -49,6 +52,37 @@ cut_merge() {
     index($0, p) && $0 !~ /^[[:space:]]*#/ {next}
     {print}' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
   printf '%s\n%s\n' "$kept" "$5" | sed '/./,$!d'
+}
+
+# cut_read_crontab CMD: the current crontab on stdout. "no crontab for <user>" (exit 1)
+# is an empty crontab; any other failure (permission denied, an unreadable spool, a
+# crontab that cannot reach its daemon) returns 1 with the reason on stderr, so a
+# caller never mistakes an unreadable crontab for an empty one and replaces it.
+cut_read_crontab() {
+  local cmd="$1" out err rc ef
+  ef="$(mktemp)" || { say "cannot create a temp file to read the crontab"; return 1; }
+  out="$($cmd -l 2>"$ef")"; rc=$?
+  err="$(cat "$ef")"; rm -f "$ef"
+  if [ "$rc" = 0 ]; then printf '%s\n' "$out"; return 0; fi
+  case "$err" in
+    *"no crontab for"*) return 0 ;;
+  esac
+  say "crontab -l failed (exit $rc): ${err:-no message}"
+  return 1
+}
+
+# cut_lost_lines CURRENT NEW BEGIN END PATTERN: every non-blank line of CURRENT outside
+# the managed block that is not the tracker's own old line (a non-comment line holding
+# PATTERN) and is missing from NEW. Empty output means NEW keeps every other job.
+cut_lost_lines() {
+  awk -v b="$3" -v e="$4" -v p="$5" '
+    FNR == NR { have[$0] = 1; next }
+    $0 == b { skip = 1; next }
+    $0 == e { skip = 0; next }
+    skip { next }
+    $0 ~ /^[[:space:]]*$/ { next }
+    index($0, p) && $0 !~ /^[[:space:]]*#/ { next }
+    !($0 in have) { print }' <(printf '%s\n' "$2") <(printf '%s\n' "$1")
 }
 
 CUT_REFUSALS=()
@@ -116,8 +150,17 @@ cut_install() {
   local host="$1" repo="$2" log="$3" expect="$4" mode="$5" begin="$6" end="$7" pat="$8" block="$9" profile="${10}"
   local crontab_cmd="${CRONTAB:-crontab}" current new cur_sha new_sha b stamp prof
   read -ra prof <<< "$profile"
-  current="$($crontab_cmd -l 2>/dev/null || true)"
+  local lost
+  if ! current="$(cut_read_crontab "$crontab_cmd")"; then
+    say "RESULT: cannot read the current crontab; refused, nothing written"; return 3
+  fi
   new="$(cut_merge "$current" "$begin" "$end" "$pat" "$block")"
+  lost="$(cut_lost_lines "$current" "$new" "$begin" "$end" "$pat")"
+  if [ -n "$lost" ]; then
+    say "RESULT: the merged crontab would drop these lines; refused, nothing written:"
+    printf '%s\n' "$lost" >&2
+    return 3
+  fi
   if [ "$mode" = print ]; then printf '%s\n' "$new"; return 0; fi
 
   say "== $host: $([ "$mode" = dry-run ] && echo 'DRY RUN, nothing is changed' || echo APPLY)"
@@ -164,11 +207,15 @@ cut_install() {
            "$(git -C "$repo" rev-parse HEAD)" "$expect" "$cur_sha" "$new_sha" > "$b/manifest.env" ) \
       || { say "RESULT: cannot write the backup to $b, nothing changed"; return 3; }
     say "backup: $b"
-    if [ "$($crontab_cmd -l 2>/dev/null || true)" != "$current" ]; then
+    local again
+    if ! again="$(cut_read_crontab "$crontab_cmd")"; then
+      say "RESULT: cannot re-read the crontab before writing; nothing written"; return 3
+    fi
+    if [ "$again" != "$current" ]; then
       say "RESULT: the crontab changed since it was read; nothing written. Run again."; return 5
     fi
     printf '%s\n' "$new" | $crontab_cmd - || { say "RESULT: crontab install failed"; return 4; }
-    if [ "$($crontab_cmd -l 2>/dev/null || true)" != "$new" ]; then
+    if [ "$(cut_read_crontab "$crontab_cmd" 2>/dev/null)" != "$new" ]; then
       say "RESULT: the crontab read back differs from what was written; undo with deploy/rollback.sh $b --apply"
       return 4
     fi

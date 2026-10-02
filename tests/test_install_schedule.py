@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "deploy" / "install-schedule.sh"
 FAKE = """#!/bin/sh
 f="$HOME/crontab.txt"
-if [ "$1" = "-l" ]; then [ -f "$f" ] && cat "$f" || exit 1; else cat > "$f"; fi
+if [ "$1" = "-l" ]; then [ -f "$f" ] && cat "$f" || { echo "no crontab for $(id -un)" >&2; exit 1; }; else cat > "$f"; fi
 """
 
 

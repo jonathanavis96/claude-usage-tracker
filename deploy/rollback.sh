@@ -34,7 +34,17 @@ for f in crontab.before crontab.after manifest.env; do
   [ -f "$DIR/$f" ] || { echo "not a deploy backup: $DIR/$f missing" >&2; exit 2; }
 done
 host="$(sed -n 's/^host=//p' "$DIR/manifest.env")"
-current="$($CRONTAB -l 2>/dev/null || true)"
+# "no crontab for <user>" is an empty crontab; any other `crontab -l` failure refuses.
+read_tab() {
+  local out err rc ef
+  ef="$(mktemp)" || return 1
+  out="$($CRONTAB -l 2>"$ef")"; rc=$?
+  err="$(cat "$ef")"; rm -f "$ef"
+  if [ "$rc" = 0 ]; then printf '%s\n' "$out"; return 0; fi
+  case "$err" in *"no crontab for"*) return 0 ;; esac
+  echo "crontab -l failed (exit $rc): ${err:-no message}" >&2; return 1
+}
+current="$(read_tab)" || { echo "REFUSE: cannot read the current crontab, nothing changed" >&2; exit 3; }
 before="$(cat "$DIR/crontab.before")"
 after="$(cat "$DIR/crontab.after")"
 echo "rollback of the $host install in $DIR: $([ "$APPLY" = 1 ] && echo APPLY || echo 'DRY RUN, nothing is changed')" >&2
@@ -51,7 +61,7 @@ diff -u --label "crontab (now)" --label "crontab.before" <(printf '%s\n' "$curre
 save="$DIR/crontab.pre-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
 ( umask 077 && printf '%s\n' "$current" > "$save" ) || { echo "cannot save $save, nothing changed" >&2; exit 3; }
 printf '%s\n' "$before" | $CRONTAB - || { echo "crontab install failed" >&2; exit 4; }
-if [ "$($CRONTAB -l 2>/dev/null || true)" != "$before" ]; then
+if [ "$(read_tab 2>/dev/null)" != "$before" ]; then
   echo "the crontab read back differs from crontab.before" >&2; exit 4
 fi
 echo "restored crontab.before (the replaced crontab is in $save)"
