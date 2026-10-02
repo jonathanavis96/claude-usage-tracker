@@ -32,4 +32,4 @@ All of these are in `tracker/meter_log.py`, which UT-H claimed on the board (ato
 
 - Test 2 uses chmod to make the directory read-only. Run as root, the write succeeds, and the strict xfail would report XPASS.
 - The soak exercises the meter-log collector (gs and Dave's path). It does not run `bin/passive.sh` itself, because that script runs `git pull` and `git push`. It also does not run moonlighter's masterrig log, which an external tool writes.
-- `_default_fetch`'s 30 s urlopen timeout (`tracker/usage_api.py:73`) cannot be configured. The harness shortens it by patching `urllib.request.urlopen`.
+- `_default_fetch`'s 30 s urlopen timeout (`tracker/usage_api.py:77`) cannot be configured. The harness shortens it by patching `urllib.request.urlopen`.
