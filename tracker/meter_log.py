@@ -108,6 +108,24 @@ def sample_line(u: Utilization, account: str, identity: str) -> dict:
             "seven_day": {"utilization": u.seven_day, "resets_at": u.seven_day_resets_at}}
 
 
+def schema_problems(body: dict) -> list[str]:
+    """What in a usage response no longer has the shape this collector reads.
+
+    A renamed key reads as null, and null is also what an idle window returns, so without
+    this a schema change would be logged as ordinary readings and freeze the published
+    series with nobody told (red-team, 2026-10-02)."""
+    out = []
+    for bucket in ("five_hour", "seven_day"):
+        b = body.get(bucket)
+        if not isinstance(b, dict):
+            out.append(f"no {bucket} bucket")
+            continue
+        for key in ("utilization", "resets_at"):
+            if key not in b:
+                out.append(f"{bucket}.{key} missing")
+    return out
+
+
 def log_owner(log: Path) -> str | None:
     """The identity on the log's first labelled line; None for a new or empty log."""
     try:
@@ -303,8 +321,16 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         print(f"{account}: skipping tick, last call {since_last:.0f}s ago (spacing {MIN_READ_SPACING_S}s)",
               file=sys.stderr)
         return EXIT_OK
+    seen: dict = {}
+    base_fetch = fetch or NO_RETRY_FETCH
+
+    def capturing_fetch(url: str, headers: dict) -> dict:
+        body = base_fetch(url, headers)
+        seen["body"] = body
+        return body
+
     try:
-        u = read_usage(config_dir, fetch=fetch or NO_RETRY_FETCH, now=clock)
+        u = read_usage(config_dir, fetch=capturing_fetch, now=clock)
         if u.five_hour is None:
             raise ValueError("no five_hour utilization in the usage response")
     except AuthExpired as e:
@@ -332,7 +358,20 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
                       "error": f"{type(e).__name__}: {e}"[:200]})
         print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED
-    if not _append(log, sample_line(u, account, identity)):
+    line = sample_line(u, account, identity)
+    body = seen.get("body")
+    if isinstance(body, dict):
+        problems = schema_problems(body)
+        if problems:
+            line["schema"] = problems
+            print(f"{account}: warning: usage response schema changed: {'; '.join(problems)}", file=sys.stderr)
+        # Keep every other bucket (seven_day_sonnet today, whatever comes next) as sent:
+        # a dropped bucket can never be recovered later. A name that clashes with one of
+        # this line's own keys is skipped.
+        for k, v in body.items():
+            if k not in line:
+                line[k] = v
+    if not _append(log, line):
         print(f"{account}: reading not recorded, the log could not be written", file=sys.stderr)
         return EXIT_READ_FAILED
     print(f"{account}: five_hour={u.five_hour:.0f}% seven_day={u.seven_day}")

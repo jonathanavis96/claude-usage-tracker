@@ -52,7 +52,7 @@ kept="$(printf '%s\n' "$current" | awk -v b="$BEGIN" -v e="$END" -v p="$REPO/bin
 block="$BEGIN
 # Publisher every 30 min + gs health check (publisher run, meter timers) + alerting + Kuma ping.
 # Docs: $REPO/docs/OPERATIONS.md
-0,30 * * * * cd $REPO && /usr/bin/python3 -m tracker.supervise --profile gs --log $LOG -- $REPO/bin/daily.sh >/dev/null 2>&1
+0,30 * * * * cd $REPO && /usr/bin/python3 -m tracker.supervise --profile gs --log $LOG -- $REPO/bin/daily.sh >> $LOG.supervise 2>&1
 $END"
 
 new="$(printf '%s\n%s\n' "$kept" "$block" | sed '/./,$!d')"

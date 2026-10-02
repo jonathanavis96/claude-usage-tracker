@@ -42,12 +42,6 @@ def flagged(code: int, err: str, line: dict) -> bool:
     return code != 0 or "schema" in err.lower() or "warning" in err.lower() or "schema" in line
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/usage_api.py:26-29 _bucket reads b.get('resets_at') and takes a missing key as "
-    "null. If the endpoint renames it, every reading is logged with resets_at null at exit 0. "
-    "Null is also what an idle window legitimately returns (889 of 4,714 moonlighter rows), "
-    "so nothing downstream can tell; every new stretch becomes reset_verified=false and "
-    "tracker/publish.py:258 drops it from the dollar series, which then freezes"))
 def test_renamed_resets_at_is_noticed(account, capsys):
     body = {"five_hour": {"utilization": 35.0, "reset_at": FIVE_RESET},
             "seven_day": {"utilization": 20.0, "reset_at": SEVEN_RESET}}
@@ -56,11 +50,6 @@ def test_renamed_resets_at_is_noticed(account, capsys):
     assert flagged(code, err, line), "a reading with utilization but no resets_at key was logged as normal"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/usage_api.py:26-29 turns a missing `seven_day` bucket into seven_day=None and "
-    "meter_log logs it at exit 0. tracker/join.py:325 window_points skips every pair with a "
-    "None seven_day, so a renamed or moved weekly bucket silently ends all weekly windows "
-    "and weekly change detection, with no warning anywhere"))
 def test_missing_seven_day_bucket_is_noticed(account, capsys):
     body = {"five_hour": {"utilization": 35.0, "resets_at": FIVE_RESET},
             "weekly": {"utilization": 20.0, "resets_at": SEVEN_RESET}}
@@ -69,12 +58,6 @@ def test_missing_seven_day_bucket_is_noticed(account, capsys):
     assert flagged(code, err, line), "a body with no seven_day bucket was logged as a normal reading"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/meter_log.py:105-108 sample_line keeps only five_hour and seven_day. Any other "
-    "bucket the endpoint adds (seven_day_sonnet today; a Fable weekly, or a limits[] list) is "
-    "thrown away at the source, so if a new per-model weekly becomes the binding limit the "
-    "gs logs hold no record of it and it can never be recovered. moonlighter's log keeps "
-    "the whole body"))
 def test_new_bucket_is_kept_in_the_log(account, capsys):
     body = {"five_hour": {"utilization": 35.0, "resets_at": FIVE_RESET},
             "seven_day": {"utilization": 20.0, "resets_at": SEVEN_RESET},

@@ -41,7 +41,7 @@ kept="$(printf '%s\n' "$current" | awk -v b="$BEGIN" -v e="$END" -v p="$REPO/bin
 
 block="$BEGIN
 # Hourly passive join + health check + alerting. Docs: $REPO/docs/OPERATIONS.md
-15 * * * * cd $REPO && /usr/bin/python3 -m tracker.supervise --log $LOG -- $REPO/bin/passive.sh >/dev/null 2>&1
+15 * * * * cd $REPO && /usr/bin/python3 -m tracker.supervise --log $LOG -- $REPO/bin/passive.sh >> $LOG.supervise 2>&1
 $END"
 
 new="$(printf '%s\n%s\n' "$kept" "$block" | sed '/./,$!d')"

@@ -11,7 +11,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "deploy" / "install-schedule.sh"
@@ -22,12 +21,6 @@ if [ "$1" = "-l" ]; then [ -f "$f" ] && cat "$f" || exit 1; else cat > "$f"; fi
 MARKER = "SUPERVISOR-CRASHED-7f3a"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "deploy/install-schedule.sh:127 ends the cron line with `>/dev/null 2>&1`. The command's "
-    "own output goes to --log, but anything tracker.supervise prints itself -- 'skipped: "
-    "previous run still going', and the traceback of every crash in test_supervise_redteam "
-    "-- is discarded, and cron mail never fires. A supervisor that dies every hour leaves "
-    "no trace on disk"))
 def test_supervisor_crash_leaves_a_trace(tmp_path, fake_home):
     fake = fake_home / "fakecrontab"
     fake.write_text(FAKE_CRONTAB)

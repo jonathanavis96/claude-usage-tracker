@@ -303,6 +303,9 @@ def check_meters(c: Config, now: float) -> str | None:
             if isinstance(row, dict) and isinstance(row.get("five_hour"), dict):
                 newest = _parse_ts(row.get("ts"))
                 if newest is not None:
+                    if row.get("schema"):
+                        return (f"meters: the usage API changed shape ({'; '.join(map(str, row['schema']))}) "
+                                f"in {log.name}; readings may be wrong")
                     break
         try:
             rows = _tail_rows(log)

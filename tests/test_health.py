@@ -118,6 +118,14 @@ class HealthTest(unittest.TestCase):
         commit({"ok": True, "at": "2026-10-02T02:00:00Z", "last_ok": "2026-10-02T02:00:00Z"})
         self.assertIsNone(self.reasons()["publisher"])
 
+    def test_schema_change_on_the_newest_reading_fails_meters(self):
+        meter = self.tmp / "meter-dave.log"
+        self.c.meter_logs = (meter,)
+        self.c.checks = ("meters",)
+        meter.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": 3},
+                                     "schema": ["seven_day.resets_at missing"]}) + "\n")
+        self.assertIn("usage API changed shape", self.reasons()["meters"] or "")
+
     def test_stale_publisher(self):
         self.c.publisher_max_age_s = 300
         self.assertIn("publisher: history/gs-passive.json last committed 10m ago", self.reasons()["publisher"])
