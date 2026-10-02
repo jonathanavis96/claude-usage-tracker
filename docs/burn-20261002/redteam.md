@@ -29,6 +29,7 @@ One line each: where, impact, suggested fix.
 - `tracker/health.py:102-112` (`test_collection_error_row_is_not_a_fresh_sample`). Same flaw in `check_collection`: an error row with a `ts` counts as a fresh sample. Fix: as above.
 - `tracker/health.py:153-156` (`test_token_check_survives_unexpected_credentials_shape`). A non-object `claudeAiOauth` raises AttributeError outside the try; the CLI crashes, and under supervise this is the crash above. Fix: `if not isinstance(oauth, dict): return "token: ... unexpected shape"`.
 - `tracker/health.py:231`, `:217` (`test_lock_check_survives_corrupt_pidfile`). A corrupt all-digit pid file overflows `os.kill`; uncaught. Low likelihood. Fix: catch `OverflowError`/`ValueError` in `pid_alive` and report the pid file as stale.
+- `tracker/health.py:102-112`, `:137-148` (`test_future_stamps_are_reported_as_clock_skew`). Age is `now - stamp` and only an age that is too large fails. A future stamp passes. If masterrig's WSL clock lags gs after the host sleeps, the publisher check hides staleness by exactly that lag and never reports the skew. Low impact: the meter and transcripts on each host share one clock, so the joined numbers are not affected. Fix: fail any stamp more than 10 min in the future as `clock skew`.
 
 ### masterrig publisher (`bin/passive.sh`) — `tests/redteam/test_passive_sh_redteam.py`
 
@@ -57,3 +58,30 @@ One line each: where, impact, suggested fix.
 - `tracker/samples.py:20` (`test_merge_keeps_the_reset_bearing_reading`). `_PRIORITY` makes the reset-less ceiling reading win a shared minute over moonlighter's, the opposite of `tracker/gs_passive.py:142` ("reset-bearing sources winning"). On masterrig's real logs, 281 reset-bearing readings are dropped. Fix: `"moonlighter": 0, "ceiling": 1`, or prefer whichever sample has `resets_at`.
 - `tracker/join.py:59-62` (`test_known_reset_between_readings_splits_the_interval`). `same_reset` returns True when either side lacks `resets_at`, so with 69% of masterrig's series coming from the ceiling log, a reset between readings is detected only by a drop. A moonlighter reading saying "ends 10:00" followed by a higher ceiling reading at 10:03 is paired across the reset. Measured on the real logs: at most 17 straddling pairs with prior use between 2026-06-13 and 2026-10-02, mostly flat, so the effect on the numbers is small. Fix: in `_is_reset`, treat `a.resets_at <= b.ts` (parsed, with the 60 s tolerance) as a reset, and carry each moonlighter `resets_at` onto the ceiling readings inside its window before the join.
 - Checked and holding: `resets_at` jitter. On 3,305 consecutive same-window moonlighter pairs the largest jitter is 1.9 s (one 599 s shift splits a window, which loses a pair but does not mis-attribute one). UTC `resets_at` against SAST `ts` is fine: every stamp is offset-aware and compared as an instant, and day buckets use UTC (`join.py:97`).
+
+## Checked and holding (no test needed)
+
+- **Python on gs**: `ssh gs python3 --version` gives 3.14.4, while masterrig and the test runs here use 3.12.3. A grep for APIs removed or changed in 3.13 and 3.14 found nothing. `rglob` symlink behaviour is the same on 3.12.3 and 3.14.3. Under a local 3.14.3, `tests.test_usage_api`, `test_meter_log`, `test_samples`, `test_join`, `test_weekly`, `test_health`, `test_supervise`, `test_gs_passive`, `test_publish`, `test_turns` and `test_contributed` all pass (unittest, one file at a time).
+- **Minimal cron env**: the installed line uses `/usr/bin/python3` and `cd $REPO`, and passive.sh sets its own PATH. It ran correctly under `sh -c` with HOME and `PATH=/usr/bin:/bin` only (the cron-line test).
+- **Two runs at once**: meter_log holds `<log>.lock` (chaos test), supervise holds `.supervise.lock`, and daily.sh holds `.cron.lock`. A hand-run `bin/passive.sh` beside the cron's is not locked. Its likely failure, a git `index.lock` collision, is the `|| exit 0` finding above.
+- **5-hour or weekly reset during a run**: meter_log is one read per run. The probe, the only multi-read run, is not scheduled (`bin/daily.sh` header). Chaos covers mid-window and weekly resets in the meter log.
+- **Disk full during publish**: `tracker.publish` writes through `write_text_atomic`, so the old page JSON survives and daily.sh exits 1. `tools/model_rates.py:1502` writes `history/model-rates.json` non-atomically. A torn file there fails the next publish (ValueError) and is refitted on the following run (`rates_due` treats an unreadable file as due), so it delays the page but does not corrupt it.
+
+## Read, not turned into tests
+
+- `bin/daily.sh:374-408`: once the subscriber send returns 2xx, the date goes into `.notified-change`, and Jonathan's own alert (`alert_jonathan ... || true`) is never retried. If only his alert fails, subscribers hear about a change and he does not. Testing it needs a stubbed `curl` on daily.sh's `$HOME/.local/bin` PATH and a two-publish evidence sequence, which is left out tonight.
+- `tracker/meter_log.py:250`: `auth_expired` and other non-429 errors do not trigger the 110 s spacing, so an account with a dead token calls the endpoint every minute indefinitely.
+- `tracker/weekly.py:309`: `probe_weekly_windows` keys the week on `resets_at[:10]`. That splits a week across UTC midnight jitter, where `_week_key` adds 30 s. Probe-only, and probes are not scheduled.
+- Pre-existing on this branch, not part of this task: `python3 -m unittest tests.test_detect` fails 2 tests on both 3.12 and 3.14 (`test_the_committed_max20_history_certifies_one_cut_dated_14_sep` expects 103 evidence points and gets 102; `test_a_partial_post_cut_pool_can_misdate_the_cut...` expects 19 and gets 20). Both read committed history, which 5babc5b's passive-day restore may have changed.
+
+## Ranked by impact
+
+1. Rejected site push: page frozen, health green (`test_rejected_site_push_is_seen_by_health`).
+2. passive.sh exits 0 on a failed push or commit (`test_unpushed_record_is_not_reported_as_success`, `test_failed_commit_is_not_reported_as_success`).
+3. Publisher check reads a stale HEAD: a daily false incident that hides real ones (`test_publisher_check_reads_what_was_fetched`), and an open incident swallows new faults (`test_new_fault_during_open_incident_is_alerted`).
+4. Supervisor dies silently: hung run, full disk, unwritable state, crashing health check, all with stderr thrown away by the cron line (`test_run_hung_for_hours_is_alerted`, `test_disk_full_run_log_does_not_crash_the_supervisor`, `test_unwritable_state_still_alerts`, `test_crashing_health_check_still_alerts`, `test_supervisor_crash_leaves_a_trace`).
+5. One account's revoked token is invisible to health (`test_meter_log_of_only_auth_errors_is_unhealthy`, `test_collection_error_row_is_not_a_fresh_sample`).
+6. Schema change logged as good readings, so the dollar series or the weekly series freezes (`test_renamed_resets_at_is_noticed`, `test_missing_seven_day_bucket_is_noticed`, `test_new_bucket_is_kept_in_the_log`).
+7. A failed WhatsApp send leaves no trace (`test_failed_alert_send_is_recorded`).
+8. Reset ids lost in masterrig's merge: wrong pairs across a reset, small measured effect (`test_merge_keeps_the_reset_bearing_reading`, `test_known_reset_between_readings_splits_the_interval`).
+9. Health crashes or misses on odd input: credentials shape, corrupt pid file, future stamps (`test_token_check_survives_unexpected_credentials_shape`, `test_lock_check_survives_corrupt_pidfile`, `test_future_stamps_are_reported_as_clock_skew`).

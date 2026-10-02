@@ -73,3 +73,17 @@ def test_lock_check_survives_corrupt_pidfile(tmp_path):
     pidfile.write_text("9" * 30)
     reason = health.check_lock(health.Config(lock_pidfile=pidfile), NOW.timestamp())
     assert reason is not None and reason.startswith("lock:")
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "tracker/health.py:102-112 and :137-148 compute age as now minus a stamp and only fail "
+    "when it is too large. A stamp in the future (masterrig's WSL clock lagging gs after the "
+    "host sleeps, or a clock stepped back) gives a negative age and passes, so skew between "
+    "masterrig and gs hides staleness by exactly the skew and is never itself reported"))
+def test_future_stamps_are_reported_as_clock_skew(tmp_path):
+    log = tmp_path / "usage_log.jsonl"
+    ahead = NOW + timedelta(hours=3)
+    log.write_text(json.dumps({"ts": _stamp(ahead), "five_hour": {"utilization": 5.0, "resets_at": None},
+                               "seven_day": {"utilization": 5.0, "resets_at": None}}) + "\n")
+    reason = health.check_collection(health.Config(usage_log=log), NOW.timestamp())
+    assert reason is not None, "a sample stamped three hours in the future passed as fresh"
