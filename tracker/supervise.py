@@ -1,0 +1,217 @@
+"""Run a scheduled tracker job unattended: one at a time, retried, logged, bounded, alerted.
+
+    python3 -m tracker.supervise --log ~/.paperclip/ops/claude-usage-passive.log -- bin/passive.sh
+
+What one run does:
+
+  1. Overlap guard. An exclusive non-blocking flock on --lock. A second run while one
+     is live exits 0 at once ("skipped: previous run still going"), so a slow join can
+     never stack cron runs. The kernel drops the lock when its holder dies, so a lock
+     can never go stale; the pid file beside it is only for the health check, and a
+     pid file whose process is dead is removed here before the run.
+  2. Log rotation. When --log is over --max-log-bytes it moves to .1 (.1 to .2, up to
+     --keep), and the command's stdout and stderr are appended to the fresh log.
+  3. Retry with backoff. A non-zero exit is retried up to --retries more times, waiting
+     --backoff, then twice that, and so on. Each attempt starts the command afresh,
+     so it re-reads the OAuth token and the checkout.
+  4. State. --state (JSON) records last_ok, last_fail, last_reason, consecutive_failures
+     and whether an incident is open.
+  5. Alert. An incident opens when consecutive_failures reaches --fail-threshold, or when
+     tracker.health reports a failure that has lasted --stale-after seconds (default 1h).
+     Opening sends ONE alert; while it stays open nothing more is sent; when a run
+     succeeds and health is clean again ONE recovery message is sent and it closes.
+
+The sender is a function (`Sender`): the default ships the text over ssh to the pihome
+WhatsApp bridge, `wa_send.py`, which prints OK or FAIL. Setting CUT_ALERT_DRY_RUN=1, or
+passing --dry-run, prints the message to stderr instead. Tests inject their own sender.
+An alert that fails to send leaves the incident unopened, so the next run tries again.
+
+Exit status is the command's last exit status (0 when skipped).
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Callable
+
+from tracker import health
+
+ROOT = Path(__file__).resolve().parent.parent
+Sender = Callable[[str], bool]
+
+WA_CMD = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "pihome",
+          "python3 /home/grafe/wa-assistant/wa_send.py 27822227457"]
+
+
+def whatsapp_sender(text: str) -> bool:
+    try:
+        r = subprocess.run(WA_CMD, input=text, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0 and "OK" in r.stdout and "FAIL" not in r.stdout
+
+
+def dry_run_sender(text: str) -> bool:
+    print(f"[alert dry-run] {text}", file=sys.stderr)
+    return True
+
+
+def default_sender() -> Sender:
+    return dry_run_sender if os.environ.get("CUT_ALERT_DRY_RUN") else whatsapp_sender
+
+
+def rotate_log(log: Path, max_bytes: int, keep: int) -> bool:
+    try:
+        if log.stat().st_size <= max_bytes:
+            return False
+    except OSError:
+        return False
+    for i in range(keep - 1, 0, -1):
+        src = log.with_name(f"{log.name}.{i}")
+        if src.exists():
+            src.replace(log.with_name(f"{log.name}.{i + 1}"))
+    log.replace(log.with_name(f"{log.name}.1"))
+    return True
+
+
+def write_state(path: Path, state: dict) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
+    tmp.replace(path)
+
+
+def clear_stale_pidfile(pidfile: Path) -> bool:
+    try:
+        text = pidfile.read_text().strip()
+    except OSError:
+        return False
+    if text.isdigit() and health.pid_alive(int(text)) and int(text) != os.getpid():
+        return False
+    pidfile.unlink(missing_ok=True)
+    return True
+
+
+def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: float,
+                   sleep: Callable[[float], None] = time.sleep) -> int:
+    code = 0
+    for attempt in range(retries + 1):
+        out = open(log, "a") if log else None
+        try:
+            if out:
+                out.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S%z')} attempt {attempt + 1}: {' '.join(cmd)}\n")
+                out.flush()
+            code = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT if out else None, check=False).returncode
+        except OSError as e:
+            code = 127
+            if out:
+                out.write(f"cannot start: {e}\n")
+        finally:
+            if out:
+                out.close()
+        if code == 0 or attempt == retries:
+            return code
+        sleep(backoff * (2 ** attempt))
+    return code
+
+
+def decide_alert(state: dict, now: float, health_reason: str | None, fail_threshold: int,
+                 stale_after: float, send: Sender, label: str) -> None:
+    """Open or close an incident, sending at most one message per transition."""
+    if health_reason:
+        state.setdefault("unhealthy_since", now)
+    else:
+        state.pop("unhealthy_since", None)
+    failing = state.get("consecutive_failures", 0) >= fail_threshold
+    stale = bool(health_reason) and now - state["unhealthy_since"] >= stale_after
+    if not state.get("incident_open"):
+        if failing or stale:
+            reason = (f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})"
+                      if failing else health_reason)
+            if send(f"Claude usage tracker ({label}) needs attention: {reason}. "
+                    f"Check: python3 -m tracker.health --all"):
+                state["incident_open"] = True
+                state["incident_since"] = now
+                state["incident_reason"] = reason
+    elif not failing and health_reason is None:
+        mins = int((now - state.get("incident_since", now)) // 60)
+        if send(f"Claude usage tracker ({label}) recovered after {mins} min: {state.get('incident_reason')}"):
+            for k in ("incident_open", "incident_since", "incident_reason"):
+                state.pop(k, None)
+
+
+def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None, retries: int = 2,
+              backoff: float = 30.0, max_log_bytes: int = 5 * 1024 * 1024, keep: int = 3,
+              fail_threshold: int = 3, stale_after: float = 3600.0, send: Sender | None = None,
+              health_cfg: health.Config | None = None, label: str = "masterrig",
+              sleep: Callable[[float], None] = time.sleep, now: Callable[[], float] = time.time) -> int:
+    send = send or default_sender()
+    pidfile = lock.with_suffix(".pid")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("skipped: previous run still going", file=sys.stderr)
+            return 0
+        clear_stale_pidfile(pidfile)
+        pidfile.write_text(str(os.getpid()))
+        try:
+            if log:
+                rotate_log(log, max_log_bytes, keep)
+            code = run_with_retry(cmd, log, retries, backoff, sleep)
+            state = health.read_state(state_path)
+            t = now()
+            if code == 0:
+                state["last_ok"] = t
+                state["consecutive_failures"] = 0
+            else:
+                state["last_fail"] = t
+                state["last_reason"] = f"exit {code} after {retries + 1} attempts"
+                state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
+            cfg = health_cfg or health.Config(state=state_path, lock_pidfile=pidfile,
+                                              logs=(log,) if log else ())
+            write_state(state_path, state)  # the run check reads it
+            reason = health.first_failure(cfg, t, skip=("lock",))
+            decide_alert(state, t, reason, fail_threshold, stale_after, send, label)
+            state["last_health"] = reason or "ok"
+            write_state(state_path, state)
+            return code
+        finally:
+            pidfile.unlink(missing_ok=True)
+    finally:
+        os.close(fd)
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--lock", type=Path, default=ROOT / ".supervise.lock")
+    p.add_argument("--state", type=Path, default=ROOT / ".supervise-state.json")
+    p.add_argument("--log", type=Path)
+    p.add_argument("--retries", type=int, default=2)
+    p.add_argument("--backoff", type=float, default=30.0)
+    p.add_argument("--max-log-bytes", type=int, default=5 * 1024 * 1024)
+    p.add_argument("--keep", type=int, default=3)
+    p.add_argument("--fail-threshold", type=int, default=3)
+    p.add_argument("--stale-after", type=float, default=3600.0)
+    p.add_argument("--label", default="masterrig")
+    p.add_argument("--dry-run", action="store_true", help="print alerts instead of sending them")
+    p.add_argument("cmd", nargs=argparse.REMAINDER)
+    a = p.parse_args(argv)
+    cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    if not cmd:
+        p.error("no command given")
+    return supervise(cmd, lock=a.lock, state_path=a.state, log=a.log, retries=a.retries, backoff=a.backoff,
+                     max_log_bytes=a.max_log_bytes, keep=a.keep, fail_threshold=a.fail_threshold,
+                     stale_after=a.stale_after, label=a.label,
+                     send=dry_run_sender if a.dry_run else None)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
