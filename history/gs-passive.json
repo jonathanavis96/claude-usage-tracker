@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-02T06:30:05.237656+00:00",
+ "generated_at": "2026-10-02T07:00:04.865419+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5662,
+    "reset_verified_samples": 5670,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 9368,
+    "samples": 9376,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-02T06:29:45+00:00"
+    "last": "2026-10-02T06:59:20+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 3140,
-    "turns": 74347,
+    "files": 3141,
+    "turns": 74348,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 3140,
+     "kept": 3141,
      "dropped": 2640,
      "subagent_files": 951,
      "dropped_to": {
@@ -10689,11 +10689,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5000,
+    "reset_verified_samples": 5012,
     "since": null,
-    "samples": 7387,
+    "samples": 7399,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-02T06:29:45+00:00"
+    "last": "2026-10-02T06:59:20+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -15094,11 +15094,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4968,
+    "reset_verified_samples": 4979,
     "since": null,
-    "samples": 5388,
+    "samples": 5399,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-02T06:29:45+00:00"
+    "last": "2026-10-02T06:59:20+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -15113,10 +15113,10 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 877,
-     "dropped": 1272,
+     "dropped": 1273,
      "subagent_files": 246,
      "dropped_to": {
-      ".claude-javiswork": 783
+      ".claude-javiswork": 784
      },
      "attributed_by_record": {
       "airlock_tune_env": 178
@@ -16747,7 +16747,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-02T06:31:06.898094+00:00",
+  "generated_at": "2026-10-02T07:01:07.860320+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -55617,6 +55617,22 @@
      "184": 1,
      "192": 1,
      "171": 1
+    },
+    "fast_output_hist": {},
+    "fast_ttfb_hist": {}
+   },
+   {
+    "day": "2026-10-02",
+    "model": "claude-haiku-4-5",
+    "account": "a2",
+    "entrypoint": "sdk-cli",
+    "n": 1,
+    "fast_session_requests": 0,
+    "output_hist": {
+     "216": 1
+    },
+    "ttfb_hist": {
+     "97": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
