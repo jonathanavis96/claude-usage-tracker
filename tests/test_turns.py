@@ -167,3 +167,21 @@ class SessionTokensByModelTests(unittest.TestCase):
                 paths.append(p)
             result = session_tokens_by_model(paths, now=now)
         self.assertEqual(result, {"claude-opus-5": 300})
+
+
+class MalformedTranscriptTests(unittest.TestCase):
+    def test_bad_lines_skip_that_line_only(self):
+        from tracker.turns import turns_in
+        lines = [{"type": "assistant", "timestamp": "2026-09-05T20:20:48Z", "message": "oops"},
+                 {"type": "assistant", "timestamp": "garbage", "message": {"id": "a", "usage": {"input_tokens": 1}}},
+                 {"type": "assistant", "timestamp": "2026-09-05T20:20:48Z",
+                  "message": {"id": "b", "usage": {"input_tokens": "lots"}}},
+                 json.loads(rec("ok"))]
+        self.assertEqual([t.id for t in turns_in(lines, set())], ["ok"])
+
+    def test_transcript_deleted_mid_scan_is_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "s.jsonl")
+            p.write_text(rec("m1") + "\n")
+            gone = Path(d, "gone.jsonl")
+            self.assertEqual(len(list(iter_turns([gone, p]))), 1)

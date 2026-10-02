@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
+from .atomic import write_text_atomic
 from . import credits as credit_model
 from .gs_passive import unpriced_credit_models
 from .turns import normalized_raw_model
@@ -303,10 +304,8 @@ def run(prices_path: Path, stretch_paths: list[Path], *, fetcher=fetch, url: str
         return []
     if not added:
         return []
-    tmp = prices_path.with_suffix(".tmp")
     try:
-        tmp.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(prices_path)
+        write_text_atomic(prices_path, json.dumps(updated, indent=2) + "\n")
     except OSError as exc:
         _warn(f"could not write {prices_path}: {exc}")
         return []

@@ -32,8 +32,33 @@ if ! flock -w 600 9; then
   exit 6
 fi
 
+# One dated line per run: everything below writes undated lines into the cron log.
+echo "$(date -u +%FT%TZ) daily.sh: start" >&2
+
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-git pull -q --rebase --autostash origin "$BRANCH" || echo "warning: git pull --rebase failed, continuing with local state" >&2
+# Exit 8: a rebase or merge left in progress (a run killed mid-pull, or by hand). The
+# state commits below would land on a detached HEAD and never reach main while the run
+# still exits 0.
+GD="$(git rev-parse --absolute-git-dir)"
+for f in rebase-merge rebase-apply MERGE_HEAD; do
+  if [ -e "$GD/$f" ]; then
+    echo "error: a $f is in progress in $(pwd): finish or abort it (git rebase --abort / git merge --abort)" >&2
+    exit 8
+  fi
+done
+# Exit 7: the pull's rebase stopped on a conflict (a local state commit whose push failed
+# against a PR that changed the same file). The rebase is aborted, which also restores an
+# autostash, so the checkout is back on main as it was; a person resolves the conflict.
+# Any other pull failure (offline) is advisory.
+if ! git pull -q --rebase --autostash origin "$BRANCH"; then
+  if [ -e "$GD/rebase-merge" ] || [ -e "$GD/rebase-apply" ]; then
+    git rebase --abort >/dev/null 2>&1
+    echo "error: git pull --rebase failed on a conflict with origin/$BRANCH; rebase aborted, checkout left on" \
+         "$BRANCH at $(git rev-parse --short HEAD). Resolve by hand: git pull --rebase origin $BRANCH" >&2
+    exit 7
+  fi
+  echo "warning: git pull --rebase failed, continuing with local state" >&2
+fi
 
 SITE="$HOME/all-done-sites-platform"
 
@@ -145,14 +170,26 @@ fi
 # branch in one commit; the site gets the published JSON below. Advisory: a
 # failed push is a warning, the files are still committed locally and the next
 # pull --rebase --autostash carries them.
+# Test gate (tracker/publish_gate.py): the tests that read the data this run is about
+# to commit, in one pytest process under 60 s. On 2026-09-29 a new price row broke 11
+# tests and was committed and published for days unnoticed. A failure does not block:
+# the numbers keep flowing and the gate sends one WhatsApp alert per incident (and one
+# when it passes again) through tracker.supervise's sender.
+nice python3 -m tracker.publish_gate \
+  || echo "warning: publish test gate failed (alerted), publishing anyway" >&2
+
+# Only these files are added and committed (`--only`): anything else staged in this
+# checkout stays staged and is never pushed with the state.
+STATE_FILES=(data/prices.json)
 git add data/prices.json
 # None of these exist until their first successful run (contributed) or first
 # tick of usable transcript+meter data (gs-passive).
 for f in history/contributed.jsonl data/contributed.json history/gs-passive.json history/model-rates.json; do
-  [ -f "$f" ] && git add "$f"
+  if [ -f "$f" ]; then git add "$f"; STATE_FILES+=("$f"); fi
 done
-if ! git diff --cached --quiet; then
-  git -c user.name=publisher -c user.email=publisher@gs commit -q -m "Daily publisher state $(date -u +%FT%H:%MZ)"
+if ! git diff --cached --quiet HEAD -- "${STATE_FILES[@]}"; then
+  git -c user.name=publisher -c user.email=publisher@gs commit -q --only \
+    -m "Daily publisher state $(date -u +%FT%H:%MZ)" -- "${STATE_FILES[@]}"
   if ! git push -q origin "$BRANCH"; then
     echo "warning: git push of tracker state failed, committed locally only" >&2
   fi
@@ -170,6 +207,26 @@ fi
   site_push
 )
 publish_rc=$?
+
+# Record a failing site push in the tracker repo, where masterrig's health check reads it
+# (tracker/health.py check_publisher). Without this the tracker side stays fresh while the
+# page itself never updates. Written and pushed on every failure and on the first success
+# after one; a run that succeeds after a success touches nothing.
+SITE_STATUS=history/site-push.json
+site_was_ok=1
+grep -q '"ok": false' "$SITE_STATUS" 2>/dev/null && site_was_ok=0
+if [ "$publish_rc" -ne 0 ] || [ "$site_was_ok" -eq 0 ]; then
+  now_utc="$(date -u +%FT%TZ)"
+  last_ok="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("last_ok",""))' "$SITE_STATUS" 2>/dev/null || true)"
+  if [ "$publish_rc" -eq 0 ]; then
+    printf '{"ok": true, "at": "%s", "last_ok": "%s"}\n' "$now_utc" "$now_utc" > "$SITE_STATUS"
+  else
+    printf '{"ok": false, "at": "%s", "last_ok": "%s"}\n' "$now_utc" "$last_ok" > "$SITE_STATUS"
+  fi
+  git add "$SITE_STATUS"
+  git -c user.name=publisher -c user.email=publisher@gs commit -q --only -m "Site push status $now_utc" -- "$SITE_STATUS" \
+    && { git push -q origin "$BRANCH" || echo "warning: git push of the site push status failed" >&2; }
+fi
 
 # One email to Jonathan through the same send endpoint, via tracker/alert.py
 # (which reads NOTIFY_ALERT_TO and the bearer secret from

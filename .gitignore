@@ -10,3 +10,7 @@ out/
 docs/handoffs/
 .passive-last-ok
 graphify-out/
+.supervise.lock
+.supervise.pid
+.supervise-state.json
+.supervise-state.json.tmp

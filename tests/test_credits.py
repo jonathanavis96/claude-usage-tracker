@@ -1105,7 +1105,9 @@ class PriceTableRoundTripTests(unittest.TestCase):
     def test_the_credits_block_is_not_mistaken_for_a_model(self):
         """build_public_json is handed the table with underscore keys already filtered."""
         raw = json.loads(Path("data/prices.json").read_text())
-        priced = {k: v for k, v in raw.items() if not k.startswith("_")}
+        # Rows tracker/list_prices.py files from the pricing page (marked by
+        # `list_price_source`) arrive with the daily publisher, not with code.
+        priced = {k: v for k, v in raw.items() if not k.startswith("_") and "list_price_source" not in v}
         self.assertNotIn("_credits", priced)
         self.assertEqual(sorted(priced),
                          ["claude-fable-5-1", "claude-haiku-4-5", "claude-opus-4-7",
@@ -2181,8 +2183,9 @@ class PricedModelsTests(unittest.TestCase):
                                  {"input", "output", "cache_read", "cache_write"})
 
     def test_every_priced_row_normalizes_to_itself(self):
-        for model in self.prices:
-            if not model.startswith("_"):
+        for model, row in self.prices.items():
+            # An auto-filed row is priced by its own id (join.priced_model), not via CANONICAL_MODELS.
+            if not model.startswith("_") and "list_price_source" not in row:
                 with self.subTest(model=model):
                     self.assertEqual(normalize_model(model), model)
 

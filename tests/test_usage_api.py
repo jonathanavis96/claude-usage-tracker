@@ -83,6 +83,26 @@ class AuthExpiredTests(unittest.TestCase):
                 read_usage(Path(d), fetch=fetch, now=lambda: datetime(2026, 9, 5, tzinfo=timezone.utc))
             self.assertEqual(calls, ["Bearer stale"])  # no retry: the token on disk never changed
 
+    def test_401_again_with_a_changed_token_raises_auth_expired(self):
+        import io
+        import urllib.error
+
+        from tracker.usage_api import AuthExpired
+
+        with tempfile.TemporaryDirectory() as d:
+            cred = Path(d, ".credentials.json")
+            cred.write_text(json.dumps({"claudeAiOauth": {"accessToken": "old"}}))
+            calls = []
+
+            def fetch(url, headers):
+                calls.append(headers["Authorization"])
+                cred.write_text(json.dumps({"claudeAiOauth": {"accessToken": "new"}}))
+                raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b""))
+
+            with self.assertRaises(AuthExpired):
+                read_usage(Path(d), fetch=fetch, now=lambda: datetime(2026, 9, 5, tzinfo=timezone.utc))
+            self.assertEqual(calls, ["Bearer old", "Bearer new"])
+
 
 class Retry429Tests(unittest.TestCase):
     def test_429_retries_then_succeeds(self):
@@ -188,3 +208,14 @@ class Retry429Tests(unittest.TestCase):
         err = urllib.error.HTTPError("u", 500, "Server Error", {}, io.BytesIO(b""))
         with mock.patch("urllib.request.urlopen", side_effect=[err]), self.assertRaises(urllib.error.HTTPError):
             _default_fetch("https://x.test/u", {}, sleep=lambda s: None)
+
+
+class SameResetTests(unittest.TestCase):
+    def test_naive_and_aware_stamps_compare_as_utc_instead_of_raising(self):
+        from tracker.usage_api import same_reset
+        self.assertTrue(same_reset("2026-09-06T02:00:00", "2026-09-06T02:00:00.4+00:00"))
+        self.assertFalse(same_reset("2026-09-06T02:00:00", "2026-09-06T07:00:00Z"))
+
+    def test_jitter_within_tolerance_is_the_same_reset(self):
+        from tracker.usage_api import same_reset
+        self.assertTrue(same_reset("2026-09-06T01:59:59.8Z", "2026-09-06T02:00:00.3Z"))

@@ -149,6 +149,60 @@ class SampleTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(len(log.read_text().splitlines()), 2)
 
+    def _log_with(self, d, line_ts, **fields):
+        cfg, log = config_dir(Path(d)), Path(d) / "meter.log"
+        line = {"ts": line_ts, "account": "dave", "identity": account_identity(cfg)}
+        line.update(fields)
+        log.write_text(json.dumps(line) + "\n")
+        return cfg, log
+
+    def _counting_fetch(self, calls):
+        def fetch(url, headers):
+            calls.append(1)
+            return BODY
+        return fetch
+
+    def test_a_tick_soon_after_a_good_read_skips_the_call(self):
+        # gs, 2026-09-23 to 2026-10-01: one read a minute per account drew a 429 with
+        # Retry-After: 0 on every other tick, 55% of all lines. Two minutes apart pass.
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = self._log_with(d, "2026-09-15T20:59:00+00:00", **BODY)  # 63s before NOW
+            rc = sample(cfg, "dave", log, fetch=self._counting_fetch(calls), now=lambda: NOW)
+            self.assertEqual(rc, 0)
+            self.assertEqual(calls, [])
+            self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_a_tick_two_minutes_after_a_good_read_samples(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = self._log_with(d, "2026-09-15T20:57:53+00:00", **BODY)  # 130s before NOW
+            self.assertEqual(sample(cfg, "dave", log, fetch=self._counting_fetch(calls), now=lambda: NOW), 0)
+            self.assertEqual(calls, [1])
+
+    def test_a_429_with_retry_after_zero_still_skips_the_next_tick(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = self._log_with(d, "2026-09-15T20:59:00+00:00", error="HTTPError: 429",
+                                      reason="rate_limited", retry_after_s=0.0)
+            sample(cfg, "dave", log, fetch=self._counting_fetch(calls), now=lambda: NOW)
+            self.assertEqual(calls, [])
+
+    def test_a_last_line_stamped_in_the_future_never_blocks_reading(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = self._log_with(d, "2026-09-16T21:00:00+00:00", **BODY)  # a day ahead of NOW
+            sample(cfg, "dave", log, fetch=self._counting_fetch(calls), now=lambda: NOW)
+            self.assertEqual(calls, [1])
+
+    def test_a_network_error_does_not_delay_the_next_tick(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = self._log_with(d, "2026-09-15T20:59:00+00:00",
+                                      error="URLError: Temporary failure in name resolution")
+            self.assertEqual(sample(cfg, "dave", log, fetch=self._counting_fetch(calls), now=lambda: NOW), 0)
+            self.assertEqual(calls, [1])
+
     def test_the_timer_path_never_sits_in_429_backoff(self):
         # read_usage's own default retries a 429 for up to ~15 minutes; a five-minute
         # sampler must give up and let the next tick try.
@@ -204,3 +258,20 @@ class UnitFileTests(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=1min", timer)
         self.assertIn("Unit=claude-usage-meter-jwork.service", timer)
         self.assertIn("WantedBy=timers.target", timer)
+
+
+class LastLineTests(unittest.TestCase):
+    def test_reads_the_last_object_line_and_skips_non_objects(self):
+        from tracker.meter_log import _last_line
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "m.log")
+            log.write_text("".join(json.dumps({"n": i, "pad": "x" * 200}) + "\n" for i in range(500))
+                           + "42\n\xff-torn")
+            self.assertEqual(_last_line(log)["n"], 499)
+
+    def test_empty_or_missing_log_is_none(self):
+        from tracker.meter_log import _last_line
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(_last_line(Path(d, "nope")))
+            Path(d, "e").write_text("")
+            self.assertIsNone(_last_line(Path(d, "e")))

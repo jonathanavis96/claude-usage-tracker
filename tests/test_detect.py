@@ -151,8 +151,12 @@ ISSUE_25_WINDOWS = [
 # (the newest is 2026-09-16T17:30Z); history is never rewritten, so what they pin
 # cannot move.
 HISTORY_CUTOFF = "2026-09-16T17:31"
-REAL_WEEKLY = json.loads((Path(__file__).resolve().parents[1] / "history" / "passive.json")
-                         .read_text(encoding="utf-8"))["weekly_windows"]
+# A frozen copy of history/passive.json's weekly_windows as committed in 44471f4, cut at
+# HISTORY_CUTOFF. The live file is rebuilt from the moonlighter log every hour, and that
+# rebuild did move windows before the cutoff (evidence 103 -> 102), so reading it made
+# these tests fail on whatever data had arrived since.
+REAL_WEEKLY = json.loads((Path(__file__).resolve().parent / "fixtures" / "weekly_windows_2026-09-16.json")
+                         .read_text(encoding="utf-8"))
 
 
 def real_points(start, end=HISTORY_CUTOFF):

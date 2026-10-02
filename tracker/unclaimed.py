@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .turns import parse_ts_or_none
+
 #: The auto-mail commit that made every `claude -p` call run on a seat picked by usage
 #: (auto-mail 510c222, "Every claude call runs on a seat picked by usage", #45). Before it
 #: nothing in auto-mail set `CLAUDE_CONFIG_DIR`, and its crontab entries set none, so a judge
@@ -59,8 +61,8 @@ def first_record(path: Path) -> tuple[datetime | None, str | None]:
                 continue
             if not isinstance(d, dict):
                 continue
-            if ts is None and d.get("timestamp"):
-                ts = datetime.fromisoformat(d["timestamp"].replace("Z", "+00:00"))
+            if ts is None:
+                ts = parse_ts_or_none(d.get("timestamp"))
             cwd = cwd or d.get("cwd")
             if ts is not None and cwd:
                 break

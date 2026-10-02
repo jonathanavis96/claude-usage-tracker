@@ -119,7 +119,11 @@ def payload_words_for(usd_per_pct: float, price: dict) -> int:
     prompt then costs more than its twelfth, and main() refuses the run when that
     leaves fewer than MIN_PROMPTS_PER_SPAN prompts per tick.
     """
-    target = usd_per_pct / PROMPTS_PER_TICK / price.get("meter_weight", 1.0)
+    weight = price.get("meter_weight", 1.0)
+    if not weight or weight <= 0:
+        raise ValueError(f"meter_weight {weight!r}: the meter never moves on this model, "
+                         "so no payload fills a tick")
+    target = usd_per_pct / PROMPTS_PER_TICK / weight
     per_word = price["cache_write"] * class_weight(price, "cache_write") * TOKENS_PER_WORD / 1e6
     words = round((target - meter_usd(FIXED_PROMPT_SPLIT, price)) / per_word)
     return max(MIN_PAYLOAD_WORDS, min(MAX_PAYLOAD_WORDS, words))

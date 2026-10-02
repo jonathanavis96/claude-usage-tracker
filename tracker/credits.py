@@ -2793,12 +2793,6 @@ def absorb_new_family_rates(by_account: dict[str, list[dict]], runs: list[Harnes
     return (rates_now if changed else model_rates), fits
 
 
-def announced_change_events(block: dict) -> list[dict]:
-    """The candidates that enter the page's change events: measured, interval excluding 1.0."""
-    return [c for c in (block or {}).get("candidates", [])
-            if c["state"] == "measured" and c["interval_excludes_no_change"]]
-
-
 def paired_levels(note: dict | None, by_window: list[dict]) -> tuple[dict, dict] | None:
     """The before and after levels over the paired accounts only, each on its own sides.
 

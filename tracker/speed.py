@@ -60,6 +60,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
+from .atomic import write_text_atomic
 from .turns import _parse_ts, normalize_model
 
 MIN_OUTPUT = 300
@@ -474,10 +475,7 @@ def main(argv: list[str] | None = None) -> int:
         paths, _ = transcript_files(masterrig_account(a.home), mtime_since)
         rows = scan_accounts([(dict(ACCOUNT_LABELS)["masterrig"], paths)], since_day)
     body = update(stored, rows, since_day or date.min.isoformat(), now)
-    a.history.parent.mkdir(parents=True, exist_ok=True)
-    tmp = a.history.with_suffix(".tmp")
-    tmp.write_text(json.dumps(body, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(a.history)
+    write_text_atomic(a.history, json.dumps(body, indent=1, sort_keys=True) + "\n")
     print(f"wrote {a.history}: {len(rows)} fresh rows, {len(body['rows'])} in all", file=sys.stderr)
     return 0
 
