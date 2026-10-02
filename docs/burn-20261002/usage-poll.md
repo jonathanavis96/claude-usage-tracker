@@ -75,3 +75,82 @@ pollers first, one user unit per host and account, then move readers.
 | masterrig `mis-usage-ceiling.sh` | After it resolves the seats' account, run `python3 -m tracker.usage_cache read --account <label> --max-age 600` instead of `curl`. Exit 3 or 4 is a READ FAILURE, so the blind and backoff paths are unchanged. Remote accounts (`ssh://` credentials) stay as they are until gs's cache is reachable from masterrig. |
 | masterrig `burn_watch.py` | Replace `usage()` with a `read --account jono` subprocess or `read_cached`. A stale record logs `5h=None`, as a refusal does today. |
 | masterrig `~/.cache/usage_all.py` | Print `read --account jono` output, which includes `age_s`, instead of calling `curl`. |
+
+## Review
+
+Reviewed 2026-10-02 against `b822ccd`. All HTTP stubbed. Fixes are in `993825a`, with ten
+new tests in `tests/test_usage_cache.py` (`ReviewFindingTests`). The eight that cover
+defects failed before the fix. The file now holds 29 tests, all passing.
+
+### Concurrency
+
+- **Two pollers for one account:** the flock works. The second returns `busy` without
+  calling, and a crashed poller's lock is released by the kernel.
+- **Reader during a write:** `os.replace` is atomic, and the existing torn-read test
+  holds.
+- **Crash between the temp write and the replace:** the previous record stays readable.
+  A new test kills the write at `os.replace`. An exception removes the temp file. A
+  SIGKILL leaves a `.avis.json.*.tmp` behind. Readers never open it, and nothing cleans
+  it up (harmless, not fixed).
+- **Fixed: host hold race.** `_host.json` was read, compared and written without a lock.
+  Two accounts refused together could interleave, so a later write of 110 s replaced
+  a 1,200 s hold. A test reproduced it deterministically. The update is now serialised
+  on `_host.lock` and only ever moves the hold later.
+
+### Backoff
+
+- **Fixed: Retry-After as an HTTP date** was read as 0, and the poller then called
+  long before it was told to. Both forms are now parsed. A past date, garbage, NaN or a
+  negative value falls back to the exponential schedule.
+- A missing header and `Retry-After: 0` back off exponentially, as designed. Huge
+  values, including `1e400` (inf), are capped at 1,200 s.
+- **Fixed: clock stepping backwards.** A `next_allowed_at` (account or host) stamped
+  before the clock stepped back an hour held polling for that hour, and `poll_loop`
+  slept through it. Gates further ahead than the longest wait the module sets (1,200 s)
+  are now ignored, matching `meter_log`'s `MAX_CLOCK_STALL_S`.
+- The per-host hold is respected by `poll_once` and by `poll_loop`'s sleep.
+- Not fixed: a hand-edited non-integer `consecutive_refusals` raises inside the 429
+  handler, and the poller crashes without writing. Only the poller writes that field.
+
+### Staleness
+
+- A missing file gives `status="missing"`, and a corrupt one gives `"corrupt"` with the
+  error text. Both are `stale=True`, and the CLI exits 4. An old reading keeps its
+  buckets with `stale=True` and `age_s`, and the CLI exits 3. Readers can tell all three
+  apart.
+- **Fixed: no default max age.** `read_cached(account)` with no `max_age_s` reported a
+  day-old reading as fresh, which is the call the meter row below suggests. The
+  default is now 600 s, the same as the CLI. Passing `None` still means "judge age
+  yourself".
+- **Fixed: a reading stamped in the future** (after the clock stepped back) had a
+  negative age and counted as fresh. It is now stale, with a 60 s tolerance.
+- **Fixed: account swap.** When the config dir changed accounts and the next call
+  failed, the old account's buckets were kept under the new identity. They are now
+  dropped when the identity changes.
+
+### Switch-over table against the inventory
+
+Every inventory row that calls the endpoint has a switch-over row. The samplers row
+calls nothing, so it correctly has none. Gaps:
+
+- **masterrig `mis-usage-ceiling.sh`** resolves the seats' account on every poll through
+  `claude-account.py`. The table starts one poller for `~/.claude` labelled `jono` and
+  says `read --account <label>`, but it never defines how a resolved account maps to a
+  label. If `~/.claude` is swapped to another account, the `jono` cache follows the swap.
+  The identity fix above stops a mixed record, but a reader still has to compare
+  `identity` with the account it resolved.
+- **The `ssh://` remote accounts** in that script stay on direct calls. The table does
+  not say which host those calls leave from. If they leave masterrig, they count
+  against masterrig's limiter, outside the shared gate.
+- **"Per host" is an inference from gs.** The same-minute refusals on gs cannot tell a
+  per-machine limiter from a per-egress-IP one. `mis-usage-feed.py` on pihome is listed
+  as out of scope, and if pihome shares masterrig's public IP, masterrig's `_host.json`
+  does not hold it.
+- **gs `usage-guard`** has no max age set. "A stale record is an error" needs one. Under
+  the backoff (up to 1,200 s), a 600 s limit makes stale readings routine while
+  refusals continue.
+- **gs `usage-ceiling.py`** reads its account from a seat.conf drop-in. Hard-coding
+  `jwork.json` breaks if that drop-in changes, so derive the label from the same
+  drop-in.
+- The meter row's `read_cached(account)` now gets the 600 s default. It only needs
+  `fetched_at`, so either the default or `max_age_s=None` works.
