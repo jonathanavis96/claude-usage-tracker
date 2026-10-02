@@ -40,8 +40,6 @@ def _conflict_gs(tmp_path, home):
     return work, env, ["bash", str(work / "bin" / "daily.sh")]
 
 
-@pytest.mark.xfail(strict=True, reason="bin/passive.sh:57,69 and bin/daily.sh:39 never `git rebase --abort` "
-                                       "a pull that stopped on a conflict: the checkout stays mid-rebase")
 @pytest.mark.parametrize("host", ["masterrig_passive_sh", "gs_daily_sh"])
 def test_conflicting_pull_leaves_no_rebase_in_progress(tmp_path, fake_home, host):
     work, env, cmd = (_conflict_masterrig if host == "masterrig_passive_sh" else _conflict_gs)(tmp_path, fake_home)
@@ -51,10 +49,10 @@ def test_conflicting_pull_leaves_no_rebase_in_progress(tmp_path, fake_home, host
     assert not rebase_in_progress(work) and branch == "main", (
         f"the checkout was left mid-rebase (HEAD is {branch!r}): every later run fails on it, and "
         "masterrig's alert says `git checkout main`, which does not end a rebase")
+    assert r.returncode == 7, f"a conflicted pull must exit 7, not {r.returncode}: gs exited 0 and kept publishing"
+    assert git(work, "status", "--porcelain", "--untracked-files=no", env=env) == "", "the checkout was left dirty"
 
 
-@pytest.mark.xfail(strict=True, reason="tracker/passive.py:87-90 reads an unparseable previous record "
-                                       "(conflict markers) as no record, and rewrites it without the kept days")
 def test_unreadable_previous_record_keeps_its_days(tmp_path, monkeypatch):
     from tracker import passive
     from tracker.join import DailyRate
@@ -74,9 +72,16 @@ def test_unreadable_previous_record_keeps_its_days(tmp_path, monkeypatch):
     monkeypatch.setattr(passive, "_rebuild", lambda home: (rates, {}, None))
 
     code = passive.main(["--out", str(out)])
-    if code != 0:
-        assert out.read_text() == before, "refused, but still overwrote the record"
-        return
-    days = set(json.loads(out.read_text())["history"])
-    assert {"2026-07-29", "2026-07-30"} <= days, (
-        f"every day the transcripts no longer reach was dropped: the record now holds only {sorted(days)}")
+    assert code != 0, "an unreadable record was read as absent and rewritten"
+    assert out.read_text() == before, "refused, but still overwrote the record"
+
+
+def test_absent_previous_record_starts_fresh(tmp_path, monkeypatch):
+    from tracker import passive
+    from tracker.join import DailyRate
+
+    out = tmp_path / "history" / "passive.json"
+    rates = {date(2026, 10, 2): DailyRate(4_200_000.0, 3, False, {}, {})}
+    monkeypatch.setattr(passive, "_rebuild", lambda home: (rates, {}, None))
+    assert passive.main(["--out", str(out)]) == 0
+    assert set(json.loads(out.read_text())["history"]) == {"2026-10-02"}

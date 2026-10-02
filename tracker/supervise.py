@@ -67,6 +67,20 @@ ROOT = Path(__file__).resolve().parent.parent
 Sender = Callable[[str], bool]
 #: bin/passive.sh's exit when the checkout is not on main; never retried.
 EXIT_OFF_MAIN = 3
+#: bin/passive.sh and bin/daily.sh: a pull's rebase stopped on a conflict and was aborted (7),
+#: or a rebase/merge was already in progress (8). Neither clears by retrying, so both are
+#: never retried and alert on the first run, like EXIT_OFF_MAIN.
+EXIT_PULL_CONFLICT = 7
+EXIT_OP_IN_PROGRESS = 8
+EXIT_NEEDS_HAND = (EXIT_OFF_MAIN, EXIT_PULL_CONFLICT, EXIT_OP_IN_PROGRESS)
+#: The alert's reason for a wrapper's own exit codes; any other code reads "exit N after M attempts".
+EXIT_REASONS = {
+    EXIT_OFF_MAIN: "checkout is off main (exit 3), run `git checkout main`",
+    4: "tracker/ has uncommitted changes in the cron checkout (exit 4): commit or stash them",
+    EXIT_PULL_CONFLICT: ("git pull hit a conflict with origin/main (exit 7); the rebase was aborted and the "
+                         "checkout is clean: resolve by hand with `git pull --rebase origin main`"),
+    EXIT_OP_IN_PROGRESS: "a rebase or merge is in progress in the checkout (exit 8): `git rebase --abort`",
+}
 
 WA_CMD = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "pihome",
           "python3 /home/grafe/wa-assistant/wa_send.py 27822227457"]
@@ -227,7 +241,7 @@ def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: floa
                     out.close()
                 except OSError:
                     pass
-        if code in (0, EXIT_OFF_MAIN) or attempt == retries:
+        if code == 0 or code in EXIT_NEEDS_HAND or attempt == retries:
             return code
         sleep(backoff * (2 ** attempt))
     return code
@@ -243,7 +257,7 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
     else:
         state.pop("unhealthy_since", None)
     failing = (state.get("consecutive_failures", 0) >= fail_threshold
-               or state.get("last_exit") == EXIT_OFF_MAIN)
+               or state.get("last_exit") in EXIT_NEEDS_HAND)
     stale = bool(health_reason) and now - state["unhealthy_since"] >= stale_after
     # What kind of fault this is: failed runs, or the failing health check's name. An open
     # incident of one kind must not swallow a later fault of another: that sends one more
@@ -339,8 +353,7 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
                 state["consecutive_failures"] = 0
             else:
                 state["last_fail"] = t
-                state["last_reason"] = ("checkout is off main (exit 3), run `git checkout main`"
-                                        if code == EXIT_OFF_MAIN else f"exit {code} after {retries + 1} attempts")
+                state["last_reason"] = EXIT_REASONS.get(code, f"exit {code} after {retries + 1} attempts")
                 state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
             cfg = health_cfg or health.Config(state=state_path, lock_pidfile=pidfile,
                                               logs=(log,) if log else ())

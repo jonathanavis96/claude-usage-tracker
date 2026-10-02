@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
@@ -83,11 +84,21 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Passive join over masterrig logs")
     ap.add_argument("--out", type=Path, default=Path("history/passive.json"))
     a = ap.parse_args(argv)
-    rates, session_tokens, weekly = _rebuild(Path.home())
+    # An absent record starts fresh. An unreadable one (conflict markers from a stopped
+    # rebase, a torn write) is never read as absent: that would rewrite the file with only
+    # the days the transcripts still reach and drop every kept day before them.
     try:
         previous = json.loads(a.out.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         previous = None
+    except (OSError, ValueError) as e:
+        print(f"error: {a.out} exists but cannot be read as JSON ({e}); not rewriting it. "
+              "Restore it from git (git checkout -- <file>) or fix it by hand.", file=sys.stderr)
+        return 2
+    if previous is not None and not isinstance(previous, dict):
+        print(f"error: {a.out} holds {type(previous).__name__}, not a record; not rewriting it.", file=sys.stderr)
+        return 2
+    rates, session_tokens, weekly = _rebuild(Path.home())
     summary = passive_summary(rates, session_tokens=session_tokens, weekly=weekly, previous=previous)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(a.out, json.dumps(summary, indent=1) + "\n")

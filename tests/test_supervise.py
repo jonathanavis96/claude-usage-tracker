@@ -114,6 +114,23 @@ class SuperviseTest(unittest.TestCase):
         self.run_cmd(0)
         self.assertIn("recovered", self.send.sent[-1])
 
+    def test_pull_conflict_and_leftover_rebase_are_not_retried_and_alert_at_once(self):
+        for code, words in ((7, "conflict"), (8, "rebase --abort")):
+            with self.subTest(code=code):
+                self.send.sent.clear()
+                self.assertEqual(self.run_cmd(code, retries=2, backoff=5), code)
+                self.assertEqual(self.sleeps, [])
+                self.assertIn(words, self.st()["last_reason"])
+                self.assertEqual(len(self.send.sent), 1)
+                self.assertIn(words, self.send.sent[0])
+                self.run_cmd(0)
+                self.assertIn("recovered", self.send.sent[-1])
+
+    def test_dirty_tracker_exit_4_is_named_and_waits_for_the_threshold(self):
+        self.run_cmd(4, retries=0)
+        self.assertIn("uncommitted", self.st()["last_reason"])
+        self.assertEqual(self.send.sent, [])
+
     def test_two_failures_do_not_alert(self):
         self.run_cmd(1, retries=0)
         self.run_cmd(1, retries=0)
