@@ -721,14 +721,20 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
                        if weekly_windows["max20"]["by_account"][label]["n"]}
-    passive_accounts = {st["_account"] for st in stretches} | weekly_accounts
+    # Only accounts whose collector is still running count (Codex finding 16): an account
+    # that once had a usable reading but whose feed `account_feeds` calls stopped is not
+    # behind today's evidence.
+    feeds = _account_feeds(gs_passive, masterrig_passive, credits, now)
+    live = {name for name, label in ACCOUNT_LABELS
+            if label in feeds and feeds[label]["state"] != "stopped"}
+    passive_accounts = ({st["_account"] for st in stretches} | weekly_accounts) & live
     return {
         "schema_version": 2,
         "generated_at": now.isoformat(),
         "last_sample_at": measured_at.isoformat() if measured_at else None,
         "meter_read_at": _last_meter_read(gs_passive),
         "passive_generated_at": passive.get("generated_at"),
-        "account_feeds": _account_feeds(gs_passive, masterrig_passive, credits, now),
+        "account_feeds": feeds,
         "plan_measured": "max20",
         "instrument": "passive" if series else "unavailable",
         "availability": {"rates": quality["status"], "evidence": evidence_status,

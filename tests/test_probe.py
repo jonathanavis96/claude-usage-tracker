@@ -985,6 +985,14 @@ class PromptSizeTests(unittest.TestCase):
         heavy = dict(PRICES["claude-opus-5"], meter_weight=2.0)
         self.assertEqual(payload_words_for(0.95, heavy), payload_words_for(0.475, PRICES["claude-opus-5"]))
 
+    def test_zero_meter_weight_is_refused_not_divided_by(self):
+        # A model the meter does not charge at all can never fill a tick, so there is no
+        # payload size to compute: refuse it by name instead of ZeroDivisionError.
+        from tracker.probe import payload_words_for
+        for weight in (0, 0.0, -1.0):
+            with self.assertRaisesRegex(ValueError, "meter_weight"):
+                payload_words_for(0.95, dict(PRICES["claude-opus-5"], meter_weight=weight))
+
     def test_token_expectation_follows_the_payload(self):
         # the token expectation is what the sized prompt spends, PROMPTS_PER_TICK times
         # over, so the burst it sizes is 80% of a twelve-prompt span whatever the model
