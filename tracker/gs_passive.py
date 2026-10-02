@@ -696,6 +696,11 @@ def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict
             "accounts": out_accounts, "changes": checked.changes}
 
 
+def _utc_day(stamp: str) -> str:
+    at = datetime.fromisoformat(stamp)
+    return (at.astimezone(timezone.utc) if at.tzinfo else at).date().isoformat()
+
+
 def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
                             allow_legacy_unverified: bool = False) -> list[tuple[datetime, float]]:
     """Accepted passive readings as (time, meter dollars per full window), revalued at `prices`.
@@ -731,7 +736,8 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             valued = {m: bundle_meter_usd(m, tok, prices) for m, tok in s["tokens"].items()}
             if any(v is None for v in valued.values()):
                 continue
-            key = s["end"][:10] if by == "day" else s["end"]
+            # Per UTC day, as the docstring says: a +02:00 stretch's own date is not its UTC date.
+            key = _utc_day(s["end"]) if by == "day" else s["end"]
             groups.setdefault(key, []).append((s, sum(valued.values())))
         for ss in groups.values():
             usd = sum(v for _, v in ss)

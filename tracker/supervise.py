@@ -54,6 +54,7 @@ import fcntl
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -63,6 +64,7 @@ from pathlib import Path
 from typing import Callable
 
 from tracker import health
+from tracker.atomic import write_text_atomic
 
 ROOT = Path(__file__).resolve().parent.parent
 Sender = Callable[[str], bool]
@@ -172,10 +174,8 @@ def rotate_log(log: Path, max_bytes: int, keep: int) -> bool:
 
 def write_state(path: Path, state: dict) -> bool:
     """Save `state`; False (and a stderr line) when the disk refuses it."""
-    tmp = path.with_name(path.name + ".tmp")
     try:
-        tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
-        tmp.replace(path)
+        write_text_atomic(path, json.dumps(state, indent=1, sort_keys=True))  # a unique tmp per writer
         return True
     except OSError as e:
         print(f"cannot write state {path}: {e}", file=sys.stderr)
@@ -228,11 +228,21 @@ def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: floa
         out = _open_log(log, f"--- {time.strftime('%Y-%m-%dT%H:%M:%S%z')} attempt {attempt + 1}: {' '.join(cmd)}\n")
         sink = out if out else (subprocess.DEVNULL if log else None)
         try:
-            code = subprocess.run(cmd, stdout=sink, stderr=subprocess.STDOUT if sink else None,
-                                  check=False, timeout=timeout).returncode
-        except subprocess.TimeoutExpired:
-            code = 124
-            print(f"run killed after {int(timeout)} s: {' '.join(cmd)}", file=sys.stderr)
+            # Its own process group, so a timeout kills the whole job: killing bash alone
+            # left a hung `git push` grandchild holding daily.sh's .cron.lock (fd 9), and
+            # every later run waited 600 s and exited 6.
+            proc = subprocess.Popen(cmd, stdout=sink, stderr=subprocess.STDOUT if sink else None,
+                                    start_new_session=True)
+            try:
+                code = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait()
+                code = 124
+                print(f"run killed after {int(timeout)} s: {' '.join(cmd)}", file=sys.stderr)
         except OSError as e:
             code = 127
             print(f"cannot start {cmd[0]}: {e}", file=sys.stderr)

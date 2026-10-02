@@ -121,7 +121,14 @@ def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = Non
         fresh = _read_token(config_dir)
         if fresh == token:
             raise AuthExpired(f"401 with unchanged token at {config_dir}") from e
-        body = _call(fresh)
+        try:
+            body = _call(fresh)
+        except urllib.error.HTTPError as e2:
+            # A second 401 with the re-read token is the same state: logged as auth_expired
+            # (and so spaced by meter_log), not a plain HTTP error called every minute.
+            if e2.code == 401:
+                raise AuthExpired(f"401 with the re-read token too at {config_dir}") from e2
+            raise
     return parse_usage(body, (now or (lambda: datetime.now(timezone.utc)))())
 
 

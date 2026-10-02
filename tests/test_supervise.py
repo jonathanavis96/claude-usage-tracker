@@ -152,6 +152,27 @@ class SuperviseTest(unittest.TestCase):
                                2, 0.0, lambda m: sent.append(m) or True, "gs")
         self.assertEqual(sent, [], "an incident opened before subjects existed sent a spurious message")
 
+    def test_timeout_kills_the_whole_process_group(self):
+        import tempfile as _tf
+        import time as _t
+        d = Path(_tf.mkdtemp())
+        pidf = d / "child.pid"
+        code = supervise.run_with_retry(
+            ["bash", "-c", f"sleep 30 & echo $! > {pidf}; wait"], None, 0, 0, timeout=1)
+        self.assertEqual(code, 124)
+        pid = int(pidf.read_text())
+        deadline = _t.time() + 5
+        while _t.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+                break
+            _t.sleep(0.05)
+        else:
+            self.fail("the job's grandchild outlived the timeout")
+
     def test_dirty_tracker_exit_4_is_named_and_waits_for_the_threshold(self):
         self.run_cmd(4, retries=0)
         self.assertIn("uncommitted", self.st()["last_reason"])

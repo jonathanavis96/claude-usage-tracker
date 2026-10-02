@@ -56,3 +56,9 @@ def test_week_open_now_falls_back_to_the_date_and_never_publishes_the_instant():
     row = publish._week_open_now(new, NOW)
     assert row["partial"] is False and "resets_at" not in row
     assert publish._week_open_now(new, datetime(2026, 10, 1, 15, 59, tzinfo=timezone.utc))["partial"] is True
+
+
+def test_stretch_day_is_its_utc_day():
+    from tracker.gs_passive import _utc_day
+    assert _utc_day("2026-10-02T01:30:00+02:00") == "2026-10-01"
+    assert _utc_day("2026-10-02T01:30:00+00:00") == "2026-10-02"

@@ -83,6 +83,26 @@ class AuthExpiredTests(unittest.TestCase):
                 read_usage(Path(d), fetch=fetch, now=lambda: datetime(2026, 9, 5, tzinfo=timezone.utc))
             self.assertEqual(calls, ["Bearer stale"])  # no retry: the token on disk never changed
 
+    def test_401_again_with_a_changed_token_raises_auth_expired(self):
+        import io
+        import urllib.error
+
+        from tracker.usage_api import AuthExpired
+
+        with tempfile.TemporaryDirectory() as d:
+            cred = Path(d, ".credentials.json")
+            cred.write_text(json.dumps({"claudeAiOauth": {"accessToken": "old"}}))
+            calls = []
+
+            def fetch(url, headers):
+                calls.append(headers["Authorization"])
+                cred.write_text(json.dumps({"claudeAiOauth": {"accessToken": "new"}}))
+                raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b""))
+
+            with self.assertRaises(AuthExpired):
+                read_usage(Path(d), fetch=fetch, now=lambda: datetime(2026, 9, 5, tzinfo=timezone.utc))
+            self.assertEqual(calls, ["Bearer old", "Bearer new"])
+
 
 class Retry429Tests(unittest.TestCase):
     def test_429_retries_then_succeeds(self):
