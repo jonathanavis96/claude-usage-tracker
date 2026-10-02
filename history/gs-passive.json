@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-02T23:00:05.285435+00:00",
+ "generated_at": "2026-10-02T23:30:05.712753+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 5943,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 9678,
+    "samples": 9685,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-02T22:58:49+00:00"
+    "last": "2026-10-02T23:26:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -17096,7 +17096,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-02T23:00:55.773213+00:00",
+  "generated_at": "2026-10-02T23:30:55.597558+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
