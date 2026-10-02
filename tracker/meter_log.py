@@ -190,14 +190,15 @@ def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict
         return EXIT_REFUSED
     clock = now or (lambda: datetime.now(timezone.utc))
     now_ts = clock()
-    remaining = _backoff_remaining_s(_last_line(log), now_ts)
+    last = _last_line(log)
+    remaining = _backoff_remaining_s(last, now_ts)
     if remaining is not None:
         # Still inside a previous tick's 429 backoff: skip the network call rather than
         # retrying inside this tick, and write nothing -- the gap line already on the
         # log carries the backoff the next tick will check.
         print(f"{account}: skipping tick, {remaining:.0f}s left in 429 backoff", file=sys.stderr)
         return EXIT_READ_FAILED
-    since_last = _since_last_call_s(_last_line(log), now_ts)
+    since_last = _since_last_call_s(last, now_ts)
     if since_last is not None and 0 <= since_last < MIN_READ_SPACING_S:
         print(f"{account}: skipping tick, last call {since_last:.0f}s ago (spacing {MIN_READ_SPACING_S}s)",
               file=sys.stderr)
