@@ -15,7 +15,11 @@ These pass across 240 seeded cycles plus three more seeds of 120 cycles each, wi
 - **Timezone.** The host TZ (UTC or Africa/Johannesburg) does not change a byte of the log, and a clock that reports +02:00 still stamps UTC.
 - **Deleted log.** When the log is deleted, the next tick starts a fresh one.
 
-## Failing invariants (strict xfail in `tests/chaos/test_soak.py`)
+## Failing invariants (all six fixed on the integration branch, UT-I)
+
+Status: fixed in `tracker/meter_log.py` and the xfail markers removed; `pytest tests/chaos` is 18 passed. Fixes: (1) `_append` writes a newline first when the log does not end in one; (2) `_append` returns False on `OSError` and `sample()` exits 4; (3) `sample()` holds `fcntl.flock` on `<log>.lock` (waits up to 45 s, then exits 4), so the second run sees the first's reading and skips under the 110 s spacing; (4) a clock up to 20 min behind the last line skips the tick with exit 4; (5) a last line more than 20 min in the future is ignored, and a backoff never exceeds its own Retry-After; (6) Retry-After is capped at 1200 s (`RETRY_429_MAX_S`).
+
+Original findings:
 
 | # | Invariant | Test | Cause |
 |---|---|---|---|

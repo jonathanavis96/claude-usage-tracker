@@ -1,8 +1,7 @@
 """Fault-injection soak of the usage collector. Run: python3 -m pytest tests/chaos -q
 
-Known-failing invariants are strict xfails naming the cause; see
-docs/burn-20261002/chaos-findings.md. When a fix lands the xfail turns into an
-XPASS failure, and the marker should be removed.
+The six invariants that failed on 2026-10-02 (docs/burn-20261002/chaos-findings.md)
+were fixed in tracker/meter_log.py the same night; their tests are ordinary tests now.
 """
 from __future__ import annotations
 
@@ -148,8 +147,6 @@ def test_deleted_data_file_starts_a_fresh_log(tmp_path):
     check_invariants(rig)
 
 
-@pytest.mark.xfail(strict=True, reason="torn write: _append (tracker/meter_log.py:108) appends after a "
-                   "partial last line with no newline, so the next reading is glued onto it and lost")
 def test_crash_mid_write_does_not_lose_the_next_reading(tmp_path):
     rig = Rig(tmp_path)
     with rig.running():
@@ -170,9 +167,6 @@ def test_crash_mid_write_does_not_lose_the_next_reading(tmp_path):
     assert len(good) == 3, "every reading after a torn line survives"
 
 
-@pytest.mark.xfail(strict=True, reason="full disk / read-only data dir: _append (tracker/meter_log.py:108) "
-                   "raises PermissionError out of sample(), including from inside its own error handlers "
-                   "(meter_log.py:180-205), so the run crashes with a traceback instead of exiting 4")
 def test_read_only_data_dir_fails_cleanly(tmp_path):
     rig = Rig(tmp_path)
     with rig.running():
@@ -189,8 +183,6 @@ def test_read_only_data_dir_fails_cleanly(tmp_path):
     assert ok.rc == 4 and bad.rc == 4
 
 
-@pytest.mark.xfail(strict=True, reason="no writer lock: sample() (tracker/meter_log.py:154) takes no lock, "
-                   "so two overlapping runs both read and both append, writing duplicate rows for one tick")
 def test_two_runs_at_once_write_one_row(tmp_path):
     rig = Rig(tmp_path)
     rig.api.hold = threading.Barrier(2)  # both requests are in flight together
@@ -213,8 +205,6 @@ def test_two_runs_at_once_write_one_row(tmp_path):
     assert len(rig.readings()) == 1, "one writer at a time: one row per tick"
 
 
-@pytest.mark.xfail(strict=True, reason="clock skew: sample() (tracker/meter_log.py:168) stamps whatever the "
-                   "clock says and appends, so a clock stepped backwards writes an out-of-order row")
 def test_clock_stepped_back_keeps_log_monotonic(tmp_path):
     rig = Rig(tmp_path)
     with rig.running():
@@ -226,9 +216,6 @@ def test_clock_stepped_back_keeps_log_monotonic(tmp_path):
     assert all(a < b for a, b in zip(stamps, stamps[1:]))
 
 
-@pytest.mark.xfail(strict=True, reason="clock skew: _backoff_remaining_s (tracker/meter_log.py:150) measures "
-                   "a 429 backoff from the logged ts, so a 429 stamped by a clock running fast blocks every "
-                   "tick until the wall clock catches up, far past Retry-After")
 def test_429_logged_by_a_fast_clock_does_not_block_for_hours(tmp_path):
     rig = Rig(tmp_path)
     with rig.running():
@@ -252,9 +239,6 @@ def test_weekly_reset_attributes_usage_to_the_new_week(tmp_path):
     assert stamp(rig.ticks[0].at) == rows[0]["ts"]
 
 
-@pytest.mark.xfail(strict=True, reason="uncapped Retry-After: _retry_after_s (tracker/meter_log.py:130) trusts any "
-                   "value, so one 429 with Retry-After: 86400 stops sampling for a day; usage_api caps its own "
-                   "wait at RETRY_429_MAX_S (1200 s)")
 def test_absurd_retry_after_is_capped(tmp_path):
     rig = Rig(tmp_path)
     with rig.running():

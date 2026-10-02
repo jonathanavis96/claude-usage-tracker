@@ -41,16 +41,19 @@ config dir is signed out), 4 the usage read failed.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import functools
 import hashlib
 import json
 import sys
+import time
 import urllib.error
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .usage_api import AuthExpired, Utilization, _default_fetch, read_usage
+from .usage_api import RETRY_429_MAX_S, AuthExpired, Utilization, _default_fetch, read_usage
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
 #: A 429 is logged and left for the next tick. read_usage's own default retries
@@ -69,6 +72,15 @@ DEFAULT_429_BACKOFF_S = 300
 #: the last good read or 429 skips the call: the same readings, without the failures.
 #: Just under two of the timers' ~65 s ticks.
 MIN_READ_SPACING_S = 110
+#: Longest a logged Retry-After may stop sampling; usage_api caps its own waits the same.
+MAX_BACKOFF_S = RETRY_429_MAX_S
+#: Longest this tick waits for another run on the same log to finish before giving up.
+LOCK_WAIT_S = 45
+#: When the clock reads earlier than the log's last line, ticks are skipped (the log stays
+#: in order) until it catches up -- but only if the gap is this small. A last line further
+#: ahead than this was stamped by a clock that ran fast; waiting it out could stop sampling
+#: for hours, so it is ignored instead and one row lands out of order (the join sorts).
+MAX_CLOCK_STALL_S = RETRY_429_MAX_S
 
 
 def account_identity(config_dir: Path) -> str | None:
@@ -112,10 +124,55 @@ def log_owner(log: Path) -> str | None:
     return None
 
 
-def _append(log: Path, line: dict) -> None:
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with open(log, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(line) + "\n")
+def _append(log: Path, line: dict) -> bool:
+    """Append one line. False (with a stderr note) when the disk refuses the write.
+
+    A run killed mid-write leaves a partial last line with no newline; a newline goes
+    first in that case so this line starts on its own and is not glued onto the fragment.
+    """
+    data = (json.dumps(line) + "\n").encode("utf-8")
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "ab+") as fh:
+            if fh.tell() > 0:
+                fh.seek(-1, 2)
+                if fh.read(1) != b"\n":
+                    data = b"\n" + data
+            fh.write(data)
+        return True
+    except OSError as e:
+        print(f"cannot write {log}: {type(e).__name__}: {e}", file=sys.stderr)
+        return False
+
+
+@contextlib.contextmanager
+def _log_lock(log: Path, wait_s: float = LOCK_WAIT_S):
+    """Hold `<log>.lock` so two runs never interleave read-check-fetch-append on one log.
+
+    Yields False when another run held it for `wait_s`. A lock file that cannot be created
+    (read-only directory) yields True without a lock: the append will fail and say so.
+    """
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(log.with_name(log.name + ".lock"), "a")
+    except OSError:
+        yield True
+        return
+    with fh:
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.05)
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def _last_line(log: Path, tail_bytes: int = 8192) -> dict | None:
@@ -143,7 +200,8 @@ def _last_line(log: Path, tail_bytes: int = 8192) -> dict | None:
 
 def _retry_after_s(e: urllib.error.HTTPError) -> float:
     ra = e.headers.get("Retry-After") if e.headers else None
-    return float(ra) if ra and ra.replace(".", "", 1).isdigit() else DEFAULT_429_BACKOFF_S
+    s = float(ra) if ra and ra.replace(".", "", 1).isdigit() else DEFAULT_429_BACKOFF_S
+    return min(s, MAX_BACKOFF_S)
 
 
 def _backoff_remaining_s(last: dict | None, now: datetime) -> float | None:
@@ -160,11 +218,27 @@ def _backoff_remaining_s(last: dict | None, now: datetime) -> float | None:
         return None
     try:
         since = datetime.fromisoformat(last["ts"])
-        retry_after_s = float(last["retry_after_s"])
+        retry_after_s = min(float(last["retry_after_s"]), MAX_BACKOFF_S)
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
     except (KeyError, ValueError, TypeError):
         return None
-    remaining = (since + timedelta(seconds=retry_after_s) - now).total_seconds()
+    remaining = min((since + timedelta(seconds=retry_after_s) - now).total_seconds(), retry_after_s)
     return remaining if remaining > 0 else None
+
+
+def _ahead_s(last: dict | None, now: datetime) -> float | None:
+    """How far `last`'s stamp is ahead of `now`, in seconds; None when it is not ahead."""
+    if not last:
+        return None
+    try:
+        since = datetime.fromisoformat(last["ts"])
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+    except (KeyError, ValueError, TypeError):
+        return None
+    ahead = (since - now).total_seconds()
+    return ahead if ahead > 0 else None
 
 
 def _since_last_call_s(last: dict | None, now: datetime) -> float | None:
@@ -197,9 +271,26 @@ def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict
         print(f"refused: {log} holds account {owner}, not {identity} ({account}); one account per log",
               file=sys.stderr)
         return EXIT_REFUSED
+    with _log_lock(log) as locked:
+        if not locked:
+            print(f"{account}: skipping tick, another run holds {log}.lock", file=sys.stderr)
+            return EXIT_READ_FAILED
+        return _sample_locked(config_dir, account, log, identity, fetch, now)
+
+
+def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
+                   fetch: Callable[[str, dict], dict] | None, now: Callable[[], datetime] | None) -> int:
     clock = now or (lambda: datetime.now(timezone.utc))
     now_ts = clock()
     last = _last_line(log)
+    ahead = _ahead_s(last, now_ts)
+    if ahead is not None:
+        if ahead <= MAX_CLOCK_STALL_S:
+            print(f"{account}: skipping tick, clock is {ahead:.0f}s behind the log's last line", file=sys.stderr)
+            return EXIT_READ_FAILED
+        print(f"{account}: log's last line is {ahead:.0f}s in the future (fast clock); ignoring it",
+              file=sys.stderr)
+        last = None
     remaining = _backoff_remaining_s(last, now_ts)
     if remaining is not None:
         # Still inside a previous tick's 429 backoff: skip the network call rather than
@@ -241,7 +332,9 @@ def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict
                       "error": f"{type(e).__name__}: {e}"[:200]})
         print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED
-    _append(log, sample_line(u, account, identity))
+    if not _append(log, sample_line(u, account, identity)):
+        print(f"{account}: reading not recorded, the log could not be written", file=sys.stderr)
+        return EXIT_READ_FAILED
     print(f"{account}: five_hour={u.five_hour:.0f}% seven_day={u.seven_day}")
     return EXIT_OK
 
