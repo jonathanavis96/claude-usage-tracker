@@ -39,9 +39,11 @@ tick). After the n-th consecutive 429 it waits
 
     max(Retry-After, MIN_READ_SPACING_S * 2 ** (n - 1)), capped at MAX_BACKOFF_S
 
-so a Retry-After header is always honoured, and the endpoint's usual Retry-After: 0
+so a Retry-After header (seconds or an HTTP date) is always honoured, and the endpoint's usual Retry-After: 0
 still backs off. Because the limiter is per host, a 429 also writes `_host.json` with
-the same next_allowed_at, and every poller on the host respects it before calling.
+the same next_allowed_at (under `_host.lock`, so it only ever moves later), and every
+poller on the host respects it before calling. A next_allowed_at further ahead than the
+longest wait ever set (MAX_GATE_S) came from a clock that stepped back and is ignored.
 
     python3 -m tracker.usage_cache poll --account avis --config-dir ~/.claude-avis [--loop]
     python3 -m tracker.usage_cache read --account avis [--max-age 600]
@@ -52,6 +54,7 @@ stale (older than --max-age), 4 missing or corrupt.
 from __future__ import annotations
 
 import contextlib
+import email.utils
 import fcntl
 import json
 import os
@@ -73,6 +76,15 @@ SCHEMA = 1
 HOST_FILE = "_host.json"
 #: A dead token is not a rate limit, but calling it every two minutes forever helps nobody.
 AUTH_EXPIRED_SPACING_S = 600
+#: The longest wait poll_once ever sets. A next_allowed_at further ahead than this was
+#: stamped by a clock that has since stepped back; honouring it could stop polling for
+#: hours, so it is ignored (meter_log's MAX_CLOCK_STALL_S makes the same call).
+MAX_GATE_S = max(MAX_BACKOFF_S, AUTH_EXPIRED_SPACING_S)
+#: read_cached's max_age_s when the caller gives none (the CLI's default too).
+DEFAULT_MAX_AGE_S = 600.0
+#: A fetched_at this far ahead of the reader's clock means the clock stepped back and
+#: the reading's real age is unknown, so it is reported stale.
+FUTURE_TOLERANCE_S = 60.0
 EXIT_FRESH, EXIT_STALE, EXIT_MISSING = 0, 3, 4
 
 Fetch = Callable[[str, dict], dict]
@@ -174,8 +186,12 @@ class CachedUsage:
 
 
 def read_cached(account: str, cache_dir: Path | None = None, now: Clock | None = None,
-                max_age_s: float | None = None) -> CachedUsage:
-    """The cached reading for `account` and how old it is. Never calls the API."""
+                max_age_s: float | None = DEFAULT_MAX_AGE_S) -> CachedUsage:
+    """The cached reading for `account` and how old it is. Never calls the API.
+
+    `stale` is True when there is no reading, it is older than `max_age_s` (pass None
+    to judge age yourself), or it is stamped in the future.
+    """
     path = cache_path(account, cache_dir)
     try:
         doc = _load(path)
@@ -186,7 +202,8 @@ def read_cached(account: str, cache_dir: Path | None = None, now: Clock | None =
     fetched_at = _parse_stamp(doc.get("fetched_at"))
     age = ((now or _utc_now)() - fetched_at).total_seconds() if fetched_at else None
     buckets = doc.get("buckets") if isinstance(doc.get("buckets"), dict) else None
-    stale = age is None or buckets is None or (max_age_s is not None and age > max_age_s)
+    stale = (age is None or buckets is None or age < -FUTURE_TOLERANCE_S
+             or (max_age_s is not None and age > max_age_s))
     refusals = doc.get("consecutive_refusals")
     return CachedUsage(
         account=account, status="ok", age_s=age, stale=stale, fetched_at=fetched_at, buckets=buckets,
@@ -213,13 +230,23 @@ def _poller_lock(path: Path):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def retry_after_s(e: urllib.error.HTTPError) -> float:
-    """Retry-After in seconds when the 429 carried a numeric one; 0 otherwise."""
+def retry_after_s(e: urllib.error.HTTPError, now: datetime | None = None) -> float:
+    """Retry-After in seconds, from either form (delta-seconds or an HTTP date); 0 when
+    absent, unparseable or already past, so the exponential schedule applies."""
     ra = e.headers.get("Retry-After") if e.headers else None
+    if ra is None:
+        return 0.0
     try:
-        return max(0.0, float(ra)) if ra is not None else 0.0
+        s = float(ra)
     except ValueError:
-        return 0.0  # an HTTP-date form: fall back to the exponential schedule
+        try:
+            when = email.utils.parsedate_to_datetime(ra.strip())
+        except (TypeError, ValueError, IndexError):
+            return 0.0
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        s = (when - (now or _utc_now())).total_seconds()
+    return s if s > 0 else 0.0  # also maps NaN and negatives to 0
 
 
 def refusal_backoff_s(consecutive: int, retry_after: float = 0.0) -> float:
@@ -234,6 +261,27 @@ def _host_gate(cache_dir: Path) -> datetime | None:
     except (ValueError, OSError):
         return None
     return _parse_stamp(doc.get("next_allowed_at")) if doc else None
+
+
+def _live_gate(gates, t: datetime) -> datetime | None:
+    """The latest of `gates` that is a real hold at `t`: None when all are past, or are
+    further ahead than any wait this module sets (a clock that stepped back)."""
+    live = [g for g in gates if g and t < g <= t + timedelta(seconds=MAX_GATE_S)]
+    return max(live) if live else None
+
+
+def _raise_host_gate(cache_dir: Path, nxt: datetime, account: str, t: datetime) -> None:
+    """Move the host hold to `nxt` unless it already reaches later. Serialised on
+    `_host.lock` so two pollers refused together cannot shorten each other's hold."""
+    with open(cache_dir / "_host.lock", "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            gate = _host_gate(cache_dir)
+            if gate is None or gate < nxt or gate > t + timedelta(seconds=MAX_GATE_S):
+                write_json_durable(cache_dir / HOST_FILE,
+                                   {"next_allowed_at": _stamp(nxt), "set_by": account, "set_at": _stamp(t)})
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def poll_once(account: str, config_dir: Path, *, fetch: Fetch | None = None, now: Clock | None = None,
@@ -255,9 +303,13 @@ def poll_once(account: str, config_dir: Path, *, fetch: Fetch | None = None, now
         except (ValueError, OSError):
             prev = {}  # corrupt: start over; the next write replaces it
         t = clock()
-        gates = [g for g in (_parse_stamp(prev.get("next_allowed_at")), _host_gate(cache_dir)) if g]
-        if gates and t < max(gates):
+        if _live_gate((_parse_stamp(prev.get("next_allowed_at")), _host_gate(cache_dir)), t):
             return "backoff"
+        identity = account_identity(Path(config_dir))
+        if prev.get("identity") != identity:
+            # The config dir is now signed into another account (or out): the kept
+            # reading belongs to the old one and must not be served under the new identity.
+            prev = {k: v for k, v in prev.items() if k not in ("fetched_at", "buckets")}
 
         seen: dict = {}
         base = fetch or NO_RETRY_FETCH
@@ -268,7 +320,7 @@ def poll_once(account: str, config_dir: Path, *, fetch: Fetch | None = None, now
             return body
 
         rec = {k: prev.get(k) for k in ("fetched_at", "buckets")}
-        rec.update(schema=SCHEMA, account=account, identity=account_identity(Path(config_dir)),
+        rec.update(schema=SCHEMA, account=account, identity=identity,
                    host=socket.gethostname(), last_attempt_at=_stamp(t),
                    consecutive_refusals=prev.get("consecutive_refusals") or 0)
         outcome, wait = "error", MIN_READ_SPACING_S
@@ -290,8 +342,9 @@ def poll_once(account: str, config_dir: Path, *, fetch: Fetch | None = None, now
             if e.code == 429:
                 outcome = "rate_limited"
                 n = int(rec["consecutive_refusals"]) + 1
-                wait = refusal_backoff_s(n, retry_after_s(e))
-                rec.update(consecutive_refusals=n, last_error=f"HTTP 429 (Retry-After {retry_after_s(e):.0f}s)",
+                ra = retry_after_s(e, now=t)
+                wait = refusal_backoff_s(n, ra)
+                rec.update(consecutive_refusals=n, last_error=f"HTTP 429 (Retry-After {ra:.0f}s)",
                            last_error_reason="rate_limited")
             else:
                 rec.update(last_error=f"HTTP {e.code}", last_error_reason="error")
@@ -301,10 +354,7 @@ def poll_once(account: str, config_dir: Path, *, fetch: Fetch | None = None, now
         rec["next_allowed_at"] = _stamp(nxt)
         write_json_durable(path, rec)
         if outcome == "rate_limited":
-            gate = _host_gate(cache_dir)
-            if gate is None or gate < nxt:
-                write_json_durable(cache_dir / HOST_FILE, {"next_allowed_at": _stamp(nxt), "set_by": account,
-                                                           "set_at": _stamp(t)})
+            _raise_host_gate(cache_dir, nxt, account, t)
         return outcome
 
 
@@ -322,9 +372,9 @@ def poll_loop(account: str, config_dir: Path, *, cache_dir: Path | None = None, 
             print(f"{account}: another poller holds the lock on this host; exiting", file=sys.stderr)
             return
         c = read_cached(account, cache_dir, now=clock)
-        gate = _host_gate(Path(cache_dir or default_cache_dir()))
-        until = max([g for g in (c.next_allowed_at, gate) if g] or [clock()])
-        sleep(max(floor, (until - clock()).total_seconds()))
+        t = clock()
+        until = _live_gate((c.next_allowed_at, _host_gate(Path(cache_dir or default_cache_dir()))), t) or t
+        sleep(max(floor, (until - t).total_seconds()))
 
 
 # --------------------------------------------------------------------------- CLI
@@ -342,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("read", help="print the cached reading and its age; never calls the API")
     r.add_argument("--account", required=True)
     r.add_argument("--cache-dir", type=Path)
-    r.add_argument("--max-age", type=float, default=600.0)
+    r.add_argument("--max-age", type=float, default=DEFAULT_MAX_AGE_S)
     a = ap.parse_args(argv)
     if a.cmd == "poll":
         if a.loop:

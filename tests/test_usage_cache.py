@@ -3,6 +3,7 @@
 Every test stubs the HTTP layer; nothing here calls the real endpoint.
 """
 import email.message
+import email.utils
 import fcntl
 import json
 import tempfile
@@ -280,6 +281,133 @@ class ConcurrencyTests(Base):
                      max_iterations=3)
         self.assertEqual(slept, [MIN_READ_SPACING_S, 500, MIN_READ_SPACING_S])
         self.assertEqual(len(f.calls), 3)
+
+
+class ReviewFindingTests(Base):
+    """Defects found in review on 2026-10-02; each test failed before its fix."""
+
+    def test_retry_after_as_an_http_date_is_honoured(self):
+        when = email.utils.format_datetime(T0 + timedelta(seconds=900), usegmt=True)
+        f = StubFetch(http_error(429, retry_after=when))
+        self.assertEqual(self.poll(f), "rate_limited")
+        c = uc.read_cached("avis", self.cache, now=self.clock)
+        self.assertEqual(c.next_allowed_at, T0 + timedelta(seconds=900))
+        host = json.loads((self.cache / uc.HOST_FILE).read_text())
+        self.assertEqual(uc._parse_stamp(host["next_allowed_at"]), T0 + timedelta(seconds=900))
+
+    def test_retry_after_date_in_the_past_or_garbage_falls_back_to_the_schedule(self):
+        past = email.utils.format_datetime(T0 - timedelta(seconds=900), usegmt=True)
+        for ra in (past, "soon", "nan", "-5"):
+            self.assertEqual(uc.retry_after_s(http_error(429, retry_after=ra), now=T0), 0.0, ra)
+        self.assertEqual(uc.retry_after_s(http_error(429, retry_after="1e400"), now=T0), float("inf"))
+        self.assertEqual(uc.refusal_backoff_s(1, float("inf")), MAX_BACKOFF_S)
+
+    def test_a_gate_set_by_a_clock_that_ran_ahead_does_not_stall_polling(self):
+        # The clock stepped back an hour after a 429: next_allowed_at is now further
+        # ahead than any wait the poller ever sets, so it cannot be a real backoff.
+        uc.write_json_durable(uc.cache_path("avis", self.cache),
+                              {"next_allowed_at": uc._stamp(T0 + timedelta(hours=3))})
+        self.assertEqual(self.poll(StubFetch(BODY)), "fetched")
+
+    def test_a_far_future_host_gate_is_ignored_by_poll_and_loop(self):
+        self.cache.mkdir()
+        uc.write_json_durable(self.cache / uc.HOST_FILE, {"next_allowed_at": uc._stamp(T0 + timedelta(hours=3))})
+        slept = []
+
+        def sleep(s):
+            slept.append(s)
+            self.clock.advance(s)
+
+        f = StubFetch(BODY)
+        uc.poll_loop("avis", self.cfg, cache_dir=self.cache, fetch=f, now=self.clock, sleep=sleep,
+                     max_iterations=2)
+        self.assertEqual(len(f.calls), 2)
+        self.assertEqual(slept, [MIN_READ_SPACING_S, MIN_READ_SPACING_S])
+
+    def test_a_real_gate_still_holds(self):
+        # The far-future guard must not swallow the longest real wait.
+        uc.write_json_durable(uc.cache_path("avis", self.cache),
+                              {"next_allowed_at": uc._stamp(T0 + timedelta(seconds=MAX_BACKOFF_S))})
+        self.assertEqual(self.poll(StubFetch(BODY)), "backoff")
+
+    def test_default_read_has_a_max_age(self):
+        # A reader that passes no max_age_s must not get a day-old reading as fresh.
+        self.poll(StubFetch(BODY))
+        self.clock.advance(86400)
+        self.assertTrue(uc.read_cached("avis", self.cache, now=self.clock).stale)
+        self.clock.t = T0 + timedelta(seconds=60)
+        self.assertFalse(uc.read_cached("avis", self.cache, now=self.clock).stale)
+
+    def test_a_reading_stamped_in_the_future_is_stale(self):
+        # The clock stepped back: the reading's real age is unknown.
+        self.poll(StubFetch(BODY))
+        self.clock.advance(-3600)
+        c = uc.read_cached("avis", self.cache, now=self.clock, max_age_s=600)
+        self.assertLess(c.age_s, 0)
+        self.assertTrue(c.stale)
+
+    def test_buckets_of_another_account_are_dropped_when_the_config_dir_changes_account(self):
+        self.poll(StubFetch(BODY))
+        (self.cfg / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "uuid-2"}}))
+        self.clock.advance(MIN_READ_SPACING_S)
+        self.assertEqual(self.poll(StubFetch(http_error(401))), "auth_expired")
+        c = uc.read_cached("avis", self.cache, now=self.clock)
+        self.assertNotEqual(c.record["identity"], None)
+        self.assertIsNone(c.buckets)
+        self.assertIsNone(c.fetched_at)
+        self.assertTrue(c.stale)
+
+    def test_host_gate_is_not_shortened_by_a_concurrent_refusal(self):
+        # avis (Retry-After 110) and dave (Retry-After 1200) are refused together. If
+        # avis reads _host.json before dave writes it and writes after, the host hold
+        # drops from 1200 s to 110 s. The update must be serialised.
+        real_load, real_write = uc._load, uc.write_json_durable
+        state = {"armed": False, "fired": False}
+
+        def write(path, doc):
+            real_write(path, doc)
+            if Path(path).name == "avis.json" and doc.get("last_error_reason") == "rate_limited":
+                state["armed"] = True
+
+        def load(path):
+            doc = real_load(path)
+            if state["armed"] and not state["fired"] and Path(path).name == uc.HOST_FILE \
+                    and threading.current_thread() is threading.main_thread():
+                state["fired"] = True
+                t = threading.Thread(target=lambda: self.poll(StubFetch(http_error(429, retry_after=1200)),
+                                                              account="dave"))
+                t.start()
+                t.join(timeout=1.0)
+                state["thread"] = t
+            return doc
+
+        uc._load, uc.write_json_durable = load, write
+        try:
+            self.assertEqual(self.poll(StubFetch(http_error(429, retry_after=0))), "rate_limited")
+            state["thread"].join(timeout=5)
+        finally:
+            uc._load, uc.write_json_durable = real_load, real_write
+        self.assertTrue(state["fired"])
+        host = json.loads((self.cache / uc.HOST_FILE).read_text())
+        self.assertEqual(uc._parse_stamp(host["next_allowed_at"]), T0 + timedelta(seconds=MAX_BACKOFF_S))
+
+    def test_a_crash_before_the_replace_leaves_the_previous_record_readable(self):
+        self.poll(StubFetch(BODY))
+        real = uc.os.replace
+
+        def boom(src, dst):
+            raise KeyboardInterrupt  # stands in for a kill between the temp write and the replace
+
+        uc.os.replace = boom
+        try:
+            self.clock.advance(MIN_READ_SPACING_S)
+            with self.assertRaises(KeyboardInterrupt):
+                self.poll(StubFetch(BODY))
+        finally:
+            uc.os.replace = real
+        c = uc.read_cached("avis", self.cache, now=self.clock)
+        self.assertEqual((c.status, c.fetched_at, c.buckets), ("ok", T0, BODY))
+        self.assertEqual(sorted(p.name for p in self.cache.iterdir()), ["avis.json", "avis.lock"])
 
 
 if __name__ == "__main__":
