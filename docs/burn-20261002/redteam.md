@@ -28,3 +28,8 @@ One line each: where, impact, suggested fix.
 - `tracker/health.py:102-112` (`test_collection_error_row_is_not_a_fresh_sample`). Same flaw in `check_collection`: an error row with a `ts` counts as a fresh sample. Fix: as above.
 - `tracker/health.py:153-156` (`test_token_check_survives_unexpected_credentials_shape`). A non-object `claudeAiOauth` raises AttributeError outside the try; the CLI crashes, and under supervise this is the crash above. Fix: `if not isinstance(oauth, dict): return "token: ... unexpected shape"`.
 - `tracker/health.py:231`, `:217` (`test_lock_check_survives_corrupt_pidfile`). A corrupt all-digit pid file overflows `os.kill`; uncaught. Low likelihood. Fix: catch `OverflowError`/`ValueError` in `pid_alive` and report the pid file as stale.
+
+### masterrig publisher (`bin/passive.sh`) — `tests/redteam/test_passive_sh_redteam.py`
+
+- `bin/passive.sh:78-83` (`test_unpushed_record_is_not_reported_as_success[push_rejected]`, `[origin_unreachable]`). A push rejected after the rebase retry (branch protection, a non-fast-forward the rebase cannot fix, a revoked deploy key) or a network that is down ends in a warning and exit 0. supervise records success, health stays green, no alert; masterrig's record stops reaching main and the page shows a1 `stopped` only after 36 h. Fix: `exit 5` after the warning (supervise then retries and alerts at 3 in a row); or treat "stamp older than 26 h" as a health failure.
+- `bin/passive.sh:77` (`test_failed_commit_is_not_reported_as_success`). `git commit ... || exit 0` turns a failed commit (stale `.git/index.lock`, full disk, a hook) into success, every hour, for good. Fix: `|| { say "commit failed"; exit 5; }`.
