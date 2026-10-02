@@ -279,6 +279,15 @@ class FastClockReadingTests(unittest.TestCase):
         pts = window_points(parse_moonlighter(lines, source="meter"))
         self.assertEqual(round(sum(p["five_hour_pct"] for p in pts), 1), 27.0)
 
+    def test_one_reading_stamped_behind_costs_only_itself(self):
+        # A single line stamped 61 min behind its predecessors must not take the
+        # eight good readings before it down with it (review of a799f8b).
+        lines = [self._line(5 * i, 10 + i, 20 + i / 2) for i in range(8)]           # 10..17
+        lines.append(self._line(40 - 61, 18, 24))                                  # slow clock, -61 min
+        lines += [self._line(45 + 5 * i, 19 + i, 24.5 + i / 2) for i in range(10)]  # 19..28
+        pts = window_points(parse_moonlighter(lines, source="meter"))
+        self.assertEqual(round(sum(p["five_hour_pct"] for p in pts), 1), 18.0)
+
     def test_other_sources_interleaved_in_time_are_kept(self):
         meter = parse_moonlighter([self._line(10 * i, 10 + 2 * i, 20 + i) for i in range(6)],
                                   source="meter")

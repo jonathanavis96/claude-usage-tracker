@@ -315,21 +315,36 @@ def _in_log_order(samples: list[Sample]) -> list[Sample]:
     as a dip, and the climb back is counted twice (UT-S soak, finding 2).
     Only readings from one parse of one log are compared (`Sample.seq`), so
     a merge of several sources is never judged against itself.
+
+    The readings kept are the longest run that is in time order in the log, so
+    the fewest are dropped: one line stamped ahead costs that line, and so does
+    one line stamped behind (it must not take every earlier reading with it).
     """
     by_log: dict[int, list[Sample]] = {}
     for s in samples:
         if s.seq is not None:
             by_log.setdefault(s.seq[0], []).append(s)
-    drop: set[int] = set()
+    keep: set[int] = set()
     for group in by_log.values():
         group.sort(key=lambda s: s.seq[1])
-        earliest_after = None
-        for s in reversed(group):
-            if earliest_after is not None and s.ts > earliest_after:
-                drop.add(id(s))
+        # Longest non-decreasing subsequence by ts (patience sort, O(n log n)).
+        tails: list[datetime] = []
+        tail_idx: list[int] = []
+        prev: list[int] = [-1] * len(group)
+        for i, s in enumerate(group):
+            k = bisect.bisect_right(tails, s.ts)
+            if k == len(tails):
+                tails.append(s.ts)
+                tail_idx.append(i)
             else:
-                earliest_after = s.ts
-    return [s for s in samples if id(s) not in drop]
+                tails[k] = s.ts
+                tail_idx[k] = i
+            prev[i] = tail_idx[k - 1] if k else -1
+        i = tail_idx[-1] if tail_idx else -1
+        while i >= 0:
+            keep.add(id(group[i]))
+            i = prev[i]
+    return [s for s in samples if s.seq is None or id(s) in keep]
 
 
 def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> list[dict]:
