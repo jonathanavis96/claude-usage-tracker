@@ -85,6 +85,15 @@ class HealthTest(unittest.TestCase):
         self.assertIn("meter: newest line in meter-dave.log is 6m old", self.reasons()["meter"])
         meter.write_text(json.dumps({"ts": iso(NOW - 400), "reason": "rate_limited", "retry_after_s": 300}) + "\n")
         self.assertIsNone(self.reasons()["meter"], "a 429 gap line extends the limit by its Retry-After")
+        rows = [{"ts": iso(NOW - 60 * i), "reason": "rate_limited", "retry_after_s": 0} for i in range(50, 0, -1)]
+        rows[1::2] = [{"ts": r["ts"]} for r in rows[1::2]]
+        rows += [{"ts": iso(NOW - 5 + i), "reason": "rate_limited", "retry_after_s": 0} for i in range(5)]
+        meter.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.assertIn("30 of the last 55 lines", self.reasons()["meter"] or "")
+        rows = [{"ts": iso(NOW - 60 * i)} for i in range(40, 0, -1)]
+        rows[::4] = [{**r, "reason": "rate_limited", "retry_after_s": 0} for r in rows[::4]]
+        meter.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.assertIsNone(self.reasons()["meter"], "a 429 in four is not a storm")
         self.c.meter_logs = ()
         self.assertIsNone(self.reasons()["meter"], "no meter logs configured, nothing to check")
 

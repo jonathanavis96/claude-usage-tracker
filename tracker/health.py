@@ -20,6 +20,8 @@ Checks, in order (the first failure is the one-line reason):
                younger than --meter-max-age (default 180 s). meter_log skips a tick
                within 110 s of the last call, exiting 0 with no line, so reads land
                about 130 s apart; a 429 gap line extends the limit by its Retry-After.
+               Also fails when more than half of the log's last 40+ lines are 429s
+               (the 2026-09-23 storm: 55% of reads, unseen for nine days).
   lock         no lock pid file whose process is dead, and none older than --lock-max-age.
   sizes        each log under --max-log-bytes and the history/ directory under
                --max-history-bytes.
@@ -164,8 +166,34 @@ def check_token(c: Config, now: float) -> str | None:
     return None
 
 
+def _tail_rows(path: Path, n: int = 60) -> list[dict]:
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        start = max(0, f.tell() - 65536)
+        f.seek(start)
+        lines = f.read().splitlines()
+    if start:
+        lines = lines[1:]  # the first line is cut part way
+    rows = []
+    for raw in lines[-n:]:
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
 def check_meter(c: Config, now: float) -> str | None:
     for log in c.meter_logs:
+        try:
+            rows = _tail_rows(log)
+        except OSError:
+            rows = []
+        limited = sum(1 for r in rows if r.get("reason") == "rate_limited")
+        if len(rows) >= 40 and limited * 2 > len(rows):
+            return f"meter: {limited} of the last {len(rows)} lines in {log.name} are 429s"
         try:
             row = _last_line(log)
         except OSError as e:
