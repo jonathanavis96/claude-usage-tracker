@@ -208,7 +208,7 @@ def masterrig_account(home: Path | None = None) -> Account:
 def _read(path: Path, fmt: str, since: datetime | None) -> list[Sample]:
     if not path.exists():
         return []
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:  # one bad byte costs its line only
         return parse_log(fmt, fh, since)
 
 
