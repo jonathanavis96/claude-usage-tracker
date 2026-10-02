@@ -174,6 +174,20 @@ def check_publisher(c: Config, now: float) -> str | None:
             stamps.append(int(out))
     if not stamps:
         return f"publisher: no commit touches {c.publisher_path}"
+    # bin/daily.sh records a failing site push in history/site-push.json: the tracker
+    # state above stays fresh while the page itself does not update.
+    for rev in ("@{upstream}", "HEAD"):
+        try:
+            raw = subprocess.run(["git", "-C", str(c.repo), "show", f"{rev}:history/site-push.json"],
+                                 capture_output=True, text=True, timeout=30, check=False).stdout
+            site = json.loads(raw) if raw.strip() else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            site = None
+        if isinstance(site, dict):
+            if site.get("ok") is False:
+                return (f"publisher: the site push is failing (last failure {site.get('at')}, "
+                        f"last success {site.get('last_ok') or 'unknown'}); the page is not updating")
+            break
     age = now - max(stamps)
     if age > c.publisher_max_age_s:
         return f"publisher: {c.publisher_path} last committed {_age(age)} ago (limit {_age(c.publisher_max_age_s)})"

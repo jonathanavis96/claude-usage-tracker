@@ -15,7 +15,6 @@ import subprocess
 import time
 from pathlib import Path
 
-import pytest
 
 from tracker import health
 
@@ -89,13 +88,6 @@ def make_gs(tmp_path: Path, home: Path) -> tuple[Path, Path, Path, dict]:
     return work, origin, site_origin, env
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/health.py:137-148 check_publisher only asks when history/gs-passive.json was last "
-    "committed to the tracker repo. bin/daily.sh:157-162 commits and pushes that file before "
-    "it tries the site push (:164-174), so a site push that fails every run (revoked "
-    "github-cut-site deploy key, branch protection, an unfixable divergence) leaves the "
-    "tracker side fresh and the health check green while the public page never updates. "
-    "gs is not under tracker.supervise, so daily.sh's exit 1 reaches only its cron log"))
 def test_rejected_site_push_is_seen_by_health(tmp_path, fake_home):
     work, origin, site_origin, env = make_gs(tmp_path, fake_home)
     site_before = git(site_origin, "rev-parse", "main", env=env)

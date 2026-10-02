@@ -40,4 +40,5 @@ One line each: where, impact, suggested fix.
 
 ### gs publisher (`bin/daily.sh`) — `tests/redteam/test_daily_sh_redteam.py`
 
+- **Fixed (UT-I):** `bin/daily.sh` writes and pushes `history/site-push.json` on every failed site push and on the first success after one; `check_publisher` fails while it says `"ok": false`. Marker removed.
 - `tracker/health.py:137-148` with `bin/daily.sh:157-174` (`test_rejected_site_push_is_seen_by_health`). The only publisher check is the age of the last tracker-repo commit to `history/gs-passive.json`. daily.sh commits and pushes that before the site push. When the site push fails on every run (revoked `github-cut-site` key, branch protection, a divergence the rebase cannot fix), the tracker side stays fresh, health stays green and the public page freezes. gs is not under supervise, so daily.sh's exit 1 reaches only its cron log. **Highest-impact silent failure found.** Fix: check what readers see. Read `generated_at` from the site repo's `website/public/data/claude-usage.json` at `origin/main` (masterrig can `git ls-remote`/fetch it) or from the live URL, and fail over 2 h. Also run daily.sh under `tracker.supervise --label gs`.

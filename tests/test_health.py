@@ -107,6 +107,17 @@ class HealthTest(unittest.TestCase):
         self.c.publisher_max_age_s = 300
         self.assertIsNone(self.reasons()["publisher"])
 
+    def test_failing_site_push_fails_the_publisher_check_until_it_recovers(self):
+        def commit(doc):
+            (self.repo / "history" / "site-push.json").write_text(json.dumps(doc))
+            subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t",
+                            "commit", "-qm", "s"], check=True)
+        commit({"ok": False, "at": "2026-10-02T01:30:00Z", "last_ok": "2026-10-01T20:00:00Z"})
+        self.assertIn("site push is failing", self.reasons()["publisher"] or "")
+        commit({"ok": True, "at": "2026-10-02T02:00:00Z", "last_ok": "2026-10-02T02:00:00Z"})
+        self.assertIsNone(self.reasons()["publisher"])
+
     def test_stale_publisher(self):
         self.c.publisher_max_age_s = 300
         self.assertIn("publisher: history/gs-passive.json last committed 10m ago", self.reasons()["publisher"])

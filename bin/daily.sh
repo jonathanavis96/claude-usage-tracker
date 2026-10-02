@@ -182,6 +182,26 @@ fi
 )
 publish_rc=$?
 
+# Record a failing site push in the tracker repo, where masterrig's health check reads it
+# (tracker/health.py check_publisher). Without this the tracker side stays fresh while the
+# page itself never updates. Written and pushed on every failure and on the first success
+# after one; a run that succeeds after a success touches nothing.
+SITE_STATUS=history/site-push.json
+site_was_ok=1
+grep -q '"ok": false' "$SITE_STATUS" 2>/dev/null && site_was_ok=0
+if [ "$publish_rc" -ne 0 ] || [ "$site_was_ok" -eq 0 ]; then
+  now_utc="$(date -u +%FT%TZ)"
+  last_ok="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("last_ok",""))' "$SITE_STATUS" 2>/dev/null || true)"
+  if [ "$publish_rc" -eq 0 ]; then
+    printf '{"ok": true, "at": "%s", "last_ok": "%s"}\n' "$now_utc" "$now_utc" > "$SITE_STATUS"
+  else
+    printf '{"ok": false, "at": "%s", "last_ok": "%s"}\n' "$now_utc" "$last_ok" > "$SITE_STATUS"
+  fi
+  git add "$SITE_STATUS"
+  git -c user.name=publisher -c user.email=publisher@gs commit -q -m "Site push status $now_utc" \
+    && { git push -q origin "$BRANCH" || echo "warning: git push of the site push status failed" >&2; }
+fi
+
 # One email to Jonathan through the same send endpoint, via tracker/alert.py
 # (which reads NOTIFY_ALERT_TO and the bearer secret from
 # ~/.claude-usage-notify.env, and skips with a note when either is missing).
