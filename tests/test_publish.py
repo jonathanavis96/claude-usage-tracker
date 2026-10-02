@@ -59,6 +59,12 @@ def gs_weekly(**accounts):
                          for name, points in accounts.items()}}
 
 
+def live(report, now):
+    """`report` as a feed collected at `now`: passive_account_count counts only accounts
+    whose feed account_feeds does not call stopped (Codex finding 16)."""
+    return dict(report, generated_at=now.isoformat())
+
+
 def legacy_window(window_ending, d5, d7):
     """The same point as a passive.json from before that repair wrote it: no pieces, no reset flag."""
     return {"window_ending": window_ending, "windows": round(d5 / d7, 2) if d7 else None,
@@ -377,7 +383,7 @@ class BuildTests(unittest.TestCase):
                 probe(2, "claude-sonnet-5", 420000, account="jwork"),
                 dict(probe(3, "claude-sonnet-5", 420000, account="dave"), outlier=True)]
         now = datetime(2026, 9, 2, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=daily_report([15.0] * 2))
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=live(daily_report([15.0] * 2), now))
         self.assertEqual(j["probe_account_count"], 2)
         self.assertEqual(j["passive_account_count"], 1)
         self.assertNotIn("dave", json.dumps(j))
@@ -548,7 +554,7 @@ class GsPassiveTests(unittest.TestCase):
     def test_passive_readings_are_the_series_and_probe_rows_only_date_their_own_runs(self):
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=live(GS_PASSIVE_MATCHING_PROBE, now))
         self.assertEqual(j["instrument"], "passive")
         self.assertNotIn("passive_calibration", j)
         self.assertEqual(j["last_sample_at"], "2026-09-06T08:00:00+00:00")
@@ -644,7 +650,7 @@ class GsPassiveTests(unittest.TestCase):
 
     def test_publishing_works_with_zero_probe_rows(self):
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=GS_PASSIVE_MATCHING_PROBE)
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=live(GS_PASSIVE_MATCHING_PROBE, now))
         self.assertEqual(j["instrument"], "passive")
         self.assertEqual(j["probe_account_count"], 0)
         self.assertEqual(j["passive_account_count"], 1)
@@ -708,8 +714,20 @@ class GsPassiveTests(unittest.TestCase):
         }}
         rows = [probe(d, "claude-sonnet-5", 420000) for d in range(1, 6)]
         now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
-        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=report)
+        j = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=live(report, now))
         self.assertEqual(j["passive_account_count"], 1)
+
+    def test_passive_account_count_leaves_out_an_account_whose_feed_stopped(self):
+        # Codex finding 16: dave has an accepted stretch, but his meter was last read
+        # three days before publishing, so account_feeds calls the feed stopped and he
+        # is not counted as behind today's evidence.
+        now = datetime(2026, 9, 6, 20, 15, tzinfo=timezone.utc)
+        report = live(GS_PASSIVE_MATCHING_PROBE, now)
+        report["accounts"] = {"dave": dict(report["accounts"]["dave"],
+                                           meter={"last": "2026-09-03T20:00:00+00:00"})}
+        j = build_public_json([], PASSIVE, EFFORT, PRICES, now, gs_passive=report)
+        self.assertEqual(j["account_feeds"]["a3"]["state"], "stopped")
+        self.assertEqual(j["passive_account_count"], 0)
 
 
 class FailurePathTests(unittest.TestCase):
@@ -1259,7 +1277,8 @@ class ThreeAccountWeeklyTests(unittest.TestCase):
         passive = dict(PASSIVE, weekly_windows={"current": 6.0, "history": [],
                                                 "by_window": self.A1})
         return build_public_json([], passive, EFFORT, PRICES, self.NOW,
-                                 gs_passive=gs_weekly(jwork=self.A2, dave=self.A3))
+                                 gs_passive=live(gs_weekly(jwork=self.A2, dave=self.A3), self.NOW),
+                                 masterrig_passive={"generated_at": self.NOW.isoformat()})
 
     def test_every_accounts_points_are_pooled_and_tagged_but_never_named(self):
         j = self._publish()
