@@ -503,12 +503,6 @@ def _points(rows_by_contributor: dict[str, list[dict]], prices: dict, now: datet
     return [p for _, p in points]
 
 
-def _contributor_weeks(rows: list[dict], now: datetime) -> list[float]:
-    """The `windows` figure of each complete week one contributor's samples pair into."""
-    result = weekly_windows([parse_row(r) for r in _by_time(rows)], now=now)
-    return [h["windows"] for h in result["history"] if not h.get("partial")]
-
-
 def _weekly(rows_by_contributor: dict[str, list[dict]], now: datetime) -> dict:
     """Each source's own paired weekly estimate; never pooled, weighted or outlier-rejected.
 
