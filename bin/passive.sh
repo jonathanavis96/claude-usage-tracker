@@ -74,10 +74,14 @@ if git diff --cached --quiet; then
   printf '%s' "$joined_with" > "$STAMP"
   exit 0
 fi
-git -c user.name=tracker -c user.email=tracker@local commit -q -m "Passive history $(date -u +%F)" || exit 0
+# Exit 5: the record did not reach main (commit or push failed). tracker.supervise retries,
+# then alerts at three failed runs in a row; a 0 here would read as a healthy run.
+git -c user.name=tracker -c user.email=tracker@local commit -q -m "Passive history $(date -u +%F)" \
+  || { say "error: git commit failed, the record was not committed"; exit 5; }
 if git push -q origin "$BRANCH" \
     || { git pull -q --rebase origin "$BRANCH" && git push -q origin "$BRANCH"; }; then
   printf '%s' "$joined_with" > "$STAMP"
 else
-  say "warning: git push failed after a rebase retry, commit made locally only"
+  say "error: git push failed after a rebase retry, commit made locally only"
+  exit 5
 fi

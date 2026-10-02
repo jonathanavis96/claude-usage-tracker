@@ -123,12 +123,15 @@ def _age(seconds_ago: float) -> str:
 
 def check_collection(c: Config, now: float) -> str | None:
     try:
-        row = _last_line(c.usage_log)
+        rows = _tail_rows(c.usage_log, n=10_000)
     except OSError as e:
         return f"collection: cannot read {c.usage_log}: {e.strerror}"
+    # The newest real reading: an error row carries a ts but no utilization.
+    row = next((r for r in reversed(rows) if isinstance(r.get("five_hour"), dict)
+                and isinstance(r["five_hour"].get("utilization"), (int, float))), None)
     ts = _parse_ts(row.get("ts")) if row else None
     if ts is None:
-        return f"collection: no timestamped sample in {c.usage_log}"
+        return f"collection: no reading (a line with five_hour utilization) near the end of {c.usage_log}"
     if now - ts > 2 * c.collection_interval_s:
         return f"collection: newest meter sample is {_age(now - ts)} old (limit {_age(2 * c.collection_interval_s)})"
     return None
@@ -182,6 +185,8 @@ def check_token(c: Config, now: float) -> str | None:
         oauth = json.loads(c.credentials.read_text()).get("claudeAiOauth") or {}
     except (OSError, ValueError, AttributeError):
         return f"token: {c.credentials} unreadable"
+    if not isinstance(oauth, dict):
+        return f"token: claudeAiOauth in {c.credentials} has an unexpected shape"
     if not oauth.get("accessToken"):
         return "token: no claudeAiOauth.accessToken (signed out)"
     refresh = _parse_ts(oauth.get("refreshTokenExpiresAt"))
@@ -220,7 +225,7 @@ def _tail_rows(path: Path, n: int = 60) -> list[dict]:
 def pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
+    except (ProcessLookupError, OverflowError, ValueError):
         return False
     except PermissionError:
         return True
@@ -298,6 +303,9 @@ def check_meters(c: Config, now: float) -> str | None:
             return (f"meters: newest usable reading in {log.name} is {_age(now - newest)} old "
                     f"(limit {_age(c.meter_max_age_s)})")
     return None
+
+
+check_meter = check_meters  # the name the red-team tests and older notes use
 
 
 CHECKS: dict[str, Callable[[Config, float], str | None]] = {

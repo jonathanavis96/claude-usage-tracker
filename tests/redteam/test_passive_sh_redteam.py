@@ -59,11 +59,6 @@ def run_passive(work: Path, env: dict) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=120)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "bin/passive.sh:78-83 handles a push that fails even after a rebase retry with a warning "
-    "line and falls off the end with exit 0. tracker.supervise records a success, health's "
-    "`run` check stays green, and no alert is ever sent, while masterrig's record never "
-    "reaches main (the page only shows a1 `stopped` 36 h later)"))
 @pytest.mark.parametrize("fault", ["push_rejected", "origin_unreachable"])
 def test_unpushed_record_is_not_reported_as_success(tmp_path, fake_home, fault):
     work, origin, env = make_checkout(tmp_path, fake_home)
@@ -79,11 +74,6 @@ def test_unpushed_record_is_not_reported_as_success(tmp_path, fake_home, fault):
     assert r.returncode != 0, "a record that never left masterrig was reported as a successful run"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "bin/passive.sh:77 `git commit ... || exit 0`: a commit that fails (a stale "
-    ".git/index.lock from a killed git, a full disk, a failing hook) exits 0. The stamp is "
-    "not written, so every hourly run repeats the join and fails the same way, each one "
-    "recorded by tracker.supervise as a success"))
 def test_failed_commit_is_not_reported_as_success(tmp_path, fake_home):
     work, _, env = make_checkout(tmp_path, fake_home)
     hook = work / ".git" / "hooks" / "pre-commit"

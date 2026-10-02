@@ -30,7 +30,7 @@ class HealthTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "s"],
                        check=True, env=env)
         self.log = self.tmp / "usage_log.jsonl"
-        self.log.write_text(json.dumps({"ts": iso(NOW - 3000)}) + "\n" + json.dumps({"ts": iso(NOW - 60)}) + "\n")
+        self.log.write_text(json.dumps({"ts": iso(NOW - 3000), "five_hour": {"utilization": 1}}) + "\n" + json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": 1}}) + "\n")
         self.state = self.tmp / "state.json"
         self.state.write_text(json.dumps({"last_ok": NOW - 120}))
         self.creds = self.tmp / "creds.json"
@@ -48,11 +48,11 @@ class HealthTest(unittest.TestCase):
         self.assertIsNone(health.first_failure(self.c, NOW))
 
     def test_stale_collection(self):
-        self.log.write_text(json.dumps({"ts": iso(NOW - 2 * 3600)}) + "\n")
+        self.log.write_text(json.dumps({"ts": iso(NOW - 2 * 3600), "five_hour": {"utilization": 1}}) + "\n")
         self.assertIn("collection: newest meter sample is 2h00m old", self.reasons()["collection"])
 
     def test_resets_at_style_offsets_are_parsed_not_string_compared(self):
-        self.log.write_text(json.dumps({"ts": "2026-10-02T03:59:00+02:00"}) + "\n")
+        self.log.write_text(json.dumps({"ts": "2026-10-02T03:59:00+02:00", "five_hour": {"utilization": 1}}) + "\n")
         self.assertIsNone(self.reasons()["collection"])
 
     def test_garbage_tail_falls_back_to_last_good_line(self):
@@ -147,7 +147,7 @@ class HealthTest(unittest.TestCase):
     def test_cli_exit_codes(self):
         import time
         now = time.time()
-        self.log.write_text(json.dumps({"ts": iso(now - 60)}) + "\n")
+        self.log.write_text(json.dumps({"ts": iso(now - 60), "five_hour": {"utilization": 1}}) + "\n")
         self.state.write_text(json.dumps({"last_ok": now - 60}))
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((now + 3600) * 1000)}}))
         args = ["--usage-log", str(self.log), "--state", str(self.state), "--repo", str(self.repo),
