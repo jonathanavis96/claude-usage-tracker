@@ -127,11 +127,6 @@ def test_failed_alert_send_is_recorded(rig, capsys):
     assert recorded, "a failed alert send left no trace in stderr or the state file"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/supervise.py:138-151 decide_alert sends nothing while an incident is open, "
-    "whatever the new reason. An incident opened by one lasting health line (a token idle "
-    "past its grace, the stale-HEAD publisher reading in test_passive_sh_redteam) swallows "
-    "every later, different fault: here three failed runs in a row are never reported"))
 def test_new_fault_during_open_incident_is_alerted(rig, monkeypatch):
     monkeypatch.setattr(health, "first_failure",
                         lambda *a, **k: "token: access token expired 13h00m ago and not refreshed")

@@ -245,6 +245,18 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
     failing = (state.get("consecutive_failures", 0) >= fail_threshold
                or state.get("last_exit") == EXIT_OFF_MAIN)
     stale = bool(health_reason) and now - state["unhealthy_since"] >= stale_after
+    # What kind of fault this is: failed runs, or the failing health check's name. An open
+    # incident of one kind must not swallow a later fault of another: that sends one more
+    # message and the incident takes on the new kind.
+    kinds = ({"runs"} if failing else set()) | ({health_reason.split(":")[0]} if stale else set())
+    if state.get("incident_open") and kinds - set(state.get("incident_kinds", [])):
+        new = sorted(kinds - set(state.get("incident_kinds", [])))
+        reason = (f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})"
+                  if "runs" in new else health_reason)
+        if send(f"Claude usage tracker ({label}) has a further problem: {reason}. "
+                f"Check: python3 -m tracker.health --all"):
+            state["incident_kinds"] = sorted(set(state.get("incident_kinds", [])) | kinds)
+            state["incident_reason"] = f"{state.get('incident_reason')}; {reason}"
     if not state.get("incident_open"):
         if failing or stale:
             reason = (f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})"
@@ -259,10 +271,11 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
                 state["incident_open"] = True
                 state["incident_since"] = now
                 state["incident_reason"] = reason
+                state["incident_kinds"] = sorted(kinds)
     elif not failing and health_reason is None:
         mins = int((now - state.get("incident_since", now)) // 60)
         if (send_up or send)(f"Claude usage tracker ({label}) recovered after {mins} min: {state.get('incident_reason')}"):
-            for k in ("incident_open", "incident_since", "incident_reason"):
+            for k in ("incident_open", "incident_since", "incident_reason", "incident_kinds"):
                 state.pop(k, None)
 
 
