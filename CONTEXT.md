@@ -160,6 +160,14 @@ _Avoid_: shift, event
 An account-scoped change point in paired five-hour/seven-day movement. A split certifies only when both sides clear the d7 floors, their pooled levels differ by more than 15%, and their rounding intervals do not overlap. Detected on the window points, never on the calendar-week rows (a mid-week step blends into the week's average). Events publish onset bounds, confirmation evidence and the metric name; they do not claim that Anthropic changed a weekly cap or establish causation.
 _Avoid_: plan change (that is Jonathan's own subscription move, not a measured step)
 
+**Plan-wide**:
+A five-hour change candidate's figure that holds with each of its combined accounts left out in turn: refitted by the same estimator without that account, every refit keeps the direction with a 95% interval that still excludes no change. A plan limit changes for every account at the same instant, so a change one account alone produces, or a change resting on one account, is not plan-wide. Only a plan-wide candidate whose own interval excludes no change opens a regime, enters `events` and can become `last_change` (`plan_wide`, `applies`, `withheld_reason` in `credits.five_hour_on_meters.candidates`).
+_Avoid_: consistent, agreed (the credit series' two-account agreement is a different rule)
+
+**Rate check**:
+The test that a joint fit's new-family rate is one a list price can explain: its 95% interval overlaps half to twice the family's input list-price ratio to its base family in data/prices.json. A fit that fails it has not separated the rate from the limit change, so it stays unseparated (`joint_fit.rate_check`).
+_Avoid_: rate sanity check, plausibility filter
+
 **Alert**:
 One email to Jonathan, sent by the tracker through the site's send endpoint, for an outlier, a confirmed change or a refused weight.
 _Avoid_: notification, ping, warning email
