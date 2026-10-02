@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests._deploy_fixture import make_checkout
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "deploy" / "install-gs.sh"
 FAKE = """#!/bin/sh
@@ -28,40 +30,43 @@ class InstallGsTest(unittest.TestCase):
         fake = self.home / "fakecrontab"
         fake.write_text(FAKE)
         fake.chmod(0o755)
-        self.env = {**os.environ, "HOME": str(self.home), "CRONTAB": str(fake)}
+        self.env = {**os.environ, "HOME": str(self.home), "CRONTAB": str(fake), "CUT_PIHOME_SSH": "none"}
         self.tab = self.home / "crontab.txt"
+        self.repo = str(make_checkout(self.home / "cut"))
+        self.gs_tab = GS_TAB.replace("/srv/cut", self.repo)
 
     def run_it(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["bash", str(SCRIPT), "--repo", "/srv/cut", *args], env=self.env,
+        return subprocess.run(["bash", str(SCRIPT), "--repo", self.repo, *args, "--no-check"], env=self.env,
                               capture_output=True, text=True, check=True)
 
     def test_dry_run_changes_nothing(self):
-        self.tab.write_text(GS_TAB)
+        self.tab.write_text(self.gs_tab)
         out = self.run_it("--dry-run").stdout
         self.assertIn("tracker.supervise --profile gs", out)
-        self.assertNotIn(">> /home/jonathan/.paperclip/ops/claude-usage-daily.log", out)
-        self.assertEqual(self.tab.read_text(), GS_TAB)
+        bare = [ln for ln in out.splitlines() if ">> /home/jonathan/.paperclip/ops/claude-usage-daily.log" in ln]
+        self.assertTrue(bare and all(ln.startswith("-") for ln in bare), bare)
+        self.assertEqual(self.tab.read_text(), self.gs_tab)
         self.assertFalse((self.home / ".paperclip").exists())
 
     def test_wraps_the_publisher_keeps_everything_else_and_is_idempotent(self):
-        self.tab.write_text(GS_TAB)
+        self.tab.write_text(self.gs_tab)
         self.assertIn("installed", self.run_it().stdout)
         first = self.tab.read_text()
-        for line in GS_TAB.splitlines():
+        for line in self.gs_tab.splitlines():
             if "bin/daily.sh" not in line:
                 self.assertIn(line, first)
         daily = [ln for ln in first.splitlines() if "bin/daily.sh" in ln and not ln.startswith("#")]
         self.assertEqual(len(daily), 1)
-        self.assertTrue(daily[0].startswith("0,30 * * * * cd /srv/cut && /usr/bin/python3 -m tracker.supervise "
+        self.assertTrue(daily[0].startswith(f"0,30 * * * * cd {self.repo} && /usr/bin/python3 -m tracker.supervise "
                                             "--profile gs --log "))
-        self.assertIn("-- /srv/cut/bin/daily.sh", daily[0])
+        self.assertIn(f"-- {self.repo}/bin/daily.sh", daily[0])
         self.assertIn("already up to date", self.run_it().stdout)
         self.assertEqual(self.tab.read_text(), first)
         self.assertTrue((self.home / ".paperclip" / "ops").is_dir())
 
     def test_coexists_with_the_masterrig_block(self):
-        self.tab.write_text(GS_TAB)
-        subprocess.run(["bash", str(ROOT / "deploy" / "install-schedule.sh"), "--repo", "/srv/cut"],
+        self.tab.write_text(self.gs_tab)
+        subprocess.run(["bash", str(ROOT / "deploy" / "install-schedule.sh"), "--repo", self.repo, "--no-check"],
                        env=self.env, capture_output=True, text=True, check=True)
         self.run_it()
         tab = self.tab.read_text()

@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests._deploy_fixture import make_checkout
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "deploy" / "install-schedule.sh"
 FAKE = """#!/bin/sh
@@ -21,11 +23,12 @@ class InstallScheduleTest(unittest.TestCase):
         fake = self.home / "fakecrontab"
         fake.write_text(FAKE)
         fake.chmod(0o755)
-        self.env = {**os.environ, "HOME": str(self.home), "CRONTAB": str(fake)}
+        self.env = {**os.environ, "HOME": str(self.home), "CRONTAB": str(fake), "CUT_PIHOME_SSH": "none"}
         self.tab = self.home / "crontab.txt"
+        self.repo = str(make_checkout(self.home / "cut"))
 
     def run_it(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["bash", str(SCRIPT), "--repo", "/srv/cut", *args], env=self.env,
+        return subprocess.run(["bash", str(SCRIPT), "--repo", self.repo, *args, "--no-check"], env=self.env,
                               capture_output=True, text=True, check=True)
 
     def test_dry_run_changes_nothing(self):
@@ -35,11 +38,12 @@ class InstallScheduleTest(unittest.TestCase):
         self.assertEqual(self.tab.read_text(), "0 0 * * * other\n")
 
     def test_replaces_legacy_line_keeps_others_and_is_idempotent(self):
-        self.tab.write_text("0 0 * * * other\n15 * * * * /srv/cut/bin/passive.sh >> x.log 2>&1\n# /srv/cut/bin/passive.sh comment kept\n")
+        self.tab.write_text(f"0 0 * * * other\n15 * * * * {self.repo}/bin/passive.sh >> x.log 2>&1\n"
+                           f"# {self.repo}/bin/passive.sh comment kept\n")
         self.assertIn("installed", self.run_it().stdout)
         first = self.tab.read_text()
         self.assertIn("0 0 * * * other", first)
-        self.assertIn("# /srv/cut/bin/passive.sh comment kept", first)
+        self.assertIn(f"# {self.repo}/bin/passive.sh comment kept", first)
         self.assertNotIn(">> x.log", first)
         self.assertEqual(first.count("tracker.supervise"), 1)
         self.assertIn("already up to date", self.run_it().stdout)
