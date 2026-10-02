@@ -89,6 +89,7 @@ from itertools import pairwise
 from pathlib import Path
 from statistics import mean, median, stdev
 
+from .atomic import write_text_atomic
 from . import credits as credit_model
 from . import speed
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
@@ -207,7 +208,7 @@ def masterrig_account(home: Path | None = None) -> Account:
 def _read(path: Path, fmt: str, since: datetime | None) -> list[Sample]:
     if not path.exists():
         return []
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:  # one bad byte costs its line only
         return parse_log(fmt, fh, since)
 
 
@@ -1119,10 +1120,7 @@ def main(argv: list[str] | None = None) -> int:
         if speed_rows is not None:
             r["speed"] = speed_rows
     if a.out:
-        a.out.parent.mkdir(parents=True, exist_ok=True)
-        tmp = a.out.with_suffix(".tmp")
-        tmp.write_text(json.dumps(r, indent=1) + "\n", encoding="utf-8")
-        tmp.replace(a.out)  # atomic: a killed run never leaves a truncated file
+        write_text_atomic(a.out, json.dumps(r, indent=1) + "\n")
         print(f"wrote {a.out}", file=sys.stderr)
     return 0
 

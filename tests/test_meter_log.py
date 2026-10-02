@@ -204,3 +204,20 @@ class UnitFileTests(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=1min", timer)
         self.assertIn("Unit=claude-usage-meter-jwork.service", timer)
         self.assertIn("WantedBy=timers.target", timer)
+
+
+class LastLineTests(unittest.TestCase):
+    def test_reads_the_last_object_line_and_skips_non_objects(self):
+        from tracker.meter_log import _last_line
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "m.log")
+            log.write_text("".join(json.dumps({"n": i, "pad": "x" * 200}) + "\n" for i in range(500))
+                           + "42\n\xff-torn")
+            self.assertEqual(_last_line(log)["n"], 499)
+
+    def test_empty_or_missing_log_is_none(self):
+        from tracker.meter_log import _last_line
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(_last_line(Path(d, "nope")))
+            Path(d, "e").write_text("")
+            self.assertIsNone(_last_line(Path(d, "e")))

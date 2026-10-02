@@ -32,6 +32,17 @@ from tracker.turns import Turn
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "pricing_page.html"
 PRICES = ROOT / "data" / "prices.json"
+
+
+def prices_without_auto_rows() -> dict:
+    """data/prices.json as it stood before tracker/list_prices.py filed any row.
+
+    The daily publisher runs list_prices against the live page and commits what it
+    adds (claude-sonnet-5-5 on 2026-09-29), so the shipped table is not a fixture:
+    a test that copies it unfiltered stops seeing the "no row yet" case it tests.
+    """
+    raw = json.loads(PRICES.read_text(encoding="utf-8"))
+    return {k: v for k, v in raw.items() if not (isinstance(v, dict) and "list_price_source" in v)}
 NOW = datetime(2026, 9, 30, 0, 5, tzinfo=timezone.utc)
 SONNET_55 = "claude-sonnet-5-5"
 TOKENS = {"input": 1_000, "output": 20_000, "cache_read": 3_000_000, "cache_write": 400_000}
@@ -98,7 +109,7 @@ class RunTests(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
         self.prices = self.dir / "prices.json"
-        shutil.copy(PRICES, self.prices)
+        self.prices.write_text(json.dumps(prices_without_auto_rows(), indent=2) + "\n", encoding="utf-8")
         self.before = self.prices.read_bytes()
         self.history = self.dir / "gs-passive.json"
         # As tracker.gs_passive writes it while the model has no row: kept by its raw id,
@@ -196,7 +207,7 @@ class NewRowPricesTheStretchTests(unittest.TestCase):
     """After the row is added, a Sonnet 5.5 stretch is valued and kept."""
 
     def setUp(self):
-        self.prices = json.loads(PRICES.read_text(encoding="utf-8"))
+        self.prices = prices_without_auto_rows()
         self.credits = credit_model.load_credits(self.prices)
         self.listed = parse_price_table(page())
 

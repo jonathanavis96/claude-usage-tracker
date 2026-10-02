@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
 
+from .atomic import write_text_atomic
 from .publish import meter_usd
 
 MODELS = ["claude-sonnet-5", "claude-opus-5", "claude-fable-5-1"]
@@ -188,9 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     prices = {k: v for k, v in json.loads(a.prices.read_text(encoding="utf-8")).items() if not k.startswith("_")}
 
     def write(m: dict) -> None:
-        tmp = out.with_suffix(".tmp")
-        tmp.write_text(json.dumps(m, indent=1) + "\n", encoding="utf-8")
-        tmp.replace(out)
+        write_text_atomic(out, json.dumps(m, indent=1) + "\n")
 
     if a.recompute:
         m = recompute(json.loads(a.recompute.read_text(encoding="utf-8")), prices)

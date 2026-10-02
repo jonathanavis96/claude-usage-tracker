@@ -678,3 +678,13 @@ class UnclaimedAttributionTests(unittest.TestCase):
             both = one + [(".claude-dave", at - timedelta(minutes=10), at + timedelta(minutes=10))]
             self.assertIsNone(attribute(path, home, both))
             self.assertIsNone(attribute(path, home, []))
+
+
+class MeterLogBytesTests(unittest.TestCase):
+    def test_an_invalid_utf8_byte_costs_its_line_not_the_log(self):
+        from tracker.gs_passive import _read
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "ceil.log")
+            p.write_bytes(b"2026-10-02T01:40:00+02:00 5-hour 8% / 7-day 18%\n\xff\xfe junk\n"
+                          b"2026-10-02T01:45:00+02:00 5-hour 9% / 7-day 18%\n")
+            self.assertEqual([s.five_hour for s in _read(p, "ceiling", None)], [8.0, 9.0])

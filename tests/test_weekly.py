@@ -346,3 +346,19 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MalformedRowTests(unittest.TestCase):
+    def test_unparseable_fields_make_the_row_a_gap(self):
+        from tracker.weekly import parse_row
+        ok = {"ts": "2026-09-01T10:00:00+00:00",
+              "five_hour": {"utilization": 5, "resets_at": "2026-09-01T12:00:00+00:00"},
+              "seven_day": {"utilization": 9, "resets_at": "2026-09-05T04:00:00+00:00"}}
+        self.assertIsNotNone(parse_row(ok))
+        for bad in ({**ok, "five_hour": {"utilization": "n/a", "resets_at": "2026-09-01T12:00:00+00:00"}},
+                    {**ok, "seven_day": {"utilization": 9, "resets_at": "soon"}},
+                    {**ok, "five_hour": "broken"}):
+            self.assertIsNone(parse_row(bad))
+        self.assertEqual(weekly_windows(parse_rows(['{"ts": "x", "five_hour": {"utilization": 1, "resets_at": "y"},'
+                                                    ' "seven_day": {"utilization": 1, "resets_at": "z"}}'])),
+                         weekly_windows([]))

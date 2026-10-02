@@ -30,8 +30,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+
+from .turns import parse_ts_or_none
 
 #: How much later than its first cloud turn a launch may be logged. `cloud-build` writes
 #: its row after `claude --cloud` returns, which it allows up to 240 seconds.
@@ -54,11 +56,6 @@ class CloudSpan:
                 "end": self.end.isoformat(), "source": self.source}
 
 
-def _ts(value: str) -> datetime:
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
 def launches(log: Path) -> list[dict]:
     """The rows of a `sessions.tsv`: launch time, the name its transcript is filed under, session id."""
     out = []
@@ -70,9 +67,8 @@ def launches(log: Path) -> list[dict]:
         session = next((c for c in cols if c.startswith("session_")), None)
         if sha is None or sha < 2 or not session:
             continue
-        try:
-            at = _ts(cols[0])
-        except ValueError:
+        at = parse_ts_or_none(cols[0])
+        if at is None:
             continue
         out.append({"at": at, "name": "-".join(cols[1:sha]), "session": session})
     return out
@@ -86,8 +82,9 @@ def _cloud_turn_times(path: Path) -> list[datetime]:
                 d = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(d, dict) and d.get("remoteSourced") and d.get("timestamp"):
-                out.append(_ts(d["timestamp"]))
+            at = parse_ts_or_none(d.get("timestamp")) if isinstance(d, dict) and d.get("remoteSourced") else None
+            if at is not None:
+                out.append(at)
     return out
 
 
