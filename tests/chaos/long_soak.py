@@ -317,7 +317,8 @@ class Soak:
                                                                   "tz", "jitter_long")
                 and i > self.token_bad_until):
             blocked = self.backoff_until is not None and sim_now < self.backoff_until
-            spaced = self.last_call_at is not None and (rig.clock - self.last_call_at).total_seconds() < 110
+            spaced = ((self.last_call_at is not None and (rig.clock - self.last_call_at).total_seconds() < 110)
+                      or (self.last_ts is not None and (sim_now - self.last_ts).total_seconds() < 110))
             behind = self.last_ts is not None and self.last_ts > sim_now
             if not (blocked or spaced or behind):
                 self.note("unexplained_skip", i, f"{special}: rc={t.rc} last_ts={self.last_ts} "
