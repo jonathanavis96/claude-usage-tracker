@@ -116,6 +116,9 @@ class HealthTest(unittest.TestCase):
         self.assertIn("unreadable", self.reasons()["token"])
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((NOW - 13 * 3600) * 1000)}}))
         self.assertIn("access token expired 13h00m ago", self.reasons()["token"])
+        self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((NOW - 72 * 3600) * 1000),
+                                                            "refreshTokenExpiresAt": int((NOW + 86400) * 1000)}}))
+        self.assertIsNone(self.reasons()["token"], "three idle days with a live refresh token are not a failure")
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((NOW - 3600) * 1000)}}))
         self.assertIsNone(self.reasons()["token"], "an idle hour inside the grace is not a failure")
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int(NOW * 1000),

@@ -190,7 +190,10 @@ def check_token(c: Config, now: float) -> str | None:
     exp = _parse_ts(oauth.get("expiresAt"))
     if exp is None:
         return "token: no expiresAt"
-    if now - exp > c.token_grace_s:
+    if now - exp > c.token_grace_s and refresh is None:
+        # Only without a known-good refresh token: Claude Code refreshes the access token
+        # when it next runs, so a weekend away is not a failure. What the token is for,
+        # collection, has its own check.
         return f"token: access token expired {_age(now - exp)} ago and not refreshed"
     return None
 
