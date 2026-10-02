@@ -8,10 +8,12 @@ What runs, where, how it heals itself, and what each alert means.
 |---|---|---|---|
 | masterrig | cron `15 * * * *` → `tracker.supervise` → `bin/passive.sh` | hourly; real work every 20h or when `tracker/` changes on main | passive join, writes `history/passive.json`, `masterrig-passive.json`, `masterrig-speed.json`, commits and pushes "Passive history" |
 | masterrig | moonlighter `gate.py` (not this repo) | 30 min | samples the usage meter into `~/.moonlighter/usage_log.jsonl`, the join's meter input |
-| gs | `bin/daily.sh` | ~30 min | merges history, publishes the site JSON, commits "Daily publisher state" (`history/gs-passive.json`) |
+| gs | cron `0,30 * * * *` → `tracker.supervise --profile gs` → `bin/daily.sh` | 30 min | merges history, runs the publish test gate, publishes the site JSON, commits "Daily publisher state" (`history/gs-passive.json`) |
 | gs | `claude-usage-meter-{avis,dave,jwork}.timer` (`deploy/systemd/`) | 1 min | one meter sample per account into `~/.paperclip/ops/claude-usage-meter-*.log`; exit 4 = logged gap, next tick retries; a 429 backs off by `retry_after_s` |
 
 Install or update the masterrig schedule with `deploy/install-schedule.sh` (`--dry-run` first). It is idempotent and replaces the old bare `bin/passive.sh` cron line.
+
+On gs, run `deploy/install-gs.sh --dry-run`, then `deploy/install-gs.sh`, from `~/claude-usage-tracker`. It replaces the bare `bin/daily.sh` line with the supervised one and leaves every other line alone. The meter timers are not changed: the supervised publisher run checks their logs every 30 minutes (health check `meters`).
 
 ## How it heals
 
@@ -22,7 +24,7 @@ Install or update the masterrig schedule with `deploy/install-schedule.sh` (`--d
 
 ## Health check
 
-`python3 -m tracker.health` prints `ok` and exits 0, or prints the first failure on one line and exits 1. `--all` lists every check.
+`python3 -m tracker.health` (on gs: `python3 -m tracker.health --profile gs`) prints `ok` and exits 0, or prints the first failure on one line and exits 1. `--all` lists every check.
 
 | Line starts with | Meaning | Usual fix |
 |---|---|---|
@@ -32,18 +34,39 @@ Install or update the masterrig schedule with `deploy/install-schedule.sh` (`--d
 | `token:` | credentials unreadable, signed out, or access token expired more than 12 h ago, or refresh token expired | `claude /login` on masterrig |
 | `lock:` | dead pid file, or a run holding the lock over 2 h | a hung join; kill it, the next run clears the pid file |
 | `sizes:` | a log or `history/` over its bound | look for a runaway writer |
+| `meters:` (gs) | a `claude-usage-meter-*.log` has had no usable reading (a line with `five_hour`, not a logged 429 gap) for 15 min, or is unreadable | `systemctl --user status claude-usage-meter-<account>.timer`; a signed-out account's config dir needs a login |
+
+On gs, `run:` means the supervised `bin/daily.sh` has not succeeded in an hour (its state is `~/.paperclip/ops/claude-usage-daily-state.json`, its log `~/.paperclip/ops/claude-usage-daily.log`). gs has no `collection`, `publisher` or `token` check: there is no moonlighter log there, the publisher is the job itself, and the meter check covers each account's sign-in.
 
 ## Alerts
 
-Sent to Jonathan on WhatsApp through pihome's `wa_send.py`. At most two messages per incident:
+Sent to Jonathan on WhatsApp through pihome's `wa_send.py`; when that fails the same text goes by email through `tracker/alert.py` (`~/.claude-usage-notify.env`). gs has no ssh route to pihome, so gs alerts always arrive by email. The label in the message (`masterrig`, `gs`) says which host. At most two messages per incident:
 
 - **"needs attention: N runs in a row failed (exit X after 3 attempts)"**: three hourly runs failed even after retries. Something persistent is broken: git push rejected, a join crashing, disk full.
 - **"needs attention: <health line>"**: a health check has failed continuously for an hour. The line is the one from the table above.
 - **"recovered after N min: ..."**: the incident has closed (a run succeeded and health is clean). Nothing further is needed.
 
+- **"(gs publisher) test gate failed: ... Published anyway"**: the tests that read the data `bin/daily.sh` is about to commit (`tracker/publish_gate.py`, about 25 s, limit 60 s) failed. The publish still went out, so the page keeps updating; usually a new price row or a data shape the code does not handle yet. Run the command in the message on gs. **"test gate passes again"** closes it. Its state is `~/.paperclip/ops/claude-usage-publish-gate.json`.
+
 A failed send leaves the incident unopened, so the next hourly run tries again. Set `CUT_ALERT_DRY_RUN=1` or pass `--dry-run` to print alerts instead of sending them. State lives in `.supervise-state.json` in the checkout (gitignored).
+
+## Dead-man switch (Uptime Kuma)
+
+If cron, the host or the supervisor itself stops, nothing above can run to raise an alert. So after every run that exits 0 with health clean, `tracker.supervise` GETs an Uptime Kuma push URL, and Kuma raises the alert when the pings stop. The URL is read from `~/.config/claude-usage-tracker/kuma-push-url` on each host (outside the repo; never commit it, it carries the push token). No file means no ping and no error; a failed ping is recorded as `last_ping` in the state file and never fails the run.
+
+One-time setup, once per host:
+
+1. In Uptime Kuma, **Add New Monitor** → type **Push**. Name it `Claude usage tracker (masterrig)` or `(gs)`.
+2. **Heartbeat Interval** must exceed the job interval with margin, because a run can be skipped (overlap guard), retried, or slow:
+   - masterrig runs hourly at :15, plus up to ~2 min of retries: set **5400 s** (90 min).
+   - gs runs every 30 min, and the publisher plus its test gate take a few minutes: set **2700 s** (45 min).
+3. **Retries: 2**, so one missed heartbeat is not an alert. Kuma then goes DOWN after about three intervals of silence (about 4.5 h masterrig, about 2.25 h gs).
+   An interval equal to the job interval raises false DOWN alerts: the Airlock Guard push monitor had a 300 s window on a job that pings every 300-330 s and did exactly that on 2026-10-01.
+4. Copy the push URL Kuma shows and write it on the host: `mkdir -p ~/.config/claude-usage-tracker && printf '%s\n' '<push URL>' > ~/.config/claude-usage-tracker/kuma-push-url && chmod 600 ~/.config/claude-usage-tracker/kuma-push-url`.
+5. Check: after the next scheduled run, `last_ping` is `"ok"` in `.supervise-state.json` (masterrig) or `~/.paperclip/ops/claude-usage-daily-state.json` (gs), and the Kuma monitor is UP.
+
+A ping goes only on a healthy run, so a run that keeps failing also goes silent and Kuma alerts on it too, after its own window; the WhatsApp/email alert normally arrives first.
 
 ## Known gaps
 
-- If cron itself stops, nothing runs to send an alert. An external heartbeat (for example pihome checking `.supervise-state.json` age) would cover that and is not built.
-- gs jobs are not yet under `tracker.supervise`. The meter timers already log their gaps; `daily.sh` has its own lock (exit 6).
+- `bin/daily.sh` keeps its own lock (exit 6 after waiting 10 min for a probe); under the supervisor that counts as a failed run.
