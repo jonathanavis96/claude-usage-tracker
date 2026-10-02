@@ -326,6 +326,14 @@ class Soak:
             if behind and (self.last_ts - sim_now).total_seconds() > 1200:
                 self.note("stalled_by_future_line", i, f"last_ts={self.last_ts} now={sim_now}")
 
+    @staticmethod
+    def _true_window(hist5: list, end: datetime):
+        """The true five-hour window a point's end names. The rig's mid-window reset can land
+        within same_reset's 60 s of a natural roll on the same tick, making two true windows
+        (one of them empty) that the endpoint could never produce; take the one that saw use."""
+        ws = [w for w in hist5 if same_reset(w.resets_at.isoformat(), end.isoformat())]
+        return max(ws, key=lambda w: w.used) if ws else None
+
     # -- the passive join over every segment ---------------------------------------
     def join_check(self, label: str) -> dict:
         files = list(self.segments) + ([self.rig.log] if self.rig.log.exists() else [])
@@ -357,7 +365,7 @@ class Soak:
         for p in points:
             end = datetime.fromisoformat(p["window_ending"])
             ends.append(end)
-            w = next((w for w in hist5 if same_reset(w.resets_at.isoformat(), end.isoformat())), None)
+            w = self._true_window(hist5, end)
             if w is None or not p["reset_verified"]:
                 self.note("join_point_on_no_true_reset", self.ticks_done, f"{label}: {p}")
                 continue
@@ -369,7 +377,7 @@ class Soak:
         hist7 = [w.resets_at - timedelta(days=7) for k, w in self.rig.meter.history if k == "seven"]
         groups: dict = defaultdict(list)
         for p, end in zip(points, ends):
-            w = next((w for w in hist5 if same_reset(w.resets_at.isoformat(), end.isoformat())), None)
+            w = self._true_window(hist5, end)
             if w is not None:
                 groups[id(w)].append((w, p))
         for items in groups.values():
