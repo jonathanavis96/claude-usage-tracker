@@ -910,3 +910,42 @@ class PowerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RateCheckTests(unittest.TestCase):
+    """A joint fit is separable only if its rate interval reaches half to twice the list-price
+    ratio: Opus 5.5 lists at 0.8x Opus 5 on input, so the band is 0.4x to 1.6x."""
+
+    def test_the_band_is_read_off_the_input_list_prices(self):
+        check = C.joint_rate_check("opus-5-5", "opus", CREDITS, [0.9, 1.2])
+        self.assertEqual((check["state"], check["price_class"]), ("passed", "input"))
+        self.assertEqual(check["list_price_ratio"], 0.8)
+        self.assertEqual(check["plausible_band"], [0.4, 1.6])
+        self.assertEqual(C.joint_rate_check("sonnet-5-5", "sonnet", CREDITS, [2.51, 7.2])["state"],
+                         "failed")
+        self.assertEqual(C.joint_rate_check("nope-9", "opus", CREDITS, [1.0, 1.1])["state"],
+                         "not_applicable")
+
+    def test_an_implausible_new_family_rate_leaves_the_fit_unseparated(self):
+        # The meter charges Opus 5.5 at 3x Opus 5, which no list price explains.
+        fit = _joint(_mixed(g=1.0, r=3.0))
+        lo, hi = fit["rate_relative_interval"]
+        self.assertGreater(lo, 1.6)
+        self.assertLess(hi / lo, C.JOINT_SEPARABLE_SPAN)  # pinned, so only the check refuses it
+        self.assertEqual(fit["rate_check"]["state"], "failed")
+        self.assertFalse(fit["separable"])
+        self.assertEqual(fit["state"], "measuring")
+        self.assertIn("has not separated the rate", fit["reason"])
+        meters = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())
+        cand = meters["candidates"][0]
+        self.assertIsNone(cand["change_pct"])
+        self.assertEqual(cand["scope"]["state"], "undetermined")
+        self.assertIn("has not separated the rate", cand["scope"]["reason"])
+        rates, _ = C.absorb_new_family_rates(_mixed(g=1.0, r=3.0), [], CREDITS, {}, LABELS,
+                                             lambda rates: _output_value)
+        self.assertEqual(rates, {})  # nothing absorbed
+
+    def test_a_plausible_rate_passes(self):
+        fit = _joint(_mixed(g=1.2, r=0.6))
+        self.assertEqual(fit["rate_check"]["state"], "passed")
+        self.assertTrue(fit["separable"])
