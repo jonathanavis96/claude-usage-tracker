@@ -27,9 +27,6 @@ def test_fast_clock_line_leaves_log_monotonic_after_the_clock_is_corrected(tmp_p
     assert all(a < b for a, b in zip(stamps, stamps[1:])), [s.isoformat() for s in stamps]
 
 
-@pytest.mark.xfail(strict=True, reason="UT-S soak: a reading stamped ahead by a fast clock sorts "
-                                       "into the join out of place; the dip and the climb back are "
-                                       "two pieces of one window, so the climb is counted twice")
 @pytest.mark.parametrize("ahead_min", [25, 61])
 def test_fast_clock_reading_does_not_inflate_the_window_total(tmp_path, ahead_min):
     from tracker.join import window_points

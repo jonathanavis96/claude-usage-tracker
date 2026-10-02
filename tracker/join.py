@@ -306,6 +306,32 @@ def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stre
     return out
 
 
+def _in_log_order(samples: list[Sample]) -> list[Sample]:
+    """Drop a reading stamped later than a reading written after it in the same log.
+
+    A clock that ran fast for one tick stamps its reading ahead; the meter log
+    keeps it (tracker/meter_log.py ignores a line over MAX_CLOCK_STALL_S ahead
+    rather than stall sampling). Sorted by time it lands among later readings
+    as a dip, and the climb back is counted twice (UT-S soak, finding 2).
+    Only readings from one parse of one log are compared (`Sample.seq`), so
+    a merge of several sources is never judged against itself.
+    """
+    by_log: dict[int, list[Sample]] = {}
+    for s in samples:
+        if s.seq is not None:
+            by_log.setdefault(s.seq[0], []).append(s)
+    drop: set[int] = set()
+    for group in by_log.values():
+        group.sort(key=lambda s: s.seq[1])
+        earliest_after = None
+        for s in reversed(group):
+            if earliest_after is not None and s.ts > earliest_after:
+                drop.add(id(s))
+            else:
+                earliest_after = s.ts
+    return [s for s in samples if id(s) not in drop]
+
+
 def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> list[dict]:
     """Five-hour and seven-day movement per five-hour window, for weekly windows per account.
 
@@ -327,7 +353,7 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
     its end has reached the cap (tracker/weekly.py SEVEN_DAY_CAP_PCT) is left
     out: past it the weekly meter stops while the five-hour one keeps counting.
     """
-    samples = sorted(samples, key=lambda s: s.ts)
+    samples = sorted(_in_log_order(samples), key=lambda s: s.ts)
     windows: list[dict] = []
     chain: dict | None = None
     for a, b in pairwise(samples):

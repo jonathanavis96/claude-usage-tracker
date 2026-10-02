@@ -12,8 +12,9 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from itertools import count
 
 _CEIL = re.compile(r"^(\S+) 5-hour (\d+)% / 7-day (\d+)%")
 _GS_CEIL = re.compile(r"^(\S+) (?:ok|warn|HARD CEILING \([\w-]+\)) five_hour=(\d+)% seven_day=(\d+)%")
@@ -38,6 +39,19 @@ class Sample:
     resets_at: str | None  # the five-hour window's reset
     source: str
     seven_resets_at: str | None = None  # the seven-day window's reset, when the log records it
+    #: (parse call, line position): where the reading sat in the one log it came from. Two
+    #: readings with the same first element came from the same file, in this order
+    #: (tracker/join.py drops a reading a fast clock stamped ahead of its successors).
+    seq: tuple[int, int] | None = field(default=None, compare=False, repr=False)
+
+
+_PARSE_CALLS = count()
+
+
+def _sequenced(samples: list[Sample]) -> list[Sample]:
+    """Stamp each reading with this parse call and its position in the log."""
+    call = next(_PARSE_CALLS)
+    return [replace(s, seq=(call, i)) for i, s in enumerate(samples)]
 
 
 def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list[Sample]:
@@ -57,7 +71,7 @@ def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list
         except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
             continue
         out.append(sample)
-    return out
+    return _sequenced(out)
 
 
 def parse_meter_log(lines: Iterable[str]) -> list[Sample]:
@@ -106,7 +120,7 @@ def parse_gs_ceiling_log(lines: Iterable[str], since: datetime | None = None) ->
         if ts is None or (since is not None and ts < since):
             continue
         out.append(Sample(ts, float(m.group(2)), float(m.group(3)), None, "gs-ceiling"))
-    return out
+    return _sequenced(out)
 
 
 def parse_ceiling_log(lines: Iterable[str]) -> list[Sample]:
@@ -118,7 +132,7 @@ def parse_ceiling_log(lines: Iterable[str]) -> list[Sample]:
         ts = _iso_or_none(m.group(1))
         if ts is not None:
             out.append(Sample(ts, float(m.group(2)), float(m.group(3)), None, "ceiling"))
-    return out
+    return _sequenced(out)
 
 
 _FIVE_HOURS = timedelta(hours=5)
