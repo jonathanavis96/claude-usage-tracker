@@ -59,6 +59,18 @@ class DailyRate:
 def _is_reset(a: Sample, b: Sample) -> bool:
     if not same_reset(a.resets_at, b.resets_at):
         return True
+    # `a` says when its window ends; `b` (often a ceiling reading, which carries no reset
+    # id) is at or past that instant, so they belong to different windows even if `b` is
+    # higher. Parsed, with 5 s for the seconds of jitter resets_at carries.
+    if a.resets_at and b.resets_at is None:
+        try:
+            end = datetime.fromisoformat(a.resets_at.replace("Z", "+00:00"))
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            if b.ts > end + timedelta(seconds=5):
+                return True
+        except ValueError:
+            pass
     return b.five_hour < a.five_hour
 
 

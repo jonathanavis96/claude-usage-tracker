@@ -224,3 +224,23 @@ class RealPostTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AlertEdgeTests(unittest.TestCase):
+    def test_multiline_subject_is_folded_onto_one_line(self):
+        from datetime import datetime, timezone
+
+        from tracker.alert import alert_body
+        b = alert_body("drift\r\nBcc: x@y.z  seen", "t", "a@b.c", source="h",
+                       now=datetime(2026, 9, 1, tzinfo=timezone.utc))
+        self.assertEqual(b["subject"], "Claude usage tracker: drift Bcc: x@y.z seen")
+
+    def test_non_utf8_env_file_reads_as_empty_not_a_crash(self):
+        import tempfile
+        from pathlib import Path
+
+        from tracker.alert import read_env_file
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "env")
+            p.write_bytes(b"NOTIFY_ALERT_TO=\xff\xfe\n")
+            self.assertIsInstance(read_env_file(p), dict)

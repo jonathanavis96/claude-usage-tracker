@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .atomic import write_text_atomic
 from .alert import ENV_FILE, Poster, _default_post, alert_config, send_alert
 from .rows import is_output
 
@@ -103,9 +104,7 @@ def latest_pair(rows: list[dict], model: str = WEIGHT_MODEL) -> tuple[dict, dict
 
 
 def _write(path: Path, raw: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    write_text_atomic(path, json.dumps(raw, indent=2) + "\n")
 
 
 def _alert(subject: str, text: str, *, post: Poster, env_file: Path, environ: Mapping[str, str] | None,

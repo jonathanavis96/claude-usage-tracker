@@ -29,10 +29,6 @@ def prose_rows(rows: list[dict]) -> list[dict]:
     return [r for r in rows if not is_output(r)]
 
 
-def output_rows(rows: list[dict]) -> list[dict]:
-    return [r for r in rows if is_output(r)]
-
-
 def is_outlier(row: dict) -> bool:
     return bool(row.get("outlier"))
 

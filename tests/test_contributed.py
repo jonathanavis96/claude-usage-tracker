@@ -703,3 +703,28 @@ class MainTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimeOrderingTests(unittest.TestCase):
+    def test_naive_stamp_is_utc_whatever_the_host_zone(self):
+        import os
+        import time
+
+        from tracker.contributed import _iso_z
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "Africa/Johannesburg"
+        time.tzset()
+        try:
+            self.assertEqual(_iso_z("2026-09-01T10:00:00"), "2026-09-01T10:00:00Z")
+        finally:
+            if old is None:
+                os.environ.pop("TZ")
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
+    def test_rows_order_by_instant_not_by_string(self):
+        from tracker.contributed import _by_time
+        rows = [{"ts": "2026-09-01T09:00:00Z"}, {"ts": "2026-09-01T10:00:00+02:00"}, {"ts": None}]
+        self.assertEqual([r["ts"] for r in _by_time(rows)],
+                         [None, "2026-09-01T10:00:00+02:00", "2026-09-01T09:00:00Z"])

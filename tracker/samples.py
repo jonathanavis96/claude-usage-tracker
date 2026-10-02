@@ -43,18 +43,20 @@ class Sample:
 def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list[Sample]:
     out = []
     for line in lines:
+        # One corrupt line (a torn write, a hand edit) skips that line, never the whole log.
         try:
             d = json.loads(line)
-        except (json.JSONDecodeError, TypeError):
+            fh = d.get("five_hour") or {}
+            seven = d.get("seven_day") or {}
+            if fh.get("utilization") is None or not d.get("ts"):
+                continue
+            sd = seven.get("utilization")
+            sample = Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),
+                            float(sd) if sd is not None else None, fh.get("resets_at"), source,
+                            seven.get("resets_at"))
+        except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
             continue
-        fh = (d.get("five_hour") or {})
-        if fh.get("utilization") is None or not d.get("ts"):
-            continue
-        seven = d.get("seven_day") or {}
-        sd = seven.get("utilization")
-        out.append(Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),
-                          float(sd) if sd is not None else None, fh.get("resets_at"), source,
-                          seven.get("resets_at")))
+        out.append(sample)
     return out
 
 
@@ -79,6 +81,13 @@ def parse_meter_log(lines: Iterable[str]) -> list[Sample]:
     return parse_moonlighter(lines, source="meter")
 
 
+def _iso_or_none(s: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
 def parse_gs_ceiling_log(lines: Iterable[str], since: datetime | None = None) -> list[Sample]:
     """Reading lines of gs's usage-ceiling.py log (`ok`, `warn` and `HARD CEILING`).
 
@@ -93,8 +102,8 @@ def parse_gs_ceiling_log(lines: Iterable[str], since: datetime | None = None) ->
         m = _GS_CEIL.match(line)
         if not m:
             continue
-        ts = datetime.fromisoformat(m.group(1))
-        if since is not None and ts < since:
+        ts = _iso_or_none(m.group(1))
+        if ts is None or (since is not None and ts < since):
             continue
         out.append(Sample(ts, float(m.group(2)), float(m.group(3)), None, "gs-ceiling"))
     return out
@@ -106,7 +115,9 @@ def parse_ceiling_log(lines: Iterable[str]) -> list[Sample]:
         m = _CEIL.match(line)
         if not m:
             continue
-        out.append(Sample(datetime.fromisoformat(m.group(1)), float(m.group(2)), float(m.group(3)), None, "ceiling"))
+        ts = _iso_or_none(m.group(1))
+        if ts is not None:
+            out.append(Sample(ts, float(m.group(2)), float(m.group(3)), None, "ceiling"))
     return out
 
 
@@ -210,7 +221,10 @@ def merge_samples(*lists: list[Sample]) -> list[Sample]:
     for s in sorted((s for lst in lists for s in lst), key=lambda s: s.ts):
         key = s.ts.replace(second=0, microsecond=0)
         cur = by_minute.get(key)
-        if cur is None or _PRIORITY[s.source] < _PRIORITY[cur.source]:
+        # A reading that carries its window's reset id wins the minute over one that does
+        # not (the ceiling log has none); source priority breaks the remaining ties.
+        rank = (s.resets_at is None, _PRIORITY[s.source])
+        if cur is None or rank < (cur.resets_at is None, _PRIORITY[cur.source]):
             by_minute[key] = s
     return [by_minute[k] for k in sorted(by_minute)]
 

@@ -46,6 +46,12 @@ class TestDeployScriptsSyntax(unittest.TestCase):
     def test_daily_sh_syntax(self) -> None:
         self._check("daily.sh")
 
+    def test_daily_sh_dates_each_run_in_its_log(self) -> None:
+        # gs's claude-usage-daily.log held 3,265 undated lines: the 2026-10-01 DNS outage
+        # and the site push failures in it could not be dated from the log.
+        body = (BIN / "daily.sh").read_text()
+        self.assertRegex(body, r'(?m)^echo "\$\(date -u \+%FT%TZ\) daily.sh: start')
+
     def test_output_probe_sh_syntax(self) -> None:
         self._check("output-probe.sh")
 
@@ -852,6 +858,24 @@ class TestPassiveShGuard(unittest.TestCase):
         proc = self._run()
         self.assertIn("commit made locally only", proc.stderr)
         self.assertFalse((self.repo / self.STAMP).exists())
+
+    def test_a_run_is_dated_in_the_log(self) -> None:
+        # The cron log had 115 undated lines, so no failure in it could be dated.
+        proc = self._run()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertRegex(proc.stderr, r"(?m)^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ passive.sh: joining on main")
+
+    def test_a_checkout_off_main_refuses_and_pushes_nothing(self) -> None:
+        # The live checkout once sat on a feature branch: the cron pulled and pushed
+        # `crossing-detection`, and that day's record never reached main.
+        self._git(self.repo, "checkout", "-q", "-b", "feature")
+        proc = self._run("--force")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not main", proc.stderr)
+        self.assertFalse(self._ran())
+        heads = subprocess.run(["git", "ls-remote", "--heads", "origin"], cwd=self.repo,
+                               capture_output=True, text=True, check=True).stdout
+        self.assertNotIn("feature", heads)
 
 
 class TestDailySiteSync(unittest.TestCase):

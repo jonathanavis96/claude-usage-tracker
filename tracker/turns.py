@@ -71,10 +71,22 @@ def _parse_ts(s: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def parse_ts_or_none(s) -> datetime | None:
+    """`_parse_ts`, or None for a value that is not a readable stamp."""
+    try:
+        return _parse_ts(s)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
     seen: set[str] = set()
     for p in paths:
-        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+        try:
+            fh = open(p, "r", encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            continue  # removed between listing and reading (Claude Code prunes old transcripts)
+        with fh:
             yield from turns_in(_json_lines(fh), seen)
 
 
@@ -123,18 +135,22 @@ def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
     for d in lines:
         if d.get("type") != "assistant":
             continue
-        m = d.get("message") or {}
-        u = m.get("usage")
-        mid = m.get("id")
-        if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
+        m = d.get("message")
+        u = m.get("usage") if isinstance(m, dict) else None
+        mid = m.get("id") if isinstance(u, dict) else None
+        if not mid or mid in seen or not d.get("timestamp"):
             continue
-        now = _usage_counts(u)
+        try:  # a corrupt line skips itself, never the transcript
+            now = _usage_counts(u)
+            ts = None if mid in counts else _parse_ts(d["timestamp"])
+        except (TypeError, ValueError, AttributeError):
+            continue
         if d.get("remoteSourced"):
             remote.add(mid)
         if mid in counts:
             counts[mid] = tuple(max(a, b) for a, b in zip(counts[mid], now))
         else:
-            first[mid] = (_parse_ts(d["timestamp"]), m.get("model") or "unknown")
+            first[mid] = (ts, m.get("model") or "unknown")
             counts[mid] = now
     for mid, (ts, model) in first.items():
         seen.add(mid)
@@ -218,6 +234,12 @@ def transcript_session_id(path: Path) -> str:
 def transcript_paths(root: Path, since: datetime | None) -> list[Path]:
     out = []
     for p in Path(root).rglob("*.jsonl"):
-        if since is None or datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc) >= since:
-            out.append(p)
+        if since is not None:
+            try:
+                mtime = p.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if datetime.fromtimestamp(mtime, tz=timezone.utc) < since:
+                continue
+        out.append(p)
     return sorted(out)
