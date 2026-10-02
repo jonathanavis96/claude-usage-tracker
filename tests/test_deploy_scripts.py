@@ -46,6 +46,12 @@ class TestDeployScriptsSyntax(unittest.TestCase):
     def test_daily_sh_syntax(self) -> None:
         self._check("daily.sh")
 
+    def test_daily_sh_dates_each_run_in_its_log(self) -> None:
+        # gs's claude-usage-daily.log held 3,265 undated lines: the 2026-10-01 DNS outage
+        # and the site push failures in it could not be dated from the log.
+        body = (BIN / "daily.sh").read_text()
+        self.assertRegex(body, r'(?m)^echo "\$\(date -u \+%FT%TZ\) daily.sh: start')
+
     def test_output_probe_sh_syntax(self) -> None:
         self._check("output-probe.sh")
 
