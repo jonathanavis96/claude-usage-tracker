@@ -1,6 +1,6 @@
 # Integration of the 2026-10-02 burn (UT-I)
 
-Branch `burn/20261002-ut-integrate`. It holds UT-2, UT-3, UT-4, UT-H, UT-1 and UT-5, merged in that order with merge commits, plus the fixes below.
+Branch `burn/20261002-ut-integrate`. It holds UT-2, UT-3, UT-4, UT-H, UT-1, UT-5 and the red-team branch UT-R, merged in that order with merge commits, plus the fixes below.
 
 ## What merged
 - **UT-2**: closure of the 2026-09-16 Codex audit (`docs/burn-20261002/audit-closure.md`) and its regression tests.
@@ -33,6 +33,12 @@ The only conflict was in `tracker/passive.py` (UT-H's atomic write against UT-1'
 - **The gs alerts reach Jonathan.** An incident is pushed to Kuma as `status=down&msg=<reason>`, and its recovery as `status=up`. This was tested against a fake server on 127.0.0.1.
 - **Two tests that failed on main and on every branch now pass.** They are in `tests/test_detect.py` and read the hourly-rebuilt `history/passive.json` (evidence 103 -> 102). They now read a frozen fixture, `tests/fixtures/weekly_windows_2026-09-16.json`, taken from 44471f4.
 
+- **All 11 red-team findings fixed** (`docs/burn-20261002/redteam.md`); every strict xfail in `tests/redteam/` is now a passing test.
+  - Supervisor: it survives a full-disk run log, an unwritable state file and a crashing health check. A run is killed at 45 min, and a lock held past 2 h alerts. A failed alert send is recorded.
+  - Health: freshness is judged from real readings, not error rows. An odd token file or pid file is reported instead of crashing the check.
+  - `bin/passive.sh` exits 5 when its commit or push fails, where it used to exit 0.
+  - `bin/daily.sh` records a failing site push in `history/site-push.json`, which fails the publisher check. Before, the page could freeze while health stayed green.
+
 ## End-to-end proof
 Both trees ran the real `tracker.passive` and `tracker.publish` with the same inputs: a temporary HOME, a copy of the moonlighter and ceiling logs, the real transcripts read-only, and main's committed `history/`. A `sitecustomize` guard blocked all network. No alert config was present.
 
@@ -48,7 +54,6 @@ FULL_RESULTS
 - The supervisor's alert reads "1 runs in a row failed" for exit 3. The wording is cosmetic.
 - F8 (wide change intervals) is model work, out of scope.
 - `history/passive.json` changes on main about every hour. If the merge conflicts on it, take main's file and run `python3 tools/restore_passive_days.py` again. It is idempotent and only adds missing days.
-- Red-team (UT-R) items: see `docs/burn-20261002/redteam.md` if merged; anything left there is still open.
 - The `alldonesites` page (the only consumer of `claude-usage.json`) needs no change. The end-to-end run shows the same schema, and only the history series extends back further.
 
 ## Morning steps for Jonathan
@@ -62,6 +67,9 @@ FULL_RESULTS
 WhatsApp (pihome `wa_send.py`) sends one message when an incident opens and one when it recovers. Nothing repeats while an incident stays open. An incident opens on any of these:
 - three supervised runs fail in a row;
 - one run exits 3 because the checkout is off main;
+- `passive.sh` exits 5 (commit or push failed) three runs in a row;
+- the site push is failing (`history/site-push.json`), so the page is frozen;
+- a run hangs with the lock held for over 2 h;
 - a `health` failure lasts an hour: collection stale, publisher not committing for 2 h, token expired past 12 h or refresh token expired, a stale lock, oversized logs or history, a stale meter log, or a 429 storm.
 On a host with a Kuma push URL, the incident goes to Kuma first as `status=down` with the reason, so Kuma's notification is the alert. Recovery is sent as `status=up`. WhatsApp, then email, are used only when Kuma is unreachable. gs cannot reach pihome, so there it is Kuma, then email.
 - **Kuma itself** alerts when a host's pings stop: about 2.25 h on gs, about 24 h on masterrig.
