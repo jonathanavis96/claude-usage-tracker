@@ -74,6 +74,28 @@ class DeadmanTest(unittest.TestCase):
         self.run_cmd(0, self.url_file)
         self.assertEqual(_Handler.hits, [])
 
+    def test_incident_pushes_down_with_reason_then_up_on_recovery(self):
+        for _ in range(3):
+            self.run_cmd(1, self.url_file)
+        self.assertEqual(len(_Handler.hits), 1, "one push when the incident opens, none while it stays open")
+        self.assertIn("status=down", _Handler.hits[0])
+        self.assertIn("3+runs+in+a+row+failed", _Handler.hits[0])
+        self.assertIn("/api/push/TOKEN?", _Handler.hits[0])
+        self.assertEqual(self.sent, [], "Kuma took it: no WhatsApp or email")
+        st = self.run_cmd(0, self.url_file)
+        self.assertIn("status=up", _Handler.hits[1])
+        self.assertIn("recovered", _Handler.hits[1])
+        self.assertNotIn("incident_open", st)
+        self.run_cmd(0, self.url_file)
+        self.assertEqual(_Handler.hits[2], "/api/push/TOKEN?status=up&msg=OK", "healthy runs ping up again")
+
+    def test_kuma_down_unreachable_falls_back_to_sender(self):
+        _Handler.status = 500
+        for _ in range(3):
+            self.run_cmd(1, self.url_file)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("3 runs in a row failed", self.sent[0])
+
     def test_missing_file_means_no_ping_and_no_error(self):
         st = self.run_cmd(0, self.tmp / "absent")
         self.assertEqual(_Handler.hits, [])

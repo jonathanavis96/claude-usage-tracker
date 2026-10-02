@@ -26,6 +26,9 @@ What one run does:
      the repo, never committed). A missing or empty file means no ping and no error, and
      a failed ping is only noted in the state file. Kuma alerts when the pings stop, which
      covers what nothing above can: cron, the host or this script no longer running.
+     An incident is pushed to the same URL with status=down and the reason as msg, and its
+     recovery with status=up, so gs (no route to pihome's WhatsApp) alerts through Kuma.
+     WhatsApp, then email, are used only when that push fails.
 
 --profile gs sets the gs defaults: lock, state and log under ~/.paperclip/ops, label gs,
 the gs health checks (tracker.health.gs_config), no retries (bin/daily.sh runs again in
@@ -53,6 +56,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -107,9 +111,19 @@ def kuma_url_file() -> Path:
     return Path(os.environ.get("HOME", str(Path.home()))) / ".config" / "claude-usage-tracker" / "kuma-push-url"
 
 
-def ping_deadman(url_file: Path | None, timeout: float = 10.0) -> str | None:
-    """GET the push URL in `url_file`. None when there is no file (no ping configured),
-    else "ok" or a one-line failure. Never raises: a dead-man ping must not fail a run."""
+def _with_status(url: str, status: str, msg: str) -> str:
+    """The push URL with Kuma's `status` and `msg` query parameters set (others kept)."""
+    parts = urllib.parse.urlsplit(url)
+    q = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True) if k not in ("status", "msg")]
+    q += [("status", status), ("msg", msg[:250])]
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(q)))
+
+
+def ping_deadman(url_file: Path | None, timeout: float = 10.0, status: str = "up", msg: str = "OK") -> str | None:
+    """GET the push URL in `url_file` with status=up|down and msg. None when there is no
+    file (no ping configured), else "ok" or a one-line failure. Never raises: a dead-man
+    ping must not fail a run. Kuma marks the monitor down on status=down and notifies with
+    msg, so an incident reaches Jonathan through the same channel as a stopped host."""
     if url_file is None:
         return None
     try:
@@ -121,7 +135,7 @@ def ping_deadman(url_file: Path | None, timeout: float = 10.0) -> str | None:
     if not url.startswith(("http://", "https://")):
         return "failed: push URL file does not hold an http(s) URL"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        with urllib.request.urlopen(_with_status(url, status, msg), timeout=timeout) as r:
             return "ok" if 200 <= r.status < 300 else f"failed: HTTP {r.status}"
     except Exception as e:  # noqa: BLE001 - any failure is only recorded
         return f"failed: {type(e).__name__}"
@@ -182,8 +196,10 @@ def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: floa
 
 
 def decide_alert(state: dict, now: float, health_reason: str | None, fail_threshold: int,
-                 stale_after: float, send: Sender, label: str) -> None:
-    """Open or close an incident, sending at most one message per transition."""
+                 stale_after: float, send: Sender, label: str, send_up: Sender | None = None) -> None:
+    """Open or close an incident, sending at most one message per transition.
+
+    `send` carries the opening message, `send_up` (default `send`) the recovery."""
     if health_reason:
         state.setdefault("unhealthy_since", now)
     else:
@@ -202,9 +218,26 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
                 state["incident_reason"] = reason
     elif not failing and health_reason is None:
         mins = int((now - state.get("incident_since", now)) // 60)
-        if send(f"Claude usage tracker ({label}) recovered after {mins} min: {state.get('incident_reason')}"):
+        if (send_up or send)(f"Claude usage tracker ({label}) recovered after {mins} min: {state.get('incident_reason')}"):
             for k in ("incident_open", "incident_since", "incident_reason"):
                 state.pop(k, None)
+
+
+def _kuma_first(send: Sender, kuma_file: Path | None, state: dict) -> tuple[Sender, Sender]:
+    """Senders that push the incident to Kuma first (status=down; status=up on recovery)
+    and fall back to `send` (WhatsApp, then email) only when that push fails. With no
+    push URL configured they are `send` itself."""
+    if kuma_file is None:
+        return send, send
+
+    def via(status: str) -> Sender:
+        def go(text: str) -> bool:
+            ping = ping_deadman(kuma_file, status=status, msg=text)
+            if ping is not None:
+                state["last_ping"] = f"{status}: {ping}"
+            return ping == "ok" or send(text)
+        return go
+    return via("down"), via("up")
 
 
 def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None, retries: int = 2,
@@ -244,9 +277,10 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
                                               logs=(log,) if log else ())
             write_state(state_path, state)  # the run check reads it
             reason = health.first_failure(cfg, t, skip=("lock",))
-            decide_alert(state, t, reason, fail_threshold, stale_after, send, label)
+            send_down, send_up = _kuma_first(send, kuma_file, state)
+            decide_alert(state, t, reason, fail_threshold, stale_after, send_down, label, send_up=send_up)
             state["last_health"] = reason or "ok"
-            if code == 0 and reason is None:
+            if code == 0 and reason is None and not state.get("incident_open"):
                 ping = ping_deadman(kuma_file)
                 if ping is not None:
                     state["last_ping"] = ping
