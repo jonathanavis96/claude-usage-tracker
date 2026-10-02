@@ -100,13 +100,6 @@ def test_harness_happy_path_pushes(tmp_path, fake_home):
     assert not os.environ.get("PYTEST_XDIST_WORKER")  # single worker only
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/health.py:137-148 check_publisher runs `git log -1 -- history/gs-passive.json` on "
-    "the checkout's HEAD. bin/passive.sh only moves HEAD on a full run (about once in 20 h): "
-    "its hourly early exit (passive.sh:42-48) just fetches. So 2 h after each full run the "
-    "check reads gs's publisher as stale while origin/main holds a commit minutes old. Under "
-    "tracker.supervise that is a daily false incident, and while it is open no other alert "
-    "is sent, so a real failure in the same hours is masked"))
 def test_publisher_check_reads_what_was_fetched(tmp_path, fake_home):
     three_hours_ago = f"@{int(time.time()) - 3 * 3600} +0000"
     work, origin, env = make_checkout(tmp_path, fake_home, init_date=three_hours_ago)
