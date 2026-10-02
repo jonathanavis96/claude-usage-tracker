@@ -1,0 +1,57 @@
+# Integration of the 2026-10-02 burn (UT-I)
+
+Branch `burn/20261002-ut-integrate`. It holds UT-2, UT-3, UT-4, UT-H, UT-1 and UT-5, merged in that order with merge commits, plus the fixes below.
+
+## What merged
+- **UT-2**: closure of the 2026-09-16 Codex audit (`docs/burn-20261002/audit-closure.md`) and its regression tests.
+- **UT-3**: `tracker/health.py`, `tracker/supervise.py` (flock, retries, log rotation, one alert per incident), `deploy/install-schedule.sh`, `docs/OPERATIONS.md`.
+- **UT-4**: the chaos soak harness in `tests/chaos/`.
+- **UT-H**: hardening against malformed input, `tracker/atomic.py`, and the 11 tests that also failed on main. They had treated the live price table as fixed data.
+- **UT-1**: the failure inventory. `passive.json` keeps days the transcripts no longer reach. `passive.sh` dates its lines and exits 3 when the checkout is off main. Meter reads are at least 110 s apart, and `daily.sh` writes a dated start line.
+- **UT-5**: STATUS_UT5
+
+The only conflict was in `tracker/passive.py` (UT-H's atomic write against UT-1's `_rebuild` split), and both sides were kept. A line-by-line check found every line each branch added in the final tree, except lines that a later fix replaced on purpose.
+
+## What was fixed on this branch
+- **All six chaos findings, in `tracker/meter_log.py`.** The xfails are now ordinary tests: `tests/chaos` was 12 passed, 6 xfailed and with `--runxfail` 6 failed, and is now 18 passed.
+  1. A torn last line gets a newline before the next reading.
+  2. A read-only or full disk exits 4 with a note on stderr, not a traceback.
+  3. `flock` on `<log>.lock`: a second run waits, then skips under the 110 s spacing.
+  4. A clock up to 20 min behind the last line skips the tick.
+  5. A last line more than 20 min in the future (written by a fast clock) is ignored.
+  6. Retry-After is capped at 1200 s.
+- **Health and supervisor.**
+  - `passive.sh` exit 3 (off main) is not retried. It counts as a failed run and alerts on the first occurrence, and `health` fails `run` with "checkout is off main".
+  - New `meter` check (`--meter-log`, repeatable). The limit is 180 s, which allows for the 110 s spacing, plus the Retry-After of a trailing 429. The check also fails when more than half of the last 40 or more lines are 429s. That rate went unseen for nine days in the 2026-09-23 storm.
+- **Lost days restored.** `history/passive.json` has 2026-07-30 to 2026-08-19 again, from 87aa061 and 9e40788. Where both commits hold a day, the newer one wins. No day already on main was overwritten. The test `tests/test_restore_passive_days.py` proves that a restored day survives a rebuild, and that the 5x-to-20x ratio becomes computable again.
+
+## End-to-end proof
+Both trees ran the real `tracker.passive` and `tracker.publish` with the same inputs: a temporary HOME, a copy of the moonlighter and ceiling logs, the real transcripts read-only, and main's committed `history/`. A `sitecustomize` guard blocked all network. No alert config was present.
+
+- `origin/main` and this branch produced identical `passive.json` (3191 leaves) and identical `claude-usage.json` (23340 leaves). Only `generated_at` differed.
+- The intended difference: seeded with this branch's restored `passive.json`, E2E_RESTORED.
+- The supervisor (dry-run sender) and health CLI were run against a fake `passive.sh` that exits 3. Result: exit 3, no retry, one dry-run alert naming "checkout is off main", and `health` exit 1 with the same reason.
+
+## Test results
+FULL_RESULTS
+
+## Still open
+- **The 429 storm on gs needs a `git pull` on gs to take effect** (step 2 below). Until then gs keeps its old code.
+- The supervisor's alert reads "1 runs in a row failed" for exit 3. The wording is cosmetic.
+- F8 (wide change intervals) is model work, out of scope.
+- `history/passive.json` changes on main about every hour. If the merge conflicts on it, take main's file and run `python3 tools/restore_passive_days.py` again. It is idempotent and only adds missing days.
+OPEN_UT5
+
+## Morning steps for Jonathan
+1. **Ship.** Say "ship it" to run `ship-to-main` on `burn/20261002-ut-integrate`.
+2. **gs.** `ssh gs 'cd ~/claude-usage-tracker && git pull'`. MORNING_GS
+3. **masterrig.** `cd ~/code/claude-usage-tracker && git pull && deploy/install-schedule.sh --dry-run`. Check that it prints one managed block that replaces the bare `bin/passive.sh` line, then run `deploy/install-schedule.sh`.
+4. **Uptime Kuma.** MORNING_KUMA
+5. **Confirm health.** `python3 -m tracker.health --all` on masterrig should print `ok` on every line. KUMA_CONFIRM
+
+### What alerts you afterwards, and how
+WhatsApp (pihome `wa_send.py`) sends one message when an incident opens and one when it recovers. Nothing repeats while an incident stays open. An incident opens on any of these:
+- three supervised runs fail in a row;
+- one run exits 3 because the checkout is off main;
+- a `health` failure lasts an hour: collection stale, publisher not committing for 2 h, token expired past 12 h or refresh token expired, a stale lock, oversized logs or history, a stale meter log, or a 429 storm.
+ALERT_KUMA
