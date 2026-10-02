@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 
+
 from tracker import health
 
 NOW = datetime(2026, 10, 2, 0, 30, tzinfo=timezone.utc)
@@ -54,3 +55,12 @@ def test_lock_check_survives_corrupt_pidfile(tmp_path):
     pidfile.write_text("9" * 30)
     reason = health.check_lock(health.Config(lock_pidfile=pidfile), NOW.timestamp())
     assert reason is not None and reason.startswith("lock:")
+
+
+def test_future_stamps_are_reported_as_clock_skew(tmp_path):
+    log = tmp_path / "usage_log.jsonl"
+    ahead = NOW + timedelta(hours=3)
+    log.write_text(json.dumps({"ts": _stamp(ahead), "five_hour": {"utilization": 5.0, "resets_at": None},
+                               "seven_day": {"utilization": 5.0, "resets_at": None}}) + "\n")
+    reason = health.check_collection(health.Config(usage_log=log), NOW.timestamp())
+    assert reason is not None, "a sample stamped three hours in the future passed as fresh"

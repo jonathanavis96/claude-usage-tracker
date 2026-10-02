@@ -89,6 +89,11 @@ def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path
                   checks=("run", "meters", "lock", "sizes"))
 
 
+#: A stamp further in the future than this is clock skew, which would otherwise hide
+#: staleness by exactly the skew.
+CLOCK_SKEW_S = 10 * 60
+
+
 def _parse_ts(value) -> float | None:
     if isinstance(value, (int, float)):
         return float(value / 1000 if value > 1e11 else value)
@@ -132,6 +137,8 @@ def check_collection(c: Config, now: float) -> str | None:
     ts = _parse_ts(row.get("ts")) if row else None
     if ts is None:
         return f"collection: no reading (a line with five_hour utilization) near the end of {c.usage_log}"
+    if ts - now > CLOCK_SKEW_S:
+        return f"collection: newest sample is stamped {_age(ts - now)} in the future (clock skew)"
     if now - ts > 2 * c.collection_interval_s:
         return f"collection: newest meter sample is {_age(now - ts)} old (limit {_age(2 * c.collection_interval_s)})"
     return None
@@ -316,6 +323,8 @@ def check_meters(c: Config, now: float) -> str | None:
             return f"meters: {limited} of the last {len(rows)} lines in {log.name} are 429s"
         if newest is None:
             return f"meters: no usable reading near the end of {log.name}"
+        if newest - now > CLOCK_SKEW_S:
+            return f"meters: newest reading in {log.name} is stamped {_age(newest - now)} in the future (clock skew)"
         if now - newest > c.meter_max_age_s:
             return (f"meters: newest usable reading in {log.name} is {_age(now - newest)} old "
                     f"(limit {_age(c.meter_max_age_s)})")

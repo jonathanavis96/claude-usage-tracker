@@ -262,10 +262,11 @@ def _ahead_s(last: dict | None, now: datetime) -> float | None:
 def _since_last_call_s(last: dict | None, now: datetime) -> float | None:
     """Seconds since `last`, when it is a good reading or a 429; None otherwise.
 
-    Other failures (a DNS error, an expired token) say nothing about the endpoint's
-    limit, so they never delay the next tick.
+    An expired token is spaced too (otherwise a dead account calls every minute for
+    good). Other failures (a DNS error) say nothing about the endpoint's limit, so they
+    never delay the next tick.
     """
-    if not last or ("error" in last and last.get("reason") != "rate_limited"):
+    if not last or ("error" in last and last.get("reason") not in ("rate_limited", "auth_expired")):
         return None
     try:
         since = datetime.fromisoformat(last["ts"])
