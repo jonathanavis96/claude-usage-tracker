@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-02T17:00:05.242695+00:00",
+ "generated_at": "2026-10-02T17:30:05.367586+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5856,
+    "reset_verified_samples": 5864,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 9563,
+    "samples": 9571,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-02T16:56:18+00:00"
+    "last": "2026-10-02T17:28:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,7 +33,7 @@
      ".claude-jono"
     ],
     "files": 3168,
-    "turns": 75104,
+    "turns": 75111,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 3168,
@@ -10777,11 +10777,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5255,
+    "reset_verified_samples": 5267,
     "since": null,
-    "samples": 7642,
+    "samples": 7654,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-02T16:58:28+00:00"
+    "last": "2026-10-02T17:30:15+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -15396,9 +15396,9 @@
     "note": null,
     "reset_verified_samples": 5176,
     "since": null,
-    "samples": 5644,
+    "samples": 5656,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-02T16:58:28+00:00"
+    "last": "2026-10-02T17:30:15+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -17047,7 +17047,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-02T17:01:01.156049+00:00",
+  "generated_at": "2026-10-02T17:30:59.096446+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -55980,7 +55980,7 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 323,
+    "n": 324,
     "fast_session_requests": 0,
     "output_hist": {
      "223": 13,
@@ -55991,7 +55991,7 @@
      "227": 17,
      "218": 6,
      "235": 8,
-     "221": 6,
+     "221": 7,
      "236": 12,
      "226": 12,
      "214": 7,
@@ -56099,7 +56099,7 @@
      "156": 1,
      "115": 2,
      "42": 1,
-     "52": 2,
+     "52": 3,
      "129": 3,
      "50": 1,
      "38": 3,
