@@ -21,6 +21,17 @@ What one run does:
      Opening sends ONE alert; while it stays open nothing more is sent; when a run
      succeeds and health is clean again ONE recovery message is sent and it closes.
 
+  6. Dead-man ping. After a run that exited 0 with health clean, GET the Uptime Kuma push
+     URL in --kuma-url-file (default ~/.config/claude-usage-tracker/kuma-push-url, outside
+     the repo, never committed). A missing or empty file means no ping and no error, and
+     a failed ping is only noted in the state file. Kuma alerts when the pings stop, which
+     covers what nothing above can: cron, the host or this script no longer running.
+
+--profile gs sets the gs defaults: lock, state and log under ~/.paperclip/ops, label gs,
+the gs health checks (tracker.health.gs_config), no retries (bin/daily.sh runs again in
+30 minutes and mails subscribers, so it is never rerun at once) and an incident after 2
+failed runs in a row (an hour).
+
 The sender is a function (`Sender`): the default ships the text over ssh to the pihome
 WhatsApp bridge, `wa_send.py`, which prints OK or FAIL. Setting CUT_ALERT_DRY_RUN=1, or
 passing --dry-run, prints the message to stderr instead. Tests inject their own sender.
@@ -37,6 +48,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from typing import Callable
 
@@ -64,6 +76,30 @@ def dry_run_sender(text: str) -> bool:
 
 def default_sender() -> Sender:
     return dry_run_sender if os.environ.get("CUT_ALERT_DRY_RUN") else whatsapp_sender
+
+
+def kuma_url_file() -> Path:
+    return Path(os.environ.get("HOME", str(Path.home()))) / ".config" / "claude-usage-tracker" / "kuma-push-url"
+
+
+def ping_deadman(url_file: Path | None, timeout: float = 10.0) -> str | None:
+    """GET the push URL in `url_file`. None when there is no file (no ping configured),
+    else "ok" or a one-line failure. Never raises: a dead-man ping must not fail a run."""
+    if url_file is None:
+        return None
+    try:
+        url = url_file.read_text().strip()
+    except OSError:
+        return None
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        return "failed: push URL file does not hold an http(s) URL"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return "ok" if 200 <= r.status < 300 else f"failed: HTTP {r.status}"
+    except Exception as e:  # noqa: BLE001 - any failure is only recorded
+        return f"failed: {type(e).__name__}"
 
 
 def rotate_log(log: Path, max_bytes: int, keep: int) -> bool:
@@ -149,7 +185,8 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
               backoff: float = 30.0, max_log_bytes: int = 5 * 1024 * 1024, keep: int = 3,
               fail_threshold: int = 3, stale_after: float = 3600.0, send: Sender | None = None,
               health_cfg: health.Config | None = None, label: str = "masterrig",
-              sleep: Callable[[float], None] = time.sleep, now: Callable[[], float] = time.time) -> int:
+              sleep: Callable[[float], None] = time.sleep, now: Callable[[], float] = time.time,
+              kuma_file: Path | None = None) -> int:
     send = send or default_sender()
     pidfile = lock.with_suffix(".pid")
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +218,10 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             reason = health.first_failure(cfg, t, skip=("lock",))
             decide_alert(state, t, reason, fail_threshold, stale_after, send, label)
             state["last_health"] = reason or "ok"
+            if code == 0 and reason is None:
+                ping = ping_deadman(kuma_file)
+                if ping is not None:
+                    state["last_ping"] = ping
             write_state(state_path, state)
             return code
         finally:
@@ -191,26 +232,36 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--lock", type=Path, default=ROOT / ".supervise.lock")
-    p.add_argument("--state", type=Path, default=ROOT / ".supervise-state.json")
+    p.add_argument("--profile", choices=("masterrig", "gs"), default="masterrig")
+    p.add_argument("--kuma-url-file", type=Path, default=None,
+                   help="file holding the Uptime Kuma push URL (default ~/.config/claude-usage-tracker/kuma-push-url)")
+    p.add_argument("--lock", type=Path)
+    p.add_argument("--state", type=Path)
     p.add_argument("--log", type=Path)
-    p.add_argument("--retries", type=int, default=2)
+    p.add_argument("--retries", type=int)
     p.add_argument("--backoff", type=float, default=30.0)
     p.add_argument("--max-log-bytes", type=int, default=5 * 1024 * 1024)
     p.add_argument("--keep", type=int, default=3)
-    p.add_argument("--fail-threshold", type=int, default=3)
+    p.add_argument("--fail-threshold", type=int)
     p.add_argument("--stale-after", type=float, default=3600.0)
-    p.add_argument("--label", default="masterrig")
+    p.add_argument("--label")
     p.add_argument("--dry-run", action="store_true", help="print alerts instead of sending them")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
     a = p.parse_args(argv)
     cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
     if not cmd:
         p.error("no command given")
-    return supervise(cmd, lock=a.lock, state_path=a.state, log=a.log, retries=a.retries, backoff=a.backoff,
-                     max_log_bytes=a.max_log_bytes, keep=a.keep, fail_threshold=a.fail_threshold,
-                     stale_after=a.stale_after, label=a.label,
-                     send=dry_run_sender if a.dry_run else None)
+    gs = a.profile == "gs"
+    lock = a.lock or (health.GS_LOCK if gs else ROOT / ".supervise.lock")
+    state = a.state or (health.GS_STATE if gs else ROOT / ".supervise-state.json")
+    log = a.log or (health.GS_LOG if gs else None)
+    cfg = health.gs_config(state=state, pidfile=lock.with_suffix(".pid"), logs=(log,) if log else ()) if gs else None
+    return supervise(cmd, lock=lock, state_path=state, log=log,
+                     retries=a.retries if a.retries is not None else (0 if gs else 2), backoff=a.backoff,
+                     max_log_bytes=a.max_log_bytes, keep=a.keep,
+                     fail_threshold=a.fail_threshold if a.fail_threshold is not None else (2 if gs else 3),
+                     stale_after=a.stale_after, label=a.label or a.profile, health_cfg=cfg,
+                     send=dry_run_sender if a.dry_run else None, kuma_file=a.kuma_url_file or kuma_url_file())
 
 
 if __name__ == "__main__":

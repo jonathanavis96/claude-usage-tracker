@@ -163,5 +163,26 @@ class SuperviseTest(unittest.TestCase):
 
 REAL_WA = supervise.whatsapp_sender
 
+class ProfileArgsTest(unittest.TestCase):
+    def captured(self, *argv):
+        with mock.patch.object(supervise, "supervise", return_value=0) as m:
+            supervise.main([*argv, "--", "true"])
+        return m.call_args.kwargs
+
+    def test_gs_profile_defaults(self):
+        kw = self.captured("--profile", "gs")
+        self.assertEqual((kw["lock"], kw["state_path"], kw["log"]), (health.GS_LOCK, health.GS_STATE, health.GS_LOG))
+        self.assertEqual((kw["retries"], kw["fail_threshold"], kw["label"]), (0, 2, "gs"))
+        self.assertEqual(kw["health_cfg"].checks, ("run", "meters", "lock", "sizes"))
+        self.assertEqual(kw["kuma_file"], supervise.kuma_url_file())
+
+    def test_masterrig_defaults_unchanged(self):
+        kw = self.captured("--kuma-url-file", "/x/url")
+        self.assertEqual((kw["retries"], kw["fail_threshold"], kw["label"]), (2, 3, "masterrig"))
+        self.assertIsNone(kw["health_cfg"])
+        self.assertEqual(kw["lock"], supervise.ROOT / ".supervise.lock")
+        self.assertEqual(kw["kuma_file"], Path("/x/url"))
+
+
 if __name__ == "__main__":
     unittest.main()
