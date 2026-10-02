@@ -61,7 +61,8 @@ FULL_RESULTS
 - `history/passive.json` changes on main about every hour. If the merge conflicts on it, take main's file and run `python3 tools/restore_passive_days.py` again. It is idempotent and only adds missing days.
 - The `alldonesites` page (the only consumer of `claude-usage.json`) needs no change. The end-to-end run shows the same schema, and only the history series extends back further.
 
-## Morning steps for Jonathan
+## Deploy steps (morning, for Jonathan)
+Every fix below that needs a live change takes effect through these steps: the gs pull, the two installers (they replace the bare cron lines, which fixes the discarded supervisor output) and the Kuma monitors. Nothing else needs a manual change.
 1. **Ship.** Say "ship it" to run `ship-to-main` on `burn/20261002-ut-integrate`.
 2. **gs.** `ssh gs 'cd ~/claude-usage-tracker && git pull'`. This takes the 110 s meter spacing (which ends the 429 storm), the gate and the Kuma push live. Then, on gs: `deploy/install-gs.sh --dry-run`. Check that it replaces the bare `bin/daily.sh` line with one managed block, then run `deploy/install-gs.sh`.
 3. **masterrig.** `cd ~/code/claude-usage-tracker && git pull && deploy/install-schedule.sh --dry-run`. Check that it prints one managed block that replaces the bare `bin/passive.sh` line, then run `deploy/install-schedule.sh`.
