@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-02T02:30:05.063797+00:00",
+ "generated_at": "2026-10-02T03:00:05.726172+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5629,
+    "reset_verified_samples": 5647,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 9279,
+    "samples": 9297,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-02T02:29:10+00:00"
+    "last": "2026-10-02T02:58:00+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -7330,12 +7330,12 @@
      "start": "2026-09-21T21:15:08+00:00",
      "end": "2026-09-23T08:11:09+00:00",
      "delta_pct": 10.0,
-     "windows": 6,
+     "windows": 8,
      "usd": 24.3802,
      "usd_per_pct": 2.438,
      "bounds": [
-      1.5238,
-      6.0951
+      1.3545,
+      12.1901
      ],
      "tokens": {
       "claude-opus-5": {
@@ -7969,12 +7969,12 @@
      "start": "2026-09-25T19:36:22+00:00",
      "end": "2026-09-26T19:42:07+00:00",
      "delta_pct": 10.0,
-     "windows": 4,
+     "windows": 5,
      "usd": 54.643,
      "usd_per_pct": 5.4643,
      "bounds": [
-      3.9031,
-      9.1072
+      3.6429,
+      10.9286
      ],
      "tokens": {
       "claude-opus-5-5": {
@@ -8022,12 +8022,12 @@
      "start": "2026-09-26T19:42:07+00:00",
      "end": "2026-09-27T08:52:07+00:00",
      "delta_pct": 10.0,
-     "windows": 3,
+     "windows": 4,
      "usd": 46.3452,
      "usd_per_pct": 4.6345,
      "bounds": [
-      3.565,
-      6.6207
+      3.3104,
+      7.7242
      ],
      "tokens": {
       "claude-opus-5-5": {
@@ -8142,12 +8142,12 @@
      "start": "2026-09-27T19:18:32+00:00",
      "end": "2026-09-28T19:25:05+00:00",
      "delta_pct": 10.0,
-     "windows": 3,
+     "windows": 5,
      "usd": 19.7836,
      "usd_per_pct": 1.9784,
      "bounds": [
-      1.5218,
-      2.8262
+      1.3189,
+      3.9567
      ],
      "tokens": {
       "claude-opus-5-5": {
@@ -9233,12 +9233,12 @@
      "usd_per_pct": 2.4482,
      "delta_pct": 30.0,
      "stretches": 3,
-     "rounding": 0.2667,
+     "rounding": 0.3333,
      "bounds": [
-      1.9328,
-      3.3385
+      1.8362,
+      3.6723
      ],
-     "pieces": 8,
+     "pieces": 10,
      "reset_verified": false,
      "capture_diagnosed": 0
     },
@@ -9275,12 +9275,12 @@
      "usd_per_pct": 5.4643,
      "delta_pct": 10.0,
      "stretches": 1,
-     "rounding": 0.4,
+     "rounding": 0.5,
      "bounds": [
-      3.9031,
-      9.1072
+      3.6429,
+      10.9286
      ],
-     "pieces": 4,
+     "pieces": 5,
      "reset_verified": false,
      "capture_diagnosed": 1
     },
@@ -9289,12 +9289,12 @@
      "usd_per_pct": 4.019,
      "delta_pct": 20.0,
      "stretches": 2,
-     "rounding": 0.3,
+     "rounding": 0.35,
      "bounds": [
-      3.0915,
-      5.7414
+      2.977,
+      6.1831
      ],
-     "pieces": 6,
+     "pieces": 7,
      "reset_verified": false,
      "capture_diagnosed": 1
     },
@@ -9303,12 +9303,12 @@
      "usd_per_pct": 1.9784,
      "delta_pct": 10.0,
      "stretches": 1,
-     "rounding": 0.3,
+     "rounding": 0.5,
      "bounds": [
-      1.5218,
-      2.8262
+      1.3189,
+      3.9567
      ],
-     "pieces": 3,
+     "pieces": 5,
      "reset_verified": false,
      "capture_diagnosed": 0
     },
@@ -10212,7 +10212,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-22T07:40:00.189340+00:00",
+     "window_ending": "2026-09-22T12:48:25+00:00",
      "windows": null,
      "five_hour_pct": 4.0,
      "seven_day_pct": 0.0,
@@ -10221,7 +10221,7 @@
       null
      ],
      "pieces": 1,
-     "reset_verified": true
+     "reset_verified": false
     },
     {
      "window_ending": "2026-09-22T17:49:59.939831+00:00",
@@ -10691,9 +10691,9 @@
     "note": null,
     "reset_verified_samples": 4954,
     "since": null,
-    "samples": 7289,
+    "samples": 7301,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-02T02:28:05+00:00"
+    "last": "2026-10-02T03:00:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -13421,11 +13421,11 @@
      "start": "2026-09-21T17:44:09+00:00",
      "end": "2026-09-28T11:44:14+00:00",
      "delta_pct": 10.0,
-     "windows": 14,
+     "windows": 26,
      "usd": 12.8998,
      "usd_per_pct": 1.29,
      "bounds": [
-      0.5375,
+      0.3583,
       null
      ],
      "tokens": {
@@ -13713,12 +13713,12 @@
      "start": "2026-09-28T20:22:30+00:00",
      "end": "2026-09-29T11:02:25+00:00",
      "delta_pct": 11.0,
-     "windows": 4,
+     "windows": 5,
      "usd": 24.0131,
      "usd_per_pct": 2.183,
      "bounds": [
-      1.6009,
-      3.4304
+      1.5008,
+      4.0022
      ],
      "tokens": {
       "claude-sonnet-5": {
@@ -14259,12 +14259,12 @@
      "start": "2026-09-29T23:18:15+00:00",
      "end": "2026-09-30T22:12:35+00:00",
      "delta_pct": 10.0,
-     "windows": 6,
+     "windows": 7,
      "usd": 14.6448,
      "usd_per_pct": 1.4645,
      "bounds": [
-      0.9153,
-      3.6612
+      0.8615,
+      4.8816
      ],
      "tokens": {
       "claude-sonnet-5-5": {
@@ -14312,12 +14312,12 @@
      "start": "2026-09-30T22:12:35+00:00",
      "end": "2026-10-01T15:37:00+00:00",
      "delta_pct": 10.0,
-     "windows": 4,
+     "windows": 5,
      "usd": 16.2026,
      "usd_per_pct": 1.6203,
      "bounds": [
-      1.1573,
-      2.7004
+      1.0802,
+      3.2405
      ],
      "tokens": {
       "claude-opus-5-5": {
@@ -14644,12 +14644,12 @@
      "usd_per_pct": 1.3867,
      "delta_pct": 62.0,
      "stretches": 6,
-     "rounding": 0.2742,
+     "rounding": 0.4677,
      "bounds": [
-      1.0883,
-      1.9106
+      0.9448,
+      2.6053
      ],
-     "pieces": 17,
+     "pieces": 29,
      "reset_verified": false,
      "capture_diagnosed": 0
     },
@@ -14658,12 +14658,12 @@
      "usd_per_pct": 1.7608,
      "delta_pct": 122.0,
      "stretches": 12,
-     "rounding": 0.0738,
+     "rounding": 0.082,
      "bounds": [
-      1.6398,
-      1.901
+      1.6274,
+      1.918
      ],
-     "pieces": 9,
+     "pieces": 10,
      "reset_verified": false,
      "capture_diagnosed": 4
     },
@@ -14672,12 +14672,12 @@
      "usd_per_pct": 1.4645,
      "delta_pct": 10.0,
      "stretches": 1,
-     "rounding": 0.6,
+     "rounding": 0.7,
      "bounds": [
-      0.9153,
-      3.6612
+      0.8615,
+      4.8816
      ],
-     "pieces": 6,
+     "pieces": 7,
      "reset_verified": false,
      "capture_diagnosed": 0
     },
@@ -14686,12 +14686,12 @@
      "usd_per_pct": 1.4898,
      "delta_pct": 20.0,
      "stretches": 2,
-     "rounding": 0.3,
+     "rounding": 0.35,
      "bounds": [
-      1.146,
-      2.1283
+      1.1035,
+      2.292
      ],
-     "pieces": 6,
+     "pieces": 7,
      "reset_verified": false,
      "capture_diagnosed": 0
     }
@@ -14905,7 +14905,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-09-27T16:30:00.439042+00:00",
+     "window_ending": "2026-09-27T20:39:10+00:00",
      "windows": 4.0,
      "five_hour_pct": 4.0,
      "seven_day_pct": 1.0,
@@ -14914,10 +14914,10 @@
       null
      ],
      "pieces": 1,
-     "reset_verified": true
+     "reset_verified": false
     },
     {
-     "window_ending": "2026-09-28T09:10:00.318316+00:00",
+     "window_ending": "2026-09-28T12:43:37+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -14926,7 +14926,7 @@
       null
      ],
      "pieces": 1,
-     "reset_verified": true
+     "reset_verified": false
     },
     {
      "window_ending": "2026-09-28T14:10:00.459914+00:00",
@@ -14965,7 +14965,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-09-29T05:20:00.220980+00:00",
+     "window_ending": "2026-09-29T11:28:50+00:00",
      "windows": 7.5,
      "five_hour_pct": 15.0,
      "seven_day_pct": 2.0,
@@ -14974,7 +14974,7 @@
       38.5867
      ],
      "pieces": 1,
-     "reset_verified": true
+     "reset_verified": false
     },
     {
      "window_ending": "2026-09-29T16:29:59.608075+00:00",
@@ -15094,11 +15094,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4927,
+    "reset_verified_samples": 4931,
     "since": null,
-    "samples": 5287,
+    "samples": 5299,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-02T02:28:05+00:00"
+    "last": "2026-10-02T03:00:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -15749,11 +15749,11 @@
      "start": "2026-09-24T11:16:42+00:00",
      "end": "2026-09-28T21:10:05+00:00",
      "delta_pct": 10.0,
-     "windows": 15,
+     "windows": 29,
      "usd": 27.0653,
      "usd_per_pct": 2.7065,
      "bounds": [
-      1.0826,
+      0.694,
       null
      ],
      "tokens": {
@@ -15795,11 +15795,11 @@
      "start": "2026-09-28T21:10:05+00:00",
      "end": "2026-09-30T16:26:15+00:00",
      "delta_pct": 10.0,
-     "windows": 10,
+     "windows": 13,
      "usd": 25.7646,
      "usd_per_pct": 2.5765,
      "bounds": [
-      1.2882,
+      1.1202,
       null
      ],
      "tokens": {
@@ -15858,11 +15858,11 @@
      "cloud_session": false,
      "unclaimed_tokens": {
       "claude-sonnet-5": {
-       "input": 154,
-       "output": 12705,
-       "cache_read": 1447634,
-       "cache_write": 1024632,
-       "cache_write_1h": 1024632
+       "input": 152,
+       "output": 12640,
+       "cache_read": 1428995,
+       "cache_write": 1014163,
+       "cache_write_1h": 1014163
       },
       "claude-opus-5-5": {
        "input": 6,
@@ -16435,12 +16435,12 @@
      "usd_per_pct": 2.7065,
      "delta_pct": 10.0,
      "stretches": 1,
-     "rounding": 1.5,
+     "rounding": 2.9,
      "bounds": [
-      1.0826,
+      0.694,
       null
      ],
-     "pieces": 15,
+     "pieces": 29,
      "reset_verified": false,
      "capture_diagnosed": 0
     },
@@ -16449,12 +16449,12 @@
      "usd_per_pct": 2.4982,
      "delta_pct": 20.0,
      "stretches": 2,
-     "rounding": 0.6,
+     "rounding": 0.75,
      "bounds": [
-      1.5614,
-      6.2455
+      1.4275,
+      9.9927
      ],
-     "pieces": 12,
+     "pieces": 15,
      "reset_verified": false,
      "capture_diagnosed": 0
     },
@@ -16634,7 +16634,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-09-30T10:10:00.039762+00:00",
+     "window_ending": "2026-09-30T13:40:55+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
@@ -16643,7 +16643,7 @@
       null
      ],
      "pieces": 1,
-     "reset_verified": true
+     "reset_verified": false
     },
     {
      "window_ending": "2026-09-30T15:10:00.172072+00:00",
@@ -16747,7 +16747,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-02T02:30:58.238976+00:00",
+  "generated_at": "2026-10-02T03:01:00.973453+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
