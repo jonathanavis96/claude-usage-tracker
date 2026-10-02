@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
 
 from tracker import publish
 from tracker.weekly import weekly_windows
@@ -38,8 +37,6 @@ def _rows():
     return rows
 
 
-@pytest.mark.xfail(strict=True, reason="tracker/publish.py:1669 sets `partial` from `week_ending >= today`, "
-                                       "so a week stays open on the page until UTC midnight after its reset")
 def test_week_is_complete_from_its_reset_instant():
     weekly = weekly_windows(_rows(), now=NOW)
     assert weekly["history"], "precondition: the week has enough movement to be published"
@@ -50,3 +47,12 @@ def test_week_is_complete_from_its_reset_instant():
     assert row["week_ending"] == "2026-10-01"
     assert row["partial"] is False, ("the week reset at 16:00Z is published as still open at 20:00Z: publish "
                                      "compares the reset's date with today's, not the reset instant with now")
+
+
+def test_week_open_now_falls_back_to_the_date_and_never_publishes_the_instant():
+    old = {"week_ending": "2026-10-01", "windows": 5.0}
+    assert publish._week_open_now(old, NOW)["partial"] is True          # no instant: open until midnight
+    new = dict(old, resets_at=RESET)
+    row = publish._week_open_now(new, NOW)
+    assert row["partial"] is False and "resets_at" not in row
+    assert publish._week_open_now(new, datetime(2026, 10, 1, 15, 59, tzinfo=timezone.utc))["partial"] is True

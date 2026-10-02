@@ -1639,6 +1639,24 @@ def _paired_step(pooled_regimes: list[dict], by_window: list[dict], by_account: 
     return regimes, events
 
 
+def _week_open_now(h: dict, now: datetime) -> dict:
+    """A passive weekly row with `partial` recomputed for `now`, and its reset instant dropped.
+
+    A row carrying its reset instant (`resets_at`, tracker/weekly.py) is complete from
+    that instant, as weekly.py itself decides; an older row without one falls back to its
+    date, which reads a week as open until UTC midnight after its reset."""
+    row = dict(h)
+    resets_at = row.pop("resets_at", None)
+    try:
+        at = datetime.fromisoformat(resets_at) if isinstance(resets_at, str) else None
+    except ValueError:
+        at = None
+    if at is not None and at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    row["partial"] = at > now if at is not None else date.fromisoformat(row["week_ending"]) >= now.date()
+    return row
+
+
 def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime,
                   gs_passive: dict | None = None) -> tuple[dict, list]:
     """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
@@ -1666,8 +1684,7 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     passive_weekly = dict(passive_weekly or {"current": None, "history": [], "by_window": []})
     # passive.json may lag: it can predate the flag, or carry a `partial` from when its
     # newest week was still open. Recompute it against this publish's own time.
-    passive_weekly["history"] = [dict(h, partial=date.fromisoformat(h["week_ending"]) >= now.date())
-                                 for h in passive_weekly.get("history", [])]
+    passive_weekly["history"] = [_week_open_now(h, now) for h in passive_weekly.get("history", [])]
     # The median of the last two complete weeks is not a measurement of anything the
     # page states (audit finding 6), and it was the one figure here still published as
     # one. The raw series itself stays: `by_window` is what bin/daily.sh reads to tell

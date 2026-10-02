@@ -235,7 +235,9 @@ def weekly_windows(rows: list[dict | None], now: datetime | None = None) -> dict
 
     for h in history:
         h["partial"] = datetime.fromisoformat(h["_resets_at"]) > now
-        del h["_resets_at"]
+        # Kept (as resets_at) so the publisher can recompute `partial` against the reset
+        # instant, not the week's date: a week that reset at 16:00Z is complete at 16:00Z.
+        h["resets_at"] = h.pop("_resets_at")
 
     return {"current": current, "history": history, "by_window": by_window}
 

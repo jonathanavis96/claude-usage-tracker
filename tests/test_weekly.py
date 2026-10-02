@@ -47,7 +47,7 @@ class WeeklyWindowsTests(unittest.TestCase):
         self.assertEqual(result["history"], [
             {"week_ending": "2026-09-04", "windows": 6.0, "five_hour_pct": 60.0, "seven_day_pct": 10.0,
              "rounding_interval": [5.0498, 7.3042], "pieces": 1, "source": "paired_meter_deltas",
-             "reset_verified": True, "partial": False},
+             "reset_verified": True, "partial": False, "resets_at": "2026-09-04T03:59:59+00:00"},
         ])
         self.assertEqual(result["current"], 6.0)
         self.assertEqual(result["by_window"], [
