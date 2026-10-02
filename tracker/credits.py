@@ -2690,6 +2690,60 @@ def _joint_scatter(groups: list[tuple[list[tuple], list[tuple]]], r: float, m: f
     return robust if robust > 0 else scatter_variance(ss, n - len(groups) - 2, rounding)
 
 
+#: How `plan_wide` reads a change: a plan limit changes for every account at the same instant,
+#: so a change that one account alone produces is not a plan change.
+PLAN_WIDE_METHOD = (
+    "A plan limit change applies to every account at the same instant. So a change whose "
+    "combined estimate draws on two or more accounts is refitted with each of them left out in "
+    "turn, by the same estimator that produced it (the joint fit's g, or the combined "
+    "windows-per-week ratio when that is the published figure), and it is plan-wide only if "
+    "every refit keeps its direction with a 95% interval that still excludes no change. With "
+    "two accounts that is each account alone. A change resting on one account is not plan-wide.")
+
+
+def plan_wide_verdict(change_pct: float | None, accounts: list[str], without: dict[str, dict],
+                      estimator: str) -> dict:
+    """Whether a combined change holds with each of its accounts left out in turn.
+
+    `without[label]` is the same estimator refitted without that account, with its
+    `change_pct` and `interval_pct`; each entry gains `holds`, True when the refit keeps the
+    full change's direction and its interval excludes no change on that side. `passed` when
+    every refit holds and there are at least two accounts; `failed` otherwise, with the
+    reason; `untested` without a change to test. See PLAN_WIDE_METHOD.
+    """
+    out = {"state": "untested", "estimator": estimator, "accounts": list(accounts),
+           "without": without, "reason": None}
+    if change_pct is None:
+        out["reason"] = "no combined change to test"
+        return out
+    if len(accounts) < 2:
+        out.update(state="failed", reason=(
+            f"the change rests on one account ({', '.join(accounts) or 'none'}); a plan limit "
+            "change applies to every account at once"))
+        return out
+    failing = []
+    for label, row in without.items():
+        iv = row.get("interval_pct")
+        row["holds"] = bool(row.get("change_pct") is not None and iv and change_pct != 0
+                            and (iv[0] > 0 if change_pct > 0 else iv[1] < 0))
+        if not row["holds"]:
+            failing.append(label)
+    if not failing:
+        out["state"] = "passed"
+        return out
+
+    def reads(label: str) -> str:
+        row = without[label]
+        if row.get("change_pct") is None:
+            return f"without {label} there is no estimate"
+        lo, hi = row["interval_pct"] or (None, None)
+        return f"without {label} it reads {row['change_pct']:+g}% [{lo:g}, {hi:g}]"
+    out.update(state="failed", reason=(
+        f"{'; '.join(reads(k) for k in failing)}: the {change_pct:+g}% does not hold with each "
+        "account left out, so it is not plan-wide"))
+    return out
+
+
 def _pct_of(x: float) -> float:
     return round((x - 1) * 100, 1)
 
@@ -2697,7 +2751,8 @@ def _pct_of(x: float) -> float:
 def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
                    lo: datetime | None, hi: datetime | None, value, credits: dict,
                    labels: dict[str, str], names: list[str],
-                   base_times_opus: float | None = None, prices: dict | None = None) -> dict:
+                   base_times_opus: float | None = None, prices: dict | None = None,
+                   leave_one_out: bool = True) -> dict:
     """A new family's rate and the five-hour limit change at its first use, fitted jointly.
 
     Per stretch, meter % = (known + r x new) / (L x g): `known` is the credits of every
@@ -2719,6 +2774,11 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     JOINT_SEPARABLE_SPAN and touches neither search bound) and passes the rate check
     (`joint_rate_check`, against `prices` or data/prices.json): a rate interval that misses
     half to twice the list-price ratio has not separated the rate from the limit change.
+
+    A separable fit is refitted with each combined account left out in turn
+    (`leave_one_out`; the refits themselves are not), and `plan_wide` says whether its g
+    holds on every one of them (`plan_wide_verdict`). None when the fit is not separable:
+    its g is then not the published figure.
     """
     per_account, groups = {}, []
     unclaimed = unclaimed_shares(selected, value, at, lo, hi, labels, names)
@@ -2739,7 +2799,8 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
            "log_residual_sd": None, "scatter_sd": None, "rounding_sd": None,
            "unclaimed_share": unclaimed, "accounts_combined": [g[0] for g in groups],
-           "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP, "rate_check": None}
+           "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP, "rate_check": None,
+           "plan_wide": None}
     fit = _joint_solve([(b, a) for _, b, a in groups])
     if fit is None or not any(u for _, _, a in groups for _, u, *_ in a):
         out["reason"] = "no stretch after the candidate on an account with a before side"
@@ -2792,6 +2853,24 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
                    f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "
                    f"{r_hi:.2f}x its base family's"),
     })
+    if separable and leave_one_out:
+        without = {}
+        for name in selected:
+            label = _label_for(labels, name, names)
+            if label not in out["accounts_combined"]:
+                continue
+            sub = joint_rate_fit({n: rows for n, rows in selected.items() if n != name}, fam, at,
+                                 lo, hi, value, credits, labels, names, base_times_opus, prices,
+                                 leave_one_out=False)
+            without[label] = {"change_pct": sub["five_hour_limit_change_pct"],
+                              "interval_pct": sub["five_hour_limit_change_interval_pct"],
+                              "accounts_combined": sub["accounts_combined"],
+                              "separable": sub["separable"],
+                              "rate_relative_to_base": sub["rate_relative_to_base"],
+                              "rate_relative_interval": sub["rate_relative_interval"]}
+        out["plan_wide"] = plan_wide_verdict(out["five_hour_limit_change_pct"],
+                                             out["accounts_combined"], without,
+                                             "the joint fit's five-hour limit change g")
     return out
 
 
@@ -3247,6 +3326,20 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                 pct = scope["five_hour_limit_change_pct"]
                 interval = scope["five_hour_limit_change_interval_pct"]
         state = change_state(interval if pct is not None else wpw_interval)
+        if pct is not None:
+            # The published figure is the joint fit's g: its own leave-one-out refits decide.
+            plan_wide = (cand.get("joint_fit") or {}).get("plan_wide") or plan_wide_verdict(
+                None, [], {}, "the joint fit's five-hour limit change g")
+            if plan_wide["state"] == "untested":
+                plan_wide = dict(plan_wide, reason="the joint fit carries no leave-one-out refits")
+        else:
+            without = {}
+            for label in paired if len(paired) > 1 else ():
+                rest = combine_log_ratios({k: v for k, v in paired.items() if k != label})
+                without[label] = {"change_pct": _pct_of(rest["ratio"]),
+                                  "interval_pct": _pct_interval(*rest["interval"])}
+            plan_wide = plan_wide_verdict(wpw_pct, sorted(paired), without,
+                                          "the combined windows-per-week ratio")
         out.append({
             "family": cand["family"], "at": cand["at"], "at_source": cand.get("at_source"),
             "first_seen_account": cand.get("first_seen_account"),
@@ -3254,6 +3347,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
             "before_from": cand.get("before_from"), "after_until": cand.get("after_until"),
             "state": state,
             "scope": scope,
+            "plan_wide": plan_wide,
             "windows_per_week_change_pct": wpw_pct,
             "windows_per_week_change_interval_pct": wpw_interval,
             "windows_per_week_change_excludes_no_change": bool(

@@ -949,3 +949,96 @@ class RateCheckTests(unittest.TestCase):
         fit = _joint(_mixed(g=1.2, r=0.6))
         self.assertEqual(fit["rate_check"]["state"], "passed")
         self.assertTrue(fit["separable"])
+
+
+def _mixed_accounts(steps, r=0.6, n=24, sd=0.08, seed=5):
+    """`_mixed` on any accounts, each with its own five-hour step: `steps` maps an account
+    name to the g its meter moves by at CAND. A plan change moves every account by one g."""
+    rng = random.Random(seed)
+    by = {}
+    for k, (name, g) in enumerate(sorted(steps.items())):
+        level = 100.0 + 40.0 * k
+        rows = []
+        for i in range(n):
+            known = rng.uniform(500, 3000)
+            st = _st(C.CUT_AT + timedelta(hours=3 * (i + 1)), 2, "claude-opus-5", known)
+            st["delta_pct"] = known / level * math.exp(rng.gauss(0, sd))
+            rows.append(st)
+        for i in range(n):
+            total, s_new = rng.uniform(500, 3000), rng.uniform(0.05, 0.95)
+            known, new = total * (1 - s_new), total * s_new
+            st = _st(CAND + timedelta(hours=3 * (i + 1)), 2, "claude-opus-5", known)
+            st["tokens"]["claude-opus-5-5"] = {"output": new}
+            st["delta_pct"] = (known + r * new) / (level * g) * math.exp(rng.gauss(0, sd))
+            rows.append(st)
+        by[name] = rows
+    return by
+
+
+def _max20_accounts(after_wpw):
+    """`_max20` with each account's own windows per week after CAND (5.0 before)."""
+    rows = []
+    for label, wpw in sorted(after_wpw.items()):
+        rows += [_window(label, C.CUT_AT + timedelta(hours=6 * (i + 1)), 50.0, 10.0)
+                 for i in range(20)]
+        rows += [_window(label, CAND + timedelta(hours=6 * (i + 1)), 50.0, 50.0 / wpw)
+                 for i in range(10)]
+    return {"by_window": rows, "by_account": {}}
+
+
+class PlanWideTests(unittest.TestCase):
+    """A plan limit change moves every account at once, so it must hold with each one left out."""
+
+    def test_an_artifact_on_one_account_is_rejected(self):
+        # a1's meter steps 40%; a2 and a3 do not move. Combined, the fit still reads a rise.
+        fit = _joint(_mixed_accounts({"acct_one": 1.4, "acct_two": 1.0, "acct_new": 1.0}))
+        self.assertTrue(fit["separable"])
+        self.assertEqual(fit["accounts_combined"], ["a1", "a2", "a3"])
+        self.assertGreater(fit["five_hour_limit_change_interval_pct"][0], 0.0)
+        pw = fit["plan_wide"]
+        self.assertEqual(pw["state"], "failed")
+        self.assertEqual(sorted(pw["without"]), ["a1", "a2", "a3"])
+        self.assertFalse(pw["without"]["a1"]["holds"])
+        self.assertEqual(pw["without"]["a1"]["accounts_combined"], ["a2", "a3"])
+        self.assertIn("without a1", pw["reason"])
+        cand = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())["candidates"][0]
+        self.assertEqual(cand["plan_wide"], pw)
+
+    def test_a_change_shared_by_every_account_passes(self):
+        fit = _joint(_mixed_accounts({"acct_one": 1.2, "acct_two": 1.2, "acct_new": 1.2}))
+        pw = fit["plan_wide"]
+        self.assertEqual(pw["state"], "passed", pw["reason"])
+        self.assertIsNone(pw["reason"])
+        for label in ("a1", "a2", "a3"):
+            row = pw["without"][label]
+            self.assertTrue(row["holds"])
+            self.assertGreater(row["interval_pct"][0], 0.0)
+            # The refit is the same estimator on the other accounts: its own rate and g.
+            self.assertTrue(row["separable"])
+
+    def test_with_two_accounts_each_one_alone_must_show_it(self):
+        fit = _joint(_mixed_accounts({"acct_one": 1.4, "acct_two": 1.0}))
+        pw = fit["plan_wide"]
+        self.assertEqual(pw["state"], "failed")
+        self.assertEqual(pw["without"]["a1"]["accounts_combined"], ["a2"])
+        self.assertEqual(pw["without"]["a2"]["accounts_combined"], ["a1"])
+        self.assertTrue(pw["without"]["a2"]["holds"])   # a1 alone shows it
+        self.assertFalse(pw["without"]["a1"]["holds"])  # a2 alone does not
+
+    def test_an_inseparable_fit_is_tested_on_windows_per_week(self):
+        # The published figure is then the windows-per-week change, so that is what is refitted.
+        shared = C.five_hour_on_meters(_announced(), _max20_accounts({"a1": 4.0, "a2": 4.0, "a3": 4.0}))
+        pw = shared["candidates"][0]["plan_wide"]
+        self.assertEqual((pw["state"], pw["estimator"]), ("passed", "the combined windows-per-week ratio"))
+        self.assertEqual(pw["without"]["a1"]["change_pct"], -20.0)
+        one = C.five_hour_on_meters(_announced(), _max20_accounts({"a1": 3.0, "a2": 5.0, "a3": 5.0}))
+        cand = one["candidates"][0]
+        self.assertLess(cand["windows_per_week_change_interval_pct"][1], 0.0)
+        self.assertEqual(cand["plan_wide"]["state"], "failed")
+        self.assertFalse(cand["plan_wide"]["without"]["a1"]["holds"])
+
+    def test_a_change_resting_on_one_account_is_not_plan_wide(self):
+        cand = C.five_hour_on_meters(_announced(), _max20_accounts({"a1": 3.0}))["candidates"][0]
+        self.assertEqual(cand["accounts_combined"], ["a1"])
+        self.assertEqual(cand["plan_wide"]["state"], "failed")
+        self.assertIn("rests on one account", cand["plan_wide"]["reason"])
