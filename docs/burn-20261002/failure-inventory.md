@@ -29,7 +29,7 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
 
 ## Failure modes
 
-### F1. passive.json loses days and the 5x-to-20x ratio as transcripts age out (open, UT-1)
+### F1. passive.json loses days and the 5x-to-20x ratio as transcripts age out (fixed on burn/20261002-ut-1-forensics, 4086e7c)
 - Symptom: the committed `history/passive.json` started at 2026-07-30 (09-05), 08-07 (09-06),
   08-11 (09-09 to 09-19), then 08-20 from 2026-09-21 onward. Its `plan_ratio_5x_to_20x`
   went 0.3865, 0.423, 0.4468, 0.6696, 1.0287, 0.6612, 0.2492 and has been `None` since
@@ -45,19 +45,25 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
   start moved from 30 July to 20 August.
 - Fix: merge with the stored record. Days earlier than the first day the transcripts can
   still produce are kept as stored. Days the transcripts still cover are recounted.
+- Not recovered: the days already lost (2026-07-30 to 2026-08-19). They are in git, in
+  `87aa061:history/passive.json` (from 07-30) and `9e40788:history/passive.json` (from 08-11).
+  Once the fix is on main, merging those days into `history/passive.json` once makes them stick.
+  This is left to the integrator because automation rewrites that file on main every day.
 
-### F2. The masterrig cron log has no timestamps (open, UT-1)
+### F2. The cron logs have no timestamps (fixed on burn/20261002-ut-1-forensics, ee71d1e and the daily.sh commit)
 - Symptom: `claude-usage-passive.log` holds 115 lines, none with a date. The 2026-09-?? line
   `fatal: couldn't find remote ref crossing-detection` (the checkout was on a feature branch,
   so the cron pulled and pushed that branch) cannot be dated from the log at all.
 - Root cause: `bin/passive.sh` and the Python modules print without stamps.
-- Fix: stamp every line the wrapper emits with the UTC time.
+- The same holds on gs: `claude-usage-daily.log` has 3,265 undated lines, so its 18 site-push
+  failures and the 2026-10-01 DNS outage cannot be dated from it.
+- Fix: passive.sh stamps every line it writes itself. daily.sh writes one dated line at the start of each run.
 
-### F3. passive.sh follows whatever branch the live checkout has checked out (open, UT-1)
+### F3. passive.sh follows whatever branch the live checkout has checked out (fixed on burn/20261002-ut-1-forensics, ee71d1e)
 - Symptom: the log line above. The cron pushed `crossing-detection` to origin
   ("Create a pull request for 'crossing-detection'"), so that day's masterrig record never reached main.
 - Root cause: `bin/passive.sh:30` `BRANCH="$(git rev-parse --abbrev-ref HEAD)"`.
-- Fix: refuse to run off main (a warning and exit 0), so a feature checkout never publishes a record to a side branch.
+- Fix: refuse to run off main (a dated line and exit 3), so a feature checkout never publishes a record to a side branch.
 
 ### F4. Missing masterrig days when the machine sleeps (fixed on main)
 - Symptom: no "Passive history" commit for 2026-09-20 or 2026-09-22. The moonlighter meter
@@ -84,6 +90,28 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
 - Jonathan, 2026-09-28 19:32: "five-hour −2% to +63% ... surely thats a bug?". Traced in
   `docs/findings-2026-09-29-*`: rounding of the 1% meter and missing work. Model work, out of scope tonight.
 
+### F9. On gs, 55% of meter reads are 429s (fixed on burn/20261002-ut-1-forensics, 5e895f2)
+- Symptom: `~/.paperclip/ops/claude-usage-meter-{avis,dave,jwork}.log` on gs. Until
+  2026-09-22 each account logged about 262 good reads a day and no 429s. From 2026-09-23,
+  each logs about 600 good reads and 650 to 800 `rate_limited` lines a day. That is 18,784
+  429 lines with `retry_after_s: 0.0` in all, about every other tick
+  (2026-10-01 12:00-13:59 for dave: `xx.x.x.x.xx.x.x.x.xxx...`). 15 more carried Retry-After of about 3,600 s.
+- Root cause: #78 (1ec0f93, 2026-09-23) moved the timers to one tick a minute
+  (`deploy/systemd/*.timer`, `OnUnitActiveSec=1min`). The endpoint lets about one call in two
+  minutes through per account and answers the rest with a 429 carrying Retry-After 0. The
+  backoff in `tracker/meter_log.py:_backoff_remaining_s` reads that 0 as "no wait".
+- Impact on data: none directly. `parse_meter_log` skips error lines. The cost is a
+  doubled call rate against a rate-limited endpoint, logs that are half noise, and runs of
+  2 or 3 failures in a row (4 to 6 minute gaps).
+- Fix: a tick within 110 s of the last good read or 429 skips the call (`MIN_READ_SPACING_S`).
+  The timers stay at one minute, so a good read still comes about every 130 s.
+- Needs a deploy on gs (a `git pull` in `~/claude-usage-tracker`). Nothing to restart, since each tick is a oneshot.
+
+### F10. gs DNS outage, 2026-10-01 about 17:23Z (environment, self-healed)
+- 45 `URLError ... Temporary failure in name resolution` lines per account. The publisher log
+  shows the matching contributed-export, site-pull and tracker-push failures. Both gs
+  checkouts were level with origin at 00:15Z on 2026-10-02. No action.
+
 ### Live state at 2026-10-02 00:06Z
 - Page `generated_at` 00:02Z. a1 (masterrig) fed 21:15Z, a2 and a3 fresh, a4 idle. Publisher cadence holding.
 
@@ -91,6 +119,8 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
 
 | Item | Owner |
 |---|---|
-| F1 passive.json history merge | UT-1 |
-| F2 timestamps in the passive log | UT-1 |
-| F3 passive.sh off-main guard | UT-1 |
+| F1 passive.json history merge | UT-1, done. Restoring the lost days is left to the integrator |
+| F2 timestamps in both cron logs | UT-1, done |
+| F3 passive.sh off-main guard | UT-1, done |
+| F9 meter read spacing on gs | UT-1, done. Needs a gs pull to take effect |
+| Health check for the 429 rate and for an undated or stopped log | UT-3 |
