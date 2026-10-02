@@ -26,6 +26,12 @@ Checks, in order (the first failure is the one-line reason):
                above the ~130 s between reads that meter_log's 110 s spacing gives
                (a skipped tick exits 0 and writes nothing). Also fails when more than
                half of the last 40+ lines are 429s (2026-09-23: 55%, unseen nine days).
+               A logged Retry-After that meter_log is honouring extends the age limit
+               by its length (at most 2 h). An account whose reads since its newest
+               reading are all auth_expired is idle (its access token lapsed and only
+               Claude Code refreshes it), not broken: it fails only when its refresh
+               token has expired, or after 24 h. Every failing log is reported, joined
+               with " | ", so each account is its own incident in the supervisor.
 
 Profiles pick which checks run. `masterrig` (default) is collection, run, publisher,
 token, lock, sizes. `gs` is run (the supervised bin/daily.sh, every 30 min), meters,
@@ -70,6 +76,7 @@ class Config:
     max_history_bytes: int = 200 * 1024 * 1024
     meter_logs: tuple[Path, ...] = ()
     meter_max_age_s: int = 15 * 60
+    meter_config_dirs: dict | None = None  # account -> config dir; None: GS_METER_CONFIG_DIRS under HOME
     checks: tuple[str, ...] | None = None  # None: every check but meters (masterrig)
 
 
@@ -292,42 +299,108 @@ def check_sizes(c: Config, now: float) -> str | None:
     return None
 
 
+#: gs meter account -> its Claude config dir under HOME (deploy/systemd/claude-usage-meter-*).
+GS_METER_CONFIG_DIRS = {"avis": ".claude-avis", "dave": ".claude-dave", "jwork": ".claude-javiswork"}
+#: An account whose newest reads are all `auth_expired` while its refresh token is still
+#: good is idle, not broken: meter_log never refreshes a token (only Claude Code does, when
+#: someone uses that account), and the access token lapses ~8 h after the last refresh. It
+#: fails `meters` only once the refresh token itself has expired, or after this long.
+IDLE_TOKEN_GRACE_S = 24 * 60 * 60
+#: Longest a logged Retry-After extends the meter age limit; matches meter_log's own cap.
+MAX_HONOURED_BACKOFF_S = 2 * 60 * 60
+
+
+def _meter_account(log: Path) -> str | None:
+    name = log.name
+    if name.startswith("claude-usage-meter-") and name.endswith(".log"):
+        return name[len("claude-usage-meter-"):-len(".log")]
+    return None
+
+
+def _refresh_token_expiry(c: Config, account: str | None) -> float | None:
+    """When the account's refresh token expires (epoch s), or None when unknown.
+
+    Reads only `claudeAiOauth.refreshTokenExpiresAt`; no token value is ever read out."""
+    dirs = c.meter_config_dirs if c.meter_config_dirs is not None else {
+        a: Path(os.environ.get("HOME", str(Path.home()))) / d for a, d in GS_METER_CONFIG_DIRS.items()}
+    if account not in dirs:
+        return None
+    try:
+        oauth = json.loads((Path(dirs[account]) / ".credentials.json").read_text()).get("claudeAiOauth") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    return _parse_ts(oauth.get("refreshTokenExpiresAt"))
+
+
 def check_meters(c: Config, now: float) -> str | None:
-    for log in c.meter_logs:
+    """Every failing meter log, joined with " | " so each account is its own incident."""
+    failures = [r for r in (_check_meter_log(c, log, now) for log in c.meter_logs) if r]
+    return " | ".join(failures) if failures else None
+
+
+def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
+    try:
+        with open(log, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 262144))
+            lines = f.read().splitlines()
+    except OSError as e:
+        return f"meters: cannot read {log.name}: {e.strerror}"
+    newest = None
+    for raw in reversed(lines):
         try:
-            with open(log, "rb") as f:
-                f.seek(0, os.SEEK_END)
-                f.seek(max(0, f.tell() - 262144))
-                lines = f.read().splitlines()
-        except OSError as e:
-            return f"meters: cannot read {log.name}: {e.strerror}"
-        newest = None
-        for raw in reversed(lines):
-            try:
-                row = json.loads(raw)
-            except ValueError:
-                continue
-            if isinstance(row, dict) and isinstance(row.get("five_hour"), dict):
-                newest = _parse_ts(row.get("ts"))
-                if newest is not None:
-                    if row.get("schema"):
-                        return (f"meters: the usage API changed shape ({'; '.join(map(str, row['schema']))}) "
-                                f"in {log.name}; readings may be wrong")
-                    break
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and isinstance(row.get("five_hour"), dict):
+            newest = _parse_ts(row.get("ts"))
+            if newest is not None:
+                if row.get("schema"):
+                    return (f"meters: the usage API changed shape ({'; '.join(map(str, row['schema']))}) "
+                            f"in {log.name}; readings may be wrong")
+                break
+    try:
+        rows = _tail_rows(log)
+    except OSError:
+        rows = []
+    limited = sum(1 for r in rows if r.get("reason") == "rate_limited")
+    if len(rows) >= 40 and limited * 2 > len(rows):
+        return f"meters: {limited} of the last {len(rows)} lines in {log.name} are 429s"
+    # The lines after the newest usable reading: why the meter has not read since.
+    trailing = []
+    for r in reversed(rows):
+        if isinstance(r.get("five_hour"), dict):
+            break
+        trailing.append(r)
+    if trailing and all(r.get("reason") == "auth_expired" for r in trailing):
+        account = _meter_account(log)
+        refresh_until = _refresh_token_expiry(c, account)
+        since = newest if newest is not None else _parse_ts(trailing[-1].get("ts"))
+        if refresh_until is not None and refresh_until <= now:
+            return (f"meters: {account}'s refresh token expired {_age(now - refresh_until)} ago "
+                    f"({log.name}): that account needs a login")
+        if refresh_until is not None:
+            if since is not None and now - since <= IDLE_TOKEN_GRACE_S:
+                return None   # token lapsed (idle): it refreshes the next time the account is used
+            return (f"meters: token lapsed (idle) for {_age(now - since) if since else 'a long time'} in "
+                    f"{log.name}: use that account once to refresh it (limit {_age(IDLE_TOKEN_GRACE_S)})")
+        # No readable refresh-token expiry: idle cannot be told from signed out, so the
+        # plain age rule below applies.
+    if newest is None:
+        return f"meters: no usable reading near the end of {log.name}"
+    if newest - now > CLOCK_SKEW_S:
+        return f"meters: newest reading in {log.name} is stamped {_age(newest - now)} in the future (clock skew)"
+    limit = c.meter_max_age_s
+    # A Retry-After meter_log is honouring stops reads for that long: not a stopped meter.
+    last = rows[-1] if rows else {}
+    if last.get("reason") == "rate_limited":
         try:
-            rows = _tail_rows(log)
-        except OSError:
-            rows = []
-        limited = sum(1 for r in rows if r.get("reason") == "rate_limited")
-        if len(rows) >= 40 and limited * 2 > len(rows):
-            return f"meters: {limited} of the last {len(rows)} lines in {log.name} are 429s"
-        if newest is None:
-            return f"meters: no usable reading near the end of {log.name}"
-        if newest - now > CLOCK_SKEW_S:
-            return f"meters: newest reading in {log.name} is stamped {_age(newest - now)} in the future (clock skew)"
-        if now - newest > c.meter_max_age_s:
-            return (f"meters: newest usable reading in {log.name} is {_age(now - newest)} old "
-                    f"(limit {_age(c.meter_max_age_s)})")
+            limit += min(max(float(last.get("retry_after_s") or 0), 0.0), MAX_HONOURED_BACKOFF_S)
+        except (TypeError, ValueError):
+            pass
+    if now - newest > limit:
+        return (f"meters: newest usable reading in {log.name} is {_age(now - newest)} old "
+                f"(limit {_age(limit)})")
     return None
 
 

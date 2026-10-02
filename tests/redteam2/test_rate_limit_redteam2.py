@@ -16,15 +16,12 @@ import json
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from tracker import meter_log
 
 T0 = datetime(2026, 9, 26, 14, 28, tzinfo=timezone.utc)   # jwork's 3,600 s block began here
 
 
-@pytest.mark.xfail(strict=True, reason="tracker/meter_log.py:222 caps Retry-After at 1200 s, so a tick "
-                                       "20 and 40 min into the endpoint's measured 3,600 s block calls it again")
 def test_measured_one_hour_retry_after_is_honoured(tmp_path, fake_home):
     cfg = fake_home / ".claude-javiswork"
     cfg.mkdir()

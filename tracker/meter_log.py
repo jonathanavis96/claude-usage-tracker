@@ -72,8 +72,13 @@ DEFAULT_429_BACKOFF_S = 300
 #: the last good read or 429 skips the call: the same readings, without the failures.
 #: Just under two of the timers' ~65 s ticks.
 MIN_READ_SPACING_S = 110
-#: Longest a logged Retry-After may stop sampling; usage_api caps its own waits the same.
-MAX_BACKOFF_S = RETRY_429_MAX_S
+#: Longest a logged Retry-After may stop sampling. The endpoint's own long answer is 3,600 s
+#: (failure inventory F9: 15 of them on gs, after a run of Retry-After 0), so a cap below an
+#: hour has the sampler call inside a block the server asked it to respect, and the endpoint
+#: answers persistence with longer blocks. Two hours covers that; the cap only stops an
+#: absurd value such as 86400 from halting sampling for a day. (usage_api's in-process
+#: retry cap, RETRY_429_MAX_S, is a different thing: how long one process sleeps.)
+MAX_BACKOFF_S = 2 * 60 * 60
 #: Longest this tick waits for another run on the same log to finish before giving up.
 LOCK_WAIT_S = 45
 #: When the clock reads earlier than the log's last line, ticks are skipped (the log stays

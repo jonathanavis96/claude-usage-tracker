@@ -221,6 +221,47 @@ class GsProfileTest(unittest.TestCase):
         (self.ops / "claude-usage-meter-jwork.log").unlink()
         self.assertIn("meters: cannot read claude-usage-meter-jwork.log", health.first_failure(self.c, NOW))
 
+    def test_every_failing_meter_log_is_named(self):
+        self.write_meter("dave", NOW - 1200)
+        self.write_meter("avis", NOW - 1800)
+        reason = health.first_failure(self.c, NOW)
+        self.assertIn("claude-usage-meter-avis.log", reason)
+        self.assertIn("claude-usage-meter-dave.log", reason)
+        self.assertEqual(reason.count(" | "), 1)
+
+    def test_an_honoured_retry_after_extends_the_age_limit(self):
+        rows = [{"ts": iso(NOW - 1800), "account": "jwork", "five_hour": {"utilization": 1.0}},
+                {"ts": iso(NOW - 1790), "account": "jwork", "error": "HTTP 429", "reason": "rate_limited",
+                 "retry_after_s": 3600}]
+        log = self.ops / "claude-usage-meter-jwork.log"
+        log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.assertIsNone(health.first_failure(self.c, NOW))
+        rows[1]["retry_after_s"] = 600
+        log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.assertIn("jwork", health.first_failure(self.c, NOW))
+
+    def _idle(self, account, refresh_in_s, read_ago_s):
+        cfg = self.tmp / f"cfg-{account}"
+        cfg.mkdir(exist_ok=True)
+        (cfg / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": "x", "expiresAt": int((NOW - 3600) * 1000),
+            "refreshTokenExpiresAt": int((NOW + refresh_in_s) * 1000)}}))
+        self.c.meter_config_dirs = {account: cfg}
+        rows = [{"ts": iso(NOW - read_ago_s), "account": account, "five_hour": {"utilization": 1.0}}]
+        rows += [{"ts": iso(NOW - read_ago_s + 120 * (i + 1)), "account": account, "error": "AuthExpired",
+                  "reason": "auth_expired"} for i in range(5)]
+        (self.ops / f"claude-usage-meter-{account}.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def test_idle_token_lapse_passes_until_the_grace_ends(self):
+        self._idle("dave", 20 * 86400, 3 * 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+        self._idle("dave", 20 * 86400, 25 * 3600)
+        self.assertIn("token lapsed (idle)", health.first_failure(self.c, NOW))
+
+    def test_expired_refresh_token_needs_a_login(self):
+        self._idle("dave", -3600, 3 * 3600)
+        self.assertIn("needs a login", health.first_failure(self.c, NOW))
+
     def test_publisher_run_is_held_to_thirty_minutes(self):
         self.state.write_text(json.dumps({"last_ok": NOW - 3700, "last_reason": "exit 1 after 1 attempts"}))
         self.assertIn("run: last successful run 1h01m ago", health.first_failure(self.c, NOW))

@@ -389,7 +389,7 @@ class ReviewFindingTests(Base):
             uc._load, uc.write_json_durable = real_load, real_write
         self.assertTrue(state["fired"])
         host = json.loads((self.cache / uc.HOST_FILE).read_text())
-        self.assertEqual(uc._parse_stamp(host["next_allowed_at"]), T0 + timedelta(seconds=MAX_BACKOFF_S))
+        self.assertEqual(uc._parse_stamp(host["next_allowed_at"]), T0 + timedelta(seconds=1200))
 
     def test_a_crash_before_the_replace_leaves_the_previous_record_readable(self):
         self.poll(StubFetch(BODY))

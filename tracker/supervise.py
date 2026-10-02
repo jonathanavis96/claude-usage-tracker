@@ -53,6 +53,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -247,6 +248,29 @@ def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: floa
     return code
 
 
+def health_kinds(reason: str | None) -> set[str]:
+    """The incident kinds in a health reason: its check name plus the subject it names.
+
+    One check can cover several things that fail on their own: `meters` covers one log
+    per account (its reasons are joined with " | "), `publisher` both the tracker commit
+    and the site push. Keying by check name alone let one account's open incident hide
+    another account's fault and withhold the first one's recovery."""
+    kinds: set[str] = set()
+    for part in (reason or "").split(" | "):
+        part = part.strip()
+        if not part:
+            continue
+        name = part.split(":")[0]
+        m = re.search(r"claude-usage-meter-([\w.-]+?)\.log", part)
+        if m:
+            kinds.add(f"{name}/{m.group(1)}")
+        elif name == "publisher":
+            kinds.add("publisher/site-push" if "site push" in part else "publisher/commit")
+        else:
+            kinds.add(name)
+    return kinds
+
+
 def decide_alert(state: dict, now: float, health_reason: str | None, fail_threshold: int,
                  stale_after: float, send: Sender, label: str, send_up: Sender | None = None) -> None:
     """Open or close an incident, sending at most one message per transition.
@@ -262,9 +286,22 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
     # What kind of fault this is: failed runs, or the failing health check's name. An open
     # incident of one kind must not swallow a later fault of another: that sends one more
     # message and the incident takes on the new kind.
-    kinds = ({"runs"} if failing else set()) | ({health_reason.split(":")[0]} if stale else set())
-    if state.get("incident_open") and kinds - set(state.get("incident_kinds", [])):
-        new = sorted(kinds - set(state.get("incident_kinds", [])))
+    current = health_kinds(health_reason)
+    kinds = ({"runs"} if failing else set()) | (current if stale else set())
+    # Part of an open incident cleared while something else still fails: say so, so a fix
+    # for one account does not read as not working.
+    if state.get("incident_open") and (failing or health_reason is not None):
+        # A kind stored before kinds carried a subject ("meters") still covers "meters/<log>".
+        cleared = sorted(k for k in set(state.get("incident_kinds", [])) - current - ({"runs"} if failing else set())
+                         if not any(c.split("/")[0] == k for c in current))
+        # `send`, not `send_up`: the incident is still open, so Kuma must stay down.
+        if cleared and send(f"Claude usage tracker ({label}): {', '.join(cleared)} recovered; "
+                            f"still failing: {health_reason or state.get('last_reason')}"):
+            state["incident_kinds"] = sorted(set(state.get("incident_kinds", [])) - set(cleared))
+    have = set(state.get("incident_kinds", []))
+    unseen = {k for k in kinds if k not in have and k.split("/")[0] not in have}
+    if state.get("incident_open") and unseen:
+        new = sorted(unseen)
         reason = (f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})"
                   if "runs" in new else health_reason)
         if send(f"Claude usage tracker ({label}) has a further problem: {reason}. "

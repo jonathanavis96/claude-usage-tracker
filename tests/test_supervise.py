@@ -126,6 +126,32 @@ class SuperviseTest(unittest.TestCase):
                 self.run_cmd(0)
                 self.assertIn("recovered", self.send.sent[-1])
 
+    def test_one_account_recovering_under_an_open_meters_incident_is_reported(self):
+        sent, ups = [], []
+        dave = "meters: newest usable reading in claude-usage-meter-dave.log is 1h old (limit 15m)"
+        avis = "meters: newest usable reading in claude-usage-meter-avis.log is 1h old (limit 15m)"
+        st = {"consecutive_failures": 0}
+        supervise.decide_alert(st, 0, f"{dave} | {avis}", 2, 0.0, lambda m: sent.append(m) or True, "gs",
+                               send_up=lambda m: ups.append(m) or True)
+        self.assertEqual(st["incident_kinds"], ["meters/avis", "meters/dave"])
+        supervise.decide_alert(st, 60, avis, 2, 0.0, lambda m: sent.append(m) or True, "gs",
+                               send_up=lambda m: ups.append(m) or True)
+        self.assertIn("meters/dave recovered", sent[-1])
+        self.assertEqual(ups, [], "Kuma must stay down while avis still fails")
+        self.assertEqual(st["incident_kinds"], ["meters/avis"])
+        supervise.decide_alert(st, 120, None, 2, 0.0, lambda m: sent.append(m) or True, "gs",
+                               send_up=lambda m: ups.append(m) or True)
+        self.assertEqual(len(ups), 1)
+        self.assertNotIn("incident_open", st)
+
+    def test_a_legacy_meters_kind_covers_its_accounts(self):
+        sent = []
+        st = {"consecutive_failures": 0, "incident_open": True, "incident_since": 0, "incident_kinds": ["meters"],
+              "unhealthy_since": 0}
+        supervise.decide_alert(st, 60, "meters: 25 of the last 40 lines in claude-usage-meter-jwork.log are 429s",
+                               2, 0.0, lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(sent, [], "an incident opened before subjects existed sent a spurious message")
+
     def test_dirty_tracker_exit_4_is_named_and_waits_for_the_threshold(self):
         self.run_cmd(4, retries=0)
         self.assertIn("uncommitted", self.st()["last_reason"])

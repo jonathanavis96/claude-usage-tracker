@@ -243,5 +243,6 @@ def test_absurd_retry_after_is_capped(tmp_path):
     rig = Rig(tmp_path)
     with rig.running():
         rig.tick("429", fault_arg=86400)
-        later = [rig.tick(step=timedelta(minutes=5)) for _ in range(6)]  # 30 minutes
-    assert any(t.requested for t in later), "sampling resumes within the 20-minute cap"
+        later = [rig.tick(step=timedelta(minutes=25)) for _ in range(6)]  # 2 h 30 min
+    assert not any(t.requested for t in later[:4]), "a long Retry-After is honoured up to the 2-hour cap"
+    assert any(t.requested for t in later), "sampling resumes within the 2-hour cap"

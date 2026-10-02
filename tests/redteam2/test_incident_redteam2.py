@@ -8,15 +8,11 @@ failing site push are both "publisher").
 """
 from __future__ import annotations
 
-import pytest
-
 from tracker import supervise
 
 T0 = 1_790_000_000.0
 
 
-@pytest.mark.xfail(strict=True, reason="tracker/supervise.py:251 keys an incident by check name, so a "
-                                       "second account failing under an open `meters` incident sends nothing")
 def test_second_account_fault_during_meter_incident_is_alerted():
     sent: list[str] = []
 

@@ -46,9 +46,6 @@ def _expired(url, headers):
     raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b"{}"))
 
 
-@pytest.mark.xfail(strict=True, reason="tracker/health.py:295-331 `meters` fails after 15 min with no "
-                                       "reading, whatever the cause: an idle account's lapsed access "
-                                       "token opens a gs incident (Kuma down) an hour later")
 @pytest.mark.parametrize("idle", sorted(ACCOUNTS))
 def test_idle_account_token_lapse_is_not_a_meter_failure(tmp_path, fake_home, idle):
     ops = tmp_path / "ops"
