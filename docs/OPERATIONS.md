@@ -58,9 +58,9 @@ One-time setup, once per host:
 
 1. In Uptime Kuma, **Add New Monitor** → type **Push**. Name it `Claude usage tracker (masterrig)` or `(gs)`.
 2. **Heartbeat Interval** must exceed the job interval with margin, because a run can be skipped (overlap guard), retried, or slow:
-   - masterrig runs hourly at :15, plus up to ~2 min of retries: set **5400 s** (90 min).
+   - masterrig runs hourly at :15, but masterrig is a desktop that is off or asleep some nights: its moonlighter log shows gaps of 6 h, 6.5 h, 10.5 h and 12 h in the 30 days to 2026-10-02 (09-22, 09-24, 09-27, 09-28), and reboots on 09-27 and 09-28. A 90-minute window would raise a false DOWN alert on every one of those nights. Set **Heartbeat Interval 43200 s (12 h), Retries 1**: DOWN after about 24 h of silence. That is longer than any observed off period, and the data loses nothing in a night off: `bin/passive.sh` makes the day up at the first hourly run after boot (20-hour rule). A real outage (cron gone, checkout broken, machine never back) still alerts within a day, and a failing run alerts at once through the supervisor (status=down push), not through this timer.
    - gs runs every 30 min, and the publisher plus its test gate take a few minutes: set **2700 s** (45 min).
-3. **Retries: 2**, so one missed heartbeat is not an alert. Kuma then goes DOWN after about three intervals of silence (about 4.5 h masterrig, about 2.25 h gs).
+3. **Retries: 2** on gs, so one missed heartbeat is not an alert: DOWN after about 2.25 h of silence. gs is a server and is always on. masterrig: Retries 1 as above.
    An interval equal to the job interval raises false DOWN alerts: the Airlock Guard push monitor had a 300 s window on a job that pings every 300-330 s and did exactly that on 2026-10-01.
 4. Copy the push URL Kuma shows and write it on the host: `mkdir -p ~/.config/claude-usage-tracker && printf '%s\n' '<push URL>' > ~/.config/claude-usage-tracker/kuma-push-url && chmod 600 ~/.config/claude-usage-tracker/kuma-push-url`.
 5. Check: after the next scheduled run, `last_ping` is `"ok"` in `.supervise-state.json` (masterrig) or `~/.paperclip/ops/claude-usage-daily-state.json` (gs), and the Kuma monitor is UP.
@@ -69,14 +69,9 @@ A ping goes only on a healthy run, so a run that keeps failing also goes silent 
 
 ## Known gaps
 
-<<<<<<< HEAD
-- If cron itself stops, nothing runs to send an alert. An external heartbeat (for example pihome checking `.supervise-state.json` age) would cover that and is not built.
-- gs jobs are not yet under `tracker.supervise`. The meter timers already log their gaps; `daily.sh` has its own lock (exit 6).
+- `bin/daily.sh` keeps its own lock (exit 6 after waiting 10 min for a probe); under the supervisor that counts as a failed run.
 
 ## Cross-wired from the failure inventory (UT-I)
 
 - `bin/passive.sh` exits 3 when the checkout is not on `main`. The supervisor does not retry it, records `last_exit: 3` with the reason "checkout is off main", and sends the alert on that first run. `tracker.health` fails its `run` check with "the checkout is off main (exit 3)" until a run succeeds. Fix: `git checkout main` in the live checkout.
 - `tracker.meter_log` skips a tick within 110 s of the last call (exit 0, no line), so per-account reads land about 130 s apart. The gs profile's `meters` check allows 15 min since the newest good reading, well above that, and also fails when more than half of a log's last 40 or more lines are 429s.
-=======
-- `bin/daily.sh` keeps its own lock (exit 6 after waiting 10 min for a probe); under the supervisor that counts as a failed run.
->>>>>>> burn/20261002-ut-5-deadman
