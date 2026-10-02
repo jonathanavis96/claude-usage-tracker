@@ -28,7 +28,8 @@ from tracker import health, supervise
 
 ROOT = Path(__file__).resolve().parent.parent
 GATE_TESTS = ("tests/test_list_prices.py", "tests/test_credits.py", "tests/test_publish.py",
-              "tests/test_weight.py", "tests/test_contributed.py", "tests/test_gs_passive.py")
+              "tests/test_weight.py", "tests/test_contributed.py", "tests/test_gs_passive.py",
+              "tests/test_prices_data.py")
 STATE = health.GS_OPS / "claude-usage-publish-gate.json"
 Runner = Callable[[list[str], float], tuple[int, str]]
 

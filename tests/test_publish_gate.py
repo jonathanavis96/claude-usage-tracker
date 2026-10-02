@@ -69,6 +69,23 @@ class GateTest(unittest.TestCase):
             code, summary = publish_gate.pytest_runner(["test_slow.py"], 2)
             self.assertEqual((code, summary), (1, "timed out after 2 s"))
 
+    def test_gate_catches_a_bad_price_row(self):
+        import json
+        import os
+        from unittest import mock
+        root = Path(__file__).resolve().parent.parent
+        table = json.loads((root / "data" / "prices.json").read_text())
+        good = publish_gate.pytest_runner(["tests/test_prices_data.py"], 60)
+        self.assertEqual(good[0], 0, good[1])
+        table["claude-sonnet-5-5"] = {**table["claude-sonnet-5-5"], "output": "10", "cache_read": -1}
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "prices.json"
+            bad.write_text(json.dumps(table))
+            with mock.patch.dict(os.environ, {"CUT_PRICES_FILE": str(bad)}):
+                code, summary = publish_gate.pytest_runner(["tests/test_prices_data.py"], 60)
+        self.assertEqual(code, 1)
+        self.assertIn("failed", summary)
+
     def test_gate_files_exist(self):
         for f in publish_gate.GATE_TESTS:
             self.assertTrue((publish_gate.ROOT / f).is_file(), f)
