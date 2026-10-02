@@ -47,3 +47,8 @@ A failed send leaves the incident unopened, so the next hourly run tries again. 
 
 - If cron itself stops, nothing runs to send an alert. An external heartbeat (for example pihome checking `.supervise-state.json` age) would cover that and is not built.
 - gs jobs are not yet under `tracker.supervise`. The meter timers already log their gaps; `daily.sh` has its own lock (exit 6).
+
+## Cross-wired from the failure inventory (UT-I)
+
+- `bin/passive.sh` exits 3 when the checkout is not on `main`. The supervisor does not retry it, records `last_exit: 3` with the reason "checkout is off main", and sends the alert on that first run. `tracker.health` fails its `run` check with "the checkout is off main (exit 3)" until a run succeeds. Fix: `git checkout main` in the live checkout.
+- `tracker.meter_log` skips a tick within 110 s of the last call (exit 0, no line), so per-account meter reads land about 130 s apart. `python3 -m tracker.health --meter-log <log>` (repeatable) checks those logs with a 180 s limit, plus the Retry-After of a trailing 429 gap line.

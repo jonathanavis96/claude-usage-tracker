@@ -60,7 +60,7 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(self.send.sent, [])
 
     def test_retries_with_exponential_backoff(self):
-        self.assertEqual(self.run_cmd(3, retries=2, backoff=5), 3)
+        self.assertEqual(self.run_cmd(5, retries=2, backoff=5), 5)
         self.assertEqual(self.sleeps, [5, 10])
         self.assertEqual(self.log.read_text().count("attempt"), 3)
         self.assertEqual(self.st()["consecutive_failures"], 1)
@@ -99,6 +99,17 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(len(self.send.sent), 2)
         self.assertIn("recovered", self.send.sent[1])
         self.assertNotIn("incident_open", self.st())
+
+    def test_off_main_exit_3_is_not_retried_and_alerts_at_once(self):
+        self.assertEqual(self.run_cmd(3, retries=2, backoff=5), 3)
+        self.assertEqual(self.sleeps, [], "a checkout off main is not healed by retrying")
+        st = self.st()
+        self.assertEqual((st["last_exit"], st["consecutive_failures"]), (3, 1))
+        self.assertIn("off main", st["last_reason"])
+        self.assertEqual(len(self.send.sent), 1)
+        self.assertIn("off main", self.send.sent[0])
+        self.run_cmd(0)
+        self.assertIn("recovered", self.send.sent[-1])
 
     def test_two_failures_do_not_alert(self):
         self.run_cmd(1, retries=0)

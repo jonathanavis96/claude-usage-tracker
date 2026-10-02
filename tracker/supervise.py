@@ -26,6 +26,9 @@ WhatsApp bridge, `wa_send.py`, which prints OK or FAIL. Setting CUT_ALERT_DRY_RU
 passing --dry-run, prints the message to stderr instead. Tests inject their own sender.
 An alert that fails to send leaves the incident unopened, so the next run tries again.
 
+Exit 3 from bin/passive.sh means the checkout is off main: a retry cannot fix that, so it
+is not retried, counts as a failed run, and opens an incident on the first occurrence.
+
 Exit status is the command's last exit status (0 when skipped).
 """
 from __future__ import annotations
@@ -44,6 +47,8 @@ from tracker import health
 
 ROOT = Path(__file__).resolve().parent.parent
 Sender = Callable[[str], bool]
+#: bin/passive.sh's exit when the checkout is not on main; never retried.
+EXIT_OFF_MAIN = 3
 
 WA_CMD = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "pihome",
           "python3 /home/grafe/wa-assistant/wa_send.py 27822227457"]
@@ -114,7 +119,7 @@ def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: floa
         finally:
             if out:
                 out.close()
-        if code == 0 or attempt == retries:
+        if code in (0, EXIT_OFF_MAIN) or attempt == retries:
             return code
         sleep(backoff * (2 ** attempt))
     return code
@@ -127,7 +132,8 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
         state.setdefault("unhealthy_since", now)
     else:
         state.pop("unhealthy_since", None)
-    failing = state.get("consecutive_failures", 0) >= fail_threshold
+    failing = (state.get("consecutive_failures", 0) >= fail_threshold
+               or state.get("last_exit") == EXIT_OFF_MAIN)
     stale = bool(health_reason) and now - state["unhealthy_since"] >= stale_after
     if not state.get("incident_open"):
         if failing or stale:
@@ -168,12 +174,14 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             code = run_with_retry(cmd, log, retries, backoff, sleep)
             state = health.read_state(state_path)
             t = now()
+            state["last_exit"] = code
             if code == 0:
                 state["last_ok"] = t
                 state["consecutive_failures"] = 0
             else:
                 state["last_fail"] = t
-                state["last_reason"] = f"exit {code} after {retries + 1} attempts"
+                state["last_reason"] = ("checkout is off main (exit 3), run `git checkout main`"
+                                        if code == EXIT_OFF_MAIN else f"exit {code} after {retries + 1} attempts")
                 state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
             cfg = health_cfg or health.Config(state=state_path, lock_pidfile=pidfile,
                                               logs=(log,) if log else ())

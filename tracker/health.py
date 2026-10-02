@@ -16,6 +16,10 @@ Checks, in order (the first failure is the one-line reason):
                not further in the past than --token-grace. Claude Code refreshes the
                access token only when it runs, so an idle few hours is normal; a token
                long expired, or an expired refresh token, means a re-login is needed.
+  meter        (only with --meter-log) each gs-style per-account meter log has a line
+               younger than --meter-max-age (default 180 s). meter_log skips a tick
+               within 110 s of the last call, exiting 0 with no line, so reads land
+               about 130 s apart; a 429 gap line extends the limit by its Retry-After.
   lock         no lock pid file whose process is dead, and none older than --lock-max-age.
   sizes        each log under --max-log-bytes and the history/ directory under
                --max-history-bytes.
@@ -57,6 +61,8 @@ class Config:
     max_log_bytes: int = 5 * 1024 * 1024
     history_dir: Path = ROOT / "history"
     max_history_bytes: int = 200 * 1024 * 1024
+    meter_logs: tuple[Path, ...] = ()
+    meter_max_age_s: int = 180
 
 
 def _parse_ts(value) -> float | None:
@@ -115,6 +121,9 @@ def read_state(path: Path) -> dict:
 def check_run(c: Config, now: float) -> str | None:
     st = read_state(c.state)
     last_ok = st.get("last_ok")
+    last_fail = st.get("last_fail")
+    if st.get("last_exit") == 3 and isinstance(last_fail, (int, float)) and last_fail >= (last_ok or 0):
+        return "run: bin/passive.sh refused to run, the checkout is off main (exit 3)"
     if not isinstance(last_ok, (int, float)):
         return f"run: no successful supervised run recorded in {c.state.name}"
     if now - last_ok > 2 * c.run_interval_s:
@@ -152,6 +161,26 @@ def check_token(c: Config, now: float) -> str | None:
         return "token: no expiresAt"
     if now - exp > c.token_grace_s:
         return f"token: access token expired {_age(now - exp)} ago and not refreshed"
+    return None
+
+
+def check_meter(c: Config, now: float) -> str | None:
+    for log in c.meter_logs:
+        try:
+            row = _last_line(log)
+        except OSError as e:
+            return f"meter: cannot read {log}: {e.strerror}"
+        ts = _parse_ts(row.get("ts")) if row else None
+        if ts is None:
+            return f"meter: no timestamped line in {log}"
+        limit = c.meter_max_age_s
+        if row.get("reason") == "rate_limited":
+            try:
+                limit += min(float(row.get("retry_after_s") or 0), 1200)
+            except (TypeError, ValueError):
+                pass
+        if now - ts > limit:
+            return f"meter: newest line in {log.name} is {_age(now - ts)} old (limit {int(limit)}s)"
     return None
 
 
@@ -209,6 +238,7 @@ CHECKS: dict[str, Callable[[Config, float], str | None]] = {
     "run": check_run,
     "publisher": check_publisher,
     "token": check_token,
+    "meter": check_meter,
     "lock": check_lock,
     "sizes": check_sizes,
 }
@@ -243,6 +273,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--log", type=Path, action="append", default=[], help="a log whose size is bounded (repeatable)")
     p.add_argument("--max-log-bytes", type=int, default=d.max_log_bytes)
     p.add_argument("--max-history-bytes", type=int, default=d.max_history_bytes)
+    p.add_argument("--meter-log", type=Path, action="append", default=[],
+                   help="a per-account meter log (tracker.meter_log) to check for freshness (repeatable)")
+    p.add_argument("--meter-max-age", type=int, default=d.meter_max_age_s)
     return p
 
 
@@ -251,7 +284,8 @@ def config_from_args(a: argparse.Namespace) -> Config:
                   run_interval_s=a.run_interval, repo=a.repo, history_dir=a.repo / "history",
                   publisher_max_age_s=a.publisher_max_age, credentials=a.credentials,
                   token_grace_s=a.token_grace, lock_pidfile=a.pidfile, logs=tuple(a.log),
-                  max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes)
+                  max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes,
+                  meter_logs=tuple(a.meter_log), meter_max_age_s=a.meter_max_age)
 
 
 def main(argv: list[str] | None = None) -> int:

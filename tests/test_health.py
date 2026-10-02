@@ -70,6 +70,24 @@ class HealthTest(unittest.TestCase):
         self.state.write_text(json.dumps({"last_ok": NOW - 3 * 3600, "last_reason": "exit 1"}))
         self.assertIn("last failure: exit 1", self.reasons()["run"])
 
+    def test_off_main_exit_3_fails_the_run_check(self):
+        self.state.write_text(json.dumps({"last_ok": NOW - 3600, "last_fail": NOW - 60, "last_exit": 3}))
+        self.assertIn("off main (exit 3)", self.reasons()["run"])
+        self.state.write_text(json.dumps({"last_ok": NOW - 30, "last_fail": NOW - 60, "last_exit": 0}))
+        self.assertIsNone(self.reasons()["run"])
+
+    def test_meter_log_allows_a_skipped_tick(self):
+        meter = self.tmp / "meter-dave.log"
+        self.c.meter_logs = (meter,)
+        meter.write_text(json.dumps({"ts": iso(NOW - 130)}) + "\n")
+        self.assertIsNone(self.reasons()["meter"], "reads ~130 s apart are normal under the 110 s spacing")
+        meter.write_text(json.dumps({"ts": iso(NOW - 400)}) + "\n")
+        self.assertIn("meter: newest line in meter-dave.log is 6m old", self.reasons()["meter"])
+        meter.write_text(json.dumps({"ts": iso(NOW - 400), "reason": "rate_limited", "retry_after_s": 300}) + "\n")
+        self.assertIsNone(self.reasons()["meter"], "a 429 gap line extends the limit by its Retry-After")
+        self.c.meter_logs = ()
+        self.assertIsNone(self.reasons()["meter"], "no meter logs configured, nothing to check")
+
     def test_stale_publisher(self):
         self.c.publisher_max_age_s = 300
         self.assertIn("publisher: history/gs-passive.json last committed 10m ago", self.reasons()["publisher"])
