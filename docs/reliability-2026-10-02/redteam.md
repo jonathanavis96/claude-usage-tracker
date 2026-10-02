@@ -1,6 +1,6 @@
 # Red-team findings, 2026-10-02 (UT-R)
 
-Branch `burn/20261002-ut-redteam`, cut from `burn/20261002-ut-integrate` at 6f9a99b.
+Branch `ut-redteam`, cut from `ut-integrate` at 6f9a99b.
 Every confirmed failure has a strict xfail in `tests/redteam/` that fails for the stated
 reason on that code (checked with `--runxfail`). When a fix lands, its test reports a
 strict XPASS; remove the marker then. Run one file at a time:

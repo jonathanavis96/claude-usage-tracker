@@ -14,7 +14,7 @@
 # Refuses (exit 3, nothing changed) on a checkout that is dirty, off main, mid-rebase,
 # lacks the supervisor, or does not contain --expect. Backs the crontab up before
 # changing it (deploy/rollback.sh undoes it) and ends with a post-deploy check. Details
-# and exit codes: deploy/lib.sh. Morning procedure: docs/burn-20261002/DEPLOY.md.
+# and exit codes: deploy/lib.sh. Morning procedure: docs/reliability-2026-10-02/DEPLOY.md.
 #
 # Options:
 #   --repo DIR      checkout the cron runs from (default: this script's repo)

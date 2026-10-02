@@ -1,14 +1,12 @@
 """Red-team round 2 fixtures: repo root on sys.path, no network, HOME pointed at a temp dir.
 
 tests/redteam2 has no __init__.py on purpose, like tests/redteam and tests/chaos:
-`python3 -m unittest discover -s tests` skips it, because every test here is a pytest
-strict xfail that documents a confirmed failure on the current code. Run one file at a
-time:
+`python3 -m unittest discover -s tests` skips it. Every test here began as a pytest strict
+xfail documenting a confirmed failure; each finding is now fixed and its test passes.
+Run one file at a time:
 
     timeout 300 nice -n 10 python3 -m pytest tests/redteam2/test_overlap_redteam2.py -q
 
-and check each still fails for its stated reason with --runxfail. When a fix lands, its
-test turns into a strict XPASS failure; remove the marker then.
 
 Nothing here touches a live crontab, systemd unit, Kuma monitor, ssh host, the live data
 repo or the usage API: git work happens in throwaway repos under tmp_path, crontabs are

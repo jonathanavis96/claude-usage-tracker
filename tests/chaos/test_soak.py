@@ -1,6 +1,6 @@
 """Fault-injection soak of the usage collector. Run: python3 -m pytest tests/chaos -q
 
-The six invariants that failed on 2026-10-02 (docs/burn-20261002/chaos-findings.md)
+The six invariants that failed on 2026-10-02 (docs/reliability-2026-10-02/chaos-findings.md)
 were fixed in tracker/meter_log.py the same night; their tests are ordinary tests now.
 """
 from __future__ import annotations

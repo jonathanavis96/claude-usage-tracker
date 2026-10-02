@@ -1,9 +1,9 @@
-# Integration of the 2026-10-02 burn (UT-I)
+# Integration of the 2026-10-02 reliability work (UT-I)
 
-Branch `burn/20261002-ut-integrate`. It holds UT-2, UT-3, UT-4, UT-H, UT-1, UT-5 and the red-team branch UT-R, merged in that order with merge commits, plus the fixes below.
+Branch `ut-integrate`. It holds UT-2, UT-3, UT-4, UT-H, UT-1, UT-5 and the red-team branch UT-R, merged in that order with merge commits, plus the fixes below.
 
 ## What merged
-- **UT-2**: closure of the 2026-09-16 Codex audit (`docs/burn-20261002/audit-closure.md`) and its regression tests.
+- **UT-2**: closure of the 2026-09-16 Codex audit (`docs/reliability-2026-10-02/audit-closure.md`) and its regression tests.
 - **UT-3**: `tracker/health.py`, `tracker/supervise.py` (flock, retries, log rotation, one alert per incident), `deploy/install-schedule.sh`, `docs/OPERATIONS.md`.
 - **UT-4**: the chaos soak harness in `tests/chaos/`.
 - **UT-H**: hardening against malformed input, `tracker/atomic.py`, and the 11 tests that also failed on main. They had treated the live price table as fixed data.
@@ -33,7 +33,7 @@ The only conflict was in `tracker/passive.py` (UT-H's atomic write against UT-1'
 - **The gs alerts reach Jonathan.** An incident is pushed to Kuma as `status=down&msg=<reason>`, and its recovery as `status=up`. This was tested against a fake server on 127.0.0.1.
 - **Two tests that failed on main and on every branch now pass.** They are in `tests/test_detect.py` and read the hourly-rebuilt `history/passive.json` (evidence 103 -> 102). They now read a frozen fixture, `tests/fixtures/weekly_windows_2026-09-16.json`, taken from 44471f4.
 
-- **All 11 red-team findings fixed** (`docs/burn-20261002/redteam.md`); every strict xfail in `tests/redteam/` is now a passing test.
+- **All 11 red-team findings fixed** (`docs/reliability-2026-10-02/redteam.md`); every strict xfail in `tests/redteam/` is now a passing test.
   - Supervisor: it survives a full-disk run log, an unwritable state file and a crashing health check. A run is killed at 45 min, and a lock held past 2 h alerts. A failed alert send is recorded.
   - Health: freshness is judged from real readings, not error rows. An odd token file or pid file is reported instead of crashing the check.
   - `bin/passive.sh` exits 5 when its commit or push fails, where it used to exit 0.
@@ -65,7 +65,7 @@ FULL_RESULTS
 **Use [`DEPLOY.md`](DEPLOY.md) instead.** It is the single morning page: one dry run and one `--apply` for both hosts, with backups, rollback, the gs Kuma URL fix (gs cannot resolve `pihome`) and a table mapping each step below to its own. The list below is kept as UT-I wrote it.
 
 Every fix below that needs a live change takes effect through these steps: the gs pull, the two installers (they replace the bare cron lines, which fixes the discarded supervisor output) and the Kuma monitors. Nothing else needs a manual change.
-1. **Ship.** Say "ship it" to run `ship-to-main` on `burn/20261002-ut-integrate`.
+1. **Ship.** Merge `ut-integrate` to main through a reviewed PR.
 2. **gs.** `ssh gs 'cd ~/claude-usage-tracker && git pull'`. This takes the 110 s meter spacing (which ends the 429 storm), the gate and the Kuma push live. Then, on gs: `deploy/install-gs.sh --dry-run`. Check that it replaces the bare `bin/daily.sh` line with one managed block, then run `deploy/install-gs.sh`.
 3. **masterrig.** `cd ~/code/claude-usage-tracker && git pull && deploy/install-schedule.sh --dry-run`. Check that it prints one managed block that replaces the bare `bin/passive.sh` line, then run `deploy/install-schedule.sh`.
 4. **Uptime Kuma.** Create two Push monitors, following `docs/OPERATIONS.md` → "Dead-man switch". **gs**: Heartbeat Interval 2700 s, Retries 2. **masterrig**: Heartbeat Interval 43200 s, Retries 1. masterrig is off or asleep some nights (gaps of 6 to 12 h, four times in the last 30 days), so a short window would raise a false alarm every such night. Write each push URL to `~/.config/claude-usage-tracker/kuma-push-url` (chmod 600) on its host.

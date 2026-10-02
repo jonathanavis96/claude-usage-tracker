@@ -1,7 +1,7 @@
 """Anomalies found by the long chaos soak (tests/chaos/long_soak.py), 2026-10-02 UT-S.
 
 Each is a strict xfail: when a fix lands it turns into an XPASS failure and the
-marker should come off. Report: docs/burn-20261002/soak.md.
+marker should come off. Report: docs/reliability-2026-10-02/soak.md.
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # Red-team findings, round 2, 2026-10-02 (UT-R2)
 
-Branch `burn/20261002-ut-redteam2`, cut from `burn/20261002-ut-integrate` at 0402ef3 (its tip at the time).
+Branch `ut-redteam2`, cut from `ut-integrate` at 0402ef3 (its tip at the time).
 It adds only `tests/redteam2/` and this file, and fixes nothing: UT-I2 does the fixing.
 Every confirmed failure has a strict xfail in `tests/redteam2/` that fails for the stated
 reason on this code (checked with `--runxfail`). When a fix lands, its test reports a
@@ -93,3 +93,19 @@ One entry each: where, the test, the impact and a suggested fix.
 6. An installer wipes the host's crontab when `crontab -l` fails. The likelihood is low and the damage is total (`test_unreadable_crontab_is_not_replaced[install-schedule.sh]`, `[install-gs.sh]`).
 7. A measured 3,600 s Retry-After is cut to 1,200 s, so the sampler calls twice inside the block (`test_measured_one_hour_retry_after_is_honoured`).
 8. A week stays `partial` on the page until UTC midnight after its reset (`test_week_is_complete_from_its_reset_instant`).
+
+## Fixed (all eight, plus four of the read-only items)
+
+Every strict xfail above is now a passing test; `tests/redteam2/` has no xfail left.
+
+1. Conflicted pull: `bin/passive.sh` and `bin/daily.sh` abort a rebase that stopped on a conflict and exit 7 with the checkout back on main and clean; a rebase or merge already in progress exits 8 at start. The supervisor names both and alerts on the first run.
+2. Unreadable record: `tracker.passive` exits 2 without writing when `--out` exists but does not parse.
+3. Staged work: both wrappers commit with `git commit --only -- <their files>`; `passive.sh` refuses (exit 4) to join on uncommitted `tracker/` code.
+4. Idle token: `meters` passes an account whose reads are all `auth_expired` while its refresh token is valid, for 24 h; it fails with "needs a login" once the refresh token has expired. With no readable expiry the plain age rule applies.
+5. Incident masking: `meters` reports every failing log; incident kinds are check plus subject (`meters/<account>`, `publisher/commit`, `publisher/site-push`); a partial recovery is reported while Kuma stays down.
+6. Crontab wipe: a `crontab -l` failure other than "no crontab for <user>" refuses (exit 3) in every mode before anything is printed or written, and a merge that would drop any non-tracker line refuses too. `deploy/rollback.sh` reads the crontab the same way.
+7. Retry-After: `meter_log` honours up to 2 h; `meters` extends its age limit by the Retry-After being honoured.
+8. Week partial: weekly rows keep `resets_at`; publish compares instants (date fallback for older rows) and drops the field from the page.
+
+Read-only items also fixed: the supervisor kills the job's process group on timeout; its state file goes through `write_text_atomic`; `passive_dollar_readings` keys UTC days; a second 401 with a re-read token is `AuthExpired`.
+

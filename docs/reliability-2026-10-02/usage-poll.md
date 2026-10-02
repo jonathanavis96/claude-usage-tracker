@@ -37,11 +37,11 @@ Not in scope but seen: `mis-usage-feed.py` (now on pihome, all accounts) and
   one and 2,517 none. One extra caller of any account costs every account on gs.
 - **gs runs the old meter.** gs's `~/claude-usage-tracker` is on `main` at `d92eaed`,
   whose `meter_log.py` has no `MIN_READ_SPACING_S`; the 110 s spacing on
-  `burn/20261002-ut-integrate` is not deployed, so each meter still calls every minute.
+  `ut-integrate` is not deployed, so each meter still calls every minute.
 - Retry-After is nearly always absent or `0` on a refusal (3, 3 and 10 of ~6,000 meter
   429s carried a positive value), so a backoff that only honours the header never backs
   off.
-- masterrig's pollers are rarely refused. The burn watcher's two failures (03:12 and
+- masterrig's pollers are rarely refused. The usage watcher's two failures (03:12 and
   03:16 SAST) fell between ceiling reads that succeeded (03:11:44 and 03:16:48).
 
 ## The shared reader: `tracker/usage_cache.py`

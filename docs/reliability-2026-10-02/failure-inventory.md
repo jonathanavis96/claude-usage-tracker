@@ -29,7 +29,7 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
 
 ## Failure modes
 
-### F1. passive.json loses days and the 5x-to-20x ratio as transcripts age out (fixed on burn/20261002-ut-1-forensics, 4086e7c)
+### F1. passive.json loses days and the 5x-to-20x ratio as transcripts age out (fixed on ut-1-forensics, 4086e7c)
 - Symptom: the committed `history/passive.json` started at 2026-07-30 (09-05), 08-07 (09-06),
   08-11 (09-09 to 09-19), then 08-20 from 2026-09-21 onward. Its `plan_ratio_5x_to_20x`
   went 0.3865, 0.423, 0.4468, 0.6696, 1.0287, 0.6612, 0.2492 and has been `None` since
@@ -50,7 +50,7 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
   Once the fix is on main, merging those days into `history/passive.json` once makes them stick.
   This is left to the integrator because automation rewrites that file on main every day.
 
-### F2. The cron logs have no timestamps (fixed on burn/20261002-ut-1-forensics, ee71d1e and the daily.sh commit)
+### F2. The cron logs have no timestamps (fixed on ut-1-forensics, ee71d1e and the daily.sh commit)
 - Symptom: `claude-usage-passive.log` holds 115 lines, none with a date. The 2026-09-?? line
   `fatal: couldn't find remote ref crossing-detection` (the checkout was on a feature branch,
   so the cron pulled and pushed that branch) cannot be dated from the log at all.
@@ -59,7 +59,7 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
   failures and the 2026-10-01 DNS outage cannot be dated from it.
 - Fix: passive.sh stamps every line it writes itself. daily.sh writes one dated line at the start of each run.
 
-### F3. passive.sh follows whatever branch the live checkout has checked out (fixed on burn/20261002-ut-1-forensics, ee71d1e)
+### F3. passive.sh follows whatever branch the live checkout has checked out (fixed on ut-1-forensics, ee71d1e)
 - Symptom: the log line above. The cron pushed `crossing-detection` to origin
   ("Create a pull request for 'crossing-detection'"), so that day's masterrig record never reached main.
 - Root cause: `bin/passive.sh:30` `BRANCH="$(git rev-parse --abbrev-ref HEAD)"`.
@@ -90,7 +90,7 @@ of 2026-09-16, UT-3 scheduling, self-healing, health and alerting, UT-4 chaos so
 - Jonathan, 2026-09-28 19:32: "five-hour −2% to +63% ... surely thats a bug?". Traced in
   `docs/findings-2026-09-29-*`: rounding of the 1% meter and missing work. Model work, out of scope tonight.
 
-### F9. On gs, 55% of meter reads are 429s (fixed on burn/20261002-ut-1-forensics, 5e895f2)
+### F9. On gs, 55% of meter reads are 429s (fixed on ut-1-forensics, 5e895f2)
 - Symptom: `~/.paperclip/ops/claude-usage-meter-{avis,dave,jwork}.log` on gs. Until
   2026-09-22 each account logged about 262 good reads a day and no 429s. From 2026-09-23,
   each logs about 600 good reads and 650 to 800 `rate_limited` lines a day. That is 18,784

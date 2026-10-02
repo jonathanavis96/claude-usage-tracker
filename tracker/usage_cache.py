@@ -4,7 +4,7 @@ WHY THIS EXISTS
 ---------------
 On 2026-10-02 at least seven processes across masterrig and gs polled
 https://api.anthropic.com/api/oauth/usage independently (inventory and switch-over
-plan: docs/burn-20261002/usage-poll.md). The endpoint's limiter is shared across the
+plan: docs/reliability-2026-10-02/usage-poll.md). The endpoint's limiter is shared across the
 accounts on one host: in the week to 2026-10-02 the three gs meters were refused in the
 same minute far more often than one at a time (3,454 minutes all three, 1,278 only one).
 So every extra reader of one account also costs the other accounts on that host, and

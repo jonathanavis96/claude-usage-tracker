@@ -4,7 +4,7 @@ Each test replays the audit's own counterexample (audit_checks.py, preserved in 
 parent workspace at .agents/codex/claude-usage-tracker-audit-2026-09-16/) against the
 current code and asserts the repaired behaviour. Findings already covered by
 tests/test_core_audit_repairs.py are not repeated here. See
-docs/burn-20261002/audit-closure.md for the per-finding status.
+docs/reliability-2026-10-02/audit-closure.md for the per-finding status.
 """
 import importlib.util
 import unittest

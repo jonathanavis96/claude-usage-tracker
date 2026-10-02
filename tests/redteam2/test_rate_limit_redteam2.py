@@ -1,6 +1,6 @@
 """Red-team 2: the usage endpoint refusing requests for asking too often.
 
-docs/burn-20261002/failure-inventory.md F9 measured gs's 429s: mostly Retry-After 0 about
+docs/reliability-2026-10-02/failure-inventory.md F9 measured gs's 429s: mostly Retry-After 0 about
 every other tick (fixed by the 110 s spacing), and "15 more carried Retry-After of about
 3,600 s". "A run of Retry-After 0 answers escalates to a Retry-After 3600 block": the
 endpoint answers persistence with longer blocks. Since the chaos fix (6), meter_log caps

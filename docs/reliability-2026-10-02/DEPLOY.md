@@ -7,7 +7,7 @@ The fixes do nothing until both hosts run the new code and both crontabs carry t
 Every command below runs on masterrig unless it starts with `ssh gs`.
 
 ## 1. Ship
-Say "ship it" to run `ship-to-main` on **`burn/20261002-ut-deploy`**. It holds all of `burn/20261002-ut-integrate` plus the hardened installers, so shipping it ships both.
+Merge the fixes to main through a reviewed PR. The merged branch holds all of `ut-integrate`, the hardened installers and the round-2 red-team fixes (`redteam2.md`).
 
 ## 2. Pull on both hosts
 ```
@@ -107,7 +107,7 @@ If the crontab has changed since the install, the rollback refuses, and `--force
 ## Mapping to INTEGRATION.md "Deploy steps"
 | INTEGRATION step | Here |
 |---|---|
-| 1. Ship `burn/20261002-ut-integrate` | 1. Ship `burn/20261002-ut-deploy` (contains it) |
+| 1. Ship `ut-integrate` | 1. Ship `ut-deploy` (contains it) |
 | 2. gs `git pull`, `deploy/install-gs.sh --dry-run`, then install | 2 (pull under `.cron.lock`), 3 and 4 (`scripts/deploy.sh` runs `install-gs.sh` over ssh) |
 | 3. masterrig `git pull`, `deploy/install-schedule.sh --dry-run`, then install | 2, 3 and 4 |
 | 4. Kuma push monitors, URL files | 5, with the gs URL host fixed to `100.105.0.13:3001` |
