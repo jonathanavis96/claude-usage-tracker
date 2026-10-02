@@ -119,3 +119,49 @@ class HealthTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GsProfileTest(unittest.TestCase):
+    """The gs profile: the supervised publisher run plus the three meter timers' logs."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.ops = self.tmp / "ops"
+        self.ops.mkdir()
+        self.state = self.ops / "state.json"
+        self.state.write_text(json.dumps({"last_ok": NOW - 120}))
+        for a in health.GS_METER_ACCOUNTS:
+            self.write_meter(a, NOW - 60)
+        self.c = health.gs_config(state=self.state, pidfile=self.ops / "x.pid", ops=self.ops, repo=self.tmp)
+
+    def write_meter(self, account, ts, gap_after=0):
+        rows = [{"ts": iso(ts), "account": account, "five_hour": {"utilization": 1.0}}]
+        rows += [{"ts": iso(ts + 60 * (i + 1)), "account": account, "error": "HTTP 429", "reason": "rate_limited"}
+                 for i in range(gap_after)]
+        (self.ops / f"claude-usage-meter-{account}.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def test_fresh_gs_is_healthy_and_skips_masterrig_checks(self):
+        names = [n for n, _ in health.run_checks(self.c, NOW)]
+        self.assertEqual(names, ["run", "lock", "sizes", "meters"])
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_masterrig_default_does_not_run_meters(self):
+        self.assertNotIn("meters", [n for n, _ in health.run_checks(health.Config(), NOW)])
+
+    def test_gap_lines_do_not_count_as_a_reading(self):
+        # dave's last usable read is 20 min old though 429 gaps were logged since.
+        self.write_meter("dave", NOW - 1200, gap_after=19)
+        self.assertIn("meters: newest usable reading in claude-usage-meter-dave.log is 20m old",
+                      health.first_failure(self.c, NOW))
+
+    def test_routine_429s_between_reads_stay_healthy(self):
+        self.write_meter("avis", NOW - 300, gap_after=4)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_missing_meter_log_fails(self):
+        (self.ops / "claude-usage-meter-jwork.log").unlink()
+        self.assertIn("meters: cannot read claude-usage-meter-jwork.log", health.first_failure(self.c, NOW))
+
+    def test_publisher_run_is_held_to_thirty_minutes(self):
+        self.state.write_text(json.dumps({"last_ok": NOW - 3700, "last_reason": "exit 1 after 1 attempts"}))
+        self.assertIn("run: last successful run 1h01m ago", health.first_failure(self.c, NOW))
