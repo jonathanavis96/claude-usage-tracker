@@ -155,10 +155,16 @@ def rotate_log(log: Path, max_bytes: int, keep: int) -> bool:
     return True
 
 
-def write_state(path: Path, state: dict) -> None:
+def write_state(path: Path, state: dict) -> bool:
+    """Save `state`; False (and a stderr line) when the disk refuses it."""
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
-    tmp.replace(path)
+    try:
+        tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
+        tmp.replace(path)
+        return True
+    except OSError as e:
+        print(f"cannot write state {path}: {e}", file=sys.stderr)
+        return False
 
 
 def clear_stale_pidfile(pidfile: Path) -> bool:
@@ -172,23 +178,55 @@ def clear_stale_pidfile(pidfile: Path) -> bool:
     return True
 
 
+#: A run longer than this is killed (exit 124): a `git push` stalled on a half-open
+#: connection would otherwise hold the lock, and silence every later run, for good.
+RUN_TIMEOUT_S = 45 * 60
+
+
+def _open_log(log: Path | None, header: str):
+    """The run log opened for append with `header` written, or None when there is no log
+    or the disk refuses it (full disk): the job still runs, its output discarded."""
+    if not log:
+        return None
+    try:
+        out = open(log, "a")
+    except OSError as e:
+        print(f"run log {log} unwritable ({e}); running without it", file=sys.stderr)
+        return None
+    try:
+        out.write(header)
+        out.flush()
+        return out
+    except OSError as e:
+        print(f"run log {log} unwritable ({e}); running without it", file=sys.stderr)
+        try:
+            out.close()
+        except OSError:
+            pass
+        return None
+
+
 def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: float,
-                   sleep: Callable[[float], None] = time.sleep) -> int:
+                   sleep: Callable[[float], None] = time.sleep, timeout: float = RUN_TIMEOUT_S) -> int:
     code = 0
     for attempt in range(retries + 1):
-        out = open(log, "a") if log else None
+        out = _open_log(log, f"--- {time.strftime('%Y-%m-%dT%H:%M:%S%z')} attempt {attempt + 1}: {' '.join(cmd)}\n")
+        sink = out if out else (subprocess.DEVNULL if log else None)
         try:
-            if out:
-                out.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S%z')} attempt {attempt + 1}: {' '.join(cmd)}\n")
-                out.flush()
-            code = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT if out else None, check=False).returncode
+            code = subprocess.run(cmd, stdout=sink, stderr=subprocess.STDOUT if sink else None,
+                                  check=False, timeout=timeout).returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+            print(f"run killed after {int(timeout)} s: {' '.join(cmd)}", file=sys.stderr)
         except OSError as e:
             code = 127
-            if out:
-                out.write(f"cannot start: {e}\n")
+            print(f"cannot start {cmd[0]}: {e}", file=sys.stderr)
         finally:
             if out:
-                out.close()
+                try:
+                    out.close()
+                except OSError:
+                    pass
         if code in (0, EXIT_OFF_MAIN) or attempt == retries:
             return code
         sleep(backoff * (2 ** attempt))
@@ -211,8 +249,13 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
         if failing or stale:
             reason = (f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})"
                       if failing else health_reason)
-            if send(f"Claude usage tracker ({label}) needs attention: {reason}. "
-                    f"Check: python3 -m tracker.health --all"):
+            if not send(f"Claude usage tracker ({label}) needs attention: {reason}. "
+                        f"Check: python3 -m tracker.health --all"):
+                state["last_alert_error"] = f"alert not sent at {now:.0f}: every channel failed"
+                state["alert_failures"] = state.get("alert_failures", 0) + 1
+                print(f"alert NOT sent (every channel failed): {reason}", file=sys.stderr)
+            else:
+                state.pop("alert_failures", None)
                 state["incident_open"] = True
                 state["incident_since"] = now
                 state["incident_reason"] = reason
@@ -240,6 +283,18 @@ def _kuma_first(send: Sender, kuma_file: Path | None, state: dict) -> tuple[Send
     return via("down"), via("up")
 
 
+def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: Sender, label: str,
+                   t: float) -> None:
+    """A run holding the lock past health's lock limit is an incident, raised from here:
+    the hung run itself will never get to its own health check."""
+    reason = health.check_lock(health.Config(lock_pidfile=pidfile), time.time())
+    if reason is None:
+        return
+    state = health.read_state(state_path)
+    decide_alert(state, t, reason, fail_threshold, 0.0, send, label)
+    write_state(state_path, state)
+
+
 def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None, retries: int = 2,
               backoff: float = 30.0, max_log_bytes: int = 5 * 1024 * 1024, keep: int = 3,
               fail_threshold: int = 3, stale_after: float = 3600.0, send: Sender | None = None,
@@ -255,6 +310,7 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             print("skipped: previous run still going", file=sys.stderr)
+            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now())
             return 0
         clear_stale_pidfile(pidfile)
         pidfile.write_text(str(os.getpid()))
@@ -275,7 +331,10 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
                 state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
             cfg = health_cfg or health.Config(state=state_path, lock_pidfile=pidfile,
                                               logs=(log,) if log else ())
-            write_state(state_path, state)  # the run check reads it
+            if not write_state(state_path, state):  # the run check reads it
+                # Nothing persists, so the in-a-row count cannot grow: alert on this run.
+                state["consecutive_failures"] = max(fail_threshold, state.get("consecutive_failures", 0))
+                state["last_reason"] = f"state file {state_path} unwritable (disk full or read-only)"
             reason = health.first_failure(cfg, t, skip=("lock",))
             send_down, send_up = _kuma_first(send, kuma_file, state)
             decide_alert(state, t, reason, fail_threshold, stale_after, send_down, label, send_up=send_up)

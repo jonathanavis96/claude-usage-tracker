@@ -60,11 +60,6 @@ def failing_cmd(code: int = 1) -> list[str]:
     return [PY, "-c", f"raise SystemExit({code})"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/supervise.py:109-121 run_with_retry writes the run log through a buffered file "
-    "outside any error handling of its own: on a full disk the flush in `finally: out.close()` "
-    "raises OSError (ENOSPC) out of supervise(), so the command never runs, no state is written "
-    "and no alert is ever sent"))
 def test_disk_full_run_log_does_not_crash_the_supervisor(rig, tmp_path):
     ran = tmp_path / "ran"
     # /dev/full accepts open() and fails every write with ENOSPC: a full disk.
@@ -73,11 +68,6 @@ def test_disk_full_run_log_does_not_crash_the_supervisor(rig, tmp_path):
     assert code == 0
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/supervise.py:88-91 write_state raises when the state directory cannot be written "
-    "(full disk, read-only mount). supervise() then dies before decide_alert, and because "
-    "consecutive_failures is never persisted the 3-in-a-row threshold can never be reached: "
-    "a persistently failing job is never alerted"))
 def test_unwritable_state_still_alerts(rig, tmp_path):
     state_dir = tmp_path / "ro"
     state_dir.mkdir()
@@ -94,11 +84,6 @@ def test_unwritable_state_still_alerts(rig, tmp_path):
     assert rig.send.sent, "three failed runs with an unwritable state file sent no alert"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/supervise.py:189 calls health.first_failure with no exception handling. A health "
-    "check that raises (see test_health_redteam for a real trigger) kills supervise() after "
-    "the run, before decide_alert: the failing run is never alerted and the state is left "
-    "without last_health"))
 def test_crashing_health_check_still_alerts(rig, monkeypatch):
     def boom(c, now):
         raise RuntimeError("health check bug")
@@ -113,12 +98,6 @@ def test_crashing_health_check_still_alerts(rig, monkeypatch):
     assert rig.send.sent, "a crashing health check silenced the failure alert"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/supervise.py:164-168 exits 0 with 'skipped' whenever the lock is held, before any "
-    "health check runs, and run_with_retry (supervise.py:114) has no timeout. A run hung on "
-    "a stalled git push or fetch holds the lock forever: every later hourly run is skipped "
-    "silently, and the health check's own `lock` rule (held over 2 h) is never evaluated by "
-    "the only thing that sends alerts"))
 def test_run_hung_for_hours_is_alerted(rig):
     pidfile = rig.lock.with_suffix(".pid")
     fd = os.open(rig.lock, os.O_CREAT | os.O_RDWR)
@@ -136,11 +115,6 @@ def test_run_hung_for_hours_is_alerted(rig):
     assert rig.send.sent, "a run holding the lock for 3+ hours produced no alert"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "tracker/supervise.py:142-146 ignores a False from the sender without a word: nothing on "
-    "stderr, nothing in the state file, nothing the health check reads. With pihome's "
-    "WhatsApp bridge down (ssh key, wa_send.py, the phone) every incident is retried in "
-    "silence forever and no one can tell the alert path itself is broken"))
 def test_failed_alert_send_is_recorded(rig, capsys):
     rig.send.ok = False
     for _ in range(3):

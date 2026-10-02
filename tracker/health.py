@@ -314,8 +314,16 @@ CHECKS: dict[str, Callable[[Config, float], str | None]] = {
 def run_checks(c: Config, now: float | None = None, only: list[str] | None = None) -> list[tuple[str, str | None]]:
     now = time.time() if now is None else now
     chosen = c.checks if c.checks is not None else tuple(n for n in CHECKS if n != "meters")
-    return [(name, fn(c, now)) for name, fn in CHECKS.items()
+    return [(name, _safe(name, fn, c, now)) for name, fn in CHECKS.items()
             if name in chosen and (not only or name in only)]
+
+
+def _safe(name: str, fn: Callable[[Config, float], str | None], c: Config, now: float) -> str | None:
+    """A check that raises is a failure of that check, never a crash of the caller."""
+    try:
+        return fn(c, now)
+    except Exception as e:  # noqa: BLE001 - the supervisor must reach its alert path
+        return f"{name}: check crashed: {type(e).__name__}: {e}"
 
 
 def first_failure(c: Config, now: float | None = None, skip: tuple[str, ...] = ()) -> str | None:

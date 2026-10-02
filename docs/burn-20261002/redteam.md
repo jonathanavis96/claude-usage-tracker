@@ -14,6 +14,8 @@ Its conftest blocks every non-loopback socket and points HOME at a temp dir.
 
 One line each: where, impact, suggested fix.
 
+**Status (UT-I): all five fixed in `tracker/supervise.py` and `tracker/health.py`; markers removed, 5 passed.** Run log on a full disk falls back to DEVNULL; `write_state` returns False and forces the alert; each health check is wrapped (`check crashed`); runs time out at 45 min (exit 124) and a busy lock past 2 h alerts from the skipped run; a failed send writes `last_alert_error`, `alert_failures` and a stderr line.
+
 ### Supervisor (masterrig cron wrapper) — `tests/redteam/test_supervise_redteam.py`
 
 - `tracker/supervise.py:109-121` (`test_disk_full_run_log_does_not_crash_the_supervisor`). Full disk: the run log's flush in `finally: out.close()` raises ENOSPC out of `supervise()`. The job never runs, no state, no alert, every hour. Fix: wrap the log writes; on OSError fall back to `stdout=DEVNULL` and record "run log unwritable" as the failure reason.
