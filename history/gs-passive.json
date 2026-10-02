@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-02T04:30:04.743528+00:00",
+ "generated_at": "2026-10-02T05:00:05.270051+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 5662,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 9328,
+    "samples": 9336,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-02T04:27:10+00:00"
+    "last": "2026-10-02T04:58:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -10689,18 +10689,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 4954,
+    "reset_verified_samples": 4963,
     "since": null,
-    "samples": 7339,
+    "samples": 7350,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-02T04:29:10+00:00"
+    "last": "2026-10-02T04:58:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1218,
-    "turns": 37599,
+    "files": 1219,
+    "turns": 37600,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -15096,9 +15096,9 @@
     "note": null,
     "reset_verified_samples": 4931,
     "since": null,
-    "samples": 5337,
+    "samples": 5349,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-02T04:29:10+00:00"
+    "last": "2026-10-02T04:58:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -16747,7 +16747,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-02T04:31:08.449755+00:00",
+  "generated_at": "2026-10-02T05:01:05.246875+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -55617,6 +55617,22 @@
      "184": 1,
      "192": 1,
      "171": 1
+    },
+    "fast_output_hist": {},
+    "fast_ttfb_hist": {}
+   },
+   {
+    "day": "2026-10-02",
+    "model": "claude-haiku-4-5",
+    "account": "a3",
+    "entrypoint": "sdk-cli",
+    "n": 1,
+    "fast_session_requests": 0,
+    "output_hist": {
+     "212": 1
+    },
+    "ttfb_hist": {
+     "80": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
