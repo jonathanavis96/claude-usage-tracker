@@ -41,3 +41,10 @@ One line each: where, impact, suggested fix.
 ### Cron line — `tests/redteam/test_cron_line_redteam.py`
 
 - `deploy/install-schedule.sh:127` (`test_supervisor_crash_leaves_a_trace`). The cron line ends in `>/dev/null 2>&1`. The job's own output goes to `--log`, but everything `tracker.supervise` prints itself ("skipped: previous run still going", and every traceback from the supervisor crashes above) is thrown away, and cron mail never fires. Fix: `>> $LOG.supervise 2>&1` (or into `$LOG`), and have supervise stamp its own lines. Ran with a cron-like env (HOME and PATH=/usr/bin:/bin only): the absolute `/usr/bin/python3` and `cd $REPO` resolve, so the minimal PATH itself is not a fault.
+
+### Usage API schema change — `tests/redteam/test_schema_redteam.py`
+
+- `tracker/usage_api.py:26-29` (`test_renamed_resets_at_is_noticed`). A renamed `resets_at` is read as null and logged at exit 0. Null is also what an idle window legitimately returns (889 of 4,714 moonlighter rows), so nothing can tell. Every new gs stretch becomes `reset_verified: false`, `tracker/publish.py:258` drops it, and the dollar series freezes on old evidence. Fix: in `_bucket`, warn (stderr plus a `schema` field on the line) when the key is absent, or when `utilization > 0` with a null `resets_at`. Have health fail on `schema` lines.
+- `tracker/usage_api.py:26-29` (`test_missing_seven_day_bucket_is_noticed`). A renamed or moved weekly bucket gives `seven_day=None` at exit 0. `tracker/join.py:325` then skips every pair, and weekly windows and weekly change detection end silently. Fix: as above. A body with no `seven_day` key is a schema change, not a reading.
+- `tracker/meter_log.py:105-108` (`test_new_bucket_is_kept_in_the_log`). `sample_line` keeps only `five_hour` and `seven_day`. `seven_day_sonnet` today, and a Fable weekly or a `limits[]` list tomorrow, are dropped at the source and cannot be recovered later. moonlighter keeps the whole body. Fix: store the raw body's other top-level keys under `extra`.
+- Control that passes: null five-hour utilization is already a gap (exit 4), never a zero.
