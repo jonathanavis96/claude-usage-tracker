@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-03T00:17:49.954205+00:00",
+ "generated_at": "2026-10-03T00:20:24.634508+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -272,7 +272,7 @@
  "session_tokens": {
   "claude-sonnet-4-6": 266627,
   "claude-opus-5": 2637549,
-  "claude-sonnet-5": 788436,
+  "claude-sonnet-5": 780123,
   "claude-opus-4-7": 127145,
   "claude-fable-5-1": 6587074,
   "claude-opus-5-5": 2238527,
