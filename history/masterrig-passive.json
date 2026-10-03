@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-03T09:20:31.305214+00:00",
+ "generated_at": "2026-10-03T10:15:47.946996+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 3860,
+    "reset_verified_samples": 3861,
     "since": null,
-    "samples": 14484,
+    "samples": 14487,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-10-02T21:30:12.122074+02:00"
+    "last": "2026-10-03T12:11:44+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 4965,
-    "turns": 119498,
+    "files": 4968,
+    "turns": 119510,
     "withheld_patterns": [],
     "own_sessions": null
    },
