@@ -89,7 +89,7 @@ class ChangeStateTests(unittest.TestCase):
         # The notify step's 24 and 48 hour rules read an event's age and its
         # `interval_excludes_no_change`; the state has no clock in it. The same candidate
         # published as one hour old and as five days old carries the same state.
-        fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11))
+        fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11, n=60))
         cand = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())["candidates"][0]
         young = P._announced_event_record(cand)
         old = P._announced_event_record({**cand, "at": (CAND - timedelta(days=5)).isoformat()})
@@ -204,10 +204,11 @@ def _announced(note=FIVE_HOUR_NOTE, at=CAND, joint_fit=None):
                             "announcement": note, "joint_fit": joint_fit}]}
 
 
-def _mixed(g=1.2, r=0.6, n=24, sd=0.08, seed=5, share=None):
+def _mixed(g=1.2, r=0.6, n=24, sd=0.08, seed=5, share=None, shares=None):
     """Two accounts' stretches around CAND: known-rate Opus 5 work at 100 credits per 1%
     before; after it Opus 5 and Opus 5.5 mixed, the Opus 5.5 share varying stretch to
-    stretch (or fixed at `share`), the new family charged at `r` times Opus 5 and the
+    stretch (or fixed at `share`, or cycling through `shares`), the new family charged at
+    `r` times Opus 5 and the
     five-hour limit multiplied by `g`. Valued by `_output_value`, so a stretch's credits at
     the base rate are its output tokens."""
     rng = random.Random(seed)
@@ -221,7 +222,8 @@ def _mixed(g=1.2, r=0.6, n=24, sd=0.08, seed=5, share=None):
             rows.append(st)
         for i in range(n):
             total = rng.uniform(500, 3000)
-            s_new = share if share is not None else rng.uniform(0.05, 0.95)
+            s_new = (shares[i % len(shares)] if shares else
+                     share if share is not None else rng.uniform(0.05, 0.95))
             known, new = total * (1 - s_new), total * s_new
             st = _st(CAND + timedelta(hours=3 * (i + 1)), 2, "claude-opus-5", known)
             st["tokens"]["claude-opus-5-5"] = {"output": new}
@@ -266,6 +268,48 @@ class FirstTurnTests(unittest.TestCase):
             s.add(Turn(ts=CAND + timedelta(minutes=minutes), model=model, id=str(minutes),
                        input=1, output=1, cache_read=0, cache_write=0), {})
         self.assertEqual(s.first_turns["claude-opus-5-5"], CAND + timedelta(minutes=9))
+
+
+class SeparabilityTests(unittest.TestCase):
+    """A joint fit is separable only when the new family's rate is actually pinned: a narrow
+    rate interval, and enough mixed stretches after the candidate to identify it."""
+
+    def test_a_rate_interval_wider_than_one_and_a_half_times_is_not_separable(self):
+        fit = _joint(_mixed(n=8, sd=0.25))
+        lo, hi = fit["rate_relative_interval"]
+        # Wide enough to fail the 1.5x test, narrow enough to have passed the old 3x one.
+        self.assertGreater(hi / lo, C.JOINT_SEPARABLE_SPAN)
+        self.assertLessEqual(hi / lo, 3.0)
+        self.assertEqual(C.JOINT_SEPARABLE_SPAN, 1.5)
+        self.assertFalse(fit["separable"])
+        self.assertEqual(fit["state"], "measuring")
+        self.assertIn("rate's 95% interval", fit["reason"])
+
+    def test_fewer_than_three_mixed_after_stretches_is_not_separable(self):
+        # Every after stretch is nearly all one family or the other: the shares vary a lot,
+        # which pins a rate in the bootstrap, but no stretch mixes the two, so nothing does.
+        fit = _joint(_mixed(shares=(0.05, 0.95), sd=0.02))
+        lo, hi = fit["rate_relative_interval"]
+        self.assertLessEqual(hi / lo, C.JOINT_SEPARABLE_SPAN)
+        self.assertEqual(fit["n_mixed_after"], 0)
+        self.assertFalse(fit["separable"])
+        self.assertIn("mixed", fit["reason"])
+        self.assertNotIn("rate's 95% interval", fit["reason"])
+
+    def test_three_mixed_stretches_are_enough(self):
+        by = _mixed(shares=(0.05, 0.95), sd=0.02)
+        # Three after stretches on the first account at a 50% share.
+        after = [st for st in by["acct_one"] if "claude-opus-5-5" in st["tokens"]][:3]
+        for st in after:
+            known = st["tokens"]["claude-opus-5"]["output"]
+            new = st["tokens"]["claude-opus-5-5"]["output"]
+            total = known + new
+            st["tokens"]["claude-opus-5"]["output"] = total / 2
+            st["tokens"]["claude-opus-5-5"]["output"] = total / 2
+            st["delta_pct"] = (total / 2 + 0.6 * total / 2) / (100.0 * 1.2)
+        fit = _joint(by)
+        self.assertEqual(fit["n_mixed_after"], 3)
+        self.assertTrue(fit["separable"], fit["reason"])
 
 
 class MeterTests(unittest.TestCase):
@@ -354,7 +398,7 @@ class MeterTests(unittest.TestCase):
 
     def test_a_separable_fit_moves_the_regimes_at_once_whatever_its_intervals(self):
         # A small, noisy +8% step: separable, but both intervals include no change.
-        fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11))
+        fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11, n=60))
         self.assertTrue(fit["separable"])
         g_lo, g_hi = fit["five_hour_limit_change_interval_pct"]
         self.assertLess(g_lo, 0.0)
@@ -395,7 +439,7 @@ class MeterTests(unittest.TestCase):
         for g, sd, state in ((1.08, 0.25, "measuring"), (1.3, 0.2, "provisional"),
                              (1.2, 0.02, "measured")):
             with self.subTest(g=g, sd=sd):
-                fit = _joint(_mixed(g=g, r=0.6, sd=sd, seed=11))
+                fit = _joint(_mixed(g=g, r=0.6, sd=sd, seed=11, n=60))
                 self.assertTrue(fit["separable"])
                 self.assertEqual(fit["state"], state, fit["five_hour_limit_change_interval_pct"])
                 cand = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())["candidates"][0]
@@ -582,7 +626,8 @@ class PublishStateTests(unittest.TestCase):
     """A family's rate crossing the publish limit moves no change figure (issue #132)."""
 
     def setUp(self):
-        self.by = _sonnet_mixed()
+        # Low enough scatter that the fit pins the rate within JOINT_SEPARABLE_SPAN.
+        self.by = _sonnet_mixed(sd=0.03)
         self.published = copy.deepcopy(_POOLED_RATES)
         self.unpublished = _unpublished(_POOLED_RATES)
 

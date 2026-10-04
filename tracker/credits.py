@@ -2499,8 +2499,15 @@ JOINT_BOOTSTRAP = 200
 JOINT_SEED = 20260928
 #: The fit separates the rate from the limit change when the rate's 95% interval spans at
 #: most this factor end to end and touches neither search bound. A mix too uniform to
-#: separate them leaves the rate's interval spread across the range.
-JOINT_SEPARABLE_SPAN = 3.0
+#: separate them leaves the rate's interval spread across the range. At 3x, fits whose rate
+#: ran from 0.64x to 1.47x its base family's passed, and their g swung with the rate.
+JOINT_SEPARABLE_SPAN = 1.5
+#: The rate is identified only by stretches that mix the new family with known-rate work:
+#: the fit is separable only with at least JOINT_MIN_MIXED pooled after-side stretches whose
+#: new-family share lies in JOINT_MIXED_SHARE. A stretch nearly all one family or the other
+#: reads the level of one side, not the rate.
+JOINT_MIXED_SHARE = (0.2, 0.8)
+JOINT_MIN_MIXED = 3
 
 
 def base_family(fam: str, credits: dict) -> str:
@@ -2675,6 +2682,7 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
            "times_opus": None, "times_opus_interval": None,
            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
            "log_residual_sd": None, "scatter_sd": None, "rounding_sd": None,
+           "n_mixed_after": None,
            "unclaimed_share": unclaimed, "accounts_combined": [g[0] for g in groups],
            "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP}
     fit = _joint_solve([(b, a) for _, b, a in groups])
@@ -2699,7 +2707,23 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     r_lo, r_hi = q(rs, 0.025), q(rs, 0.975)
     g_lo, g_hi = q(gs, 0.025), q(gs, 0.975)
     lo_b, hi_b = JOINT_RATE_BOUNDS
-    separable = (r_lo > lo_b * 1.05 and r_hi < hi_b / 1.05 and r_hi / r_lo <= JOINT_SEPARABLE_SPAN)
+    pinned = r_lo > lo_b * 1.05 and r_hi < hi_b / 1.05 and r_hi / r_lo <= JOINT_SEPARABLE_SPAN
+    share_lo, share_hi = JOINT_MIXED_SHARE
+    n_mixed = sum(1 for _, _, a in groups for k, u, *_ in a
+                  if k + u > 0 and share_lo <= u / (k + u) <= share_hi)
+    mixed = n_mixed >= JOINT_MIN_MIXED
+    separable = pinned and mixed
+    failed = []
+    if not pinned:
+        failed.append(f"the new family's share of the work varies too little to separate its rate "
+                      f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "
+                      f"{r_hi:.2f}x its base family's, wider than {JOINT_SEPARABLE_SPAN:g}x end "
+                      f"to end or against a search bound")
+    if not mixed:
+        failed.append(f"only {n_mixed} pooled stretch{'' if n_mixed == 1 else 'es'} after the "
+                      f"candidate mixed the new family at a share of {share_lo:g} to {share_hi:g} "
+                      f"of the work, and the rate is identified only by mixing; "
+                      f"{JOINT_MIN_MIXED} are needed")
     for label, b, a in groups:
         level = huber_location([x for x, _ in b], [s2 + v or 1.0 for _, v in b])[0]
         e = [math.log((k + r * u) / d) - level for k, u, d, _ in a]
@@ -2720,10 +2744,8 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
         "rounding_sd": round(math.sqrt(sum(rounding) / len(rounding)), 4),
         # An inseparable fit's g is not a reading of the limit, so it stays measuring.
         "state": change_state([_pct_of(g_lo), _pct_of(g_hi)]) if separable else "measuring",
-        "reason": (None if separable else
-                   f"the new family's share of the work varies too little to separate its rate "
-                   f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "
-                   f"{r_hi:.2f}x its base family's"),
+        "n_mixed_after": n_mixed,
+        "reason": None if separable else "; ".join(failed),
     })
     return out
 
