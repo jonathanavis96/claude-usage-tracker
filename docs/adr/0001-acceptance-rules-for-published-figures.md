@@ -1,6 +1,6 @@
 # 0001. Acceptance rules for published figures
 
-Status: accepted, 2026-09-23
+Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04
 
 ## Context
 
@@ -77,9 +77,43 @@ These are the acceptance rules. Each names where it lives.
    the two gs accounts.
    Source: `tools/model_rates.py:555` (`FIT_ACCOUNTS`).
 
+8. **A joint fit separates only at a rate a list price can explain (rate check), added
+   2026-10-04.** On top of the span test (`JOINT_SEPARABLE_SPAN = 1.5`) and the mixing test
+   (`JOINT_MIN_MIXED` after-side stretches at a share in `JOINT_MIXED_SHARE`), a new
+   family's fitted `rate_relative_to_base` counts only if its 95% interval overlaps
+   `JOINT_RATE_PLAUSIBLE = (0.5, 2.0)` times its input list-price ratio to its base family
+   in data/prices.json. Otherwise the fit is not separable: its g is not published, its rate
+   is not absorbed, and `reason` names the rate check. A family with no list price skips the
+   test, and its `rate_check.reason` says so.
+   Source: `tracker/credits.py` (`joint_rate_check`, `JOINT_RATE_PLAUSIBLE`,
+   `JOINT_RATE_PRICE_CLASS`, applied in `joint_rate_fit`).
+   Findings: `docs/findings-2026-10-02-one-account-change.md`.
+
+9. **A five-hour change must hold on every account (plan-wide), added 2026-10-04.** A plan
+   limit change reaches every account at the same instant. A five-hour change candidate
+   whose combined figure draws on two or more accounts is refitted with each of them left
+   out in turn, by the estimator behind the figure it would publish (the joint fit's g, the
+   weekly limit change g times the windows-per-week ratio where that moved more, or the
+   combined windows-per-week ratio while the fit cannot separate g). It is plan-wide only if
+   every refit keeps the direction with a 95% interval that still excludes no change; with
+   two accounts that is each one alone, and a change resting on one account is not
+   plan-wide. Only a plan-wide candidate whose own interval excludes no change `applies`:
+   enters `events`, can become `last_change`, reaches the subscriber email, and may scale a
+   window regime by its g. The rest stay in `credits.five_hour_on_meters.candidates` with a
+   `withheld_reason` that names each test it failed. A withheld candidate that can be
+   measured still opens a regime boundary, which carries the previous window and does not
+   split the window cluster.
+   Source: `tracker/credits.py` (`plan_wide_verdict`, `_candidate_plan_wide`,
+   `_withheld_reason`, `five_hour_meter_events`, `five_hour_meter_boundaries`, the
+   leave-one-out block in `joint_rate_fit`).
+   Findings: `docs/findings-2026-10-02-one-account-change.md`.
+
+   Both rules are also checked on every publish by `tracker/invariants.py`
+   (`no_unproven_step`), which alerts without blocking.
+
 ### Pending
 
-8. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
+10. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
    family's rate only if 3 or more of its stretches are at least 60% that family. Another
    PR is adding this; when it merges, this entry takes its source location and moves up
    into the list above. Until then the code has no such rule (the only dominance constant

@@ -773,12 +773,13 @@ RUN_CLUSTER_SOURCE = "unmeasured_boundary_run_cluster"
 
 KNOWN_DATE_METHOD = (
     " After that, every change measured on the two meters (`five_hour_on_meters`, the "
-    "windows-per-week ratio across a change candidate; dated after cut_at) opens a new regime "
-    "in `regimes`, from the candidate's own instant. Each such regime is measured in the family "
+    "windows-per-week ratio across a change candidate; `measurable`, dated after cut_at) opens "
+    "a new regime in `regimes`, from the candidate's own instant, whether it is published "
+    "(`applies`) or withheld. Each such regime is measured in the family "
     "actually in use: its regime family is the family with the most pure clean stretches "
     "starting in it (`regime_family`, `n_regime_family`). A boundary the tracker could not "
     "measure (a change whose joint fit cannot separate the new family's rate from the limit "
-    "change) does not split the window cluster: the regimes it joins form one run, from the "
+    "change, or a withheld one: ADR 0001 rules 8 and 9) does not split the window cluster: the regimes it joins form one run, from the "
     "last measured boundary (the cut, or a change whose fit separates), and `run_from` names "
     "its first instant. A run of two or more regimes whose pure clean stretches, starting "
     f"anywhere in it, hold {MIN_AFTER_CLUSTER} readings of its most common family states every "
@@ -802,8 +803,9 @@ KNOWN_DATE_METHOD = (
     "regime's figure in the same family's units, and `measured_family` names the family the "
     "figure was measured in "
     f"(`{KNOWN_DATE_UNSCALED_SOURCE}`), because the joint fit cannot yet separate the new "
-    "family's rate from the five-hour limit change g. Only where the joint fit does separate "
-    "them is the previous regime's figure scaled by g instead, each interval edge by g's same "
+    "family's rate from the five-hour limit change g or the change is withheld. Only where the "
+    "joint fit does separate them and the change is published (`applies`) is the previous "
+    "regime's figure scaled by g instead, each interval edge by g's same "
     "edge. The window interval is a spread of readings, not a standard error. The published "
     "value and interval are the newest regime's. Where the newest regime is measured in a "
     "family other than the anchor, that family's row in `per_family` is its direct reading, "
@@ -813,21 +815,26 @@ KNOWN_DATE_METHOD = (
 def known_date_changes(meters: dict | None) -> list[dict]:
     """The measured changes that open window regimes, oldest first, with their window ratio.
 
-    The candidates of the `five_hour_on_meters` block that `apply` (measurable at all, dated
-    after CUT_AT: the 14 September split already stands for everything before it). Each
-    carries its instant, its scope, and the five-hour window ratio and interval, from the
-    published rounded percents so a reader can redo the arithmetic. The ratio is the joint
-    fit's five-hour limit change g at its point estimate, whatever its interval or `scope`
-    label; a change whose fit is not separable (`change_pct` null) has none, and
-    `window_scaled` False tells `window_regimes` to carry the previous regime. Nothing here
-    names a date; the boundaries are the candidate records' own.
+    The candidates of the `five_hour_on_meters` block that are `measurable` (a combined
+    reading, dated after CUT_AT: the 14 September split already stands for everything before
+    it; `five_hour_meter_boundaries`). Each carries its instant, its scope, and the five-hour
+    window ratio and interval, from the published rounded percents so a reader can redo the
+    arithmetic. The ratio is the joint fit's five-hour limit change g at its point estimate,
+    whatever its `scope` label, and only for a change that `applies` (ADR 0001 rules 8 and 9:
+    separable at a rate a list price explains, plan-wide, its interval excluding no change).
+    A change whose fit is not separable (`change_pct` null) or that is withheld has none, and
+    `window_scaled` False tells `window_regimes` to carry the previous regime and not to
+    split the run there. Nothing here names a date; the boundaries are the candidate records'
+    own.
     """
     out = []
-    for cand in five_hour_meter_events(meters):
+    for cand in five_hour_meter_boundaries(meters):
         at = datetime.fromisoformat(cand["at"])
         if at <= CUT_AT:
             continue
-        scaled = cand.get("change_pct") is not None and bool(cand.get("interval_pct"))
+        # Only a published change (ADR 0001 rules 8 and 9) may scale a window.
+        scaled = (bool(cand.get("applies")) and cand.get("change_pct") is not None
+                  and bool(cand.get("interval_pct")))
         lo, hi = cand["interval_pct"] if scaled else (0.0, 0.0)
         pct = cand["change_pct"] if scaled else 0.0
         out.append({"at": at, "family": cand["family"], "change_pct": pct,
@@ -855,8 +862,8 @@ def current_method(changes: list[dict]) -> str:
         return CURRENT_METHOD + KNOWN_DATE_METHOD
     applied = "; ".join(f"from {_utc(c['at'])} ({c['family']} first turn), "
                         + (f"{c['change_pct']:+g}%" if c.get("window_scaled", True)
-                           else "window carried, joint fit not separable, unless the regime's "
-                                "own family states it")
+                           else "window carried, joint fit not separable or change withheld, "
+                                "unless the regime's own family states it")
                         for c in changes)
     return (CURRENT_METHOD + KNOWN_DATE_METHOD
             + f" Known-date changes applied: {applied}.")
@@ -2768,6 +2775,65 @@ JOINT_SEPARABLE_SPAN = 1.5
 #: reads the level of one side, not the rate.
 JOINT_MIXED_SHARE = (0.2, 0.8)
 JOINT_MIN_MIXED = 3
+#: The rate check (`joint_rate_check`, ADR 0001 rule 8): a fitted rate counts only if its 95%
+#: interval reaches this band around the new family's list-price ratio to its base family. A
+#: fit that can only explain the meter by pricing a new model at under half or over twice what
+#: its list price says has not told the rate and the limit change apart
+#: (docs/findings-2026-10-02-one-account-change.md).
+JOINT_RATE_PLAUSIBLE = (0.5, 2.0)
+#: The price class the rate check reads the list-price ratio in. The joint fit values a
+#: family by its input rate: input and cache writes at that rate, output at a fixed multiple
+#: of it (`comparison_value`), so the input price is the one its `rate_relative_to_base`
+#: scales.
+JOINT_RATE_PRICE_CLASS = "input"
+
+
+def list_price_ratio_to_base(fam: str, base: str, credits: dict,
+                             prices: dict | None = None) -> float | None:
+    """A family's list price over its base family's, in JOINT_RATE_PRICE_CLASS, or None.
+
+    From data/prices.json (`_list_prices`) unless `prices` is given. None when either row,
+    or its price in that class, is missing: there is then no list price to check against.
+    """
+    if prices is None:
+        prices = _list_prices()
+    num = (prices.get(list_price_model(fam, credits)) or {}).get(JOINT_RATE_PRICE_CLASS)
+    den = (prices.get(list_price_model(base, credits)) or {}).get(JOINT_RATE_PRICE_CLASS)
+    return num / den if num and den else None
+
+
+def joint_rate_check(fam: str, base: str, credits: dict, interval: list[float] | None,
+                     prices: dict | None = None) -> dict:
+    """ADR 0001 rule 8: whether a joint fit's rate interval is one a list price can explain.
+
+    Passed when the fitted `rate_relative_to_base` interval overlaps JOINT_RATE_PLAUSIBLE
+    times the list-price ratio of the new family to its base family, in
+    JOINT_RATE_PRICE_CLASS. Failed when it misses that band: the fit then reads the meter's
+    movement as a rate far from what the model lists at, which is a limit change, missing or
+    extra work, or a mix of them, and not a rate. `not_applicable` without a list price, and
+    its `reason` says the test was skipped.
+    """
+    ratio = list_price_ratio_to_base(fam, base, credits, prices)
+    out = {"state": "not_applicable", "price_class": JOINT_RATE_PRICE_CLASS,
+           "list_price_ratio": round(ratio, 4) if ratio is not None else None,
+           "plausible_band": None, "rate_relative_interval": interval, "reason": None}
+    if ratio is None:
+        out["reason"] = (f"no {JOINT_RATE_PRICE_CLASS} list price for {family_label(fam)} or "
+                         f"{family_label(base)} in data/prices.json, so the rate check was skipped")
+        return out
+    lo, hi = (ratio * f for f in JOINT_RATE_PLAUSIBLE)
+    out["plausible_band"] = [round(lo, 4), round(hi, 4)]
+    if not interval:
+        out["reason"] = "no fitted rate interval, so the rate check was skipped"
+        return out
+    passed = interval[0] <= hi and interval[1] >= lo
+    out["state"] = "passed" if passed else "failed"
+    if not passed:
+        out["reason"] = (f"the fitted rate's 95% interval, {interval[0]:.2f}x to {interval[1]:.2f}x "
+                         f"{family_label(base)}, misses {lo:.2f}x to {hi:.2f}x, half to twice "
+                         f"{family_label(fam)}'s {JOINT_RATE_PRICE_CLASS} list-price ratio of "
+                         f"{ratio:.2f}x: the fit has not separated the rate from the limit change")
+    return out
 
 
 def base_family(fam: str, credits: dict) -> str:
@@ -2899,6 +2965,61 @@ def _joint_scatter(groups: list[tuple[list[tuple], list[tuple]]], r: float, m: f
     return robust if robust > 0 else scatter_variance(ss, n - len(groups) - 2, rounding)
 
 
+#: How `plan_wide` reads a change (ADR 0001 rule 9): a plan limit changes for every account
+#: at the same instant, so a change that one account alone produces is not a plan change.
+PLAN_WIDE_METHOD = (
+    "A plan limit change applies to every account at the same instant. So a change whose "
+    "combined estimate draws on two or more accounts is refitted with each of them left out in "
+    "turn, by the same estimator that produced it (the joint fit's g, the weekly limit change "
+    "g times the windows-per-week ratio where that moved more, or the combined windows-per-week "
+    "ratio while the fit cannot separate g), and it is plan-wide only if every refit keeps its "
+    "direction with a 95% interval that still excludes no change. With two accounts that is "
+    "each account alone. A change resting on one account is not plan-wide.")
+
+
+def plan_wide_verdict(change_pct: float | None, accounts: list[str], without: dict[str, dict],
+                      estimator: str) -> dict:
+    """Whether a combined change holds with each of its accounts left out in turn.
+
+    `without[label]` is the same estimator refitted without that account, with its
+    `change_pct` and `interval_pct`; each entry gains `holds`, True when the refit keeps the
+    full change's direction and its interval excludes no change on that side. `passed` when
+    every refit holds and there are at least two accounts; `failed` otherwise, with the
+    reason; `untested` without a change to test. See PLAN_WIDE_METHOD.
+    """
+    out = {"state": "untested", "estimator": estimator, "accounts": list(accounts),
+           "without": without, "reason": None}
+    if change_pct is None:
+        out["reason"] = "no combined change to test"
+        return out
+    if len(accounts) < 2:
+        out.update(state="failed", reason=(
+            f"the change rests on one account ({', '.join(accounts) or 'none'}); a plan limit "
+            "change applies to every account at once"))
+        return out
+    failing = []
+    for label, row in without.items():
+        iv = row.get("interval_pct")
+        row["holds"] = bool(row.get("change_pct") is not None and iv and change_pct != 0
+                            and (iv[0] > 0 if change_pct > 0 else iv[1] < 0))
+        if not row["holds"]:
+            failing.append(label)
+    if not failing:
+        out["state"] = "passed"
+        return out
+
+    def reads(label: str) -> str:
+        row = without[label]
+        if row.get("change_pct") is None:
+            return f"without {label} there is no estimate"
+        lo, hi = row["interval_pct"] or (None, None)
+        return f"without {label} it reads {row['change_pct']:+g}% [{lo:g}, {hi:g}]"
+    out.update(state="failed", reason=(
+        f"{'; '.join(reads(k) for k in failing)}: the {change_pct:+g}% does not hold with each "
+        "account left out, so it is not plan-wide"))
+    return out
+
+
 def _pct_of(x: float) -> float:
     return round((x - 1) * 100, 1)
 
@@ -2906,7 +3027,8 @@ def _pct_of(x: float) -> float:
 def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
                    lo: datetime | None, hi: datetime | None, value, credits: dict,
                    labels: dict[str, str], names: list[str],
-                   base_times_opus: float | None = None) -> dict:
+                   base_times_opus: float | None = None, prices: dict | None = None,
+                   leave_one_out: bool = True) -> dict:
     """A new family's rate and the five-hour limit change at its first use, fitted jointly.
 
     Per stretch, meter % = (known + r x new) / (L x g): `known` is the credits of every
@@ -2924,6 +3046,16 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     no login claims (`unclaimed_shares`) is added to its stretches' known work. Intervals are
     a percentile bootstrap, stretches resampled within each account and side, at that
     scatter. `value(tokens)` prices a bundle in credits.
+
+    On top of the span and mixing tests, a fit counts as separable only if it passes the rate
+    check (`joint_rate_check`, ADR 0001 rule 8, against `prices` or data/prices.json): a rate
+    interval that misses half to twice the list-price ratio has not separated the rate from
+    the limit change. `reason` names every test that failed.
+
+    A separable fit is refitted with each combined account left out in turn
+    (`leave_one_out`; the refits themselves are not), and `plan_wide` says whether its g
+    holds on every one of them (`plan_wide_verdict`, ADR 0001 rule 9). None when the fit is
+    not separable: its g is then not the published figure.
     """
     per_account, groups = {}, []
     unclaimed = unclaimed_shares(selected, value, at, lo, hi, labels, names)
@@ -2945,7 +3077,8 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
            "log_residual_sd": None, "scatter_sd": None, "rounding_sd": None,
            "n_mixed_after": None,
            "unclaimed_share": unclaimed, "accounts_combined": [g[0] for g in groups],
-           "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP}
+           "per_account": per_account, "bootstrap": JOINT_BOOTSTRAP, "rate_check": None,
+           "plan_wide": None}
     fit = _joint_solve([(b, a) for _, b, a in groups])
     if fit is None or not any(u for _, _, a in groups for _, u, *_ in a):
         out["reason"] = "no stretch after the candidate on an account with a before side"
@@ -2973,18 +3106,22 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     n_mixed = sum(1 for _, _, a in groups for k, u, *_ in a
                   if k + u > 0 and share_lo <= u / (k + u) <= share_hi)
     mixed = n_mixed >= JOINT_MIN_MIXED
-    separable = pinned and mixed
+    check = joint_rate_check(fam, out["base_family"], credits, [round(r_lo, 4), round(r_hi, 4)],
+                             prices)
+    separable = pinned and mixed and check["state"] != "failed"
     failed = []
     if not pinned:
-        failed.append(f"the new family's share of the work varies too little to separate its rate "
+        failed.append(f"span test: the new family's share of the work varies too little to separate its rate "
                       f"from the limit change: the rate's 95% interval runs {r_lo:.2f}x to "
                       f"{r_hi:.2f}x its base family's, wider than {JOINT_SEPARABLE_SPAN:g}x end "
                       f"to end or against a search bound")
     if not mixed:
-        failed.append(f"only {n_mixed} pooled stretch{'' if n_mixed == 1 else 'es'} after the "
+        failed.append(f"mixing test: only {n_mixed} pooled stretch{'' if n_mixed == 1 else 'es'} after the "
                       f"candidate mixed the new family at a share of {share_lo:g} to {share_hi:g} "
                       f"of the work, and the rate is identified only by mixing; "
                       f"{JOINT_MIN_MIXED} are needed")
+    if check["state"] == "failed":
+        failed.append(f"rate check (ADR 0001 rule 8): {check['reason']}")
     for label, b, a in groups:
         level = huber_location([x for x, _ in b], [s2 + v or 1.0 for _, v in b])[0]
         e = [math.log((k + r * u) / d) - level for k, u, d, _ in a]
@@ -3006,8 +3143,27 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
         # An inseparable fit's g is not a reading of the limit, so it stays measuring.
         "state": change_state([_pct_of(g_lo), _pct_of(g_hi)]) if separable else "measuring",
         "n_mixed_after": n_mixed,
+        "rate_check": check,
         "reason": None if separable else "; ".join(failed),
     })
+    if separable and leave_one_out:
+        without = {}
+        for name in selected:
+            label = _label_for(labels, name, names)
+            if label not in out["accounts_combined"]:
+                continue
+            sub = joint_rate_fit({n: rows for n, rows in selected.items() if n != name}, fam, at,
+                                 lo, hi, value, credits, labels, names, base_times_opus, prices,
+                                 leave_one_out=False)
+            without[label] = {"change_pct": sub["five_hour_limit_change_pct"],
+                              "interval_pct": sub["five_hour_limit_change_interval_pct"],
+                              "accounts_combined": sub["accounts_combined"],
+                              "separable": sub["separable"],
+                              "rate_relative_to_base": sub["rate_relative_to_base"],
+                              "rate_relative_interval": sub["rate_relative_interval"]}
+        out["plan_wide"] = plan_wide_verdict(out["five_hour_limit_change_pct"],
+                                             out["accounts_combined"], without,
+                                             "the joint fit's five-hour limit change g")
     return out
 
 
@@ -3270,9 +3426,12 @@ WINDOWS_PER_WEEK_METHOD = (
     f"interval spans at most {JOINT_SEPARABLE_SPAN:g}x end to end and touches neither search "
     f"bound, and at least {JOINT_MIN_MIXED} pooled stretches after the candidate mix the new "
     f"family at a share of {JOINT_MIXED_SHARE[0]:g} to {JOINT_MIXED_SHARE[1]:g} of the work, "
-    "because only mixing identifies the rate; `scope.reason` names the test that failed. "
+    "because only mixing identifies the rate, and its rate interval reaches half to twice the "
+    "new family's input list-price ratio to its base family (`joint_fit.rate_check`, ADR 0001 "
+    "rule 8; a family with no list price skips that test and says so); `scope.reason` names "
+    "the test that failed. "
     "Once the fit separates the rate from g, `change_pct` is g at its point "
-    "estimate, whatever its interval, and it splits the window regimes' runs: a regime too "
+    "estimate, and where the candidate `applies` it splits the window regimes' runs: a regime too "
     "thin to be measured in its own family "
     "scales the window by g and the week by g times the ratio at once, and the figures move "
     "as readings arrive. `scope` only "
@@ -3285,11 +3444,17 @@ WINDOWS_PER_WEEK_METHOD = (
     "the fit separates it, else the windows-per-week change. It is measuring while that "
     "interval includes no change, provisional once it excludes it, and measured once it also "
     f"has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less; the notify step's "
-    "24 and 48 hour rules time the email and never set it. A "
-    "candidate after the weekly change `applies` as soon as it can be measured at all (one "
-    "reading after on a combined account): it opens a window regime and enters `events` and "
-    "`last_change` at its measured size, however small, and every publish recomputes it. "
-    "`announcement` is reference metadata and changes no figure, state or scope.")
+    "24 and 48 hour rules time the email and never set it. `headline` is the figure a "
+    "candidate would publish: g, or the weekly limit change where that moved more, or the "
+    "windows-per-week change while the fit cannot separate g. `plan_wide` refits that figure "
+    "with each combined account left out in turn (`plan_wide_method`). A candidate after the "
+    "weekly change that can be measured at all (one reading after on a combined account, "
+    "`measurable`) opens a window regime. It `applies` (ADR 0001 rule 9) -- enters `events`, "
+    "can become `last_change` and reach the email, and may scale its regime's window by g -- "
+    "only once its headline is plan-wide and its 95% interval excludes no change; every "
+    "publish recomputes it. Every other candidate stays here with its figures, state and "
+    "`withheld_reason`, which names each test it failed, and its regime carries the previous "
+    "window. `announcement` is reference metadata and changes no figure, state or scope.")
 
 
 def own_weekly_step_start(block: dict | None) -> datetime | None:
@@ -3394,6 +3559,96 @@ def _bootstrap_ratio(sides: dict[str, tuple[list[dict], list[dict]]], weights: d
             round(draws[min(int(0.975 * len(draws)), len(draws) - 1)], 4)]
 
 
+def _candidate_plan_wide(cand: dict, headline: dict, paired: dict[str, dict],
+                         sides: dict[str, tuple[list[dict], list[dict]]],
+                         rho_boot: list[float] | None) -> dict:
+    """The plan-wide test (`plan_wide_verdict`, ADR 0001 rule 9) of the figure a candidate
+    would publish.
+
+    That figure is `headline`: the joint fit's five-hour limit change g, or the weekly limit
+    change g times the windows-per-week ratio where that moved more (the event reads the same
+    one), or the combined windows-per-week change while the fit is not separable. g's refits
+    are the joint fit's own (`joint_rate_fit`, `plan_wide.without`). The weekly change without
+    an account is that account's g refit times the windows-per-week ratio recombined without
+    it, with its bootstrap interval resampled the same way (`_bootstrap_ratio`).
+    """
+    metric = headline["metric"]
+    joint_pw = (cand.get("joint_fit") or {}).get("plan_wide")
+    if metric in ("five_hour_limit", "weekly_limit") and not joint_pw:
+        return dict(plan_wide_verdict(None, [], {}, "the joint fit's five-hour limit change g"),
+                    reason="the joint fit carries no leave-one-out refits")
+    if metric == "five_hour_limit":
+        return joint_pw
+    if metric == "windows_per_week":
+        without = {}
+        for label in paired if len(paired) > 1 else ():
+            rest = combine_log_ratios({k: v for k, v in paired.items() if k != label})
+            without[label] = {"change_pct": _pct_of(rest["ratio"]),
+                              "interval_pct": _pct_interval(*rest["interval"])}
+        return plan_wide_verdict(headline["change_pct"], sorted(paired), without,
+                                 "the combined windows-per-week ratio")
+    if metric is None:
+        return plan_wide_verdict(None, [], {}, "none")
+    fit = cand["joint_fit"]
+    accounts = sorted(set(joint_pw["accounts"]) | set(paired))
+    without = {}
+    for label in accounts if len(accounts) > 1 else ():
+        g_row = joint_pw["without"].get(label) or {
+            "change_pct": fit["five_hour_limit_change_pct"],
+            "interval_pct": fit["five_hour_limit_change_interval_pct"]}
+        rest = {k: v for k, v in paired.items() if k != label}
+        if not rest or g_row.get("change_pct") is None:
+            without[label] = {"change_pct": None, "interval_pct": None}
+            continue
+        if label in paired:
+            combined = combine_log_ratios(rest)
+            rho = combined["ratio"]
+            boot = _bootstrap_ratio({k: sides[k] for k in rest}, combined["weights"],
+                                    f"{JOINT_SEED}:{cand['at']}:without:{label}")
+        else:
+            rho, boot = combine_log_ratios(paired)["ratio"], rho_boot
+        if not boot:
+            without[label] = {"change_pct": None, "interval_pct": None}
+            continue
+        w, (w_lo, w_hi) = _log_normal_product(1 + g_row["change_pct"] / 100,
+                                              [1 + x / 100 for x in g_row["interval_pct"]],
+                                              rho, boot)
+        without[label] = {"change_pct": _pct_of(w), "interval_pct": [_pct_of(w_lo), _pct_of(w_hi)]}
+    return plan_wide_verdict(headline["change_pct"], accounts, without,
+                             "the weekly limit change, g times the windows-per-week ratio")
+
+
+def _withheld_reason(cand: dict, at: datetime, combined: dict | None, headline: dict,
+                     plan_wide: dict) -> str | None:
+    """Why a candidate stays in the candidates only, or None when it is published.
+
+    Published (`applies`) means it enters `events`, can become `last_change` and reach the
+    subscriber email, and may scale a window regime by its g. ADR 0001 rule 9: that needs a
+    combined measurement dated after the weekly change, a plan-wide figure (`plan_wide`), and
+    a headline interval that excludes no change. Each part of the reason names the test that
+    failed; a joint fit that failed the rate check (rule 8) is named too, since that is why
+    its g is not the headline.
+    """
+    if not combined:
+        return "not measurable: no account has readings on both sides of it yet"
+    if at <= CUT_AT:
+        return ("not measurable: dated before the 14 September weekly change, which stands for "
+                "everything before it")
+    why = []
+    if plan_wide["state"] != "passed":
+        why.append(f"plan-wide test (ADR 0001 rule 9) failed: {plan_wide['reason']}")
+    iv = headline["interval_pct"]
+    if not iv or iv[0] <= 0 <= iv[1]:
+        why.append("interval test (ADR 0001 rule 9) failed: the "
+                   f"{(headline['metric'] or 'headline').replace('_', ' ')} change's 95% interval "
+                   + (f"[{iv[0]:g}, {iv[1]:g}] includes no change" if iv else "is not measured"))
+    check = (cand.get("joint_fit") or {}).get("rate_check") or {}
+    if why and check.get("state") == "failed":
+        why.append(f"rate check (ADR 0001 rule 8) failed, so the joint fit is not separable: "
+                   f"{check['reason']}")
+    return "; ".join(why) or None
+
+
 def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
     """Every change candidate measured on the two meters, per account and combined.
 
@@ -3471,6 +3726,19 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                 pct = scope["five_hour_limit_change_pct"]
                 interval = scope["five_hour_limit_change_interval_pct"]
         state = change_state(interval if pct is not None else wpw_interval)
+        headline = {"metric": None, "change_pct": None, "interval_pct": None}
+        if pct is not None:
+            weekly = scope["weekly_limit_change_pct"]
+            if weekly is not None and abs(weekly) > abs(pct):
+                headline = {"metric": "weekly_limit", "change_pct": weekly,
+                            "interval_pct": scope["weekly_limit_change_interval_pct"]}
+            else:
+                headline = {"metric": "five_hour_limit", "change_pct": pct, "interval_pct": interval}
+        elif combined:
+            headline = {"metric": "windows_per_week", "change_pct": wpw_pct,
+                        "interval_pct": wpw_interval}
+        plan_wide = _candidate_plan_wide(cand, headline, paired, sides, rho_boot)
+        withheld = _withheld_reason(cand, at, combined, headline, plan_wide)
         out.append({
             "family": cand["family"], "at": cand["at"], "at_source": cand.get("at_source"),
             "first_seen_account": cand.get("first_seen_account"),
@@ -3478,6 +3746,7 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
             "before_from": cand.get("before_from"), "after_until": cand.get("after_until"),
             "state": state,
             "scope": scope,
+            "plan_wide": plan_wide,
             "windows_per_week_change_pct": wpw_pct,
             "windows_per_week_change_interval_pct": wpw_interval,
             "windows_per_week_change_excludes_no_change": bool(
@@ -3490,7 +3759,10 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
                                                 if combined else None),
             "windows_per_week_ratio_bootstrap_interval": rho_boot,
             "joint_fit": cand.get("joint_fit"),
-            "applies": bool(combined) and at > CUT_AT,
+            "headline": headline,
+            "measurable": bool(combined) and at > CUT_AT,
+            "applies": withheld is None,
+            "withheld_reason": withheld,
             "accounts_combined": sorted(paired),
             "per_account": per_account,
             "announcement": cand.get("announcement"),
@@ -3498,13 +3770,25 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None) -> dict:
         })
     return {"candidates": out, "unit": "percent",
             "thresholds": {"measured_half_width_pct": CHANGE_MEASURED_HALF_WIDTH_PCT,
-                           "min_before": ANNOUNCED_MIN_BEFORE},
-            "method": WINDOWS_PER_WEEK_METHOD}
+                           "min_before": ANNOUNCED_MIN_BEFORE,
+                           "rate_plausible_times_list_ratio": list(JOINT_RATE_PLAUSIBLE)},
+            "method": WINDOWS_PER_WEEK_METHOD, "plan_wide_method": PLAN_WIDE_METHOD}
 
 
 def five_hour_meter_events(block: dict | None) -> list[dict]:
-    """The meter-measured five-hour candidates that open a regime and enter the events."""
+    """The meter-measured five-hour candidates that are published: those that `apply`
+    (ADR 0001 rule 9: plan-wide, with a headline interval that excludes no change). Only
+    these enter `events`, can become `last_change` and reach the email."""
     return [c for c in (block or {}).get("candidates", []) if c.get("applies")]
+
+
+def five_hour_meter_boundaries(block: dict | None) -> list[dict]:
+    """The meter-measured five-hour candidates that open a window regime: every one that is
+    `measurable` (a combined reading, dated after the weekly change), published or withheld.
+    A withheld one opens a regime that carries the previous window, never one scaled by its
+    g (`known_date_changes`). A record without `measurable` reads `applies` for it."""
+    return [c for c in (block or {}).get("candidates", [])
+            if c.get("measurable", c.get("applies"))]
 
 
 def _weekly_regime_index(t: datetime, own_end: datetime | None, regimes: list[dict]) -> int:
@@ -3603,7 +3887,7 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
     under (data/prices.json when None).
     """
     credits = load_credits() if credits is None else credits
-    ratios = {datetime.fromisoformat(c["at"]): c for c in five_hour_meter_events(meters)}
+    ratios = {datetime.fromisoformat(c["at"]): c for c in five_hour_meter_boundaries(meters)}
     regimes = window_tokens["regimes"]
     by_window = (max20 or {}).get("by_window") or []
     by_account = (max20 or {}).get("by_account") or {}
@@ -3647,7 +3931,8 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             pass
         elif source == "previous_regime_times_paired_ratio" and prev["value"] and prev["window"] \
                 and window is not None:
-            undetermined = change.get("change_pct") is None
+            # A withheld change (ADR 0001 rule 9) is no reading of the limit either.
+            undetermined = change.get("change_pct") is None or not change.get("applies", True)
             # The window change and the windows-per-week ratio are one measurement of one
             # change, so the week moves by their product, not by two independent intervals.
             # While the joint fit cannot separate the rate from the limit change only windows

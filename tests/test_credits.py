@@ -2048,11 +2048,20 @@ class KnownDateRegimeTests(unittest.TestCase):
         self.assertEqual(len(window["regimes"]), 2)
         self.assertEqual(window["current_source"], "before_cluster_scaled_by_five_hour_change")
 
-    def test_a_measured_change_applies_even_when_its_interval_includes_none(self):
-        # A small change shows small: the meters measure its size, and it moves with the data.
-        window = self.window(announced_block(self.AT, change_pct=5.0, interval_pct=(-10.0, 20.0)))
+    def test_a_withheld_change_opens_a_regime_but_carries_the_window(self):
+        # ADR 0001 rule 9: a separable change whose interval includes no change is withheld
+        # (`applies` False) though measurable. Its boundary stays, its g scales nothing.
+        block = announced_block(self.AT, change_pct=5.0, interval_pct=(-10.0, 20.0))
+        block["candidates"][0].update(measurable=True, applies=False)
+        window = self.window(block)
         self.assertEqual(len(window["regimes"]), 3)
-        self.assertEqual(window["regimes"][-1]["value"], round(11_500_000 * 1.086 * 1.05))
+        self.assertEqual(window["current_source"], C.KNOWN_DATE_UNSCALED_SOURCE)
+        self.assertEqual(window["regimes"][-1]["value"], window["regimes"][-2]["value"])
+        self.assertIn("change withheld", window["current_method"])
+        # The same change published scales it.
+        block["candidates"][0]["applies"] = True
+        self.assertEqual(self.window(block)["regimes"][-1]["value"],
+                         round(11_500_000 * 1.086 * 1.05))
 
     def test_a_separable_change_of_undetermined_scope_still_scales_the_window(self):
         window = self.window(announced_block(self.AT, scope="undetermined"))
@@ -2617,6 +2626,16 @@ class RegimeFiguresTests(unittest.TestCase):
         self.assertEqual(last["per_week_factor"], 1.0)
         self.assertEqual((last["value"], last["interval"]), (middle["value"], middle["interval"]))
         self.assertEqual(last["per_week_source"], C.UNDETERMINED_WEEK_SOURCE)
+
+    def test_a_withheld_change_steps_windows_per_week_and_carries_the_week(self):
+        # Separable, but withheld under ADR 0001 rule 9: its g is no reading of the limit.
+        meters = self.meters()
+        meters["candidates"][0].update(measurable=True, applies=False)
+        _, middle, last = self.figures(meters)["per_week_regimes"]
+        self.assertEqual(last["windows_per_week_source"], "previous_regime_times_paired_ratio")
+        self.assertEqual(last["per_week_factor"], 1.0)
+        self.assertEqual(last["per_week_source"], C.UNDETERMINED_WEEK_SOURCE)
+        self.assertEqual((last["value"], last["interval"]), (middle["value"], middle["interval"]))
 
     def test_a_change_that_does_not_apply_leaves_the_pooled_figure(self):
         meters = self.meters()
