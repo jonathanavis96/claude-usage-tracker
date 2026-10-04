@@ -3577,8 +3577,10 @@ PER_REGIME_METHOD = (
     "per 1% times 100 of its own pure stretches of the regime's `regime_family` (named on the "
     "row as `measured_family`) that lie "
     "wholly in the regime, read off their token counts with no rate and no pooled figure in "
-    "them. For regimes stated by one run's cluster, the stretches are those lying wholly in "
-    "the run, pooled over it, and every regime of the run carries the same window. A factor with no reading behind it is null, and so is its product.")
+    "them, published as `measured_window`; `window` is that reading in anchor-family units, "
+    "times the regime's own value over its `measured_value` where the family is not the "
+    "anchor, and `per_week` is `window` times windows per week. For regimes stated by one "
+    "run's cluster, the stretches are those lying wholly in the run, pooled over it, and every regime of the run carries the same window. A factor with no reading behind it is null, and so is its product.")
 
 
 def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None,
@@ -3671,6 +3673,20 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
     spans = [{"from": regimes[g[0]]["from"], "until": regimes[g[-1]]["until"]} for g in groups]
     group_of = {k: i for i, g in enumerate(groups) for k in g}
 
+    anchor = regimes[0].get("measured_family") or "opus" if regimes else "opus"
+
+    def anchor_window(reg: dict, fam: str, direct: int | None) -> int | None:
+        # The page reads `window` in anchor units and scales it by the family's own factor,
+        # so an off-anchor reading goes back through the regime's own factor
+        # (value over measured_value); a reading in a family the regime's figure was not
+        # measured in has no such factor and publishes no anchor window.
+        if direct is None or fam == anchor:
+            return direct
+        if fam != reg.get("measured_family") or not reg.get("value") \
+                or not reg.get("measured_value"):
+            return None
+        return round(direct * reg["value"] / reg["measured_value"])
+
     accounts = {}
     for name, label in labels.items():
         # The account's own pure regime-family readings: tokens per full window straight off
@@ -3690,11 +3706,12 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
         rows = []
         for k, reg in enumerate(regimes):
             readings = own_windows.get(group_of[k], [])
-            window = round(median(readings)) if readings else None
+            direct = round(median(readings)) if readings else None
+            fam = reg.get("regime_family") or reg.get("measured_family") or "opus"
+            window = anchor_window(reg, fam, direct)
             wpw = _pooled_windows_per_week(rows_in.get(label, {}).get(k, []))
             rows.append({"from": reg["from"], "until": reg["until"], "window": window,
-                         "measured_family": (reg.get("regime_family") or reg.get("measured_family")
-                                             or "opus"),
+                         "measured_family": fam, "measured_window": direct,
                          "windows_per_week": wpw["value"],
                          "per_week": (round(window * wpw["value"])
                                       if window is not None and wpw["value"] else None),

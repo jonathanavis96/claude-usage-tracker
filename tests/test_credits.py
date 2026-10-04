@@ -2454,7 +2454,8 @@ class RegimeFiguresTests(unittest.TestCase):
                                 "windows_per_week_ratio": ratio,
                                 "windows_per_week_ratio_interval": list(interval)}]}
 
-    def figures(self, meters=None, stretches=None, families=None, sources=None, runs=None):
+    def figures(self, meters=None, stretches=None, families=None, sources=None, runs=None,
+                measured_values=None):
         cut, day = C.CUT_AT, timedelta(days=1)
         max20 = {"by_window": [
             self.row("a1", cut - 5 * day, 60.0, 10.0),
@@ -2477,6 +2478,12 @@ class RegimeFiguresTests(unittest.TestCase):
                 reg["source"] = sources[k]
             if runs:
                 reg["run_from"] = runs[k]
+            if measured_values:
+                reg["measured_value"] = measured_values[k]
+        if families and measured_values and families[-1] != "opus":
+            # The newest regime's family row is its own direct reading.
+            tokens["per_family"][families[-1]] = {"all": {"value": measured_values[-1],
+                                                          "interval": None}}
         credits = {"regimes": self.regimes([10_000, 11_000, 12_000])}
         if stretches is None:
             stretches = {"one": [self.st(cut - 5 * day, 2, 1000.0),
@@ -2512,18 +2519,42 @@ class RegimeFiguresTests(unittest.TestCase):
                              # Not the regime's family: no part of its window.
                              pure(self.AT + 4 * day, "claude-opus-5", 10_000)],
                      "two": []}
-        figures = self.figures(stretches=stretches,
-                               families=["opus", "opus", "opus-5-5"])["account_regimes"]
+        figures = self.figures(stretches=stretches, families=["opus", "opus", "opus-5-5"],
+                               measured_values=[1000, 1100, 1500])["account_regimes"]
         a1, a2 = figures["a1"], figures["a2"]
         # Medians of the account's own readings, never scaled by the pooled regime value.
         self.assertEqual((a1[0]["window"], a1[0]["n_window"]), (500_000, 2))
+        self.assertEqual(a1[0]["measured_window"], 500_000)
         self.assertEqual((a1[1]["window"], a1[1]["n_window"], a1[1]["per_week"]), (None, 0, None))
-        self.assertEqual((a1[2]["window"], a1[2]["n_window"]), (650_000, 3))
+        # Measured in opus-5-5: the direct median is `measured_window`, and `window` is it in
+        # anchor units at the regime's own factor (value 1200 over measured_value 1500).
+        self.assertEqual((a1[2]["measured_window"], a1[2]["n_window"]), (650_000, 3))
+        self.assertEqual(a1[2]["window"], 520_000)
         self.assertEqual(a1[2]["measured_family"], "opus-5-5")
-        self.assertEqual(a1[2]["per_week"], 650_000 * 4)
+        self.assertEqual(a1[2]["per_week"], 520_000 * 4)
         self.assertEqual((a1[0]["windows_per_week"], a1[1]["windows_per_week"]), (6.0, 5.0))
         self.assertEqual([r["window"] for r in a2], [None, None, None])
         self.assertEqual(a2[2]["windows_per_week"], 3.0)
+
+    def test_page_scale_returns_an_off_anchor_account_window_to_its_direct_reading(self):
+        # The page multiplies `window` by per_family[family].all.value / all.value; for a
+        # regime measured in opus-5-5 that must give back the account's direct reading.
+        cut, day = C.CUT_AT, timedelta(days=1)
+
+        def pure(start, total):
+            return {"start": start.isoformat(), "end": (start + timedelta(hours=2)).isoformat(),
+                    "delta_pct": 10.0, "tokens": {"claude-opus-5-5": tok(cache_read=total)}}
+
+        stretches = {"one": [pure(self.AT + day, 80_310), pure(self.AT + 2 * day, 80_290)],
+                     "two": [pure(self.AT + day, 62_123)]}
+        figures = self.figures(stretches=stretches, families=["opus", "opus", "opus-5-5"],
+                               measured_values=[1000, 1100, 1593])
+        scale = 1593 / 1200
+        for label in ("a1", "a2"):
+            last = figures["account_regimes"][label][-1]
+            self.assertIsNotNone(last["window"])
+            self.assertAlmostEqual(last["window"] * scale, last["measured_window"], delta=1)
+        self.assertEqual(figures["account_regimes"]["a1"][-1]["measured_window"], 803_000)
 
     def test_account_windows_pool_the_accounts_readings_over_a_run(self):
         cut, day = C.CUT_AT, timedelta(days=1)
@@ -2538,12 +2569,13 @@ class RegimeFiguresTests(unittest.TestCase):
                              pure(self.AT + day, 61_000)],          # 610k, regime 2
                      "two": [pure(self.AT + 2 * day, 66_000)]}
         figures = self.figures(stretches=stretches, families=["opus", "opus-5-5", "opus-5-5"],
-                               runs=[None, cut.isoformat(), cut.isoformat()])["account_regimes"]
+                               runs=[None, cut.isoformat(), cut.isoformat()],
+                               measured_values=[1000, 1100, 1200])["account_regimes"]
         a1, a2 = figures["a1"], figures["a2"]
         for row in a1[1:]:
-            self.assertEqual((row["window"], row["n_window"]), (610_000, 3))
+            self.assertEqual((row["measured_window"], row["n_window"]), (610_000, 3))
         for row in a2[1:]:
-            self.assertEqual((row["window"], row["n_window"]), (660_000, 1))
+            self.assertEqual((row["measured_window"], row["n_window"]), (660_000, 1))
         self.assertEqual(a1[0]["window"], None)
 
     def test_a_directly_measured_regime_states_its_week_as_window_times_windows(self):
