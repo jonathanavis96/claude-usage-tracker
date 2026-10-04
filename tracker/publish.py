@@ -1371,7 +1371,8 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # Every figure per regime, so no chart holds one window across a boundary.
     tokens.update(credit_model.regime_figures(
         window, tokens, weekly["max20"], priceable, labels,
-        credit_model.across_cut_value(credits, model_rates=model_rates), meters=meters))
+        credit_model.across_cut_value(credits, model_rates=model_rates), meters=meters,
+        credits=credits))
     return {
         "as_of": credit_model.newest(window_as_of, fits_as_of),
         "as_of_source": {
