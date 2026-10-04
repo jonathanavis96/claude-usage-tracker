@@ -770,16 +770,24 @@ KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
 
 KNOWN_DATE_METHOD = (
     " After that, every change measured on the two meters (`five_hour_on_meters`, the "
-    "windows-per-week ratio across a change candidate; state measured, dated after cut_at) "
-    "opens a new regime in `regimes`, from the candidate's own instant. A regime's own cluster "
-    f"(stretches starting in it) states it once it holds {MIN_AFTER_CLUSTER} readings; below "
-    "that it is the previous regime's value times the change's five-hour limit ratio g (the "
-    "joint fit's point estimate, whatever its interval), the interval's low edge times g's low "
-    "edge and its high edge times g's high edge. Where the joint fit cannot yet separate the "
-    "new family's rate from g, the regime carries the previous regime's value "
-    f"(`{KNOWN_DATE_UNSCALED_SOURCE}`). The window interval "
-    "is a spread of readings, not a standard error, so the edges are multiplied rather than "
-    "standard errors combined. The published value and interval are the newest regime's.")
+    "windows-per-week ratio across a change candidate; dated after cut_at) opens a new regime "
+    "in `regimes`, from the candidate's own instant. Each such regime is measured in the family "
+    "actually in use: its regime family is the family with the most pure clean stretches "
+    "starting in it (`regime_family`, `n_regime_family`). Once that family holds "
+    f"{MIN_AFTER_CLUSTER} readings in the regime, the regime is their median tokens per 1% "
+    "times 100, read straight off their token counts with no rate in it, published as "
+    "`measured_value` and `measured_interval`. `value` and `interval` give the same window in "
+    "the anchor family's tokens, converted at the two families' point rates where the regime "
+    "family is not the anchor. Below that many readings the regime carries the previous "
+    "regime's figure in the same family's units, and `measured_family` names the family the "
+    "figure was measured in "
+    f"(`{KNOWN_DATE_UNSCALED_SOURCE}`), because the joint fit cannot yet separate the new "
+    "family's rate from the five-hour limit change g. Only where the joint fit does separate "
+    "them is the previous regime's figure scaled by g instead, each interval edge by g's same "
+    "edge. The window interval is a spread of readings, not a standard error. The published "
+    "value and interval are the newest regime's. Where the newest regime is measured in a "
+    "family other than the anchor, that family's row in `per_family` is its direct reading, "
+    "never a conversion.")
 
 
 def known_date_changes(meters: dict | None) -> list[dict]:
@@ -827,54 +835,94 @@ def current_method(changes: list[dict]) -> str:
         return CURRENT_METHOD + KNOWN_DATE_METHOD
     applied = "; ".join(f"from {_utc(c['at'])} ({c['family']} first turn), "
                         + (f"{c['change_pct']:+g}%" if c.get("window_scaled", True)
-                           else "window carried, joint fit not separable")
+                           else "window carried, joint fit not separable, unless the regime's "
+                                "own family states it")
                         for c in changes)
     return (CURRENT_METHOD + KNOWN_DATE_METHOD
             + f" Known-date changes applied: {applied}.")
 
 
+def _scaled(fig: dict, ratio: float, r_lo: float, r_hi: float) -> dict:
+    """{value, interval} times a ratio, each interval edge times the ratio interval's same edge."""
+    return {"value": fig["value"] * ratio if fig["value"] is not None else None,
+            "interval": ([fig["interval"][0] * r_lo, fig["interval"][1] * r_hi]
+                         if fig["interval"] else None)}
+
+
 def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
-                   changes: list[dict]) -> tuple[list[dict], str]:
+                   changes: list[dict], direct=None,
+                   anchor_fam: str | None = None) -> tuple[list[dict], str]:
     """The window regimes oldest first, and the current one's `current_source`.
 
     `own(key, scale)` is one cluster as {value, interval} (unrounded is fine), where key is
     a regime index or "whole". Regime 0 is the before cluster as measured. Regime 1 is the
     14 September split exactly as `current_cluster_rule` states it, over the stretches
-    that started before the first known-date change. Every later regime is its own cluster
-    once that holds MIN_AFTER_CLUSTER readings, else the previous regime times the change.
+    that started before the first known-date change. Both are in `anchor_fam`.
+
+    Every later regime is measured in the family actually in use. `direct(k)`, where given,
+    returns that regime's own cluster as {family, n, measured, anchor}: the family with the
+    most pure clean stretches starting in the regime, how many, their direct figure in that
+    family's tokens, and the same figure in anchor-family units. Without it the regime's
+    cluster is the anchor family's (`own`). With MIN_AFTER_CLUSTER readings the regime is
+    that cluster. Below that it is the previous regime times the change's g where the joint
+    fit separates g from the new family's rate, and the previous regime carried, in the same
+    family's units, where it does not. `measured_family`, `measured_value` and
+    `measured_interval` publish the figure in the family it was measured in; `value` and
+    `interval` stay in anchor-family units. `regime_family` and `n_regime_family` name the
+    regime's own family and its count whether or not that count was enough to state it.
     """
+    def row(fig: dict, measured: dict, fam: str | None, source: str, frm, until,
+            regime_fam: str | None, n: int) -> dict:
+        return {"from": frm, "until": until, "value": fig["value"], "interval": fig["interval"],
+                "source": source, "measured_family": fam,
+                "measured_value": measured["value"], "measured_interval": measured["interval"],
+                "regime_family": regime_fam, "n_regime_family": n}
+
     before = own(0, 1.0)
-    regimes = [{"from": None, "until": CUT_AT.isoformat(), "value": before["value"],
-                "interval": before["interval"], "source": "before_cluster"}]
+    regimes = [row(before, before, anchor_fam, "before_cluster", None, CUT_AT.isoformat(),
+                   anchor_fam, counts.get(0, 0))]
     chosen, factor, source = current_cluster_rule(counts.get(0, 0), counts.get(1, 0), five_hour_pct)
     fig = own({"before": 0, "after": 1, "whole": "whole"}[chosen], factor)
-    regimes.append({"from": CUT_AT.isoformat(), "until": None, "value": fig["value"],
-                    "interval": fig["interval"], "source": source})
+    regimes.append(row(fig, fig, anchor_fam, source, CUT_AT.isoformat(), None,
+                       anchor_fam, counts.get(1, 0)))
     for k, change in enumerate(changes, start=2):
         prev = regimes[-1]
         prev["until"] = _utc(change["at"])
-        if not change.get("window_scaled", True) and prev["value"] is not None:
-            # No separable fit, so no estimate of the limit change: the window carries the
-            # previous regime's value, however thick this regime's own cluster.
-            fig, source = {"value": prev["value"], "interval": prev["interval"]}, \
-                KNOWN_DATE_UNSCALED_SOURCE
-        elif counts.get(k, 0) >= MIN_AFTER_CLUSTER or prev["value"] is None:
-            fig, source = own(k, 1.0), KNOWN_DATE_CLUSTER_SOURCE
-        else:
+        cluster = direct(k) if direct else None
+        if cluster is None:
+            mine = own(k, 1.0)
+            cluster = {"family": anchor_fam, "n": counts.get(k, 0), "measured": mine, "anchor": mine}
+        unmeasured = prev["value"] is None and prev["measured_value"] is None
+        if cluster["n"] >= MIN_AFTER_CLUSTER or (unmeasured and cluster["n"]):
+            fig, measured, fam = cluster["anchor"], cluster["measured"], cluster["family"]
+            source = KNOWN_DATE_CLUSTER_SOURCE
+        elif change.get("window_scaled", True):
             r_lo, r_hi = change["ratio_interval"]
-            fig = {"value": prev["value"] * change["ratio"],
-                   "interval": ([prev["interval"][0] * r_lo, prev["interval"][1] * r_hi]
-                                if prev["interval"] else None)}
-            source = KNOWN_DATE_SCALED_SOURCE
-        regimes.append({"from": _utc(change["at"]), "until": None, "value": fig["value"],
-                        "interval": fig["interval"], "source": source})
+            fig = _scaled({"value": prev["value"], "interval": prev["interval"]},
+                          change["ratio"], r_lo, r_hi)
+            measured = _scaled({"value": prev["measured_value"], "interval": prev["measured_interval"]},
+                               change["ratio"], r_lo, r_hi)
+            fam, source = prev["measured_family"], KNOWN_DATE_SCALED_SOURCE
+        else:
+            # No separable fit, so no estimate of the limit change, and too few readings to
+            # state the regime: the previous regime's figure carries, in its own family.
+            fig = {"value": prev["value"], "interval": prev["interval"]}
+            measured = {"value": prev["measured_value"], "interval": prev["measured_interval"]}
+            fam, source = prev["measured_family"], KNOWN_DATE_UNSCALED_SOURCE
+        regimes.append(row(fig, measured, fam, source, _utc(change["at"]), None,
+                           cluster["family"], cluster["n"]))
     return regimes, regimes[-1]["source"]
 
 
 def _rounded_regimes(regimes: list[dict], unit: float = 1.0) -> list[dict]:
-    """The regimes as published: value and interval edges times `unit`, rounded."""
+    """The regimes as published: values and interval edges times `unit`, rounded."""
+    def edges(iv):
+        return [_round(x * unit) for x in iv] if iv else None
     return [dict(r, value=_round(r["value"] * unit if r["value"] is not None else None),
-                 interval=[_round(x * unit) for x in r["interval"]] if r["interval"] else None)
+                 interval=edges(r["interval"]),
+                 measured_value=_round(r["measured_value"] * unit
+                                       if r.get("measured_value") is not None else None),
+                 measured_interval=edges(r.get("measured_interval")))
             for r in regimes]
 
 
@@ -930,7 +978,7 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
                 "interval": [values[0] * scale, values[-1] * scale] if values else None}
 
     regimes, current_source = window_regimes(
-        {k: len(v) for k, v in by_regime.items()}, own, five_hour_pct, changes)
+        {k: len(v) for k, v in by_regime.items()}, own, five_hour_pct, changes, anchor_fam=fam)
     per_pct, per_pct_interval = regimes[-1]["value"], regimes[-1]["interval"]
 
     def side_figure(values: list[float]) -> dict:
@@ -976,6 +1024,37 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
         "status": None if pooled else f"no capture-accepted pure-{fam} stretch in the history files",
         "derivation": "credits",
     }
+
+
+def pure_family_of(tokens: dict, credits: dict) -> str | None:
+    """The one family every model of a stretch belongs to, or None for a mixed stretch."""
+    fams = {family(m, credits) for m in tokens}
+    return next(iter(fams)) if len(fams) == 1 and None not in fams else None
+
+
+def regime_family_rows(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
+                       changes: list[dict]) -> dict[int, dict[str, dict[str, list[dict]]]]:
+    """Every pure clean stretch with tokens, as {regime index: {family: {label: rows}}}.
+
+    No rate enters: a stretch is placed by its own start (`regime_index`) and filed under the
+    one family all its models belong to, priced or not, so a family the table has no rate for
+    (Opus 5.5) still has its window read straight off its token counts.
+    """
+    out: dict[int, dict[str, dict[str, list[dict]]]] = {}
+    for name, label in labels.items():
+        for st in clean.get(name, []):
+            fam = pure_family_of(st.get("tokens") or {}, credits)
+            idx = regime_index(st, changes) if fam else None
+            if idx is not None and st.get("delta_pct"):
+                out.setdefault(idx, {}).setdefault(fam, {}).setdefault(label, []).append(st)
+    return out
+
+
+def regime_family(by_fam: dict[str, dict[str, list[dict]]], anchor_fam: str) -> str:
+    """The regime family: the one with the most pure stretches in the regime, the anchor
+    first and then by name on a tie."""
+    return max(sorted(by_fam), key=lambda f: (sum(len(v) for v in by_fam[f].values()),
+                                              f == anchor_fam))
 
 
 def class_totals(tokens: dict) -> dict[str, int]:
@@ -1219,18 +1298,10 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
         return _figure_from({label: [v * scale for v in readings(account_rows)]
                              for label, account_rows in by_label.items()})
 
-    regimes, current_source = window_regimes(
-        {k: sum(len(v) for v in by_label.values()) for k, by_label in by_regime.items()},
-        own, five_hour_pct, changes)
-    regimes = _rounded_regimes(regimes)
-
     def both_sides(cls: str | None = None) -> dict:
         """The `before` and `after` sub-figures one published figure carries."""
         return {side: dict(figure(side, cls), n=n_side[side]) for side in ("before", "after")}
 
-    all_figure = dict(value=regimes[-1]["value"], interval=regimes[-1]["interval"],
-                      status=None if pooled_rows else
-                      f"no capture-accepted pure-{fam} stretch in the history files")
     per_class = {cls: dict(_figure_from({label: readings(account_rows, cls)
                                          for label, account_rows in rows.items()}),
                            **both_sides(cls))
@@ -1249,6 +1320,40 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     anchor = family_rate(fam, credits, model_rates)
     anchor_per_token = _mix_credits_per_token(shares, anchor.input, anchor.output, weight)
 
+    # Every pure clean stretch of any family, by the regime it started in, so each regime
+    # after a known-date change is measured in the family actually in use.
+    pure_by_regime = regime_family_rows(clean, credits, labels, changes)
+
+    def direct(k: int) -> dict | None:
+        """Regime k's own cluster in its regime family, and that figure in anchor units."""
+        by_fam = pure_by_regime.get(k) or {}
+        if not by_fam:
+            return None
+        name = regime_family(by_fam, fam)
+        measured = _figure_from({label: readings(account_rows)
+                                 for label, account_rows in by_fam[name].items()})
+        n = sum(len(v) for v in by_fam[name].values())
+        if name == fam:
+            return {"family": name, "n": n, "measured": measured, "anchor": measured}
+        rate = family_rate(name, credits, model_rates)
+        per_token = _mix_credits_per_token(shares, rate.input, rate.output, weight)
+        # The anchor-unit value goes through the family's point rate at the published mix;
+        # the regime family's own figure never does.
+        ratio = per_token / anchor_per_token if per_token and anchor_per_token else None
+        return {"family": name, "n": n, "measured": measured,
+                "anchor": (_scaled(measured, ratio, ratio, ratio) if ratio is not None
+                           else {"value": None, "interval": None})}
+
+    regimes, current_source = window_regimes(
+        {k: sum(len(v) for v in by_label.values()) for k, by_label in by_regime.items()},
+        own, five_hour_pct, changes, direct=direct, anchor_fam=fam)
+    regimes = _rounded_regimes(regimes)
+    measured_family = regimes[-1]["measured_family"]
+
+    all_figure = dict(value=regimes[-1]["value"], interval=regimes[-1]["interval"],
+                      status=None if pooled_rows else
+                      f"no capture-accepted pure-{fam} stretch in the history files")
+
     families = {}
     for name in credits["per_family"]:
         rate = family_rate(name, credits, model_rates)
@@ -1257,7 +1362,15 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
             "all": _family_window_tokens(all_figure, anchor_per_token, rate, shares, weight),
             "rate_source": source,
             "conversion": _conversion_sentence(fam, name, source),
+            "measured_directly": name == measured_family,
         }
+    if measured_family and measured_family != fam and measured_family in families:
+        # The headline family's figure is the regime's own direct reading, never a round
+        # trip through a rate: x r then / r at a different r is how a window is invented.
+        families[measured_family].update(
+            all={"value": regimes[-1]["measured_value"],
+                 "interval": regimes[-1]["measured_interval"], "status": None},
+            conversion=None)
 
     per_week = per_week_block(all_figure, families, windows_per_week, windows_per_week_interval,
                               windows_per_week_source)
@@ -1270,7 +1383,10 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
               f"-- and not a confidence interval. No credit rate and no class weight enters the "
               f"pure-{fam} figure: it is the stretch's own token counts over its own meter movement. "
               f"Every other family is a conversion of it at the two families' rates (`conversion`), "
-              f"and a family whose rate is a status sentence publishes no number.")
+              f"and a family whose rate is a status sentence publishes no number. A regime after "
+              f"a known-date change is measured the same way in its own regime family "
+              f"(`measured_family`, `current_method`), and that family's row is its direct "
+              f"reading.")
     return {
         "derivation": "credits",
         "as_of": newest_end(pooled_rows),
@@ -1284,6 +1400,7 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
         "regimes": regimes,
         "current_source": current_source if pooled_rows else None,
         "five_hour_window_pct": five_hour_pct,
+        "measured_family": measured_family,
         "accounts": accounts,
         "per_class": per_class,
         "all": all_figure,
@@ -2653,8 +2770,9 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     model whose rate the candidate did not touch, `new` the candidate family's tokens valued
     at its base family's rate (`base_family`), L the account's own credits per 1% from its
     before side (known work only), and g the limit change. Mixed stretches vary the new
-    family's share, and that variation separates r from g; a mix too uniform leaves r
-    unpinned and the fit says so. The fit runs once by plain least squares to measure the
+    family's share, and that variation separates r from g; the fit is `separable` only when
+    r's interval spans at most JOINT_SEPARABLE_SPAN and JOINT_MIN_MIXED after stretches mix
+    the families at a share in JOINT_MIXED_SHARE, and `reason` names the test that failed. The fit runs once by plain least squares to measure the
     scatter robustly (`_joint_scatter`), then again as a Huber M-estimate at that scatter
     plus each stretch's own rounding variance (`_joint_solve`), so a stretch with missing or
     extra work counts for less. Its interval is set mostly by how well the mix separates r
@@ -3005,13 +3123,19 @@ WINDOWS_PER_WEEK_METHOD = (
     "tokens at its base family's rate) / (the account's own before level x g). The weekly "
     "limit's change is g times the windows-per-week ratio, its interval from g's bootstrap "
     "interval and the ratio's (`windows_per_week_ratio_bootstrap_interval`) as independent "
-    "log-normal ones. Once the fit separates the rate from g, `change_pct` is g at its point "
-    "estimate, whatever its interval: the regimes scale the window by g and the week by g "
-    "times the ratio at once, and the figures move as readings arrive. `scope` only "
+    "log-normal ones. The fit separates the rate from g only when the rate is pinned: its 95% "
+    f"interval spans at most {JOINT_SEPARABLE_SPAN:g}x end to end and touches neither search "
+    f"bound, and at least {JOINT_MIN_MIXED} pooled stretches after the candidate mix the new "
+    f"family at a share of {JOINT_MIXED_SHARE[0]:g} to {JOINT_MIXED_SHARE[1]:g} of the work, "
+    "because only mixing identifies the rate; `scope.reason` names the test that failed. "
+    "Once the fit separates the rate from g, `change_pct` is g at its point "
+    "estimate, whatever its interval: a regime too thin to be measured in its own family "
+    "scales the window by g and the week by g times the ratio at once, and the figures move "
+    "as readings arrive. `scope` only "
     "describes which intervals exclude no change: `five_hour` g's alone, `weekly` the weekly "
     "one alone, `both` both, `undetermined` neither. While the fit cannot separate the rate "
-    "from g (the mix too uniform), `change_pct` is null, the regimes carry the previous "
-    "window and week, and `scope.reason` says why. The state says how settled the headline "
+    "from g, `change_pct` is null, a regime too thin to be measured in its own family "
+    "carries the previous window and week, and `scope.reason` says why. The state says how settled the headline "
     "figure is, from its own 95% interval (`change_state`): the five-hour limit change once "
     "the fit separates it, else the windows-per-week change. It is measuring while that "
     "interval includes no change, provisional once it excludes it, and measured once it also "
@@ -3282,7 +3406,7 @@ PER_REGIME_METHOD = (
     "movement pooled over every account's `weekly_windows.max20.by_window` readings in the "
     "regime, with its rounding interval; a reading belongs to the regime it ended in, the "
     "weekly change reaching each account at its own certified step. A regime a five-hour "
-    "change opened chains instead, as the window regimes do: the previous regime's windows "
+    "change opened chains instead: the previous regime's windows "
     "per week times the change's combined paired ratio (`five_hour_on_meters`, "
     "`windows_per_week_ratio`), each interval end times the ratio interval's same end. Pooling "
     "there would compare different sets of accounts either side (an account with readings on "
@@ -3293,34 +3417,39 @@ PER_REGIME_METHOD = (
     "previous regime's value and interval times the product of the two point ratios "
     "(`per_week_factor`: this regime's window over the previous one's, times the paired "
     "ratio): with the window scaled by the joint fit's g, g times the ratio, which is the "
-    "weekly limit's change. While the joint fit cannot separate the new family's rate from g "
-    "only windows per week steps: the window and the week carry the previous regime's value "
+    "weekly limit's change. A regime whose window was measured directly in its own family "
+    f"(`{KNOWN_DATE_CLUSTER_SOURCE}`) states its week as that window times its windows per "
+    "week, as the first two regimes do. While the joint fit cannot separate the new family's "
+    "rate from g and the regime is not measured directly, only windows per week steps: the "
+    "window and the week carry the previous regime's value "
     f"(`per_week_factor` 1, `per_week_source` `{UNDETERMINED_WEEK_SOURCE}`). `window` and "
     "`windows_per_week` stay published as the two factors. `per_week` is the newest regime's "
     "figure, and every family's week moves from its window the way the anchor's does. "
     "`account_regimes` gives each account's own two factors in each regime and never another "
-    "account's: its windows per week from its own readings, and its window from its own "
-    "stretches that lie wholly in the regime, valued as `five_hour_window_across_cut` values "
-    "them, the median credits per 1% times 100 over the regime's pooled window in credits "
-    "(`window_credits.regimes`) times its window in tokens (`regimes`). A factor with no "
-    "reading behind it is null, and so is its product.")
+    "account's: its windows per week from its own readings, and its window the median tokens "
+    "per 1% times 100 of its own pure stretches of the regime's `regime_family` (named on the "
+    "row as `measured_family`) that lie "
+    "wholly in the regime, read off their token counts with no rate and no pooled figure in "
+    "them. A factor with no reading behind it is null, and so is its product.")
 
 
 def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None,
                    stretches: dict[str, list[dict]], labels: dict[str, str], value,
-                   meters: dict | None = None) -> dict:
+                   meters: dict | None = None, credits: dict | None = None) -> dict:
     """`per_week_regimes`, `account_regimes` and the matching `per_week` for `window_tokens`.
 
     `stretches` is the across-the-cut selection by account name (`rate_fit_stretches`),
-    `value(tokens)` its valuation (`across_cut_value`), and `meters` the
+    `value(tokens)` its valuation (`across_cut_value`; no account window uses it now, and
+    `window_credits` is kept in the signature for the same reason), and `meters` the
     `five_hour_on_meters` block whose paired ratios chain the five-hour regimes' windows per
     week. `per_week` replaces the block's own: the newest regime's windows per week times the
     current window, so the hero figure equals the newest `per_week_regimes` value. See
-    PER_REGIME_METHOD.
+    PER_REGIME_METHOD. `credits` is the rate table whose families the stretches are filed
+    under (data/prices.json when None).
     """
+    credits = load_credits() if credits is None else credits
     ratios = {datetime.fromisoformat(c["at"]): c for c in five_hour_meter_events(meters)}
     regimes = window_tokens["regimes"]
-    credit_regimes = window_credits.get("regimes") or []
     by_window = (max20 or {}).get("by_window") or []
     by_account = (max20 or {}).get("by_account") or {}
 
@@ -3357,7 +3486,11 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                     if reg["interval"] and wpw["interval"] else None)
         factor = None
         week_source = None
-        if source == "previous_regime_times_paired_ratio" and prev["value"] and prev["window"] \
+        if reg.get("source") == KNOWN_DATE_CLUSTER_SOURCE:
+            # Measured directly in the regime: the week is that window times the regime's
+            # windows per week, as for the first two regimes.
+            pass
+        elif source == "previous_regime_times_paired_ratio" and prev["value"] and prev["window"] \
                 and window is not None:
             undetermined = change.get("change_pct") is None
             # The window change and the windows-per-week ratio are one measurement of one
@@ -3381,22 +3514,27 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
 
     accounts = {}
     for name, label in labels.items():
-        per_pct: dict[int, list[float]] = {}
+        # The account's own pure regime-family readings: tokens per full window straight off
+        # its own stretches, no rate and no pooled figure in them.
+        own_windows: dict[int, list[float]] = {}
         for st in stretches.get(name, []):
             if not st.get("start") or not st.get("end") or not st.get("delta_pct"):
                 continue
             k = _stretch_regime_index(st, regimes)
-            total = value(st["tokens"]) if k is not None else None
-            if total is not None:
-                per_pct.setdefault(k, []).append(total / st["delta_pct"])
+            if k is None:
+                continue
+            fam = regimes[k].get("regime_family") or regimes[k].get("measured_family") or "opus"
+            if pure_family_of(st.get("tokens") or {}, credits) == fam:
+                total = sum(class_totals(st["tokens"]).values())
+                own_windows.setdefault(k, []).append(total / st["delta_pct"] * 100)
         rows = []
         for k, reg in enumerate(regimes):
-            readings = per_pct.get(k, [])
-            pooled_credits = credit_regimes[k]["value"] if k < len(credit_regimes) else None
-            window = (round(median(readings) * 100 / pooled_credits * reg["value"])
-                      if readings and pooled_credits and reg["value"] is not None else None)
+            readings = own_windows.get(k, [])
+            window = round(median(readings)) if readings else None
             wpw = _pooled_windows_per_week(rows_in.get(label, {}).get(k, []))
             rows.append({"from": reg["from"], "until": reg["until"], "window": window,
+                         "measured_family": (reg.get("regime_family") or reg.get("measured_family")
+                                             or "opus"),
                          "windows_per_week": wpw["value"],
                          "per_week": (round(window * wpw["value"])
                                       if window is not None and wpw["value"] else None),
