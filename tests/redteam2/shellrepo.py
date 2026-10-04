@@ -75,7 +75,7 @@ def gs_checkout(tmp_path: Path, home: Path) -> tuple[Path, Path, Path, dict]:
     shutil.copy(ROOT / "bin" / "daily.sh", work / "bin" / "daily.sh")
     (work / "tracker").mkdir()
     (work / "tracker" / "__init__.py").write_text("")
-    for mod in ("list_prices", "contributed", "alert", "publish_gate"):
+    for mod in ("list_prices", "contributed", "alert", "publish_gate", "invariants"):
         (work / "tracker" / f"{mod}.py").write_text(NOOP_STUB)
     for mod in ("gs_passive", "publish"):
         (work / "tracker" / f"{mod}.py").write_text(OUT_STUB)

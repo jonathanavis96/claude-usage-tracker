@@ -177,6 +177,13 @@ fi
 # when it passes again) through tracker.supervise's sender.
 nice python3 -m tracker.publish_gate \
   || echo "warning: publish test gate failed (alerted), publishing anyway" >&2
+# Invariants over the JSON just built (tracker/invariants.py): the headline inside its
+# accounts, no step a change that failed ADR 0001 rules 8 and 9 scales, direct figures
+# published as measured, account units, steps that agree with the meters. On 2026-10-04 a
+# window chained through two unproven steps reached the page unnoticed. Same semantics as
+# the gate: one alert when a check starts failing, one on recovery, never blocks.
+python3 -m tracker.invariants --json "$SITE/website/public/data/claude-usage.json" \
+  || echo "warning: public JSON invariants failed (alerted), publishing anyway" >&2
 
 # Only these files are added and committed (`--only`): anything else staged in this
 # checkout stays staged and is never pushed with the state.

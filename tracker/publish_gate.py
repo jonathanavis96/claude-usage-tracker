@@ -47,25 +47,42 @@ def pytest_runner(files: list[str], timeout: float) -> tuple[int, str]:
     return (0 if r.returncode == 0 else 1), summary
 
 
-def gate(state_path: Path, send: supervise.Sender, runner: Runner = pytest_runner,
-         files: tuple[str, ...] = GATE_TESTS, timeout: float = 60.0,
-         now: Callable[[], float] = time.time) -> int:
-    code, summary = runner(list(files), timeout)
+def track_incident(state_path: Path, send: supervise.Sender, ok: bool, summary: str,
+                   failed_text: str, recovered_text: Callable[[int, str], str],
+                   now: Callable[[], float] = time.time) -> None:
+    """The incident semantics every publish-time alert here shares.
+
+    One alert (`failed_text`) when a check starts failing, nothing while it keeps failing,
+    one recovery (`recovered_text(minutes, reason)`) when it passes again. A send that fails
+    leaves the incident unopened (or open), so the next run tries again. State lives in
+    `state_path`. tracker.invariants uses it too.
+    """
     state = health.read_state(state_path)
     t = now()
-    state.update(last_run=t, last_summary=summary, last_result="pass" if code == 0 else "fail")
-    if code != 0 and not state.get("incident_open"):
-        if send(f"Claude usage tracker (gs publisher) test gate failed: {summary}. "
-                f"Published anyway. Run: cd ~/claude-usage-tracker && python3 -m pytest -q {' '.join(files)}"):
+    state.update(last_run=t, last_summary=summary, last_result="pass" if ok else "fail")
+    if not ok and not state.get("incident_open"):
+        if send(failed_text):
             state.update(incident_open=True, incident_since=t, incident_reason=summary)
-    elif code == 0 and state.get("incident_open"):
+    elif ok and state.get("incident_open"):
         mins = int((t - state.get("incident_since", t)) // 60)
-        if send(f"Claude usage tracker (gs publisher) test gate passes again after {mins} min "
-                f"(was: {state.get('incident_reason')})"):
+        if send(recovered_text(mins, state.get("incident_reason"))):
             for k in ("incident_open", "incident_since", "incident_reason"):
                 state.pop(k, None)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     supervise.write_state(state_path, state)
+
+
+def gate(state_path: Path, send: supervise.Sender, runner: Runner = pytest_runner,
+         files: tuple[str, ...] = GATE_TESTS, timeout: float = 60.0,
+         now: Callable[[], float] = time.time) -> int:
+    code, summary = runner(list(files), timeout)
+    track_incident(
+        state_path, send, code == 0, summary,
+        f"Claude usage tracker (gs publisher) test gate failed: {summary}. "
+        f"Published anyway. Run: cd ~/claude-usage-tracker && python3 -m pytest -q {' '.join(files)}",
+        lambda mins, was: (f"Claude usage tracker (gs publisher) test gate passes again after "
+                           f"{mins} min (was: {was})"),
+        now)
     print(f"publish gate: {'pass' if code == 0 else 'FAIL'}: {summary}")
     return code
 
