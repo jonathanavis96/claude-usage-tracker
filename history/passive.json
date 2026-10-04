@@ -1,11 +1,11 @@
 {
- "generated_at": "2026-10-04T15:15:33.874026+00:00",
+ "generated_at": "2026-10-04T17:15:43.759710+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
-  "output": 0.0049,
-  "cache_read": 0.9691,
-  "cache_write": 0.0257
+  "output": 0.005,
+  "cache_read": 0.9686,
+  "cache_write": 0.0259
  },
  "history": {
   "2026-07-30": {
@@ -273,7 +273,7 @@
    "interpolated": true
   },
   "2026-10-04": {
-   "tokens_per_pct": 11139778,
+   "tokens_per_pct": 8374225,
    "interpolated": false
   }
  },
@@ -281,9 +281,9 @@
   "claude-sonnet-4-6": 264267,
   "claude-opus-5": 2903578,
   "claude-sonnet-5": 647702,
-  "claude-opus-4-7": 134221,
-  "claude-fable-5-1": 6314773,
-  "claude-opus-5-5": 2106482,
+  "claude-opus-4-7": 134378,
+  "claude-fable-5-1": 6281685,
+  "claude-opus-5-5": 1879532,
   "claude-haiku-4-5": 217691,
   "claude-opus-4-8": 852622
  },
