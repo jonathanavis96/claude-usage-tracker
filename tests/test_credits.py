@@ -2170,7 +2170,10 @@ class RegimeFamilyTests(unittest.TestCase):
         block = self.block(self.RATES)
         # Opus 5.5 at 0.8x Opus 5 for every class: a window of Opus 5.5 tokens is 0.8 of one
         # in Opus 5 tokens.
-        self.assertEqual(block["regimes"][-1]["value"], round(700_000 * 0.8))
+        # The run opens at a separable +10% change, so the anchor-unit value is bridged:
+        # the previous regime's window times 1.1.
+        prev = block["regimes"][1]["value"]
+        self.assertAlmostEqual(block["regimes"][-1]["value"], prev * 1.1, delta=1)
         self.assertEqual(block["all"]["value"], block["regimes"][-1]["value"])
         self.assertEqual(block["per_family"]["opus"]["all"]["value"], block["all"]["value"])
 
@@ -2197,12 +2200,12 @@ class UnmeasuredBoundaryRunTests(unittest.TestCase):
                               for d, w in ((1, 700_000), (2, 760_000), (3, 620_000))]
     RATES = RegimeFamilyTests.RATES
 
-    def block(self, meters=None, middle=None, latest=None):
+    def block(self, meters=None, middle=None, latest=None, five_hour_pct=8.6):
         after = [opus_stretch("2026-09-16T00:00:00+00:00", 300_000),
                  *(self.MIDDLE if middle is None else middle),
                  *(self.LATEST if latest is None else latest)]
         clean = C.clean_stretches({"jwork": WindowTokensCutTests.BEFORE, "masterrig": after}, [])
-        return C.window_tokens(clean, CREDITS, LABELS, self.RATES, five_hour_pct=8.6,
+        return C.window_tokens(clean, CREDITS, LABELS, self.RATES, five_hour_pct=five_hour_pct,
                                windows_per_week=5.0,
                                meters=meters or two_changes(self.FIRST, self.SECOND))
 
@@ -2218,8 +2221,45 @@ class UnmeasuredBoundaryRunTests(unittest.TestCase):
             # Median of 450k, 600k, 620k, 640k, 700k, 760k.
             self.assertEqual(regime["measured_value"], 630_000)
             self.assertEqual(regime["measured_interval"], [450_000, 760_000])
-            self.assertEqual(regime["value"], round(630_000 * 0.8))
         self.assertIsNone(before["run_from"])
+
+    #: The bridge rate: the pre-cut window (174,000 Opus 5 tokens) times the meters' +8.6%
+    #: across the cut, over the run's direct 630,000 Opus 5.5 tokens.
+    BRIDGE = 174_000 * 1.086 / 630_000
+
+    def test_the_run_converts_at_the_rate_that_matches_the_meters_at_its_opening(self):
+        block = self.block()
+        first = block["regimes"][1]
+        self.assertAlmostEqual(first["bridge_rate"], round(self.BRIDGE, 4))
+        self.assertEqual(first["bridge_rate_interval"],
+                         [round(174_000 * 1.086 / 760_000, 4), round(174_000 * 1.086 / 450_000, 4)])
+        self.assertIn("derived: the rate that makes the step at 2026-09-14", first["bridge_rate_source"])
+        for regime in block["regimes"][1:]:
+            self.assertEqual(regime["value"], round(630_000 * self.BRIDGE))
+        # Other families still convert from the anchor at their own rates, and the fitted
+        # Opus 5.5 rate is not touched.
+        self.assertEqual(block["per_family"]["opus"]["all"]["value"], block["all"]["value"])
+        self.assertEqual(block["per_family"]["opus-5-5"]["history_rate"]["times_anchor"],
+                         round(self.BRIDGE, 4))
+
+    def test_the_step_at_the_opening_boundary_equals_the_meters_change(self):
+        block = self.block()
+        before, first = block["regimes"][:2]
+        self.assertEqual(first["family_value"], 630_000)
+        self.assertAlmostEqual(first["family_value"] / before["family_value"], 1.086, places=3)
+
+    def test_the_bridge_does_not_move_the_headline(self):
+        for pct in (8.6, None, -20.0):
+            with self.subTest(five_hour_pct=pct):
+                self.assertEqual(self.block(five_hour_pct=pct)["per_family"]["opus-5-5"]["all"],
+                                 {"value": 630_000, "interval": [450_000, 760_000], "status": None})
+
+    def test_without_a_measured_change_at_the_opening_the_fitted_rate_stands(self):
+        block = self.block(five_hour_pct=None)
+        first = block["regimes"][1]
+        self.assertNotIn("bridge_rate", first)
+        self.assertEqual(first["value"], round(630_000 * 0.8))
+        self.assertEqual(block["regimes"][0]["family_value"], round(174_000 / 0.8))
 
     def test_the_headline_family_is_the_runs_direct_median_exactly(self):
         block = self.block()

@@ -784,6 +784,15 @@ KNOWN_DATE_METHOD = (
     f"anywhere in it, hold {MIN_AFTER_CLUSTER} readings of its most common family states every "
     "regime in it with that family's direct median and spread "
     f"(`{RUN_CLUSTER_SOURCE}`); the 14 September regime's own rule above gives way to it. "
+    "Where that family is not the anchor and the boundary opening the run has a five-hour "
+    "change the meters measured (the change across the cut, or a separable change's g), the "
+    "run's anchor-unit `value` and `interval`, and every earlier regime's figure in the run "
+    "family's units, go through the bridge rate rather than the fitted one: the previous "
+    "regime's anchor window times that change, over the run's direct window. The step at "
+    "that boundary is then the meters' change. `bridge_rate`, `bridge_rate_interval` (the "
+    "same over the run's highest and lowest reading) and `bridge_rate_source` are published "
+    "on the run's first regime; the fitted rate stays published as the fitted figure, and "
+    "other families still convert from the anchor at their own rates. "
     "Otherwise each regime is measured on its own: once its regime family holds "
     f"{MIN_AFTER_CLUSTER} readings in the regime, the regime is their median tokens per 1% "
     "times 100, read straight off their token counts with no rate in it, published as "
@@ -895,7 +904,12 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
     Regimes joined by boundaries the tracker could not measure form one run (`window_runs`).
     A run of two or more regimes whose cluster holds MIN_AFTER_CLUSTER readings states every
     regime in it with that one cluster (`RUN_CLUSTER_SOURCE`, `run_from` the run's first
-    instant). Any other regime follows the rules below. Without it the regime's
+    instant). Where the run's family is not the anchor and the boundary opening the run has a
+    five-hour change the meters measured (`five_hour_pct` across the cut, a separable g after
+    it), the run's anchor-unit figure goes through the bridge rate rather than the fitted one:
+    the previous regime's anchor window times that change over the run's direct window, so
+    the step there is the meters' change (`bridge_rate`, on the run's first regime). Any
+    other regime follows the rules below. Without it the regime's
     cluster is the anchor family's (`own`). With MIN_AFTER_CLUSTER readings the regime is
     that cluster. Below that it is the previous regime times the change's g where the joint
     fit separates g from the new family's rate, and the previous regime carried, in the same
@@ -920,17 +934,49 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
                 run_clusters[k] = cluster
     froms = [None, CUT_AT.isoformat(), *(_utc(c["at"]) for c in changes)]
 
-    def run_row(k: int, until) -> dict:
+    def opening_change(k: int) -> float | None:
+        """The five-hour change the meters measured at the boundary opening regime k, as a
+        ratio: the change across the cut for regime 1, a separable change's g after it."""
+        if k == 1:
+            return 1 + five_hour_pct / 100 if five_hour_pct is not None else None
+        change = changes[k - 2]
+        return change["ratio"] if change.get("window_scaled", True) else None
+
+    bridges: dict[int, dict] = {}
+
+    def run_row(k: int, until, prev: dict) -> dict:
         cluster = run_clusters[k]
         first = min(j for j in run_clusters if run_clusters[j] is cluster)
-        return row(cluster["anchor"], cluster["measured"], cluster["family"], RUN_CLUSTER_SOURCE,
-                   froms[k], until, cluster["family"], cluster["n"], froms[first])
+        anchor_fig, extra = cluster["anchor"], {}
+        if k == first and cluster["family"] != anchor_fam:
+            g = opening_change(k)
+            measured = cluster["measured"]
+            if g is not None and prev["value"] and measured["value"] and measured["interval"]:
+                # The bridge rate: the run family's tokens priced so that the step at the
+                # opening boundary equals the five-hour change the meters measured there.
+                rate = prev["value"] * g / measured["value"]
+                lo, hi = measured["interval"]
+                bridges[first] = {
+                    "bridge_rate": rate,
+                    "bridge_rate_interval": [prev["value"] * g / hi, prev["value"] * g / lo],
+                    "bridge_rate_source": (
+                        f"derived: the rate that makes the step at {froms[k]} equal the "
+                        f"five-hour change the meters measured there ({(g - 1) * 100:+.1f}%): "
+                        f"the previous regime's {anchor_fam} window times that change, over "
+                        f"the run's direct {cluster['family']} window; its interval is the same "
+                        f"over the run's highest and lowest reading")}
+                extra = bridges[first]
+        if first in bridges:
+            rate = bridges[first]["bridge_rate"]
+            anchor_fig = _scaled(cluster["measured"], rate, rate, rate)
+        return dict(row(anchor_fig, cluster["measured"], cluster["family"], RUN_CLUSTER_SOURCE,
+                        froms[k], until, cluster["family"], cluster["n"], froms[first]), **extra)
 
     before = own(0, 1.0)
     regimes = [row(before, before, anchor_fam, "before_cluster", None, CUT_AT.isoformat(),
                    anchor_fam, counts.get(0, 0))]
     if 1 in run_clusters:
-        regimes.append(run_row(1, None))
+        regimes.append(run_row(1, None, regimes[0]))
     else:
         chosen, factor, source = current_cluster_rule(counts.get(0, 0), counts.get(1, 0),
                                                       five_hour_pct)
@@ -941,7 +987,7 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
         prev = regimes[-1]
         prev["until"] = _utc(change["at"])
         if k in run_clusters:
-            regimes.append(run_row(k, None))
+            regimes.append(run_row(k, None, prev))
             continue
         cluster = direct((k,)) if direct else None
         if cluster is None:
@@ -977,7 +1023,10 @@ def _rounded_regimes(regimes: list[dict], unit: float = 1.0) -> list[dict]:
                  interval=edges(r["interval"]),
                  measured_value=_round(r["measured_value"] * unit
                                        if r.get("measured_value") is not None else None),
-                 measured_interval=edges(r.get("measured_interval")))
+                 measured_interval=edges(r.get("measured_interval")),
+                 **({"bridge_rate": round(r["bridge_rate"], 4),
+                     "bridge_rate_interval": [round(x, 4) for x in r["bridge_rate_interval"]]}
+                    if r.get("bridge_rate") is not None else {}))
             for r in regimes]
 
 
@@ -1430,6 +1479,36 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
             all={"value": regimes[-1]["measured_value"],
                  "interval": regimes[-1]["measured_interval"], "status": None},
             conversion=None)
+    # Every regime in the newest regime's measured family: its own direct figure where it was
+    # measured in that family, else its anchor-unit figure over the rate the history is
+    # converted at -- the newest run's bridge rate where it has one, else the fitted rate.
+    newest_run = regimes[-1].get("run_from")
+    bridge = next((r for r in regimes if newest_run and r.get("run_from") == newest_run
+                   and r.get("bridge_rate") is not None), None)
+    history_rate, history_source = None, None
+    if measured_family == fam:
+        history_rate = 1.0
+    elif bridge is not None:
+        history_rate, history_source = bridge["bridge_rate"], bridge["bridge_rate_source"]
+    elif measured_family:
+        rate = family_rate(measured_family, credits, model_rates)
+        per_token = _mix_credits_per_token(shares, rate.input, rate.output, weight)
+        if per_token and anchor_per_token:
+            history_rate, history_source = per_token / anchor_per_token, "fitted"
+    for r in regimes:
+        if r["measured_family"] == measured_family:
+            r["family_value"], r["family_interval"] = r["measured_value"], r["measured_interval"]
+        else:
+            r["family_value"] = (_round(r["value"] / history_rate)
+                                 if history_rate and r["value"] is not None else None)
+            r["family_interval"] = ([_round(x / history_rate) for x in r["interval"]]
+                                    if history_rate and r["interval"] else None)
+    if measured_family and measured_family != fam and measured_family in families:
+        families[measured_family]["history_rate"] = {
+            "times_anchor": round(history_rate, 4) if history_rate else None,
+            "interval": bridge["bridge_rate_interval"] if bridge is not None else None,
+            "source": ("fitted: the family's measured rate at the published mix"
+                       if history_source == "fitted" else history_source)}
 
     per_week = per_week_block(all_figure, families, windows_per_week, windows_per_week_interval,
                               windows_per_week_source)
@@ -1460,6 +1539,11 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
         "current_source": current_source if pooled_rows else None,
         "five_hour_window_pct": five_hour_pct,
         "measured_family": measured_family,
+        "family_values_method": (
+            "`family_value` and `family_interval` on each regime are its window in "
+            "`measured_family` tokens: the regime's own direct figure where it was measured in "
+            "that family, else its anchor-unit figure over `per_family[measured_family]."
+            "history_rate`."),
         "accounts": accounts,
         "per_class": per_class,
         "all": all_figure,
