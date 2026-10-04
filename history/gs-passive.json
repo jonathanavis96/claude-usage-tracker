@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-04T14:00:05.317115+00:00",
+ "generated_at": "2026-10-04T14:30:04.940961+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 6447,
+    "reset_verified_samples": 6457,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 10397,
+    "samples": 10407,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-04T13:59:10+00:00"
+    "last": "2026-10-04T14:28:58+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 3185,
-    "turns": 75800,
+    "files": 3186,
+    "turns": 75807,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 3185,
+     "kept": 3186,
      "dropped": 2655,
      "subagent_files": 954,
      "dropped_to": {
@@ -10877,11 +10877,11 @@
     },
     {
      "window_ending": "2026-10-04T16:39:59.718854+00:00",
-     "windows": null,
+     "windows": 2.0,
      "five_hour_pct": 2.0,
-     "seven_day_pct": 0.0,
+     "seven_day_pct": 1.0,
      "rounding_interval": [
-      0.2734,
+      0.1671,
       null
      ],
      "pieces": 1,
@@ -10897,18 +10897,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5941,
+    "reset_verified_samples": 5953,
     "since": null,
-    "samples": 8422,
+    "samples": 8434,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-04T13:59:10+00:00"
+    "last": "2026-10-04T14:28:58+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1292,
-    "turns": 41831,
+    "files": 1293,
+    "turns": 41917,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -15770,7 +15770,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-04T13:59:10+00:00",
+     "window_ending": "2026-10-04T14:28:58+00:00",
      "windows": null,
      "five_hour_pct": 4.0,
      "seven_day_pct": 0.0,
@@ -15791,11 +15791,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5756,
+    "reset_verified_samples": 5768,
     "since": null,
-    "samples": 6390,
+    "samples": 6402,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-04T13:58:53+00:00"
+    "last": "2026-10-04T14:28:33+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -15810,10 +15810,10 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 888,
-     "dropped": 1323,
+     "dropped": 1324,
      "subagent_files": 246,
      "dropped_to": {
-      ".claude-javiswork": 830
+      ".claude-javiswork": 831
      },
      "attributed_by_record": {
       "airlock_tune_env": 192
@@ -17444,7 +17444,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-04T14:00:56.278838+00:00",
+  "generated_at": "2026-10-04T14:31:00.687449+00:00",
   "method": "trigger-to-last-block/v1",
   "rows": [
    {
@@ -57528,6 +57528,85 @@
     },
     "ttfb_hist": {
      "104": 1
+    },
+    "fast_output_hist": {},
+    "fast_ttfb_hist": {}
+   },
+   {
+    "day": "2026-10-04",
+    "model": "claude-opus-5-5",
+    "account": "a3",
+    "entrypoint": "cli",
+    "n": 50,
+    "fast_session_requests": 0,
+    "output_hist": {
+     "220": 3,
+     "218": 2,
+     "221": 1,
+     "230": 2,
+     "222": 2,
+     "210": 1,
+     "224": 2,
+     "212": 2,
+     "227": 2,
+     "232": 2,
+     "250": 2,
+     "223": 2,
+     "244": 1,
+     "248": 1,
+     "241": 1,
+     "226": 2,
+     "228": 2,
+     "229": 3,
+     "246": 2,
+     "243": 2,
+     "237": 2,
+     "239": 3,
+     "233": 2,
+     "242": 1,
+     "235": 2,
+     "225": 1,
+     "214": 1,
+     "219": 1
+    },
+    "ttfb_hist": {
+     "75": 1,
+     "47": 3,
+     "57": 2,
+     "48": 1,
+     "168": 1,
+     "101": 1,
+     "72": 2,
+     "76": 3,
+     "133": 1,
+     "131": 1,
+     "31": 2,
+     "25": 1,
+     "66": 1,
+     "71": 1,
+     "67": 1,
+     "58": 1,
+     "86": 2,
+     "70": 1,
+     "171": 1,
+     "63": 1,
+     "52": 2,
+     "89": 1,
+     "23": 1,
+     "90": 1,
+     "106": 1,
+     "53": 1,
+     "125": 1,
+     "44": 2,
+     "50": 2,
+     "54": 3,
+     "64": 1,
+     "43": 1,
+     "73": 1,
+     "78": 1,
+     "41": 1,
+     "38": 1,
+     "134": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
