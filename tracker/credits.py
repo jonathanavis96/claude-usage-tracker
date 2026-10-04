@@ -767,13 +767,24 @@ KNOWN_DATE_UNSCALED_SOURCE = "previous_regime_carried_fit_not_separable"
 #: `per_week_source` twin: a week that carries the previous regime's value for the same reason.
 UNDETERMINED_WEEK_SOURCE = "previous_regime_carried_fit_not_separable"
 KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
+#: `current_source` of a regime in a run of regimes joined by boundaries the tracker could not
+#: measure, stated by the whole run's cluster in the run's own family (`window_runs`).
+RUN_CLUSTER_SOURCE = "unmeasured_boundary_run_cluster"
 
 KNOWN_DATE_METHOD = (
     " After that, every change measured on the two meters (`five_hour_on_meters`, the "
     "windows-per-week ratio across a change candidate; dated after cut_at) opens a new regime "
     "in `regimes`, from the candidate's own instant. Each such regime is measured in the family "
     "actually in use: its regime family is the family with the most pure clean stretches "
-    "starting in it (`regime_family`, `n_regime_family`). Once that family holds "
+    "starting in it (`regime_family`, `n_regime_family`). A boundary the tracker could not "
+    "measure (a change whose joint fit cannot separate the new family's rate from the limit "
+    "change) does not split the window cluster: the regimes it joins form one run, from the "
+    "last measured boundary (the cut, or a change whose fit separates), and `run_from` names "
+    "its first instant. A run of two or more regimes whose pure clean stretches, starting "
+    f"anywhere in it, hold {MIN_AFTER_CLUSTER} readings of its most common family states every "
+    "regime in it with that family's direct median and spread "
+    f"(`{RUN_CLUSTER_SOURCE}`); the 14 September regime's own rule above gives way to it. "
+    "Otherwise each regime is measured on its own: once its regime family holds "
     f"{MIN_AFTER_CLUSTER} readings in the regime, the regime is their median tokens per 1% "
     "times 100, read straight off their token counts with no rate in it, published as "
     "`measured_value` and `measured_interval`. `value` and `interval` give the same window in "
@@ -849,6 +860,23 @@ def _scaled(fig: dict, ratio: float, r_lo: float, r_hi: float) -> dict:
                          if fig["interval"] else None)}
 
 
+def window_runs(changes: list[dict]) -> list[list[int]]:
+    """The window regimes grouped into runs, oldest first, as lists of regime indices.
+
+    A boundary the tracker measured splits two runs: the 14 September cut, and every change
+    whose joint fit separates the new family's rate from the limit change (`window_scaled`).
+    A change it could not measure does not: the regimes either side of it are one run, so
+    one cluster. Regime 0, before the cut, is always a run of its own.
+    """
+    runs = [[0], [1]]
+    for k, change in enumerate(changes, start=2):
+        if change.get("window_scaled", True):
+            runs.append([k])
+        else:
+            runs[-1].append(k)
+    return runs
+
+
 def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
                    changes: list[dict], direct=None,
                    anchor_fam: str | None = None) -> tuple[list[dict], str]:
@@ -859,10 +887,15 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
     14 September split exactly as `current_cluster_rule` states it, over the stretches
     that started before the first known-date change. Both are in `anchor_fam`.
 
-    Every later regime is measured in the family actually in use. `direct(k)`, where given,
-    returns that regime's own cluster as {family, n, measured, anchor}: the family with the
-    most pure clean stretches starting in the regime, how many, their direct figure in that
-    family's tokens, and the same figure in anchor-family units. Without it the regime's
+    Every later regime is measured in the family actually in use. `direct(ks)`, where given,
+    returns the cluster of the regimes `ks` (a tuple of indices) as {family, n, measured,
+    anchor}: the family with the most pure clean stretches starting in them, how many, their
+    direct figure in that family's tokens, and the same figure in anchor-family units.
+
+    Regimes joined by boundaries the tracker could not measure form one run (`window_runs`).
+    A run of two or more regimes whose cluster holds MIN_AFTER_CLUSTER readings states every
+    regime in it with that one cluster (`RUN_CLUSTER_SOURCE`, `run_from` the run's first
+    instant). Any other regime follows the rules below. Without it the regime's
     cluster is the anchor family's (`own`). With MIN_AFTER_CLUSTER readings the regime is
     that cluster. Below that it is the previous regime times the change's g where the joint
     fit separates g from the new family's rate, and the previous regime carried, in the same
@@ -872,23 +905,45 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
     regime's own family and its count whether or not that count was enough to state it.
     """
     def row(fig: dict, measured: dict, fam: str | None, source: str, frm, until,
-            regime_fam: str | None, n: int) -> dict:
+            regime_fam: str | None, n: int, run_from=None) -> dict:
         return {"from": frm, "until": until, "value": fig["value"], "interval": fig["interval"],
                 "source": source, "measured_family": fam,
                 "measured_value": measured["value"], "measured_interval": measured["interval"],
-                "regime_family": regime_fam, "n_regime_family": n}
+                "regime_family": regime_fam, "n_regime_family": n, "run_from": run_from}
+
+    # The runs whose own cluster is thick enough to state them, by their first regime.
+    run_clusters: dict[int, dict] = {}
+    for run in window_runs(changes):
+        cluster = direct(tuple(run)) if direct and len(run) > 1 else None
+        if cluster and cluster["n"] >= MIN_AFTER_CLUSTER:
+            for k in run:
+                run_clusters[k] = cluster
+    froms = [None, CUT_AT.isoformat(), *(_utc(c["at"]) for c in changes)]
+
+    def run_row(k: int, until) -> dict:
+        cluster = run_clusters[k]
+        first = min(j for j in run_clusters if run_clusters[j] is cluster)
+        return row(cluster["anchor"], cluster["measured"], cluster["family"], RUN_CLUSTER_SOURCE,
+                   froms[k], until, cluster["family"], cluster["n"], froms[first])
 
     before = own(0, 1.0)
     regimes = [row(before, before, anchor_fam, "before_cluster", None, CUT_AT.isoformat(),
                    anchor_fam, counts.get(0, 0))]
-    chosen, factor, source = current_cluster_rule(counts.get(0, 0), counts.get(1, 0), five_hour_pct)
-    fig = own({"before": 0, "after": 1, "whole": "whole"}[chosen], factor)
-    regimes.append(row(fig, fig, anchor_fam, source, CUT_AT.isoformat(), None,
-                       anchor_fam, counts.get(1, 0)))
+    if 1 in run_clusters:
+        regimes.append(run_row(1, None))
+    else:
+        chosen, factor, source = current_cluster_rule(counts.get(0, 0), counts.get(1, 0),
+                                                      five_hour_pct)
+        fig = own({"before": 0, "after": 1, "whole": "whole"}[chosen], factor)
+        regimes.append(row(fig, fig, anchor_fam, source, CUT_AT.isoformat(), None,
+                           anchor_fam, counts.get(1, 0)))
     for k, change in enumerate(changes, start=2):
         prev = regimes[-1]
         prev["until"] = _utc(change["at"])
-        cluster = direct(k) if direct else None
+        if k in run_clusters:
+            regimes.append(run_row(k, None))
+            continue
+        cluster = direct((k,)) if direct else None
         if cluster is None:
             mine = own(k, 1.0)
             cluster = {"family": anchor_fam, "n": counts.get(k, 0), "measured": mine, "anchor": mine}
@@ -1324,9 +1379,13 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     # after a known-date change is measured in the family actually in use.
     pure_by_regime = regime_family_rows(clean, credits, labels, changes)
 
-    def direct(k: int) -> dict | None:
-        """Regime k's own cluster in its regime family, and that figure in anchor units."""
-        by_fam = pure_by_regime.get(k) or {}
+    def direct(ks: tuple[int, ...]) -> dict | None:
+        """Regimes `ks`' cluster in its regime family, and that figure in anchor units."""
+        by_fam: dict[str, dict[str, list[dict]]] = {}
+        for k in ks:
+            for f, by_label in (pure_by_regime.get(k) or {}).items():
+                for label, account_rows in by_label.items():
+                    by_fam.setdefault(f, {}).setdefault(label, []).extend(account_rows)
         if not by_fam:
             return None
         name = regime_family(by_fam, fam)
@@ -3129,12 +3188,14 @@ WINDOWS_PER_WEEK_METHOD = (
     f"family at a share of {JOINT_MIXED_SHARE[0]:g} to {JOINT_MIXED_SHARE[1]:g} of the work, "
     "because only mixing identifies the rate; `scope.reason` names the test that failed. "
     "Once the fit separates the rate from g, `change_pct` is g at its point "
-    "estimate, whatever its interval: a regime too thin to be measured in its own family "
+    "estimate, whatever its interval, and it splits the window regimes' runs: a regime too "
+    "thin to be measured in its own family "
     "scales the window by g and the week by g times the ratio at once, and the figures move "
     "as readings arrive. `scope` only "
     "describes which intervals exclude no change: `five_hour` g's alone, `weekly` the weekly "
     "one alone, `both` both, `undetermined` neither. While the fit cannot separate the rate "
-    "from g, `change_pct` is null, a regime too thin to be measured in its own family "
+    "from g, `change_pct` is null, the change joins the regimes either side into one run "
+    "whose window is measured as one cluster, a regime still too thin to be measured "
     "carries the previous window and week, and `scope.reason` says why. The state says how settled the headline "
     "figure is, from its own 95% interval (`change_state`): the five-hour limit change once "
     "the fit separates it, else the windows-per-week change. It is measuring while that "
@@ -3419,7 +3480,9 @@ PER_REGIME_METHOD = (
     "ratio): with the window scaled by the joint fit's g, g times the ratio, which is the "
     "weekly limit's change. A regime whose window was measured directly in its own family "
     f"(`{KNOWN_DATE_CLUSTER_SOURCE}`) states its week as that window times its windows per "
-    "week, as the first two regimes do. While the joint fit cannot separate the new family's "
+    "week, as the first two regimes do, and so does a regime stated by its run's cluster "
+    f"(`{RUN_CLUSTER_SOURCE}`); windows per week keeps its own regime boundaries either way. "
+    "While the joint fit cannot separate the new family's "
     "rate from g and the regime is not measured directly, only windows per week steps: the "
     "window and the week carry the previous regime's value "
     f"(`per_week_factor` 1, `per_week_source` `{UNDETERMINED_WEEK_SOURCE}`). `window` and "
@@ -3430,7 +3493,8 @@ PER_REGIME_METHOD = (
     "per 1% times 100 of its own pure stretches of the regime's `regime_family` (named on the "
     "row as `measured_family`) that lie "
     "wholly in the regime, read off their token counts with no rate and no pooled figure in "
-    "them. A factor with no reading behind it is null, and so is its product.")
+    "them. For regimes stated by one run's cluster, the stretches are those lying wholly in "
+    "the run, pooled over it, and every regime of the run carries the same window. A factor with no reading behind it is null, and so is its product.")
 
 
 def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None,
@@ -3486,7 +3550,7 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                     if reg["interval"] and wpw["interval"] else None)
         factor = None
         week_source = None
-        if reg.get("source") == KNOWN_DATE_CLUSTER_SOURCE:
+        if k >= 2 and reg.get("source") in (KNOWN_DATE_CLUSTER_SOURCE, RUN_CLUSTER_SOURCE):
             # Measured directly in the regime: the week is that window times the regime's
             # windows per week, as for the first two regimes.
             pass
@@ -3512,6 +3576,17 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                          "windows_per_week_pooled_interval": pooled["interval"],
                          "n_windows_per_week": pooled["n"]})
 
+    # A run of regimes stated by one cluster (`RUN_CLUSTER_SOURCE`) is one span for the
+    # account lines too: each account's readings are pooled over the whole run.
+    groups: list[list[int]] = []
+    for k, reg in enumerate(regimes):
+        if groups and reg.get("run_from") and reg["run_from"] == regimes[groups[-1][0]].get("run_from"):
+            groups[-1].append(k)
+        else:
+            groups.append([k])
+    spans = [{"from": regimes[g[0]]["from"], "until": regimes[g[-1]]["until"]} for g in groups]
+    group_of = {k: i for i, g in enumerate(groups) for k in g}
+
     accounts = {}
     for name, label in labels.items():
         # The account's own pure regime-family readings: tokens per full window straight off
@@ -3520,16 +3595,17 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
         for st in stretches.get(name, []):
             if not st.get("start") or not st.get("end") or not st.get("delta_pct"):
                 continue
-            k = _stretch_regime_index(st, regimes)
-            if k is None:
+            i = _stretch_regime_index(st, spans)
+            if i is None:
                 continue
-            fam = regimes[k].get("regime_family") or regimes[k].get("measured_family") or "opus"
+            reg = regimes[groups[i][0]]
+            fam = reg.get("regime_family") or reg.get("measured_family") or "opus"
             if pure_family_of(st.get("tokens") or {}, credits) == fam:
                 total = sum(class_totals(st["tokens"]).values())
-                own_windows.setdefault(k, []).append(total / st["delta_pct"] * 100)
+                own_windows.setdefault(i, []).append(total / st["delta_pct"] * 100)
         rows = []
         for k, reg in enumerate(regimes):
-            readings = own_windows.get(k, [])
+            readings = own_windows.get(group_of[k], [])
             window = round(median(readings)) if readings else None
             wpw = _pooled_windows_per_week(rows_in.get(label, {}).get(k, []))
             rows.append({"from": reg["from"], "until": reg["until"], "window": window,
