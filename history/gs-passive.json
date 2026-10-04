@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-04T21:30:05.083043+00:00",
+ "generated_at": "2026-10-04T22:00:04.551126+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 6580,
+    "reset_verified_samples": 6587,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 10532,
+    "samples": 10540,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-04T21:27:10+00:00"
+    "last": "2026-10-04T21:59:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,16 +32,16 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 3195,
-    "turns": 75859,
+    "files": 3196,
+    "turns": 75860,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 3195,
-     "dropped": 2656,
+     "kept": 3196,
+     "dropped": 2657,
      "subagent_files": 954,
      "dropped_to": {
       ".claude": 556,
-      ".claude-avis": 1321,
+      ".claude-avis": 1322,
       ".claude-dave": 8
      },
      "attributed_by_record": {
@@ -10888,7 +10888,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-04T21:27:10+00:00",
+     "window_ending": "2026-10-04T21:37:53+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -10909,18 +10909,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 6124,
+    "reset_verified_samples": 6134,
     "since": null,
-    "samples": 8605,
+    "samples": 8617,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-04T21:29:14+00:00"
+    "last": "2026-10-04T21:59:11+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1297,
-    "turns": 42087,
+    "files": 1298,
+    "turns": 42088,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -15815,11 +15815,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 5933,
+    "reset_verified_samples": 5942,
     "since": null,
-    "samples": 6569,
+    "samples": 6581,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-04T21:28:23+00:00"
+    "last": "2026-10-04T21:58:18+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -15829,15 +15829,15 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 889,
-    "turns": 21333,
+    "files": 890,
+    "turns": 21334,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 889,
-     "dropped": 1333,
+     "kept": 890,
+     "dropped": 1334,
      "subagent_files": 246,
      "dropped_to": {
-      ".claude-javiswork": 840
+      ".claude-javiswork": 841
      },
      "attributed_by_record": {
       "airlock_tune_env": 197
@@ -17468,7 +17468,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-04T21:31:00.163925+00:00",
+  "generated_at": "2026-10-04T22:00:59.709928+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -58457,15 +58457,33 @@
     "model": "claude-haiku-4-5",
     "account": "a2",
     "entrypoint": "sdk-cli",
-    "n": 2,
+    "n": 3,
     "fast_session_requests": 0,
     "output_hist": {
      "211": 1,
-     "214": 1
+     "214": 1,
+     "210": 1
     },
     "ttfb_hist": {
      "88": 1,
-     "86": 1
+     "86": 1,
+     "75": 1
+    },
+    "fast_output_hist": {},
+    "fast_ttfb_hist": {}
+   },
+   {
+    "day": "2026-10-04",
+    "model": "claude-haiku-4-5",
+    "account": "a3",
+    "entrypoint": "sdk-cli",
+    "n": 1,
+    "fast_session_requests": 0,
+    "output_hist": {
+     "213": 1
+    },
+    "ttfb_hist": {
+     "92": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
@@ -58475,15 +58493,17 @@
     "model": "claude-haiku-4-5",
     "account": "a4",
     "entrypoint": "sdk-cli",
-    "n": 2,
+    "n": 3,
     "fast_session_requests": 0,
     "output_hist": {
      "220": 1,
-     "212": 1
+     "212": 1,
+     "209": 1
     },
     "ttfb_hist": {
      "110": 1,
-     "87": 1
+     "87": 1,
+     "82": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
