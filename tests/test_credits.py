@@ -2585,7 +2585,7 @@ class RegimeFiguresTests(unittest.TestCase):
         self.assertEqual(a1[0]["window"], None)
 
     def test_a_directly_measured_regime_states_its_week_as_window_times_windows(self):
-        figures = self.figures(self.meters(scope="undetermined"),
+        figures = self.figures(self.meters(scope="five_hour"),
                                sources=[None, None, C.KNOWN_DATE_CLUSTER_SOURCE])
         last = figures["per_week_regimes"][-1]
         self.assertEqual(last["windows_per_week"], 4.0)
@@ -2620,29 +2620,97 @@ class RegimeFiguresTests(unittest.TestCase):
                                                round(1400 * last["windows_per_week_interval"][1])])
         self.assertIsNone(middle["per_week_factor"])
 
-    def test_while_the_scope_is_undetermined_only_windows_per_week_steps(self):
-        _, middle, last = self.figures(self.meters(scope="undetermined"))["per_week_regimes"]
-        self.assertEqual(last["windows_per_week"], 4.0)
-        self.assertEqual(last["per_week_factor"], 1.0)
-        self.assertEqual((last["value"], last["interval"]), (middle["value"], middle["interval"]))
-        self.assertEqual(last["per_week_source"], C.UNDETERMINED_WEEK_SOURCE)
+    def assert_merged(self, figures):
+        # The withheld boundary opens no regime: one row from the cut on, its windows per week
+        # pooled over every reading from the cut (a1 50/10 twice, 40/10; a2 30/10), and the
+        # window the newest row's.
+        first, merged = figures["per_week_regimes"]
+        self.assertEqual((merged["from"], merged["until"]), (C.CUT_AT.isoformat(), None))
+        self.assertEqual(merged["windows_per_week_source"], "pooled_all_accounts")
+        self.assertEqual(merged["windows_per_week"], 4.25)
+        self.assertEqual(merged["n_windows_per_week"], 4)
+        self.assertEqual((merged["window"], merged["value"]), (1200, round(1200 * 4.25)))
+        self.assertIsNone(merged["per_week_factor"])
+        self.assertEqual(first["windows_per_week"], 6.0)
+        for label, rows in figures["account_regimes"].items():
+            self.assertEqual([(r["from"], r["until"]) for r in rows],
+                             [(None, C.CUT_AT.isoformat()), (C.CUT_AT.isoformat(), None)], label)
+        a1, a2 = figures["account_regimes"]["a1"], figures["account_regimes"]["a2"]
+        self.assertEqual((a1[1]["windows_per_week"], a1[1]["n_wpw"]), (round(140 / 30, 4), 3))
+        self.assertEqual(a2[1]["windows_per_week"], 3.0)
+        self.assertEqual(figures["per_week"]["all"]["value"], merged["value"])
 
-    def test_a_withheld_change_steps_windows_per_week_and_carries_the_week(self):
-        # Separable, but withheld under ADR 0001 rule 9: its g is no reading of the limit.
+    def test_a_withheld_change_opens_no_regime(self):
+        # Separable, but withheld under ADR 0001 rule 9: no step in either factor.
         meters = self.meters()
-        meters["candidates"][0].update(measurable=True, applies=False)
-        _, middle, last = self.figures(meters)["per_week_regimes"]
-        self.assertEqual(last["windows_per_week_source"], "previous_regime_times_paired_ratio")
-        self.assertEqual(last["per_week_factor"], 1.0)
-        self.assertEqual(last["per_week_source"], C.UNDETERMINED_WEEK_SOURCE)
-        self.assertEqual((last["value"], last["interval"]), (middle["value"], middle["interval"]))
+        meters["candidates"][0].update(measurable=True, applies=False,
+                                       withheld_reason="interval test failed")
+        self.assert_merged(self.figures(meters))
 
-    def test_a_change_that_does_not_apply_leaves_the_pooled_figure(self):
+    def test_a_change_with_no_five_hour_figure_opens_no_regime(self):
+        self.assert_merged(self.figures(self.meters(scope="undetermined")))
+
+    def test_a_change_that_is_not_measurable_opens_no_regime(self):
         meters = self.meters()
         meters["candidates"][0]["applies"] = False
-        last = self.figures(meters)["per_week_regimes"][-1]
-        self.assertEqual((last["windows_per_week"], last["windows_per_week_source"]),
-                         (3.5, "pooled_all_accounts"))
+        self.assert_merged(self.figures(meters))
+
+    def test_withheld_changes_after_the_cut_pool_with_it(self):
+        # Today's shape: 22 and 29 September both withheld, one run stated by one cluster.
+        cut, day = C.CUT_AT, timedelta(days=1)
+        later = self.AT + 7 * day
+        tokens_regimes = None
+
+        def figures(applies22):
+            nonlocal tokens_regimes
+            max20 = {"by_window": [
+                self.row("a1", cut - 2 * day, 60.0, 10.0),
+                self.row("a1", cut + day, 50.0, 10.0),
+                self.row("a1", self.AT + day, 40.0, 10.0),
+                self.row("a2", later + day, 30.0, 10.0),
+            ], "by_account": {}}
+            bounds = [(None, cut), (cut, self.AT), (self.AT, later), (later, None)]
+            tokens_regimes = [
+                {"from": f and f.isoformat(), "until": u and u.isoformat(), "value": v,
+                 "interval": [v - 100, v + 100], "source": s, "run_from": r}
+                for (f, u), v, s, r in zip(
+                    bounds, [1000, 1200, 1200, 1200],
+                    ["x", C.RUN_CLUSTER_SOURCE, C.RUN_CLUSTER_SOURCE, C.RUN_CLUSTER_SOURCE],
+                    [None, cut.isoformat(), cut.isoformat(), cut.isoformat()])]
+            tokens = {"regimes": tokens_regimes, "all": {"value": 1200, "interval": [1100, 1300]},
+                      "per_family": {"opus": {"all": {"value": 1200, "interval": [1100, 1300]}}}}
+
+            def cand(at, applies):
+                return {"at": at.isoformat(), "applies": applies, "measurable": True,
+                        "change_pct": -3.0 if applies else None,
+                        "windows_per_week_ratio": 0.5, "windows_per_week_ratio_interval": [0.4, 0.6],
+                        "withheld_reason": None if applies else "interval test failed"}
+            meters = {"candidates": [cand(self.AT, applies22), cand(later, False)]}
+            return C.regime_figures({}, tokens, max20, {"one": [], "two": []},
+                                    {"one": "a1", "two": "a2"}, lambda t: None,
+                                    meters=meters, credits=CREDITS)
+
+        out = figures(applies22=False)
+        self.assertEqual(len(tokens_regimes), 4)
+        before, after = out["per_week_regimes"]
+        self.assertEqual((after["from"], after["until"]), (cut.isoformat(), None))
+        self.assertEqual(after["windows_per_week_source"], "pooled_all_accounts")
+        self.assertEqual(after["windows_per_week"], round(120 / 30, 4))
+        self.assertEqual(after["n_windows_per_week"], 3)
+        for rows in out["account_regimes"].values():
+            self.assertEqual([r["from"] for r in rows], [None, cut.isoformat()])
+        # 22 September applied: it still chains on its paired ratio; 29 September pools with it.
+        out = figures(applies22=True)
+        rows = out["per_week_regimes"]
+        self.assertEqual([(r["from"], r["until"]) for r in rows],
+                         [(None, cut.isoformat()), (cut.isoformat(), self.AT.isoformat()),
+                          (self.AT.isoformat(), None)])
+        self.assertEqual(rows[2]["windows_per_week_source"], "previous_regime_times_paired_ratio")
+        self.assertEqual(rows[2]["windows_per_week"], round(rows[1]["windows_per_week"] * 0.5, 4))
+        self.assertEqual(rows[2]["windows_per_week_pooled"], round(70 / 20, 4))
+        for rows in out["account_regimes"].values():
+            self.assertEqual([r["from"] for r in rows],
+                             [None, cut.isoformat(), self.AT.isoformat()])
 
     def test_the_hero_week_is_the_newest_regimes_figure(self):
         figures = self.figures(self.meters())

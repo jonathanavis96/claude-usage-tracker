@@ -42,9 +42,12 @@ def _good() -> dict:
          "measured_family": "opus-5-5", "measured_value": 665},
     ]
 
+    # The withheld boundary opens no per-week or account regime: those rows run from the cut.
+    spans = [(None, CUT), (CUT, None)]
+
     def acct(windows, measured):
-        return [{"from": r["from"], "until": r["until"], "window": w, "measured_window": m}
-                for r, w, m in zip(regimes, windows, measured)]
+        return [{"from": f, "until": u, "window": w, "measured_window": m}
+                for (f, u), w, m in zip(spans, windows, measured)]
     return {"credits": {
         "window_tokens": {
             "all": {"value": 500}, "measured_family": "opus-5-5",
@@ -53,9 +56,10 @@ def _good() -> dict:
                            "opus-5-5": {"all": {"value": 665}, "measured_directly": True,
                                         "rate_source": "measured"}},
             "regimes": regimes,
-            "account_regimes": {"a1": acct([410, 470, 470], [None, None, None]),
-                                "a2": acct([490, 610, 610], [460, 800, 800]),
-                                "a3": acct([None, 395, 395], [None, 620, 620])}},
+            "per_week_regimes": [{"from": f, "until": u} for f, u in spans],
+            "account_regimes": {"a1": acct([410, 470], [None, None]),
+                                "a2": acct([490, 610], [460, 800]),
+                                "a3": acct([None, 395], [None, 620])}},
         "five_hour_on_meters": {"candidates": [_candidate()]}}}
 
 
@@ -165,6 +169,57 @@ class NoUnprovenStepTest(unittest.TestCase):
         self.assertEqual(I.no_unproven_step(doc), [])
 
 
+class NoWithheldBoundaryTest(unittest.TestCase):
+    SEP29 = "2026-09-29T18:25:18.212000+00:00"
+
+    def _live(self):
+        """Shaped like the public JSON of 2026-10-04: per-week and account rows split at the
+        two withheld changes, 22 and 29 September."""
+        doc = _good()
+        wt = _wt(doc)
+        doc["credits"]["five_hour_on_meters"]["candidates"] = [_candidate(), _candidate(at=self.SEP29)]
+        bounds = [(None, CUT), (CUT, SEP22), (SEP22, self.SEP29), (self.SEP29, None)]
+        wt["per_week_regimes"] = [{"from": f, "until": u} for f, u in bounds]
+        wt["account_regimes"] = {label: [{"from": f, "until": u, "window": 470} for f, u in bounds]
+                                 for label in ("a1", "a2")}
+        return doc
+
+    def test_merged_rows_pass(self):
+        self.assertEqual(I.no_withheld_boundary(_good()), [])
+        doc = self._live()
+        wt = _wt(doc)
+        wt["per_week_regimes"] = [{"from": None, "until": CUT}, {"from": CUT, "until": None}]
+        wt["account_regimes"] = {label: rows[:2] for label, rows in wt["account_regimes"].items()}
+        self.assertEqual(I.no_withheld_boundary(doc), [])
+
+    def test_rows_split_at_a_withheld_change_fail(self):
+        msgs = I.no_withheld_boundary(self._live())
+        self.assertEqual(len(msgs), 2)
+        first = msgs[0]
+        self.assertIn("22 September", first)
+        self.assertIn("per_week_regimes", first)
+        self.assertIn("a1", first)
+        self.assertIn("a2", first)
+        self.assertIn("interval test (ADR 0001 rule 9) failed", first)
+        self.assertIn("29 September", msgs[1])
+
+    def test_a_published_change_may_open_a_row(self):
+        doc = self._live()
+        doc["credits"]["five_hour_on_meters"]["candidates"] = [
+            _candidate(applies=True, change_pct=-3.0, interval_pct=[-5.0, -1.0], separable=True),
+            _candidate(at=self.SEP29, applies=True, change_pct=7.0, interval_pct=[2.0, 12.0],
+                       separable=True)]
+        self.assertEqual(I.no_withheld_boundary(doc), [])
+
+    def test_a_long_withheld_reason_is_shortened(self):
+        doc = self._live()
+        for cand in doc["credits"]["five_hour_on_meters"]["candidates"]:
+            cand["withheld_reason"] = "plan-wide test failed: " + "x" * 400
+        for msg in I.no_withheld_boundary(doc):
+            self.assertLess(len(msg), 400)
+            self.assertIn("…", msg)
+
+
 class DirectMeansDirectTest(unittest.TestCase):
     def test_passes_when_equal(self):
         self.assertEqual(I.direct_means_direct(_good()), [])
@@ -190,17 +245,17 @@ class AccountUnitsTest(unittest.TestCase):
 
     def test_fails_outside_a_quarter_and_names_the_account_and_both_numbers(self):
         doc = _good()
-        _wt(doc)["account_regimes"]["a3"][2]["window"] = 300  # 399 against 620
+        _wt(doc)["account_regimes"]["a3"][1]["window"] = 300  # 399 against 620
         (msg,) = I.account_units(doc)
         self.assertIn("a3", msg)
         self.assertIn("399", msg)
         self.assertIn("620", msg)
-        self.assertIn(SEP22, msg)
+        self.assertIn(CUT, msg)
 
     def test_a_missing_reading_is_skipped(self):
         doc = _good()
-        _wt(doc)["account_regimes"]["a3"][2]["measured_window"] = None
-        _wt(doc)["account_regimes"]["a3"][2]["window"] = 1
+        _wt(doc)["account_regimes"]["a3"][1]["measured_window"] = None
+        _wt(doc)["account_regimes"]["a3"][1]["window"] = 1
         self.assertEqual(I.account_units(doc), [])
 
 
@@ -242,7 +297,7 @@ class RunAllTest(unittest.TestCase):
         self.assertEqual(I.run_checks(doc), {name: [] for name, _ in I.CHECKS})
         self.assertEqual([name for name, _ in I.CHECKS],
                          ["headline_inside_accounts", "no_unproven_step", "direct_means_direct",
-                          "account_units", "steps_agree_with_meters"])
+                          "account_units", "steps_agree_with_meters", "no_withheld_boundary"])
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()
