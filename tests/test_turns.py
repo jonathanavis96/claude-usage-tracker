@@ -7,6 +7,7 @@ from pathlib import Path
 
 from tracker.turns import (
     iter_turns,
+    model_family_id,
     normalize_model,
     session_tokens_by_model,
     transcript_paths,
@@ -105,8 +106,17 @@ class NormalizeModelTests(unittest.TestCase):
         # `<synthetic>` has no row on the pricing page and never gets one; it costs
         # nothing because every `<synthetic>` turn carries zero tokens.  A model id
         # newer than the table is the case this guard exists for.
-        for m in ("<synthetic>", "unknown", "claude-opus-9"):
+        for m in ("<synthetic>", "unknown", "claude-opus-9", "claude-sonnet-9-9", "claude-sonnet-9-9-20991231"):
             self.assertIsNone(normalize_model(m))
+
+    def test_model_family_id_keeps_any_claude_id(self):
+        # Issue #116: speed needs a model's id whether or not it has a price yet.
+        self.assertEqual(model_family_id("claude-sonnet-9-9-20991231"), "claude-sonnet-9-9")
+        self.assertEqual(model_family_id("claude-sonnet-5-5[1m]"), "claude-sonnet-5-5")
+        self.assertEqual(model_family_id("claude-fable-5-20260301"), "claude-fable-5-1")
+        self.assertEqual(model_family_id("claude-opus-5"), "claude-opus-5")
+        for m in ("<synthetic>", "unknown", "", None, "gpt-5"):
+            self.assertIsNone(model_family_id(m))
 
     def test_fable_5_is_priced_as_fable_5_1(self):
         # Same list price for input, output and cache_write; cache_read differs but the
