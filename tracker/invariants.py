@@ -19,6 +19,8 @@ failures, an empty list when it holds.
    its direct `measured_window` within ACCOUNT_UNITS_TOLERANCE.
 5. `steps_agree_with_meters`: a published five-hour step whose windows-per-week ratio
    interval includes no change points the same way as the ratio's own five-hour reading.
+6. `no_withheld_boundary`: no `per_week_regimes` row and no `account_regimes` row opens at a
+   five-hour change the tracker withholds (ADR 0001 rule 9); such a change opens no regime.
 
 A failure does NOT block the publish. bin/daily.sh runs this after the publish, beside
 tracker.publish_gate, with the same incident semantics (`publish_gate.track_incident`): one
@@ -40,6 +42,8 @@ from tracker import health, publish_gate, supervise
 
 #: Check 1's allowance either side of the account range, for the rounding of published figures.
 HEADLINE_TOLERANCE = 0.05
+#: How much of a withheld reason check 6 quotes.
+REASON_CHARS = 160
 #: Check 4's bound. One figure is relative to the pool and one is direct, so this is a
 #: sanity bound on units, not an equality.
 ACCOUNT_UNITS_TOLERANCE = 0.25
@@ -245,12 +249,45 @@ def steps_agree_with_meters(doc: dict) -> list[str]:
     return out
 
 
+def _short(text: str, limit: int = REASON_CHARS) -> str:
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def no_withheld_boundary(doc: dict) -> list[str]:
+    """Check 6: no per-week or account row opens at a withheld five-hour change.
+
+    A withheld change (`applies` false) is no reading of the limit, so the regime it would
+    open is pooled with the one before; a row starting at its instant draws it as a step.
+    """
+    wt = _wt(doc)
+    out = []
+    for cand in _candidates(doc):
+        if cand.get("applies") or not cand.get("at"):
+            continue
+        blocks = []
+        if any(_same_instant(r.get("from"), cand["at"]) for r in wt.get("per_week_regimes") or []):
+            blocks.append("per_week_regimes")
+        labels = [label for label, rows in sorted((wt.get("account_regimes") or {}).items())
+                  if any(_same_instant(r.get("from"), cand["at"]) for r in rows)]
+        if labels:
+            blocks.append(f"account_regimes for {', '.join(labels)}")
+        if not blocks:
+            continue
+        day = datetime.fromisoformat(cand["at"])
+        out.append(f"{' and '.join(blocks)} open a "
+                   f"row at {day.day} {day:%B} ({cand['at']}), where the {cand.get('family')} "
+                   f"five-hour change is withheld: "
+                   f"{_short(cand.get('withheld_reason') or 'no reason recorded')}.")
+    return out
+
+
 CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_inside_accounts", headline_inside_accounts),
     ("no_unproven_step", no_unproven_step),
     ("direct_means_direct", direct_means_direct),
     ("account_units", account_units),
     ("steps_agree_with_meters", steps_agree_with_meters),
+    ("no_withheld_boundary", no_withheld_boundary),
 ]
 
 

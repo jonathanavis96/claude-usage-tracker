@@ -764,8 +764,6 @@ KNOWN_DATE_SCALED_SOURCE = "previous_regime_scaled_by_known_date_change"
 #: `current_source` of a regime opened by a change whose joint fit cannot yet separate the
 #: new family's rate from the limit change: the previous regime's value, carried.
 KNOWN_DATE_UNSCALED_SOURCE = "previous_regime_carried_fit_not_separable"
-#: `per_week_source` twin: a week that carries the previous regime's value for the same reason.
-UNDETERMINED_WEEK_SOURCE = "previous_regime_carried_fit_not_separable"
 KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
 #: `current_source` of a regime in a run of regimes joined by boundaries the tracker could not
 #: measure, stated by the whole run's cluster in the run's own family (`window_runs`).
@@ -3850,10 +3848,13 @@ PER_REGIME_METHOD = (
     f"(`{KNOWN_DATE_CLUSTER_SOURCE}`) states its week as that window times its windows per "
     "week, as the first two regimes do, and so does a regime stated by its run's cluster "
     f"(`{RUN_CLUSTER_SOURCE}`); windows per week keeps its own regime boundaries either way. "
-    "While the joint fit cannot separate the new family's "
-    "rate from g and the regime is not measured directly, only windows per week steps: the "
-    "window and the week carry the previous regime's value "
-    f"(`per_week_factor` 1, `per_week_source` `{UNDETERMINED_WEEK_SOURCE}`). `window` and "
+    "A five-hour change the tracker withholds (ADR 0001 rule 9: `applies` false), or one "
+    "with no five-hour figure (`change_pct` null), opens no regime here or in "
+    "`account_regimes`: the regime it would have opened is pooled with the one before, one "
+    "row from the earlier regime's start to the later one's end, its windows per week pooled "
+    "over every reading in both and never chained through the withheld ratio, and its window "
+    "the newest of the pooled regimes' windows (they carry one value while nothing measured "
+    "steps between them). `window` and "
     "`windows_per_week` stay published as the two factors. `per_week` is the newest regime's "
     "figure, and every family's week moves from its window the way the anchor's does. "
     "`account_regimes` gives each account's own two factors in each regime and never another "
@@ -3888,7 +3889,24 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
     """
     credits = load_credits() if credits is None else credits
     ratios = {datetime.fromisoformat(c["at"]): c for c in five_hour_meter_boundaries(meters)}
+    # A five-hour change with no published figure (ADR 0001 rule 9) is no boundary here.
+    withheld = {datetime.fromisoformat(c["at"]) for c in (meters or {}).get("candidates", [])
+                if c.get("at") and (not c.get("applies") or c.get("change_pct") is None)}
     regimes = window_tokens["regimes"]
+
+    def merged(k: int) -> bool:
+        return k >= 2 and bool(regimes[k]["from"]) \
+            and datetime.fromisoformat(regimes[k]["from"]) in withheld
+
+    # The per-week regimes: the window's, a withheld boundary joining its regime to the one
+    # before. `week_of` maps a window regime to its per-week regime.
+    weeks: list[list[int]] = []
+    for k in range(len(regimes)):
+        if weeks and merged(k):
+            weeks[-1].append(k)
+        else:
+            weeks.append([k])
+    week_of = {k: i for i, g in enumerate(weeks) for k in g}
     by_window = (max20 or {}).get("by_window") or []
     by_account = (max20 or {}).get("by_account") or {}
 
@@ -3901,13 +3919,17 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
     for r in by_window:
         label = r.get("account")
         k = _weekly_regime_index(datetime.fromisoformat(r["window_ending"]), own_end(label), regimes)
-        rows_in.setdefault(label, {}).setdefault(k, []).append(r)
+        rows_in.setdefault(label, {}).setdefault(week_of[k], []).append(r)
 
     per_week = []
-    for k, reg in enumerate(regimes):
-        pooled = _pooled_windows_per_week([r for by_k in rows_in.values() for r in by_k.get(k, [])])
+    for i, group in enumerate(weeks):
+        # The group's window is its newest regime's: a withheld boundary carries the window
+        # across it, so every regime in a group carries one value.
+        k, reg = group[0], regimes[group[-1]]
+        start = regimes[k]["from"]
+        pooled = _pooled_windows_per_week([r for by_i in rows_in.values() for r in by_i.get(i, [])])
         wpw, source = pooled, "pooled_all_accounts"
-        change = ratios.get(datetime.fromisoformat(reg["from"])) if k >= 2 and reg["from"] else None
+        change = ratios.get(datetime.fromisoformat(start)) if k >= 2 and start else None
         prev = per_week[-1] if per_week else None
         if change is not None and prev is not None:
             r_lo, r_hi = change["windows_per_week_ratio_interval"]
@@ -3931,19 +3953,15 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             pass
         elif source == "previous_regime_times_paired_ratio" and prev["value"] and prev["window"] \
                 and window is not None:
-            # A withheld change (ADR 0001 rule 9) is no reading of the limit either.
-            undetermined = change.get("change_pct") is None or not change.get("applies", True)
             # The window change and the windows-per-week ratio are one measurement of one
             # change, so the week moves by their product, not by two independent intervals.
-            # While the joint fit cannot separate the rate from the limit change only windows
-            # per week steps: the week carries the previous regime's value.
-            factor = 1.0 if undetermined else round(window / prev["window"]
-                                                    * change["windows_per_week_ratio"], 4)
-            week_source = UNDETERMINED_WEEK_SOURCE if undetermined else "previous_regime_times_per_week_factor"
+            # (A change without a published five-hour figure opened no regime: see `weeks`.)
+            factor = round(window / prev["window"] * change["windows_per_week_ratio"], 4)
+            week_source = "previous_regime_times_per_week_factor"
             product = round(prev["value"] * factor)
             interval = ([round(x * factor) for x in prev["interval"]]
                         if prev["interval"] else None)
-        per_week.append({"from": reg["from"], "until": reg["until"], "value": product,
+        per_week.append({"from": start, "until": reg["until"], "value": product,
                          "interval": interval, "window": window, "per_week_factor": factor,
                          "per_week_source": week_source,
                          "windows_per_week": wpw["value"], "windows_per_week_interval": wpw["interval"],
@@ -3953,10 +3971,13 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                          "n_windows_per_week": pooled["n"]})
 
     # A run of regimes stated by one cluster (`RUN_CLUSTER_SOURCE`) is one span for the
-    # account lines too: each account's readings are pooled over the whole run.
+    # account lines too: each account's readings are pooled over the whole run. So is a
+    # regime pooled with the one before at a withheld boundary, so a span never splits a
+    # per-week regime.
     groups: list[list[int]] = []
     for k, reg in enumerate(regimes):
-        if groups and reg.get("run_from") and reg["run_from"] == regimes[groups[-1][0]].get("run_from"):
+        if groups and (merged(k) or (reg.get("run_from")
+                                     and reg["run_from"] == regimes[groups[-1][0]].get("run_from"))):
             groups[-1].append(k)
         else:
             groups.append([k])
@@ -3995,7 +4016,8 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                 total = sum(class_totals(st["tokens"]).values())
                 own_windows.setdefault(i, []).append(total / st["delta_pct"] * 100)
         rows = []
-        for k, reg in enumerate(regimes):
+        for i, week in enumerate(weeks):
+            k, reg = week[0], regimes[week[-1]]
             readings = own_windows.get(group_of[k], [])
             own = rates.get(name, {}).get(group_of[k], [])
             pool = pooled_rates.get(group_of[k])
@@ -4003,8 +4025,8 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             # times its median credits per 1% over the pooled median.
             window = (round(reg["value"] * median(own) / pool)
                       if own and pool and reg["value"] is not None else None)
-            wpw = _pooled_windows_per_week(rows_in.get(label, {}).get(k, []))
-            rows.append({"from": reg["from"], "until": reg["until"], "window": window,
+            wpw = _pooled_windows_per_week(rows_in.get(label, {}).get(i, []))
+            rows.append({"from": regimes[k]["from"], "until": reg["until"], "window": window,
                          "measured_family": (reg.get("regime_family") or reg.get("measured_family")
                                              or "opus"),
                          "measured_window": round(median(readings)) if readings else None,
