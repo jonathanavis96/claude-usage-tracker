@@ -3573,12 +3573,18 @@ PER_REGIME_METHOD = (
     "`windows_per_week` stay published as the two factors. `per_week` is the newest regime's "
     "figure, and every family's week moves from its window the way the anchor's does. "
     "`account_regimes` gives each account's own two factors in each regime and never another "
-    "account's: its windows per week from its own readings, and its window the median tokens "
-    "per 1% times 100 of its own pure stretches of the regime's `regime_family` (named on the "
-    "row as `measured_family`) that lie "
-    "wholly in the regime, read off their token counts with no rate and no pooled figure in "
-    "them. For regimes stated by one run's cluster, the stretches are those lying wholly in "
-    "the run, pooled over it, and every regime of the run carries the same window. A factor with no reading behind it is null, and so is its product.")
+    "account's: its windows per week from its own readings, and its window, in anchor units, "
+    "the regime's window times the account's median credits per 1% of the five-hour meter "
+    "over its own clean stretches lying wholly in the regime, any family, valued as "
+    "`across_cut` values them, over the same median pooled across every account's such "
+    "stretches (`n_window` the account's count), so the rates only weigh sessions against "
+    "each other inside one regime and the pool's median account sits at the regime's window. "
+    "`measured_window` is the account's direct reading beside it: the median tokens per 1% "
+    "times 100 of its own pure stretches of the regime's `regime_family` (named on the row "
+    "as `measured_family`, counted in `n_measured_window`), with no rate in it. For regimes "
+    "stated by one run's cluster, both medians are over the stretches lying wholly in the "
+    "run, and every regime of the run carries the same readings. A factor with no reading "
+    "behind it is null, and so is its product.")
 
 
 def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None,
@@ -3587,8 +3593,9 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
     """`per_week_regimes`, `account_regimes` and the matching `per_week` for `window_tokens`.
 
     `stretches` is the across-the-cut selection by account name (`rate_fit_stretches`),
-    `value(tokens)` its valuation (`across_cut_value`; no account window uses it now, and
-    `window_credits` is kept in the signature for the same reason), and `meters` the
+    `value(tokens)` its valuation (`across_cut_value`), which the account windows compare
+    accounts with inside one regime (`window_credits` is kept in the signature though no
+    figure uses it now), and `meters` the
     `five_hour_on_meters` block whose paired ratios chain the five-hour regimes' windows per
     week. `per_week` replaces the block's own: the newest regime's windows per week times the
     current window, so the hero figure equals the newest `per_week_regimes` value. See
@@ -3671,6 +3678,21 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
     spans = [{"from": regimes[g[0]]["from"], "until": regimes[g[-1]]["until"]} for g in groups]
     group_of = {k: i for i, g in enumerate(groups) for k in g}
 
+    # Every clean stretch lying wholly in a regime (its run, for a run), any family, as
+    # credits per 1% of the five-hour meter: per account, and pooled over the accounts.
+    rates: dict[str, dict[int, list[float]]] = {}
+    for name in labels:
+        for st in stretches.get(name, []):
+            if not st.get("start") or not st.get("end") or not st.get("delta_pct"):
+                continue
+            i = _stretch_regime_index(st, spans)
+            credit = value(st.get("tokens") or {}) if i is not None else None
+            if credit is not None:
+                rates.setdefault(name, {}).setdefault(i, []).append(credit / st["delta_pct"])
+    pooled_rates = {i: median([x for by_i in rates.values() for x in by_i.get(i, [])])
+                    for i in range(len(groups))
+                    if any(by_i.get(i) for by_i in rates.values())}
+
     accounts = {}
     for name, label in labels.items():
         # The account's own pure regime-family readings: tokens per full window straight off
@@ -3690,15 +3712,22 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
         rows = []
         for k, reg in enumerate(regimes):
             readings = own_windows.get(group_of[k], [])
-            window = round(median(readings)) if readings else None
+            own = rates.get(name, {}).get(group_of[k], [])
+            pool = pooled_rates.get(group_of[k])
+            # The account's level relative to the pool, in anchor units: the regime's window
+            # times its median credits per 1% over the pooled median.
+            window = (round(reg["value"] * median(own) / pool)
+                      if own and pool and reg["value"] is not None else None)
             wpw = _pooled_windows_per_week(rows_in.get(label, {}).get(k, []))
             rows.append({"from": reg["from"], "until": reg["until"], "window": window,
                          "measured_family": (reg.get("regime_family") or reg.get("measured_family")
                                              or "opus"),
+                         "measured_window": round(median(readings)) if readings else None,
                          "windows_per_week": wpw["value"],
                          "per_week": (round(window * wpw["value"])
                                       if window is not None and wpw["value"] else None),
-                         "n_window": len(readings), "n_wpw": wpw["n"]})
+                         "n_window": len(own), "n_measured_window": len(readings),
+                         "n_wpw": wpw["n"]})
         accounts[label] = rows
     newest = per_week[-1]
     all_fig = window_tokens["all"]
