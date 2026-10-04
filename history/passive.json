@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-04T13:15:45.313223+00:00",
+ "generated_at": "2026-10-04T15:15:33.874026+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -273,16 +273,16 @@
    "interpolated": true
   },
   "2026-10-04": {
-   "tokens_per_pct": 7989481,
+   "tokens_per_pct": 11139778,
    "interpolated": false
   }
  },
  "session_tokens": {
   "claude-sonnet-4-6": 264267,
-  "claude-opus-5": 3010416,
-  "claude-sonnet-5": 663300,
-  "claude-opus-4-7": 134143,
-  "claude-fable-5-1": 6431014,
+  "claude-opus-5": 2903578,
+  "claude-sonnet-5": 647702,
+  "claude-opus-4-7": 134221,
+  "claude-fable-5-1": 6314773,
   "claude-opus-5-5": 2106482,
   "claude-haiku-4-5": 217691,
   "claude-opus-4-8": 852622
@@ -4998,11 +4998,11 @@
    },
    {
     "window_ending": "2026-10-04T16:29:59.674404+00:00",
-    "windows": 2.0,
-    "five_hour_pct": 2.0,
+    "windows": 4.0,
+    "five_hour_pct": 4.0,
     "seven_day_pct": 1.0,
     "rounding_interval": [
-     0.1671,
+     0.9451,
      null
     ],
     "pieces": 1,
