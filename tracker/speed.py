@@ -26,7 +26,8 @@ counts them in `fast_session_requests`. A history row still bins them apart
 session that slows mid-way keep its normal stretch.
 
 Rows. Each machine turns its own transcripts into daily rows, one per UTC day of the
-response's end, model (tracker/turns.py `normalize_model`, the page's ids), account label
+response's end, model (tracker/turns.py `model_family_id`: any `claude-` id, priced or not, so a
+new model needs no list edited), account label
 (a1..a4, tracker/publish.py ACCOUNT_LABELS) and entrypoint. A row keeps its speeds as a
 histogram on a log scale (bins BIN_STEP apart, so any median read back is within 2%)
 rather than as a median, so the publisher can pool rows from both machines, and any
@@ -35,7 +36,8 @@ split of them, and still take a real median.
 History. Claude Code deletes transcripts after 30 days, so rows are appended to a
 committed history file and old days are never recomputed: a run replaces only the rows
 of days on or after `today - RECOMPUTE_DAYS` (a day is still being written until its last
-session ends), and keeps every older row as stored. gs keeps its rows in
+session ends), and keeps every older row as stored. A history written under an older
+METHOD_ID is rescanned whole once instead (see METHOD_ID and `fill`). gs keeps its rows in
 history/gs-passive.json's `speed` (tracker/gs_passive.py main, hourly); masterrig in
 history/masterrig-speed.json (bin/passive.sh, daily):
 
@@ -61,7 +63,7 @@ from pathlib import Path
 from statistics import median
 
 from .atomic import write_text_atomic
-from .turns import _parse_ts, normalize_model
+from .turns import _parse_ts, model_family_id, normalize_model
 
 MIN_OUTPUT = 300
 MIN_SECONDS = 1.0
@@ -162,7 +164,7 @@ def requests_in(lines: Iterable[dict], session: str) -> list[Request]:
             q["out"] = max(q["out"], out)
     out_list = []
     for mid, q in open_.items():
-        model = normalize_model(q["model"])
+        model = model_family_id(q["model"])
         if model is None:
             continue
         out_list.append(Request(mid, session, model, q["entrypoint"], q["side"], q["start"], q["first"], q["end"],
@@ -302,22 +304,41 @@ def merge(stored: list[dict], fresh: list[dict], since_day: str) -> list[dict]:
     return sorted(keep + [r for r in fresh if r["day"] >= since_day], key=_row_key)
 
 
+def fill(stored: list[dict], fresh: list[dict]) -> list[dict]:
+    """Stored rows all kept as they are, plus each fresh row of a model a v1 history could
+    not hold (one turns.normalize_model drops): how a history from before METHOD_ID v2
+    gains the models v2 keeps. Nothing stored is replaced, since an older day's
+    transcripts may be partly deleted by now, and no row is added for a model v1 already
+    kept, so those models' figures do not move."""
+    return sorted(stored + [r for r in fresh if normalize_model(r["model"]) is None], key=_row_key)
+
+
 def update(stored: dict | None, fresh: list[dict], since_day: str, now: datetime) -> dict:
-    rows = merge((stored or {}).get("rows") or [], fresh, since_day)
+    rows = (stored or {}).get("rows") or []
+    if rows and (stored or {}).get("method") != METHOD_ID:
+        rows = fill(rows, fresh)
+    else:
+        rows = merge(rows, fresh, since_day)
     return {"schema": SCHEMA, "generated_at": now.isoformat(), "method": METHOD_ID, "rows": rows}
 
 
 def recompute_from(stored: dict | None, now: datetime) -> tuple[str | None, datetime | None]:
     """(first day to recompute, transcript mtime cutoff); (None, None) means everything,
-    which is what a history with no rows yet gets."""
-    if not (stored or {}).get("rows"):
+    which is what a history with no rows yet gets, and one written under another METHOD_ID
+    (update then only fills in the rows it lacks)."""
+    if not (stored or {}).get("rows") or stored.get("method") != METHOD_ID:
         return None, None
     day = (now - timedelta(days=RECOMPUTE_DAYS)).date()
     return day.isoformat(), datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
 
 
-#: Bumped when the method changes what a row means; recorded in every history file.
-METHOD_ID = "trigger-to-last-block/v1"
+#: Bumped when the method changes what a row means or which requests it can see; recorded
+#: in every history file. v2 keeps every `claude-` model id (tracker/turns.py
+#: `model_family_id`) where v1 kept only turns.CANONICAL_MODELS, so a v1 row means what a
+#: v2 row means and a v1 history is rescanned whole once, only to add the models v1 could
+#: not keep (issue #116: Sonnet 5.5 from 2026-09-29). A change that alters what an
+#: existing row means needs its own handling, not `fill`.
+METHOD_ID = "trigger-to-last-block/v2"
 
 
 # ---- publishing -----------------------------------------------------------------------

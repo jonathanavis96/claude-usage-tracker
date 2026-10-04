@@ -91,6 +91,19 @@ class TimingTest(unittest.TestCase):
         (r,) = requests_in(lines, "s")
         self.assertEqual((r.id, r.model), ("b", "claude-haiku-4-5"))
 
+    def test_a_model_missing_from_the_price_table_is_kept(self):
+        # Issue #116: Sonnet 5.5 is not in turns.CANONICAL_MODELS, and a model released
+        # next month will not be either; speed keeps both with no list to edit.
+        lines = [user(0), block(4, "a", 500, model="claude-sonnet-5-5"), user(5),
+                 block(9, "b", 500, model="claude-sonnet-9-9-20991231"), user(10),
+                 block(14, "c", 500, model="claude-sonnet-9-9[1m]"), user(15),
+                 block(19, "d", 500, model="<synthetic>"), user(20),
+                 block(24, "e", 500, model="gpt-5"), user(25),
+                 block(29, "f", 500, model="claude-fable-5")]
+        got = {r.id: r.model for r in requests_in(lines, "s")}
+        self.assertEqual(got, {"a": "claude-sonnet-5-5", "b": "claude-sonnet-9-9", "c": "claude-sonnet-9-9",
+                               "f": "claude-fable-5-1"})
+
     def test_uncached_input_is_input_plus_cache_writes(self):
         (r,) = requests_in([user(0), block(5, "a", 500, inp=7, cw=1200)], "s")
         self.assertEqual(r.uncached_input, 1207)
@@ -257,7 +270,7 @@ class HistoryTest(unittest.TestCase):
     def test_recompute_window(self):
         now = datetime(2026, 9, 23, 17, 0, tzinfo=timezone.utc)
         self.assertEqual(recompute_from(None, now), (None, None))
-        day, mtime = recompute_from({"rows": [row("2026-09-01")]}, now)
+        day, mtime = recompute_from({"method": speed.METHOD_ID, "rows": [row("2026-09-01")]}, now)
         self.assertEqual(day, "2026-09-21")
         self.assertEqual(mtime, datetime(2026, 9, 21, tzinfo=timezone.utc))
 
@@ -265,7 +278,7 @@ class HistoryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             hist = Path(d, "h.json")
             old = row("2026-08-01", 7)
-            hist.write_text(json.dumps({"rows": [old]}))
+            hist.write_text(json.dumps({"method": speed.METHOD_ID, "rows": [old]}))
             extract = Path(d, "x.jsonl")
             extract.write_text("\n".join(json.dumps({**x, "file": "f"}) for x in session(40, 70)) + "\n")
             speed.main(["--lines", str(extract), "--history", str(hist)])
@@ -278,6 +291,32 @@ class HistoryTest(unittest.TestCase):
             body2 = update(None, daily_rows(requests_in(session(40, 70), "f"), "a1"), "0001-01-01",
                            datetime(2026, 9, 23, tzinfo=timezone.utc))
             self.assertEqual([r["day"] for r in body2["rows"]], ["2026-09-20"])
+
+    def test_an_older_method_rescans_everything(self):
+        # A history written before speed kept every claude-* id lacks the new models'
+        # rows on every day its transcripts still hold, not only the last two.
+        now = datetime(2026, 10, 4, 17, 0, tzinfo=timezone.utc)
+        stored = {"method": "trigger-to-last-block/v1", "rows": [row("2026-09-01")]}
+        self.assertEqual(recompute_from(stored, now), (None, None))
+        self.assertEqual(recompute_from({**stored, "method": speed.METHOD_ID}, now)[0], "2026-10-02")
+
+    def test_an_older_method_only_fills_in_rows_it_lacks(self):
+        # The full rescan adds the newly kept models' rows; a stored row is never replaced,
+        # since an older day's transcripts may be partly deleted and its stored figures are
+        # the complete ones, and a model v1 already kept gets no new rows either.
+        now = datetime(2026, 10, 4, 17, 0, tzinfo=timezone.utc)
+        stored = {"method": "trigger-to-last-block/v1", "rows": [row("2026-09-01", 5), row("2026-09-30", 5)]}
+        new = {**row("2026-09-30", 3), "model": "claude-sonnet-5-5"}
+        fresh = [row("2026-09-01", 1), row("2026-09-29", 4), row("2026-09-30", 9), new]
+        body = update(stored, fresh, "0001-01-01", now)
+        self.assertEqual(body["method"], speed.METHOD_ID)
+        got = {(r["day"], r["model"]): r["n"] for r in body["rows"]}
+        self.assertEqual(got, {("2026-09-01", "claude-opus-5"): 5, ("2026-09-30", "claude-opus-5"): 5,
+                               ("2026-09-30", "claude-sonnet-5-5"): 3})
+        # Once stamped with the current method, the usual window applies again.
+        again = update(body, [row("2026-09-30", 9)], "2026-09-30", now)
+        self.assertEqual({(r["day"], r["model"]): r["n"] for r in again["rows"]},
+                         {("2026-09-01", "claude-opus-5"): 5, ("2026-09-30", "claude-opus-5"): 9})
 
 
 class PublishTest(unittest.TestCase):

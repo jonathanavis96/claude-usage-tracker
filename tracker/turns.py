@@ -171,6 +171,20 @@ def normalize_model(model_id: str) -> str | None:
     return m if m in CANONICAL_MODELS else None
 
 
+def model_family_id(model_id: str | None) -> str | None:
+    """The page's id for any Claude model, priced or not: the date suffix and [1m] marker
+    stripped and MODEL_ALIASES applied, exactly as :func:`normalize_model` does, but kept
+    whenever it starts with `claude-` rather than only when CANONICAL_MODELS lists it.
+    `<synthetic>` and any other non-`claude-` id return None.
+
+    Model speed (tracker/speed.py) uses this, so a model released after CANONICAL_MODELS
+    was last edited gets speed rows on its own (issue #116); pricing keeps
+    :func:`normalize_model`, which must still return None for an unpriced id.
+    """
+    m = normalized_raw_model(model_id or "")
+    return m if m.startswith("claude-") else None
+
+
 def normalized_raw_model(model_id: str) -> str:
     """Normalize presentation suffixes while retaining an unpriced raw id.
 
