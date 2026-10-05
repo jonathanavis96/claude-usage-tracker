@@ -25,3 +25,19 @@ def test_fast_clock_line_leaves_log_monotonic_after_the_clock_is_corrected(tmp_p
             rig.tick()
     stamps = [datetime.fromisoformat(d["ts"]) for d in rig.lines()]
     assert all(a < b for a, b in zip(stamps, stamps[1:])), [s.isoformat() for s in stamps]
+
+
+@pytest.mark.parametrize("ahead_min", [25, 61])
+def test_fast_clock_reading_does_not_inflate_the_window_total(tmp_path, ahead_min):
+    from tracker.join import window_points
+    rig = Rig(tmp_path)
+    with rig.running():
+        for _ in range(20):
+            rig.tick(burn=1.0)
+        rig.tick(burn=1.0, now=rig.clock + timedelta(minutes=2 + ahead_min))  # one fast tick
+        for _ in range(60):
+            rig.tick(burn=1.0)
+    truth = rig.meter.five.used
+    points = window_points(rig.samples())
+    total = sum(p["five_hour_pct"] for p in points)
+    assert total <= round(truth, 1) + 0.05, f"join counts {total}% for a window that moved {truth}%: {points}"

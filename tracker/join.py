@@ -306,6 +306,47 @@ def build_stretches(samples: list[Sample], turns: list[Turn], prices: dict, stre
     return out
 
 
+def _in_log_order(samples: list[Sample]) -> list[Sample]:
+    """Drop a reading stamped later than a reading written after it in the same log.
+
+    A clock that ran fast for one tick stamps its reading ahead; the meter log
+    keeps it (tracker/meter_log.py ignores a line over MAX_CLOCK_STALL_S ahead
+    rather than stall sampling). Sorted by time it lands among later readings
+    as a dip, and the climb back is counted twice (UT-S soak, finding 2).
+    Only readings from one parse of one log are compared (`Sample.seq`), so
+    a merge of several sources is never judged against itself.
+
+    The readings kept are the longest run that is in time order in the log, so
+    the fewest are dropped: one line stamped ahead costs that line, and so does
+    one line stamped behind (it must not take every earlier reading with it).
+    """
+    by_log: dict[int, list[Sample]] = {}
+    for s in samples:
+        if s.seq is not None:
+            by_log.setdefault(s.seq[0], []).append(s)
+    keep: set[int] = set()
+    for group in by_log.values():
+        group.sort(key=lambda s: s.seq[1])
+        # Longest non-decreasing subsequence by ts (patience sort, O(n log n)).
+        tails: list[datetime] = []
+        tail_idx: list[int] = []
+        prev: list[int] = [-1] * len(group)
+        for i, s in enumerate(group):
+            k = bisect.bisect_right(tails, s.ts)
+            if k == len(tails):
+                tails.append(s.ts)
+                tail_idx.append(i)
+            else:
+                tails[k] = s.ts
+                tail_idx[k] = i
+            prev[i] = tail_idx[k - 1] if k else -1
+        i = tail_idx[-1] if tail_idx else -1
+        while i >= 0:
+            keep.add(id(group[i]))
+            i = prev[i]
+    return [s for s in samples if s.seq is None or id(s) in keep]
+
+
 def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> list[dict]:
     """Five-hour and seven-day movement per five-hour window, for weekly windows per account.
 
@@ -327,7 +368,7 @@ def window_points(samples: list[Sample], max_gap: timedelta = MAX_PAIR_GAP) -> l
     its end has reached the cap (tracker/weekly.py SEVEN_DAY_CAP_PCT) is left
     out: past it the weekly meter stops while the five-hour one keeps counting.
     """
-    samples = sorted(samples, key=lambda s: s.ts)
+    samples = sorted(_in_log_order(samples), key=lambda s: s.ts)
     windows: list[dict] = []
     chain: dict | None = None
     for a, b in pairwise(samples):

@@ -259,3 +259,40 @@ class WindowPointTests(unittest.TestCase):
         self.assertEqual((sum(p["five_hour_pct"] for p in pts), sum(p["seven_day_pct"] for p in pts)),
                          (weekly["five_hour_pct"], weekly["seven_day_pct"]))
         self.assertEqual(pts[0]["window_ending"], r5)                 # a recorded reset time names the window
+
+
+class FastClockReadingTests(unittest.TestCase):
+    """UT-S soak finding 2: a reading stamped ahead by a fast clock sorts into the join
+    out of place, and the climb back after its dip was counted as a second piece."""
+
+    R5, R7 = "2026-09-01T14:00:00+00:00", "2026-09-07T00:00:00+00:00"
+
+    def _line(self, mins, fh, sd):
+        return json.dumps({"ts": (T0 + timedelta(minutes=mins)).isoformat(),
+                           "five_hour": {"utilization": fh, "resets_at": self.R5},
+                           "seven_day": {"utilization": sd, "resets_at": self.R7}})
+
+    def test_reading_out_of_order_in_its_own_log_is_dropped(self):
+        lines = [self._line(5 * i, 10 + i, 20 + i / 2) for i in range(8)]          # 10..17
+        lines.append(self._line(35 + 61, 18, 24))                                 # fast clock, +61 min
+        lines += [self._line(40 + 5 * i, 18 + i, 24 + i / 2) for i in range(20)]  # 18..37, clock fixed
+        pts = window_points(parse_moonlighter(lines, source="meter"))
+        self.assertEqual(round(sum(p["five_hour_pct"] for p in pts), 1), 27.0)
+
+    def test_one_reading_stamped_behind_costs_only_itself(self):
+        # A single line stamped 61 min behind its predecessors must not take the
+        # eight good readings before it down with it (review of a799f8b).
+        lines = [self._line(5 * i, 10 + i, 20 + i / 2) for i in range(8)]           # 10..17
+        lines.append(self._line(40 - 61, 18, 24))                                  # slow clock, -61 min
+        lines += [self._line(45 + 5 * i, 19 + i, 24.5 + i / 2) for i in range(10)]  # 19..28
+        pts = window_points(parse_moonlighter(lines, source="meter"))
+        self.assertEqual(round(sum(p["five_hour_pct"] for p in pts), 1), 18.0)
+
+    def test_other_sources_interleaved_in_time_are_kept(self):
+        meter = parse_moonlighter([self._line(10 * i, 10 + 2 * i, 20 + i) for i in range(6)],
+                                  source="meter")
+        ceiling = [Sample(T0 + timedelta(minutes=10 * i + 5), 11 + 2 * i, 20.5 + i, self.R5, "ceiling",
+                          self.R7) for i in range(5)]
+        merged = sorted(meter + ceiling, key=lambda s: s.ts)
+        pts = window_points(merged)
+        self.assertEqual(round(sum(p["five_hour_pct"] for p in pts), 1), 10.0)
