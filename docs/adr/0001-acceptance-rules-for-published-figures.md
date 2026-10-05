@@ -140,6 +140,14 @@ These are the acceptance rules. Each names where it lives.
     (`weekly_steps` on each account's record).
     Findings: `docs/findings/2026-10-04-account-agreement.md` (sections 2c and 3, branch
     wf/139-account-agreement).
+    Amended 2026-10-05 (wf-143): the step at a change certified on the weekly limit is the
+    certified change, every earlier week scaled by one factor (`week_bridge`) as the window's
+    history is bridged, the newest week its own direct level; and where a measured window
+    change is withheld, windows per week is carried across the boundary rather than the week
+    divided by a carried window. `tracker/invariants.py` checks 7-9 fail the publish when the
+    page states two figures for one change.
+    Source: `tracker/credits.py` (`chain_certified_weeks`, `carry_across_withheld_windows`).
+    Findings: `docs/findings/2026-10-05-headless-five-hour.md`.
 
 ### Pending
 

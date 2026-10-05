@@ -181,9 +181,18 @@ nice python3 -m tracker.publish_gate \
 # accounts, no step a change that failed ADR 0001 rules 8 and 9 scales, direct figures
 # published as measured, account units, steps that agree with the meters. On 2026-10-04 a
 # window chained through two unproven steps reached the page unnoticed. Same semantics as
-# the gate: one alert when a check starts failing, one on recovery, never blocks.
-python3 -m tracker.invariants --json "$SITE/website/public/data/claude-usage.json" \
-  || echo "warning: public JSON invariants failed (alerted), publishing anyway" >&2
+# the gate: one alert when a check starts failing, one on recovery. Checks 1-6 never block
+# (exit 1). Checks 7-9 (exit 2: the headline, the charts and the published changes give one
+# change different percents, or a windows-per-week step the weekly and window steps do not
+# imply) fail the publish: the last published JSON is put back and the site gets no commit.
+python3 -m tracker.invariants --json "$SITE/website/public/data/claude-usage.json"
+inv_rc=$?
+if [ "$inv_rc" -eq 2 ]; then
+  echo "error: public JSON invariants contradict the page (alerted), keeping the last published JSON" >&2
+  git -C "$SITE" checkout -q -- website/public/data/claude-usage.json
+elif [ "$inv_rc" -ne 0 ]; then
+  echo "warning: public JSON invariants failed (alerted), publishing anyway" >&2
+fi
 
 # Only these files are added and committed (`--only`): anything else staged in this
 # checkout stays staged and is never pushed with the state.

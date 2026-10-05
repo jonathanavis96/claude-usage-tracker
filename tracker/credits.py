@@ -4098,12 +4098,20 @@ PER_REGIME_METHOD = (
     "pooled with the one before, one row from the earlier regime's start to the later one's "
     "end, its week over every step in both, and its window the newest of the pooled regimes' "
     "windows (they carry one value while nothing measured steps between them). A change "
-    "certified on the weekly limit alone opens a row here and leaves the window carried. "
+    "certified on the weekly limit alone opens a row here and leaves the window carried, and "
+    "with it the windows per week (`windows_per_week_source` `carried_across_withheld_window`): "
+    "a carried window is not measured unchanged, so the week over it would draw the whole "
+    "weekly change as a windows-per-week step. Each row's week is a level pooled over the "
+    "accounts with steps in it, while a change is certified on each account against itself, "
+    "so every row before a change certified on the weekly limit is scaled to make the step "
+    "there the certified change (`week_bridge`: the factor and the row's direct value), as the "
+    "window's history is bridged; the newest row is its own direct level. "
     "`per_week` is the newest regime's figure, and every family's week moves from its window "
     "the way the anchor's does. "
     "`account_regimes` gives each account's own figures in each regime and never another "
     "account's: its week from its own steps the same way (`per_week`), its window, and "
-    "`windows_per_week` its week over its window. Its window, in anchor units, is the "
+    "`windows_per_week` its week over its window (carried across a withheld window change as "
+    "the pooled row's is). Its window, in anchor units, is the "
     "regime's window times the account's median credits per 1% of the five-hour meter "
     "over its own clean stretches lying wholly in the regime, any family, valued as "
     "`across_cut` values them, over the same median pooled across every account's such "
@@ -4136,6 +4144,79 @@ def _over(week: float | None, week_iv: list | None, window: float | None,
     iv = ([round(week_iv[0] / window_iv[1], 4), round(week_iv[1] / window_iv[0], 4)]
           if week_iv and window_iv and window_iv[0] and window_iv[1] else None)
     return round(week / window, 4), iv
+
+
+def _scale_week_row(row: dict, factor: float) -> None:
+    """Scale one `per_week_regimes` row's week, and the windows per week derived from it."""
+    if row["value"] is not None:
+        row["value"] = round(row["value"] * factor)
+    if row["interval"]:
+        row["interval"] = [round(x * factor) for x in row["interval"]]
+    if row["windows_per_week"] is not None:
+        row["windows_per_week"] = round(row["windows_per_week"] * factor, 4)
+    if row["windows_per_week_interval"]:
+        row["windows_per_week_interval"] = [round(x * factor, 4)
+                                            for x in row["windows_per_week_interval"]]
+
+
+def chain_certified_weeks(per_week: list[dict], meters: dict | None) -> None:
+    """Make each published step of `per_week_regimes` the figure its change was certified at.
+
+    Each row's week is a pooled level over whichever accounts had steps in it, while a
+    change is certified on each account compared with itself (`weekly_change`, ADR 0001
+    rule 11). The two differ when the accounts differ either side (a4 starts on
+    23 September), and the page drew the level ratio (+32%) beside a headline of the
+    certified change (+30%). So, as the window's history is bridged to the meters' change
+    (`bridge_rate`), every row before a boundary certified on the weekly limit is scaled so
+    the step there is the certified change; the newest row stays its own direct level.
+    `week_bridge` records the factor and the row's direct `value`.
+
+    A boundary whose five-hour window change was measured and withheld carries the window
+    across it, so the window there is not known to be unchanged: dividing the new week by
+    the carried window would draw the whole weekly change as a windows-per-week step. The
+    row after such a boundary carries the windows per week of the row before
+    (`windows_per_week_source` `carried_across_withheld_window`) instead.
+
+    Edits `per_week` in place, newest boundary first.
+    """
+    by_at = {datetime.fromisoformat(c["at"]): c for c in (meters or {}).get("candidates", [])
+             if c.get("at") and c.get("applies")}
+    for i in range(len(per_week) - 1, 0, -1):
+        row, prev = per_week[i], per_week[i - 1]
+        cand = by_at.get(datetime.fromisoformat(row["from"])) if row["from"] else None
+        weekly = (cand or {}).get("weekly_change") or {}
+        if (weekly.get("certified") and weekly.get("change_pct") is not None
+                and row["value"] and prev["value"]):
+            factor = row["value"] / (1 + weekly["change_pct"] / 100) / prev["value"]
+            for earlier in per_week[:i]:
+                earlier.setdefault("week_bridge", {"direct_value": earlier["value"], "factor": 1.0,
+                                                   "at": []})
+                earlier["week_bridge"]["factor"] = round(earlier["week_bridge"]["factor"] * factor, 6)
+                earlier["week_bridge"]["at"].append(row["from"])
+                _scale_week_row(earlier, factor)
+    carry_across_withheld_windows(per_week, meters)
+
+
+def carry_across_withheld_windows(rows: list[dict], meters: dict | None) -> None:
+    """Hold windows per week across each boundary whose window change was withheld.
+
+    `rows` are `per_week_regimes` rows or one account's `account_regimes` rows. A row
+    opening at a change that applies while the window change it records (`window_change`)
+    is not certified takes the windows per week (and interval, where it has one) of the row
+    before it, since its window is carried rather than measured (`chain_certified_weeks`).
+    A row whose predecessor has no windows per week keeps its own: no step is drawn there.
+    """
+    by_at = {datetime.fromisoformat(c["at"]): c for c in (meters or {}).get("candidates", [])
+             if c.get("at") and c.get("applies")}
+    for prev, row in zip(rows, rows[1:]):
+        cand = by_at.get(datetime.fromisoformat(row["from"])) if row.get("from") else None
+        if cand and cand.get("measurable", True) and prev.get("windows_per_week") is not None \
+                and cand.get("window_change") is not None \
+                and not cand["window_change"].get("certified"):
+            row["windows_per_week"] = prev["windows_per_week"]
+            if "windows_per_week_interval" in row:
+                row["windows_per_week_interval"] = prev.get("windows_per_week_interval")
+            row["windows_per_week_source"] = "carried_across_withheld_window"
 
 
 def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None,
@@ -4231,6 +4312,7 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             "windows_per_week_pooled": pooled["value"],
             "windows_per_week_pooled_interval": pooled["interval"],
             "n_windows_per_week": pooled["n"]})
+    chain_certified_weeks(per_week, meters)
 
     # A run of regimes stated by one cluster (`RUN_CLUSTER_SOURCE`) is one span for the
     # account windows: each account's readings are pooled over the whole run. So is a
@@ -4310,6 +4392,7 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                          "windows_per_week_meters": meters_wpw["value"],
                          "n_window": len(own), "n_measured_window": len(readings),
                          "n_wpw": meters_wpw["n"]})
+        carry_across_withheld_windows(rows, meters)
         accounts[label] = rows
     newest = per_week[-1]
     all_fig = window_tokens["all"]
