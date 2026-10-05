@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-05T19:00:05.921951+00:00",
+ "generated_at": "2026-10-05T19:30:05.331324+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 6911,
+    "reset_verified_samples": 6920,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 10933,
+    "samples": 10942,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-05T18:44:38+00:00"
+    "last": "2026-10-05T19:29:03+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 3233,
-    "turns": 76872,
+    "files": 3235,
+    "turns": 76881,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 3233,
+     "kept": 3235,
      "dropped": 2663,
      "subagent_files": 956,
      "dropped_to": {
@@ -45,7 +45,7 @@
       ".claude-dave": 8
      },
      "attributed_by_record": {
-      "airlock_tune_env": 325,
+      "airlock_tune_env": 327,
       "auto_mail_default_login": 555,
       "harness_run": 465
      },
@@ -24080,10 +24080,10 @@
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
      "rounding_interval": [
-      0.2734,
+      0.0,
       null
      ],
-     "pieces": 1,
+     "pieces": 2,
      "reset_verified": true
     }
    ]
@@ -24096,11 +24096,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 6551,
+    "reset_verified_samples": 6563,
     "since": null,
-    "samples": 9134,
+    "samples": 9146,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-05T18:59:14+00:00"
+    "last": "2026-10-05T19:29:03+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -35710,7 +35710,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-05T18:59:14+00:00",
+     "window_ending": "2026-10-05T19:29:03+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
@@ -35731,11 +35731,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 6354,
+    "reset_verified_samples": 6366,
     "since": null,
-    "samples": 7088,
+    "samples": 7100,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-05T18:58:10+00:00"
+    "last": "2026-10-05T19:30:08+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -35750,13 +35750,13 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 896,
-     "dropped": 1371,
+     "dropped": 1373,
      "subagent_files": 246,
      "dropped_to": {
-      ".claude-javiswork": 878
+      ".claude-javiswork": 880
      },
      "attributed_by_record": {
-      "airlock_tune_env": 214
+      "airlock_tune_env": 216
      },
      "unclaimed": 493
     }
@@ -39083,7 +39083,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-05T18:58:10+00:00",
+     "window_ending": "2026-10-05T19:30:08+00:00",
      "windows": 2.0,
      "five_hour_pct": 2.0,
      "seven_day_pct": 1.0,
@@ -39100,7 +39100,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-05T19:01:00.244618+00:00",
+  "generated_at": "2026-10-05T19:31:00.555924+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -80700,7 +80700,7 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 378,
+    "n": 379,
     "fast_session_requests": 0,
     "output_hist": {
      "211": 5,
@@ -80712,7 +80712,7 @@
      "221": 16,
      "230": 17,
      "229": 22,
-     "218": 13,
+     "218": 14,
      "233": 14,
      "239": 7,
      "234": 6,
@@ -80848,6 +80848,7 @@
      "37": 3,
      "9": 1,
      "8": 2,
+     "20": 1,
      "52": 1,
      "120": 2,
      "28": 1,
@@ -80891,14 +80892,15 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "sdk-cli",
-    "n": 16,
+    "n": 18,
     "fast_session_requests": 0,
     "output_hist": {
      "242": 1,
-     "246": 4,
+     "246": 5,
      "237": 2,
      "228": 2,
      "238": 2,
+     "234": 1,
      "226": 1,
      "235": 1,
      "239": 1,
@@ -80911,8 +80913,10 @@
      "80": 3,
      "127": 1,
      "155": 1,
+     "150": 1,
      "116": 1,
      "143": 1,
+     "90": 1,
      "142": 1,
      "139": 1,
      "123": 1,
