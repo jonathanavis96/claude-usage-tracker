@@ -494,6 +494,88 @@ SONNET_1433 = {"ts": "2026-09-06T14:33:05.254749+00:00", "model": "claude-sonnet
                "early_tick": False, "reset_start": False, "account": "dave"}
 
 
+class TestDailyInvariantsGate(unittest.TestCase):
+    """Run bin/daily.sh's invariants step and its site commit in isolation, against a scratch
+    site checkout, with a stub python3 whose tracker.invariants exits a chosen code."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = (BIN / "daily.sh").read_text(encoding="utf-8")
+
+    @staticmethod
+    def _steps(text: str) -> str:
+        gate = re.search(r"^python3 -m tracker\.invariants .*?^fi$", text, re.DOTALL | re.MULTILINE)
+        site = re.search(r'^\(\n  cd "\$SITE".*?^\)\npublish_rc=\$\?$', text,
+                         re.DOTALL | re.MULTILINE)
+        assert gate and site, "invariants step or site commit not found in bin/daily.sh"
+        return f"{gate.group(0)}\n{site.group(0)}\n"
+
+    def _git(self, *args, cwd):
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+
+    def _run(self, inv_rc: int, text: str | None = None):
+        """One run: the site has published OLD, the publisher has just written NEW.
+
+        Returns (process, site JSON after the run, staged names, site commit count, pushes).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            site = root / "site"
+            data = site / "website" / "public" / "data"
+            data.mkdir(parents=True)
+            self._git("init", "-q", "-b", "main", cwd=site)
+            published = data / "claude-usage.json"
+            published.write_text('{"page": "old"}\n', encoding="utf-8")
+            self._git("add", "-A", cwd=site)
+            self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "data: refresh claude usage",
+                      cwd=site)
+            published.write_text('{"page": "new"}\n', encoding="utf-8")
+            stub = root / "bin"
+            stub.mkdir()
+            python = stub / "python3"
+            python.write_text(f"#!/usr/bin/env bash\nexit {inv_rc}\n", encoding="utf-8")
+            python.chmod(0o755)
+            push_log = root / "push.log"
+            env = dict(os.environ)
+            env.update(SITE=str(site), PATH=f"{stub}{os.pathsep}{env['PATH']}", PUSH_LOG=str(push_log))
+            # The real site_push pushes to GitHub; here it records that it was called.
+            stub_push = 'site_push() { echo pushed >> "$PUSH_LOG"; }'
+            proc = subprocess.run(
+                ["bash", "-c", f"set -uo pipefail\n{stub_push}\n{self._steps(text or self.text)}"],
+                check=False, cwd=root, env=env, capture_output=True, text=True)
+            return (proc, published.read_text(encoding="utf-8"),
+                    self._git("diff", "--cached", "--name-only", cwd=site).split(),
+                    int(self._git("rev-list", "--count", "HEAD", cwd=site)),
+                    push_log.read_text(encoding="utf-8").split() if push_log.exists() else [])
+
+    def test_a_contradiction_keeps_the_last_published_json_and_commits_nothing(self):
+        proc, page, staged, commits, pushes = self._run(2)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(page, '{"page": "old"}\n')
+        self.assertEqual(staged, [])
+        self.assertEqual(commits, 1)
+        self.assertEqual(pushes, [])
+        self.assertIn("keeping the last published JSON", proc.stderr)
+        self.assertIn("no change", proc.stdout)
+
+    def test_the_gate_is_what_keeps_it(self):
+        # Without the checkout the same run publishes the new JSON: the test above is
+        # testing that line, not something else in the step.
+        text = re.sub(r"^  git -C \"\$SITE\" checkout .*\n", "", self.text, flags=re.MULTILINE)
+        self.assertNotEqual(text, self.text)
+        _, page, _, commits, _ = self._run(2, text)
+        self.assertEqual((page, commits), ('{"page": "new"}\n', 2))
+
+    def test_an_advisory_failure_publishes_the_new_json(self):
+        proc, page, staged, commits, pushes = self._run(1)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(page, '{"page": "new"}\n')
+        self.assertEqual(staged, [])
+        self.assertEqual(commits, 2)
+        self.assertEqual(pushes, ["pushed"])
+        self.assertIn("publishing anyway", proc.stderr)
+
+
 def _row(ts, model, tpp, ticks=3):
     return {"ts": ts, "model": model, "effort": "low", "tokens_per_pct": float(tpp),
             "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": int(tpp * ticks)},

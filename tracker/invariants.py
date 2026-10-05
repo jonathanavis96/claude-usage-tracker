@@ -36,9 +36,9 @@ Checks 7-9 read the steps the page draws the way it draws them (`chart_steps`); 
 A failure of checks 1-6 does NOT block the publish (exit 1). A failure of checks 7-9
 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change. bin/daily.sh runs
-this after the publish, beside tracker.publish_gate, with the same incident semantics (`publish_gate.track_incident`): one
-alert when a check starts failing, nothing while it keeps failing, one recovery when they
-all pass again. State lives in --state.
+this after the publish, beside tracker.publish_gate, with the same incident semantics
+(`publish_gate.track_incident`): one alert when a check starts failing, nothing while it
+keeps failing, one recovery when they all pass again. State lives in --state.
 """
 from __future__ import annotations
 
