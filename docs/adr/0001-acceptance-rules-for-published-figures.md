@@ -1,6 +1,6 @@
 # 0001. Acceptance rules for published figures
 
-Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 and 11 added 2026-10-05
+Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 to 13 added 2026-10-05
 
 ## Context
 
@@ -169,9 +169,28 @@ These are the acceptance rules. Each names where it lives.
     Findings: `docs/findings/2026-10-05-headless-five-hour.md`,
     `docs/findings/2026-10-05-headless-weight.md`.
 
+13. **The 14 September weekly before side reaches back to the account's last certified
+    boundary, added 2026-10-05.** On the seven-day meter, each account's before side for
+    the 14 September change starts at its last certified boundary before the change. That
+    boundary is the start of a regime that a certified step opened in the account's own
+    windows-per-week series, before its own weekly step. Without one, it is `PLAN_CHANGE_AT`,
+    where every account's Max 20x series starts. The start of an account's first regime is
+    only where its points begin, and it bounds nothing. From that boundary the before side
+    reads every clean step: an account with a longer clean history uses all of it. Max
+    account 1's history before `MASTERRIG_FROM` therefore counts, except the 2-5 September
+    takeoff phantom (`MASTERRIG_PHANTOM`). Its stretches from before its transcripts survive
+    already fail the `status` gate. The window change across 14 September keeps the
+    known-date selection (`MASTERRIG_FROM`): on Max account 1's five-hour meter, late August
+    does not read the level of 6-13 September, while on its seven-day meter it does.
+    `MASTERRIG_FROM` keeps its place in the rate fits and in every later candidate.
+    Source: `tracker/credits.py` (`cut_before_start`, `masterrig_excluded`,
+    `MASTERRIG_PHANTOM`, `cut_direct_tests`), `tracker/weekly_meter.py` (`clean_steps`,
+    `whole_history`), `tracker/publish.py` (the `cut_direct_tests` call).
+    Findings: `docs/findings/2026-10-05-a1-long-before.md`.
+
 ### Pending
 
-13. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
+14. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
    family's rate only if 3 or more of its stretches are at least 60% that family. Another
    PR is adding this; when it merges, this entry takes its source location and moves up
    into the list above. Until then the code has no such rule (the only dominance constant

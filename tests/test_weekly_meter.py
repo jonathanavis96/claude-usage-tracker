@@ -95,6 +95,19 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([value(s["tokens"]) for s in kept["jwork"]], [1])
         self.assertEqual([value(s["tokens"]) for s in kept["masterrig"]], [5])
 
+    def test_whole_history_reads_masterrig_back_past_its_start_less_the_phantom(self):
+        # The 14 September weekly before side reads masterrig's history before MASTERRIG_FROM,
+        # all but the 2-5 September takeoff phantom; every other account is untouched.
+        lo, hi = C.MASTERRIG_PHANTOM
+        by = {"masterrig": [step(lo - timedelta(days=3), 1), step(lo - timedelta(minutes=30), 2),
+                            step(lo + timedelta(days=1), 3), step(hi - timedelta(minutes=30), 4),
+                            step(hi, 5)],
+              "jwork": [step(lo, 6)]}
+        whole = W.clean_steps(by, [], whole_history=True)
+        self.assertEqual([value(s["tokens"]) for s in whole["masterrig"]], [1, 5])
+        self.assertEqual([value(s["tokens"]) for s in whole["jwork"]], [6])
+        self.assertEqual([value(s["tokens"]) for s in W.clean_steps(by, [])["masterrig"]], [5])
+
     def test_a_step_over_work_the_transcripts_did_not_see_is_left_out(self):
         # The capture check withheld the stretch (status not accepted): the meter moved with
         # work no transcript on this host holds, so its steps read too few credits per point.
@@ -215,6 +228,69 @@ class WeeklyChangeTests(unittest.TestCase):
         self.assertLess(lo, 0.0)
         self.assertGreater(hi, 0.0)
         self.assertFalse(out["certified"])
+
+
+def regime(start, end):
+    return {"start": start.isoformat(), "end": end.isoformat()}
+
+
+def day_rows(first_day, n_days, level, rng, per_day=6):
+    """Valued steps, `per_day` a day from `first_day` (UTC) for `n_days`, about `level`."""
+    out = []
+    for k, day in enumerate(noisy_days(level, n_days, rng, per_day, sd=0.05)):
+        for i, c in enumerate(day):
+            start = first_day + timedelta(days=k, hours=i)
+            out.append({"start": start, "end": start + timedelta(minutes=30),
+                        "day": start.date().isoformat(), "credits": c, "d7": 1, "d5": 5})
+    return out
+
+
+class CutBeforeSideTests(unittest.TestCase):
+    """ADR 0001 rule 13: the 14 September weekly before side starts at the account's last
+    certified boundary and reads every clean step from there."""
+
+    AUG = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    STEP = datetime(2026, 9, 14, 11, 30, tzinfo=timezone.utc)
+
+    def block(self, *starts):
+        """An own windows-per-week block whose regimes start at `starts`, stepped at the last."""
+        ends = [*(s - timedelta(minutes=10) for s in starts[1:]), datetime(2026, 10, 5, tzinfo=timezone.utc)]
+        return {"regimes": [regime(s, e) for s, e in zip(starts, ends)],
+                "step": {"onset": starts[-1].date().isoformat()}}
+
+    def test_the_first_regimes_start_is_no_boundary(self):
+        from tracker.passive import PLAN_CHANGE_AT
+        self.assertEqual(C.cut_before_start(None), PLAN_CHANGE_AT)
+        self.assertEqual(C.cut_before_start(self.block(self.AUG, self.STEP)), PLAN_CHANGE_AT)
+        # A regime with no step after the cut bounds nothing either.
+        late = datetime(2026, 9, 18, tzinfo=timezone.utc)
+        self.assertEqual(C.cut_before_start({"regimes": [regime(late, late + timedelta(days=9))],
+                                             "step": None}), PLAN_CHANGE_AT)
+
+    def test_a_certified_boundary_before_the_step_starts_the_side(self):
+        mid = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        self.assertEqual(C.cut_before_start(self.block(self.AUG, mid, self.STEP)), mid)
+        # Without an own step, a boundary before the cut still starts it.
+        no_step = dict(self.block(self.AUG, mid), step=None)
+        self.assertEqual(C.cut_before_start(no_step), mid)
+
+    def test_the_weekly_before_side_reads_back_to_the_boundary(self):
+        from tracker.passive import PLAN_CHANGE_AT
+        rng = random.Random(7)
+        early = day_rows(PLAN_CHANGE_AT - timedelta(days=4), 3, 5000.0, rng)  # the Max 5x plan
+        before = day_rows(datetime(2026, 8, 20, tzinfo=timezone.utc), 10, 1000.0, rng)
+        after = day_rows(datetime(2026, 9, 15, tzinfo=timezone.utc), 5, 900.0, rng)
+        max20 = {"by_account": {"a1": self.block(self.AUG, self.STEP)}}
+        out = C.cut_direct_tests({}, [], value, {}, {"a1": early + before + after}, max20, None)
+        row = out["weekly_change"]["per_account"]["a1"]
+        self.assertEqual((row["n_before"], row["days_before"]), (len(before), 10))
+        self.assertEqual(row["n_after"], len(after))
+        self.assertAlmostEqual(row["change_pct"], -10.0, delta=3.0)
+        # A certified boundary inside the history moves the start with it.
+        mid = datetime(2026, 8, 25, tzinfo=timezone.utc)
+        max20 = {"by_account": {"a1": self.block(self.AUG, mid, self.STEP)}}
+        out = C.cut_direct_tests({}, [], value, {}, {"a1": early + before + after}, max20, None)
+        self.assertEqual(out["weekly_change"]["per_account"]["a1"]["days_before"], 5)
 
 
 if __name__ == "__main__":
