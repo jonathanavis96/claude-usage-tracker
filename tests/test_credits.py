@@ -2709,3 +2709,102 @@ class RegimeFiguresTests(unittest.TestCase):
         self.assertIn("newest regime", week["windows_per_week"]["source"])
         self.assertIn("weekly_over_window", week["windows_per_week"]["source"])
         self.assertIsNone(week["status"])
+
+    def certified_on_weekly(self, weekly_pct=25.0, window_certified=False):
+        meters = self.meters(scope="undetermined")
+        meters["candidates"][0].update(
+            certified_on=["weekly_limit"], measurable=True,
+            weekly_change={"certified": True, "change_pct": weekly_pct},
+            window_change={"certified": window_certified, "change_pct": 31.8})
+        return meters
+
+    def test_the_step_at_a_change_certified_on_the_weekly_limit_is_the_certified_change(self):
+        # The pooled levels step 2200 -> 3000 (+36%, a2 joins after AT); the change was
+        # certified at +25% on each account against itself. The newest row stays its own
+        # direct level and every row before it is scaled by one factor, so the 14 September
+        # step is unchanged and the AT step is +25%.
+        figures = self.figures(self.certified_on_weekly())
+        rows = figures["per_week_regimes"]
+        factor = 3000 / 1.25 / 2200
+        self.assertEqual([r["value"] for r in rows], [round(2000 * factor), 2400, 3000])
+        self.assertAlmostEqual(rows[2]["value"] / rows[1]["value"], 1.25, places=3)
+        self.assertEqual([r["week_bridge"]["direct_value"] for r in rows[:2]], [2000, 2200])
+        self.assertEqual(rows[0]["week_bridge"]["factor"], round(factor, 6))
+        self.assertNotIn("week_bridge", rows[2])
+        # The hero week is the newest direct level, not moved by the bridge.
+        self.assertEqual(figures["per_week"]["all"]["value"], 3000)
+
+    def test_a_withheld_window_change_carries_windows_per_week(self):
+        # The window across AT is carried, not measured unchanged: windows per week does not
+        # step by dividing the new week by it.
+        rows = self.figures(self.certified_on_weekly())["per_week_regimes"]
+        factor = 3000 / 1.25 / 2200
+        self.assertEqual(rows[1]["windows_per_week"], round(2.0 * factor, 4))
+        self.assertEqual(rows[2]["windows_per_week"], rows[1]["windows_per_week"])
+        self.assertEqual(rows[2]["windows_per_week_interval"], rows[1]["windows_per_week_interval"])
+        self.assertEqual([r["windows_per_week_source"] for r in rows],
+                         ["weekly_over_window", "weekly_over_window", "carried_across_withheld_window"])
+
+    def test_a_certified_window_change_keeps_the_quotient(self):
+        rows = self.figures(self.certified_on_weekly(window_certified=True))["per_week_regimes"]
+        self.assertEqual(rows[2]["windows_per_week"], 2.5)
+        self.assertEqual(rows[2]["windows_per_week_source"], "weekly_over_window")
+
+    def test_an_uncertified_weekly_change_is_no_bridge(self):
+        meters = self.certified_on_weekly()
+        meters["candidates"][0]["weekly_change"]["certified"] = False
+        rows = self.figures(meters)["per_week_regimes"]
+        self.assertEqual([r["value"] for r in rows], [2000, 2200, 3000])
+        self.assertFalse(any("week_bridge" in r for r in rows))
+
+
+class CertifiedWeekChainTests(unittest.TestCase):
+    """`chain_certified_weeks` and `carry_across_withheld_windows` on rows by hand."""
+
+    AT = "2026-09-22T19:41:49+00:00"
+
+    def rows(self):
+        return [{"from": None, "value": 2600, "interval": [2300, 2800], "windows_per_week": 5.7,
+                 "windows_per_week_interval": [4.2, 16.0], "windows_per_week_source": "weekly_over_window"},
+                {"from": C.CUT_AT.isoformat(), "value": 2300, "interval": [2100, 2550],
+                 "windows_per_week": 4.6, "windows_per_week_interval": [2.9, 7.0],
+                 "windows_per_week_source": "weekly_over_window"},
+                {"from": self.AT, "value": 3000, "interval": [2900, 3100], "windows_per_week": 6.0,
+                 "windows_per_week_interval": [4.0, 8.4], "windows_per_week_source": "weekly_over_window"}]
+
+    def meters(self, **cand):
+        base = {"at": self.AT, "applies": True, "measurable": True,
+                "weekly_change": {"certified": True, "change_pct": 29.6},
+                "window_change": {"certified": False, "change_pct": 31.8}}
+        return {"candidates": [dict(base, **cand)]}
+
+    def test_live_shape(self):
+        rows = self.rows()
+        C.chain_certified_weeks(rows, self.meters())
+        self.assertAlmostEqual(rows[2]["value"] / rows[1]["value"] - 1, 0.296, places=3)
+        self.assertAlmostEqual(rows[1]["value"] / rows[0]["value"], 2300 / 2600, places=3)
+        self.assertEqual(rows[2]["windows_per_week"], rows[1]["windows_per_week"])
+        self.assertEqual(rows[2]["windows_per_week_source"], "carried_across_withheld_window")
+
+    def test_a_withheld_candidate_changes_nothing(self):
+        rows = self.rows()
+        C.chain_certified_weeks(rows, self.meters(applies=False))
+        self.assertEqual(rows, self.rows())
+
+    def test_a_joint_fit_record_without_a_window_change_keeps_the_quotient(self):
+        rows = self.rows()
+        meters = self.meters()
+        del meters["candidates"][0]["window_change"]
+        C.chain_certified_weeks(rows, meters)
+        self.assertEqual(rows[2]["windows_per_week"], 6.0)
+
+    def test_account_rows_carry_only_from_a_figure(self):
+        rows = [{"from": C.CUT_AT.isoformat(), "windows_per_week": 4.9},
+                {"from": self.AT, "windows_per_week": 7.2}]
+        C.carry_across_withheld_windows(rows, self.meters())
+        self.assertEqual([r["windows_per_week"] for r in rows], [4.9, 4.9])
+        self.assertEqual(rows[1]["windows_per_week_source"], "carried_across_withheld_window")
+        rows = [{"from": C.CUT_AT.isoformat(), "windows_per_week": None},
+                {"from": self.AT, "windows_per_week": 3.8}]
+        C.carry_across_withheld_windows(rows, self.meters())
+        self.assertEqual([r["windows_per_week"] for r in rows], [None, 3.8])

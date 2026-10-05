@@ -340,7 +340,9 @@ class RunAllTest(unittest.TestCase):
         self.assertEqual(I.run_checks(doc), {name: [] for name, _ in I.CHECKS})
         self.assertEqual([name for name, _ in I.CHECKS],
                          ["headline_inside_accounts", "no_unproven_step", "direct_means_direct",
-                          "account_units", "steps_agree_with_meters", "no_withheld_boundary"])
+                          "account_units", "steps_agree_with_meters", "no_withheld_boundary",
+                          "headline_matches_chart", "windows_per_week_implied",
+                          "one_figure_per_change"])
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()
@@ -385,6 +387,173 @@ class AlertTest(unittest.TestCase):
         self.doc.write_text("{not json")
         self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 1)
         self.assertIn("cannot read", self.sent[0])
+
+
+def _live_2026_10_05() -> dict:
+    """The page as published on 2026-10-05 15:01Z, cut to what checks 7-9 read: a +30%
+    weekly headline beside +32% steps on two charts, and a windows-per-week step at a
+    withheld window change."""
+    regimes = [{"from": None, "until": CUT, "value": 450593800},
+               {"from": CUT, "until": SEP22, "value": 501060306},
+               {"from": SEP22, "until": SEP29, "value": 501060306},
+               {"from": SEP29, "until": None, "value": 501060306}]
+    weeks = [{"from": None, "until": CUT, "value": 2575055593, "windows_per_week": 5.7148},
+             {"from": CUT, "until": SEP22, "value": 2278966037, "windows_per_week": 4.5483},
+             {"from": SEP22, "until": None, "value": 3007888270, "windows_per_week": 6.003}]
+    accounts = {"a1": [{"from": None, "window": 411689170, "windows_per_week": 5.5444},
+                       {"from": CUT, "window": 437652234, "windows_per_week": 4.8914},
+                       {"from": SEP22, "window": 437652234, "windows_per_week": 7.2003}]}
+    sep22 = dict(_candidate(applies=True, change_pct=31.8, interval_pct=[20.7, 43.8]),
+                 certified_on=["weekly_limit"],
+                 weekly_change={"certified": True, "change_pct": 29.6},
+                 window_change={"certified": False, "change_pct": 31.8,
+                                "interval_pct": [20.7, 43.8], "plan_wide": {"state": "failed"}})
+    sep29 = dict(_candidate(at=SEP29), weekly_change={"certified": False},
+                 window_change={"certified": False})
+    change = {"kind": "change", "date": "2026-09-22", "scope": "weekly", "metric": "weekly_limit",
+              "percent": 30, "change_pct": 29.6, "direction": "increased"}
+    return {"last_change": dict(change), "events": [
+        {"kind": "change", "date": "2026-09-14", "scope": "weekly", "percent": 25,
+         "direction": "decreased", "metric": "weekly_to_five_hour_ratio"}, dict(change)],
+        "credits": {"window_tokens": {"regimes": regimes, "per_week_regimes": weeks,
+                                      "account_regimes": accounts},
+                    "five_hour_on_meters": {"candidates": [sep22, sep29]}}}
+
+
+def _fixed(doc: dict) -> dict:
+    """The same page with this branch's data path: the 22 September week step is the
+    certified +29.6%, and windows per week is carried across the withheld window."""
+    weeks = _wt(doc)["per_week_regimes"]
+    factor = weeks[2]["value"] / 1.296 / weeks[1]["value"]
+    for row in weeks[:2]:
+        row["value"] = round(row["value"] * factor)
+        row["windows_per_week"] = round(row["windows_per_week"] * factor, 4)
+    weeks[2]["windows_per_week"] = weeks[1]["windows_per_week"]
+    a1 = _wt(doc)["account_regimes"]["a1"]
+    a1[2]["windows_per_week"] = a1[1]["windows_per_week"]
+    return doc
+
+
+SEP29 = "2026-09-29T18:25:18.212000+00:00"
+
+
+class ChartStepsTest(unittest.TestCase):
+    def test_reads_the_steps_the_page_draws(self):
+        steps = I.chart_steps(_live_2026_10_05())
+        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps["window"]], [(CUT, 11.2)])
+        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps["tokens_per_week"]],
+                         [(CUT, -11.5), (SEP22, 32.0)])
+        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps["windows_per_week"]],
+                         [(CUT, -20.4), (SEP22, 32.0)])
+
+    def test_percents_round_as_the_page_rounds_them(self):
+        # JavaScript Math.round, not round-half-to-even: -11.5% prints -11%, +32.5% +33%.
+        self.assertEqual([I._page_round(x) for x in (-11.5, 32.5, 29.6, -20.4)], [-11, 33, 30, -20])
+
+    def test_nothing_to_read_without_per_week_regimes(self):
+        doc = _live_2026_10_05()
+        _wt(doc)["per_week_regimes"] = _wt(doc)["per_week_regimes"][:1]
+        self.assertEqual(I.chart_steps(doc), {})
+        self.assertEqual(I.headline_matches_chart(doc), [])
+
+    def test_a_level_without_a_figure_is_not_drawn(self):
+        doc = _live_2026_10_05()
+        _wt(doc)["per_week_regimes"][1]["windows_per_week"] = None
+        steps = I.chart_steps(doc)["windows_per_week"]
+        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps], [(SEP22, 5.0)])
+
+
+class HeadlineMatchesChartTest(unittest.TestCase):
+    def test_the_live_page_fails(self):
+        out = I.headline_matches_chart(_live_2026_10_05())
+        self.assertEqual(len(out), 1)
+        self.assertIn("+30%", out[0])
+        self.assertIn("tokens-per-week chart labels the same change +32%", out[0])
+
+    def test_the_fixed_page_passes(self):
+        self.assertEqual(I.headline_matches_chart(_fixed(_live_2026_10_05())), [])
+
+    def test_no_step_where_the_headline_says_one_fails(self):
+        doc = _fixed(_live_2026_10_05())
+        doc["last_change"]["metric"] = "five_hour_limit"
+        self.assertIn("window-size chart draws no step", I.headline_matches_chart(doc)[0])
+
+    def test_change_pct_must_round_to_the_percent(self):
+        doc = _fixed(_live_2026_10_05())
+        doc["last_change"]["change_pct"] = 31.8
+        self.assertIn("change_pct is 31.8", I.headline_matches_chart(doc)[0])
+
+
+class WindowsPerWeekImpliedTest(unittest.TestCase):
+    def test_the_live_page_fails_on_the_plan_and_the_account_line(self):
+        out = I.windows_per_week_implied(_live_2026_10_05())
+        self.assertEqual(len(out), 2)
+        self.assertIn("steps +32.0%", out[0])
+        self.assertIn("window change is withheld", out[0])
+        self.assertIn("a1's windows-per-week line steps +47.2%", out[1])
+
+    def test_the_fixed_page_passes(self):
+        self.assertEqual(I.windows_per_week_implied(_fixed(_live_2026_10_05())), [])
+
+    def test_a_step_the_weekly_and_window_steps_do_not_imply_fails(self):
+        doc = _fixed(_live_2026_10_05())
+        _wt(doc)["per_week_regimes"][0]["windows_per_week"] *= 1.05
+        out = I.windows_per_week_implied(doc)
+        self.assertEqual(len(out), 1)
+        self.assertIn("implies -20.4%", out[0])
+
+    def test_a_certified_window_change_may_step_by_division(self):
+        # A +20% window certified at 22 September: windows per week steps 1.296 / 1.2.
+        doc = _fixed(_live_2026_10_05())
+        _wt(doc)["account_regimes"] = {}
+        doc["credits"]["five_hour_on_meters"]["candidates"][0]["window_change"]["certified"] = True
+        for reg in _wt(doc)["regimes"][2:]:
+            reg["value"] = round(reg["value"] * 1.2)
+        weeks = _wt(doc)["per_week_regimes"]
+        weeks[2]["windows_per_week"] = round(weeks[1]["windows_per_week"] * 1.296 / 1.2, 4)
+        self.assertEqual(I.windows_per_week_implied(doc), [])
+
+
+class OneFigurePerChangeTest(unittest.TestCase):
+    def test_the_live_page_fails(self):
+        out = I.one_figure_per_change(_live_2026_10_05())
+        self.assertEqual(out, ["The tokens-per-week chart says +32% on 2026-09-22 and an event "
+                               "says +30% on 2026-09-22, both for the tokens-per-week chart's "
+                               "quantity."])
+
+    def test_the_fixed_page_passes(self):
+        self.assertEqual(I.one_figure_per_change(_fixed(_live_2026_10_05())), [])
+
+    def test_a_meter_ratio_no_chart_draws_is_not_read(self):
+        doc = _fixed(_live_2026_10_05())
+        doc["events"].append({"kind": "change", "date": "2026-09-14", "percent": 19,
+                              "direction": "decreased", "metric": "weekly_to_five_hour_ratio"})
+        self.assertEqual(I.one_figure_per_change(doc), [])
+
+    def test_two_published_changes_disagreeing_fail(self):
+        doc = _fixed(_live_2026_10_05())
+        doc["events"][1]["percent"] = 29
+        self.assertTrue(I.one_figure_per_change(doc))
+
+
+class BlockingTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        self.state, self.doc = d / "ops" / "inv.json", d / "claude-usage.json"
+        self.sent: list[str] = []
+
+    def send(self, text):
+        self.sent.append(text)
+        return True
+
+    def test_a_contradiction_on_the_page_exits_2_and_says_not_published(self):
+        self.doc.write_text(json.dumps(_live_2026_10_05()))
+        self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 2)
+        self.assertIn("Not published", self.sent[0])
+
+    def test_the_fixed_page_exits_0(self):
+        self.doc.write_text(json.dumps(_fixed(_live_2026_10_05())))
+        self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 0)
 
 
 if __name__ == "__main__":
