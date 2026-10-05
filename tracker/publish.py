@@ -495,6 +495,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # untouched, and so is everything else that reads the raw histories.
     five_hour_meter = _five_hour_meter(gs_passive, masterrig_passive, credits, model_rates)
     factor = five_hour_weight.factor_of(five_hour_meter)
+    # The factor the per-family rates were fitted at (tools/model_rates.py `five_hour_unit`):
+    # rates fitted in another unit price a headless-heavy family wrongly in every test.
+    five_hour_meter["model_rates_fitted_at"] = ((model_rates or {}).get("five_hour_unit") or {}).get(
+        "headless_factor")
     gs_five = five_hour_weight.interactive_equivalent(gs_passive, factor)
     mr_five = five_hour_weight.interactive_equivalent(masterrig_passive, factor)
     # Every new family's rate is fitted at its first use jointly with any five-hour limit

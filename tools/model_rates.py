@@ -34,6 +34,16 @@ cache-read-heavy one -- sub-agent traffic -- so a Sonnet rate fitted with cache 
 zero can absorb the cache-read charge, and the hostile review of 2026-09-20 put that weight at
 0.005 to 0.015 rather than at nothing. Section 6 and the --json `measured_rates` block report
 the joint fit, which is what the publisher adopts.
+
+Every fit reads the stretches in interactive-equivalent tokens, the unit every published
+five-hour figure is in: headless tokens count at the five-hour meter's measured headless factor
+(tracker/five_hour_weight.py, ADR 0001 rule 12), fitted here from the same histories exactly as
+the publisher fits it. Fitted on metered tokens instead, a family used mostly headless takes
+the 1.5x into its rate, and a change test then compares an interactive period priced at that
+rate with a weighted one: on 2026-10-05 that put a +17% five-hour change on 29 September,
+which the rates fitted in the publisher's own unit do not show
+(docs/findings/2026-10-05-headless-weight.md). The factor used is recorded as
+`measured_rates.five_hour_unit`.
 """
 from __future__ import annotations
 
@@ -51,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.harness_runs import effort_matrix_row, probe_rows
 from tracker import credits as C
+from tracker import five_hour_weight
 
 CUT = C.CUT_AT
 P = datetime.fromisoformat
@@ -1461,6 +1472,33 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
                   f"the interval")
 
 
+def five_hour_unit(gs_passive: dict | None, masterrig_passive: dict | None,
+                   model_rates: dict | None = None) -> dict:
+    """The unit the rates are fitted in: the five-hour meter's headless factor, fitted from
+    these histories as the publisher fits it (tracker/publish.py `_five_hour_meter`), with
+    the step shares valued at `model_rates` (default: the rates on disk, which the publisher
+    values them at too). `headless_factor` is None when the histories carry too few steps with
+    a headless split, and every stretch is then read as metered."""
+    from tracker.publish import _five_hour_meter
+
+    rates = C.load_model_rates() if model_rates is None else model_rates
+    block = _five_hour_meter(gs_passive, masterrig_passive, CREDITS, rates)
+    f = block.get("headless_factor") or {}
+    return {"headless_factor": f.get("value"), "interval": f.get("interval"),
+            "status": f.get("status"),
+            "what": "stretches are fitted in interactive-equivalent tokens: each stretch's "
+                    "headless tokens count at this factor (tracker/five_hour_weight.py)"}
+
+
+def stretches_in_five_hour_unit(gs_passive: dict | None, masterrig_passive: dict | None,
+                                factor: float | None) -> dict[str, list[dict]]:
+    """Every account's stretches with headless tokens counted at `factor`
+    (tracker/five_hour_weight.py `interactive_equivalent`), the unit the publisher's
+    five-hour figures are in. With no factor, the stretches as recorded."""
+    return C.stretches_by_account(five_hour_weight.interactive_equivalent(gs_passive, factor),
+                                  five_hour_weight.interactive_equivalent(masterrig_passive, factor))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("masterrig", type=Path, help="a masterrig stretch file, as tools/reconcile_window.py takes")
@@ -1473,8 +1511,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
     a = ap.parse_args(argv)
-    S = C.stretches_by_account(json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8")),
-                               json.loads(a.masterrig.read_text(encoding="utf-8")))
+    gs_raw = json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8"))
+    mr_raw = json.loads(a.masterrig.read_text(encoding="utf-8"))
+    unit = five_hour_unit(gs_raw, mr_raw)
+    factor = unit["headless_factor"]
+    S = stretches_in_five_hour_unit(gs_raw, mr_raw, factor)
     register_families(S)
     global CANDIDATE_BOUNDS
     CANDIDATE_BOUNDS = tuple(sorted(c["at"] for c in C.change_candidates(S, CREDITS, [])))
@@ -1491,6 +1532,7 @@ def main(argv: list[str] | None = None) -> int:
     s4 = section4(data, s3, a.seed, a.resamples)
     pooled = pooled_section(data, a.seed, a.resamples)
     mr = measured_rates(s1, s3, pooled, a.variant)
+    mr["five_hour_unit"] = unit
     s5 = section5(win, mr)
     show(excl, win, s1, s2, s3, s4, s5, mr, lists, a.exclusions)
     if a.json:

@@ -2410,6 +2410,14 @@ class FiveHourMeterTests(unittest.TestCase):
         # The seven-day steps are not weighted.
         self.assertEqual(gs["accounts"]["dave"]["weekly_steps"], self.report()["accounts"]["dave"]["weekly_steps"])
 
+    def test_the_unit_the_rates_were_fitted_in_is_published_beside_the_factor(self):
+        from unittest import mock
+        import tracker.publish as P
+        rates = {"per_family": {}, "five_hour_unit": {"headless_factor": 1.42}}
+        with mock.patch.object(P.credit_model, "load_model_rates", return_value=rates):
+            j, _ = self.build(self.report())
+        self.assertEqual(j["five_hour_meter"]["model_rates_fitted_at"], 1.42)
+
     def test_without_a_recorded_split_nothing_is_weighted(self):
         rpt = self.report(split=False)
         j, gs = self.build(rpt)

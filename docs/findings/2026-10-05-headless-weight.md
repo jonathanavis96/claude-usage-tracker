@@ -1,5 +1,10 @@
 # Headless work counted at its measured five-hour weight (2026-10-05)
 
+> Superseded figures: this note's change readings were built with per-family rates fitted
+> on metered tokens. With the rates fitted in the same interactive-equivalent unit, the
+> 29 September change is gone and 22 September reads +20.0%; see
+> `docs/findings/2026-10-05-rates-in-five-hour-unit.md`.
+
 wf-144, following Jonathan's ruling that the headless effect found in wf-143 is the five-hour
 meter's own behaviour and should be used. The five-hour figures now count headless work at a
 factor fitted at every publish (ADR 0001 rule 12). The seven-day meter is not weighted.

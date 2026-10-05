@@ -160,7 +160,11 @@ These are the acceptance rules. Each names where it lives.
     five-hour points on regime, account and headless share. It is published with its interval
     and per account (`five_hour_meter`), and it is never a hand-set constant. While fewer than
     50 steps carry a headless split, nothing is weighted, and `five_hour_meter` says so.
-    Source: `tracker/five_hour_weight.py`, `tracker/turns.py` (`Turn.headless`),
+    The per-family credit rates are fitted in the same unit: `tools/model_rates.py` fits the
+    factor from the same histories and fits the rates on the weighted stretches, recording
+    the factor as `five_hour_unit`; the publish shows it as `model_rates_fitted_at`. Rates
+    fitted on metered tokens priced a headless-heavy family with the factor inside its rate.
+    Source: `tracker/five_hour_weight.py`, `tools/model_rates.py` (`five_hour_unit`), `tracker/turns.py` (`Turn.headless`),
     `tracker/join.py` (`headless_tokens`), `tracker/publish.py` (`_five_hour_meter`).
     Findings: `docs/findings/2026-10-05-headless-five-hour.md`,
     `docs/findings/2026-10-05-headless-weight.md`.
