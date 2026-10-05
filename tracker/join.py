@@ -219,6 +219,11 @@ class Stretch:
     fast_session_turns: int = 0
     first_turns: dict = field(default_factory=dict)
     remote_sourced_turns: int = 0
+    #: The share of `tokens` and `unpriced` from headless `claude -p` runs' own turns
+    #: (`Turn.headless`), same shape and keys. Already counted in them; the publisher weights
+    #: it on the five-hour meter (tracker/credits.py `interactive_equivalent`).
+    headless_tokens: dict = field(default_factory=dict)
+    headless_turns: int = 0
 
     @property
     def usd_per_pct(self) -> float:
@@ -253,6 +258,13 @@ class Stretch:
         # arrive in time order (build_stretches), so the first one seen is the earliest.
         key = normalized_raw_model(turn.model) if usd is None else priced_model(turn.model, prices)
         self.first_turns.setdefault(key, turn.ts)
+        if turn.headless:
+            self.headless_turns += 1
+            by_class = self.headless_tokens.setdefault(key, {c: 0 for c in CLASSES})
+            for c in CLASSES:
+                by_class[c] += getattr(turn, c)
+            if turn.cache_write_1h:
+                by_class["cache_write_1h"] = by_class.get("cache_write_1h", 0) + turn.cache_write_1h
         if usd is None:
             self.unpriced_tokens += turn.total
             by_class = self.unpriced.setdefault(normalized_raw_model(turn.model), {c: 0 for c in CLASSES})

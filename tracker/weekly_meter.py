@@ -94,6 +94,7 @@ def seven_day_steps(samples: Iterable[Sample], turns: Iterable[Turn], prices: di
                 "d7": 1, "d5": bisect.bisect_left(five, b.upper) - bisect.bisect_left(five, a.upper),
                 "tokens": {**st.tokens, **st.unpriced}, "unpriced_tokens": st.unpriced_tokens,
                 "turns": st.turns, "remote_sourced_turns": st.remote_sourced_turns,
+                "headless_tokens": st.headless_tokens, "headless_turns": st.headless_turns,
                 "cloud_session": bool(st.remote_sourced_turns or overlaps(cloud, a.upper, b.upper)),
             })
     return sorted(out, key=lambda s: datetime.fromisoformat(s["start"]))

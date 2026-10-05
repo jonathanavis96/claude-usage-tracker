@@ -2196,6 +2196,22 @@ class RegimeFamilyTests(unittest.TestCase):
                          (C.KNOWN_DATE_CLUSTER_SOURCE, 750_000))
         self.assertEqual(block["per_family"]["opus-5-5"]["all"]["value"], 750_000)
 
+    def test_each_regime_a_certified_change_opens_steps_by_that_change(self):
+        # Both changes measured (+10% each), and each regime is its own Opus 5.5 cluster:
+        # the anchor-unit steps are the certified changes, not a rate conversion, through a
+        # bridge rate on each regime; the headline stays the newest direct reading.
+        block = self.block(self.RATES, latest=[*self.LATEST, opus55_window(
+            "2026-10-04T06:00:00+00:00", 760_000)], separable=(True, True))
+        _, cut, first, second = block["regimes"]
+        for prev, reg in ((cut, first), (first, second)):
+            self.assertEqual(reg["source"], C.KNOWN_DATE_CLUSTER_SOURCE)
+            self.assertAlmostEqual(reg["value"] / prev["value"], 1.1, places=3)
+            self.assertIn("equal the certified five-hour change", reg["bridge_rate_source"])
+        self.assertEqual(second["measured_value"], 750_000)
+        self.assertEqual(block["per_family"]["opus-5-5"]["all"]["value"], 750_000)
+        self.assertEqual(block["per_family"]["opus-5-5"]["history_rate"]["times_anchor"],
+                         second["bridge_rate"])
+
 
 class UnmeasuredBoundaryRunTests(unittest.TestCase):
     """A boundary the tracker could not measure (a joint fit that cannot separate) does not
@@ -2756,6 +2772,24 @@ class RegimeFiguresTests(unittest.TestCase):
         rows = self.figures(meters)["per_week_regimes"]
         self.assertEqual([r["value"] for r in rows], [2000, 2200, 3000])
         self.assertFalse(any("week_bridge" in r for r in rows))
+
+    def test_the_week_is_one_level_across_a_window_only_change(self):
+        # A change certified on the window alone steps the window and not the week.
+        meters = self.meters(scope="undetermined")
+        meters["candidates"][0].update(
+            certified_on=["five_hour_limit"], measurable=True,
+            weekly_change={"certified": False, "change_pct": 6.7},
+            window_change={"certified": True, "change_pct": 9.1})
+        rows = self.figures(meters)["per_week_regimes"]
+        # One level over the steps either side of AT: (11 x 4 + 15 x 8) / 12 credits a point.
+        self.assertEqual(rows[1]["value"], rows[2]["value"])
+        self.assertEqual(rows[1]["seven_day_points"], 12)
+        self.assertEqual(rows[1]["weekly_credits_per_pct"], round((11 * 4 + 15 * 8) / 12))
+        # Windows per week steps by the window alone: the week over each row's own window.
+        self.assertAlmostEqual(rows[2]["windows_per_week"], rows[2]["value"] / 1200, places=3)
+        self.assertAlmostEqual(rows[1]["windows_per_week"], rows[1]["value"] / 1100, places=3)
+        # The 14 September row is its own week.
+        self.assertEqual(rows[0]["value"], 2000)
 
 
 class CertifiedWeekChainTests(unittest.TestCase):

@@ -60,6 +60,18 @@ class Turn:
     #: spent in Anthropic's cloud at the cloud session's own time, and a stretch holding
     #: one is left out of every measurement (tracker/join.py `remote_sourced_turns`).
     remote: bool = False
+    #: The `entrypoint` the message's first line records: `cli` for an interactive session,
+    #: `sdk-cli` for a headless `claude -p` run.
+    entrypoint: str = ""
+    #: True when the turn was read from a sub-agent's transcript (`.../subagents/...`).
+    subagent: bool = False
+
+    @property
+    def headless(self) -> bool:
+        """A headless `claude -p` run's own turn. Its sub-agents are not counted as headless:
+        the five-hour factor is measured on the run's own turns (tracker/credits.py
+        `headless_factor`, docs/findings/2026-10-05-headless-five-hour.md)."""
+        return self.entrypoint == "sdk-cli" and not self.subagent
 
     @property
     def total(self) -> int:
@@ -87,7 +99,7 @@ def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
         except FileNotFoundError:
             continue  # removed between listing and reading (Claude Code prunes old transcripts)
         with fh:
-            yield from turns_in(_json_lines(fh), seen)
+            yield from turns_in(_json_lines(fh), seen, subagent="subagents" in Path(p).parts)
 
 
 def _json_lines(fh: Iterable[str]) -> Iterator[dict]:
@@ -115,7 +127,7 @@ def _usage_counts(u: dict) -> tuple[int, int, int, int, int]:
             int(u.get("cache_read_input_tokens") or 0), cache_write, cache_write_1h)
 
 
-def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
+def turns_in(lines: Iterable[dict], seen: set[str], subagent: bool = False) -> Iterator[Turn]:
     """The turns of one transcript's parsed lines: one per message id, once across `seen`.
 
     Claude Code writes one line per content block of a response, each with a `usage`, and
@@ -127,9 +139,10 @@ def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
     per-session totals match Claude Code's own `cost-state` accounting (median ratio 1.00;
     docs/findings-2026-09-28-scatter.md). A line whose usage reads zero (a later echo of the
     message) cannot lower a count either. The turn keeps the first line's timestamp and model,
-    and is `remote` if any of its lines is marked `remoteSourced`.
+    and is `remote` if any of its lines is marked `remoteSourced`. `entrypoint` is the first
+    line's; `subagent` is the caller's, for every turn of the transcript.
     """
-    first: dict[str, tuple[datetime, str]] = {}
+    first: dict[str, tuple[datetime, str, str]] = {}
     counts: dict[str, tuple[int, ...]] = {}
     remote: set[str] = set()
     for d in lines:
@@ -150,12 +163,13 @@ def turns_in(lines: Iterable[dict], seen: set[str]) -> Iterator[Turn]:
         if mid in counts:
             counts[mid] = tuple(max(a, b) for a, b in zip(counts[mid], now))
         else:
-            first[mid] = (ts, m.get("model") or "unknown")
+            first[mid] = (ts, m.get("model") or "unknown", str(d.get("entrypoint") or ""))
             counts[mid] = now
-    for mid, (ts, model) in first.items():
+    for mid, (ts, model, entrypoint) in first.items():
         seen.add(mid)
         inp, out, read, write, write_1h = counts[mid]
-        yield Turn(ts, model, inp, out, read, write, write_1h, mid, mid in remote)
+        yield Turn(ts, model, inp, out, read, write, write_1h, mid, mid in remote,
+                   entrypoint, subagent)
 
 
 def normalize_model(model_id: str) -> str | None:

@@ -3,7 +3,8 @@
 Read-only over the gs transcripts and meter logs, through tools/account_agreement.py and its
 transcript cache. Findings: docs/findings/2026-10-05-headless-five-hour.md.
 
-    python3 -m tools.headless_hypotheses          # every hypothesis, one JSON document
+    python3 -m tools.headless_hypotheses             # every hypothesis, one JSON document
+    python3 -m tools.headless_hypotheses covariates  # what travels with headless work (wf-144)
 
 One row per tiled one-point seven-day step of each gs account from 14 September 12:00Z
 (`account_agreement.crossing_spans`), with the five-hour points crossed in it and the step's
@@ -210,5 +211,151 @@ def report() -> dict:
     return out
 
 
+# ---------------------------------------------------------------------------------------
+# What travels with headless work (wf-144): concurrency, burstiness, model mix, effort, time.
+
+EFFORT_CACHE = A.TURNS_CACHE.parent / "effort.pkl"
+EFFORT_SCORE = {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
+
+
+def effort_by_message(data: dict, cache=EFFORT_CACHE) -> dict[str, str | None]:
+    """Each own turn's `effort`, keyed by message id, read from the lines of the files the
+    turns came from; cached in a local pickle this tool itself writes."""
+    import pickle
+    if cache.exists():
+        return pickle.loads(cache.read_bytes())
+    files = sorted({x.path for n in ("jwork", "dave", "avis") for x in data[n]["own"]})
+    out: dict[str, str | None] = {}
+    for f in files:
+        try:
+            fh = open(f, encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            continue
+        with fh:
+            for line in fh:
+                if '"assistant"' not in line or '"usage"' not in line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                mid = (r.get("message") or {}).get("id")
+                if mid and mid not in out:
+                    out[mid] = r.get("effort")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(pickle.dumps(out))
+    return out
+
+
+def covariate_steps(data: dict) -> list[dict]:
+    """The same steps as `steps`, with what co-varies with headless work in each."""
+    effort = effort_by_message(data)
+    rates = A.valuation_rates("all_at_list")
+    fam_rate: dict[str, tuple[float, float] | None] = {}
+    ep: dict[str, bool] = {}
+
+    def headless(path: str) -> bool:
+        if "/subagents/" in path:
+            return False
+        if path not in ep:
+            ep[path] = entrypoint(path) == "sdk-cli"
+        return ep[path]
+
+    end = max(x.turn.ts for n in ("jwork", "dave", "avis") for x in data[n]["own"])
+    rows = []
+    for name in ("jwork", "dave", "avis"):
+        smp = [x for x in G.load_samples(G.gs_accounts()[name]) if C.CUT_AT <= x.ts <= end]
+        turns = sorted(data[name]["own"], key=lambda x: x.turn.ts)
+        stamps = [x.turn.ts for x in turns]
+        for p in A.crossing_spans(smp):
+            k = A.regime_of(p["start"])
+            if k is None or k != A.regime_of(p["end"]):
+                continue
+            part = turns[bisect.bisect_left(stamps, p["start"]):bisect.bisect_left(stamps, p["end"])]
+            tot = head = us = uk = weekend = eff_w = eff_n = 0.0
+            by_min: dict = collections.defaultdict(lambda: [0.0, set()])
+            fam: dict[str, float] = collections.defaultdict(float)
+            for x in part:
+                t = x.turn
+                if t.remote:
+                    continue
+                f = C.family(t.model, CREDITS) or "other"
+                if f not in fam_rate:
+                    fam_rate[f] = C.comparison_rate(f, CREDITS, rates) if f != "other" else None
+                r = fam_rate[f]
+                if not r:
+                    continue
+                v = (t.input + t.cache_write) * r[0] + t.output * r[1]
+                tot += v
+                head += v if headless(x.path) else 0.0
+                minute = by_min[t.ts.replace(second=0, microsecond=0)]
+                minute[0] += v
+                minute[1].add(x.path)
+                fam[f] += v
+                e = effort.get(t.id)
+                if e in EFFORT_SCORE:
+                    eff_w += EFFORT_SCORE[e] * v
+                    eff_n += v
+                weekday = t.ts.weekday() < 5
+                us += v if weekday and 12 <= t.ts.hour < 18 else 0.0
+                uk += v if weekday and 8 <= t.ts.hour < 12 else 0.0
+                weekend += v if not weekday else 0.0
+            if tot <= 0:
+                continue
+            mins = list(by_min.values())
+            rows.append({"account": name, "regime": k, "d5": p["d5"], "h": head / tot,
+                         "conc_mean": sum(c * len(paths) for c, paths in mins) / tot,
+                         "conc_peak": max(len(paths) for _, paths in mins),
+                         "per_min": tot / len(mins), "peak_min": max(c for c, _ in mins) / tot,
+                         "fam": {f: v / tot for f, v in fam.items()},
+                         "effort": eff_w / eff_n if eff_n else None,
+                         "us": us / tot, "uk": uk / tot, "weekend": weekend / tot})
+    return rows
+
+
+def _z(values: list[float]) -> list[float]:
+    a = np.array(values, float)
+    return list((a - a.mean()) / a.std())
+
+
+def covariates() -> dict:
+    """The headless factor beside each variable that travels with it, and with all of them.
+    Continuous variables are per standard deviation (concurrency and burst rate in logs)."""
+    rows = covariate_steps(A._data())
+    h = [r["h"] for r in rows]
+    effort = [r["effort"] for r in rows]
+    known = [e for e in effort if e is not None]
+    effort = [e if e is not None else sum(known) / len(known) for e in effort]
+    fams = ("opus-5-5", "sonnet", "fable")
+    variables = {
+        "concurrency_mean": _z([math.log(r["conc_mean"]) for r in rows]),
+        "concurrency_peak": _z([math.log(r["conc_peak"]) for r in rows]),
+        "credits_per_active_minute": _z([math.log(r["per_min"]) for r in rows]),
+        "peak_minute_share": _z([r["peak_min"] for r in rows]),
+        **{f"share_{f}": [r["fam"].get(f, 0.0) for r in rows] for f in fams},
+        "effort": _z(effort),
+        "us_morning_12_18z": [r["us"] for r in rows],
+        "uk_morning_08_12z": [r["uk"] for r in rows],
+        "weekend": [r["weekend"] for r in rows]}
+    out: dict = {"steps": len(rows), "headless": _factor(rows, [("headless", h)])["headless"],
+                 "beside": {}, "alone": {}}
+    for name, v in variables.items():
+        out["alone"][name] = _factor(rows, [(name, v)])[name]
+        both = _factor(rows, [("headless", h), (name, v)])
+        out["beside"][name] = {"headless": both["headless"], name: both[name]}
+    every = [("headless", h)] + [(n, v) for n, v in variables.items() if n != "concurrency_peak"]
+    out["all"] = _factor(rows, every)
+    out["median_by_share"] = {
+        f"{lo}-{hi}": {"steps": len(rs),
+                       "concurrency_mean": round(float(np.median([r["conc_mean"] for r in rs])), 1),
+                       "concurrency_peak": float(np.median([r["conc_peak"] for r in rs])),
+                       "credits_per_active_minute_k": round(float(np.median([r["per_min"] for r in rs])) / 1e3, 1),
+                       "us_morning": round(float(np.mean([r["us"] for r in rs])), 2)}
+        for lo, hi in ((0, 0.2), (0.2, 0.8), (0.8, 1.01))
+        for rs in [[r for r in rows if lo <= r["h"] < hi]]}
+    return out
+
+
 if __name__ == "__main__":
-    print(json.dumps(report(), indent=1))
+    import sys
+    print(json.dumps(covariates() if sys.argv[1:] == ["covariates"] else report(), indent=1))
