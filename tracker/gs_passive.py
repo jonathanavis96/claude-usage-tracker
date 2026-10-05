@@ -100,6 +100,7 @@ from .samples import Sample, infer_resets, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 from .unclaimed import airlock_record
 from .unclaimed import attribute as attribute_unclaimed
+from .weekly_meter import seven_day_steps
 
 JWORK_CEILING_SINCE = datetime(2026, 9, 5, 6, 14, 32, tzinfo=timezone.utc)
 #: When True, only stretches the capture check accepts are published (the
@@ -636,6 +637,9 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         cloud[name], unattributed = cloud_spans(account.cloud_dir, account.cloud_requires_grab)
         reset_sources[name] = {s.start: _reset_source(s, samples) for s in stretches[name]}
         weekly[name] = window_points(joined)
+        # The weekly limit measured directly: every one-point step of the seven-day meter
+        # with this account's own tokens in it (tracker/weekly_meter.py).
+        steps = seven_day_steps(joined, turns, prices, cloud[name], fast=fast_session_ids(files))
         root = account.config_dir / "projects"
         meta[name] = {
             "meter": {"log": str(account.meter_log), "format": account.meter_format,
@@ -653,6 +657,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
             "cloud_sessions": {"log": str(account.cloud_dir / "sessions.tsv") if account.cloud_dir else None,
                                "spans": [c.record() for c in cloud[name]],
                                "launches_unattributed": unattributed},
+            "weekly_steps": steps,
         }
     return summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until, unclaimed, cloud)
 
