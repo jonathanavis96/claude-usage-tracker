@@ -10,6 +10,7 @@ probe and writes nothing but --json. Findings: docs/findings/2026-10-04-account-
     python3 -m tools.account_agreement mix      # per-stretch work mix and the source fit
     python3 -m tools.account_agreement meters   # both meters between exact seven-day crossings
     python3 -m tools.account_agreement wpw      # windows per week per regime, tiled crossings
+    python3 -m tools.account_agreement fivehour # the five-hour counting path (part 2)
 
 `checks`, `mix` and `meters` read the gs transcripts (tools/account_transcripts.py) and
 cache them under ~/.cache/account-agreement/; masterrig's transcripts are not on gs, so
@@ -129,12 +130,13 @@ def _fmt_change(c: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("what", choices=("change", "eras", "checks", "mix", "meters", "wpw"))
+    ap.add_argument("what", choices=("change", "eras", "checks", "mix", "meters", "wpw", "fivehour"))
     ap.add_argument("--kinds", default="fitted,new_at_list,all_at_list")
     ap.add_argument("--json", type=Path)
     a = ap.parse_args(argv)
-    if a.what in ("checks", "mix", "meters", "wpw"):
-        result = {"checks": checks, "mix": mix, "meters": meters, "wpw": wpw}[a.what]()
+    if a.what in ("checks", "mix", "meters", "wpw", "fivehour"):
+        result = {"checks": checks, "mix": mix, "meters": meters, "wpw": wpw,
+                  "fivehour": fivehour}[a.what]()
         if a.json:
             a.json.write_text(json.dumps(result, indent=1, default=str))
         return 0
@@ -548,6 +550,229 @@ def wpw() -> dict:
     for v in out.values():
         v.pop("_draws")
         v.pop("_acct_draws")
+    print(json.dumps(out, indent=1, default=str))
+    return out
+
+
+# ---------------------------------------------------------------------------------------
+# The five-hour counting path (part 2): window starts, resets, weekly-at-100% spans.
+
+def five_hour_windows(samples) -> list[dict]:
+    """The five-hour windows a meter log shows, one row per window.
+
+    A window is a run of readings sharing `resets_at` (`same_reset`) with no drop. Per window:
+    its reset, first and last reading, the first reading's value, the peak, how many
+    readings, how many sample gaps over MAX_PAIR_GAP, and the seven-day value range.
+    """
+    from tracker.join import MAX_PAIR_GAP
+    from tracker.usage_api import same_reset
+    out: list[dict] = []
+    cur: dict | None = None
+    prev = None
+    for s in sorted(samples, key=lambda x: x.ts):
+        if s.five_hour is None:
+            continue
+        new = (cur is None or not same_reset(cur["resets_at"], s.resets_at)
+               or (prev is not None and s.five_hour < prev.five_hour))
+        if new:
+            cur = {"resets_at": s.resets_at, "first_ts": s.ts, "first_value": s.five_hour,
+                   "peak": s.five_hour, "last_ts": s.ts, "readings": 0, "gaps": 0,
+                   "seven_min": s.seven_day, "seven_max": s.seven_day,
+                   "drop_start": prev is not None and s.five_hour < prev.five_hour}
+            out.append(cur)
+        else:
+            if s.ts - prev.ts > MAX_PAIR_GAP:
+                cur["gaps"] += 1
+        cur["readings"] += 1
+        cur["peak"] = max(cur["peak"], s.five_hour)
+        cur["last_ts"] = s.ts
+        if s.seven_day is not None:
+            cur["seven_min"] = s.seven_day if cur["seven_min"] is None else min(cur["seven_min"], s.seven_day)
+            cur["seven_max"] = s.seven_day if cur["seven_max"] is None else max(cur["seven_max"], s.seven_day)
+        prev = s
+    return out
+
+
+def tiled_steps(samples, *, skip_first_points: int = 0, min_peak: float = 0,
+                weekly_below: float | None = None) -> list[dict]:
+    """`crossing_spans` with variants of which five-hour crossings count.
+
+    `skip_first_points`: drop five-hour crossings of value <= that (each window's first
+    points). `min_peak`: only five-hour crossings in windows whose peak is at least that.
+    `weekly_below`: drop seven-day steps (and their five-hour points) whose seven-day value
+    is at or above it. Every variant keeps the tiling: a seven-day step owns
+    [a.upper, b.upper).
+    """
+    import bisect
+
+    from tracker.crossings import crossings
+    wins = five_hour_windows(samples)
+    peak_by_reset = {}
+    for w in wins:
+        peak_by_reset[w["resets_at"]] = max(peak_by_reset.get(w["resets_at"], 0), w["peak"])
+    five = []
+    for c in crossings(samples, "five_hour"):
+        if c.value <= skip_first_points:
+            continue
+        if min_peak and peak_by_reset.get(c.window_id, 0) < min_peak:
+            continue
+        five.append(c.upper)
+    five.sort()
+    seven = crossings(samples, "seven_day")
+    by_seg: dict[int, list] = {}
+    for c in seven:
+        by_seg.setdefault(c.segment_id, []).append(c)
+    out = []
+    for cs in by_seg.values():
+        cs = sorted(cs, key=lambda c: c.value)
+        for a, b in zip(cs, cs[1:]):
+            if b.value - a.value != 1:
+                continue
+            if weekly_below is not None and b.value >= weekly_below:
+                continue
+            d5 = bisect.bisect_left(five, b.upper) - bisect.bisect_left(five, a.upper)
+            out.append({"start": a.upper, "end": b.upper, "d7": 1, "d5": d5})
+    return out
+
+
+def ratio_by_regime(steps: list[dict]) -> dict[int, tuple[float, int]]:
+    acc: dict[int, list[int]] = {}
+    for p in steps:
+        k = regime_of(p["start"])
+        if k is None or k != regime_of(p["end"]):
+            continue
+        a = acc.setdefault(k, [0, 0])
+        a[0] += p["d5"]
+        a[1] += p["d7"]
+    return {k: (a[0] / a[1], a[1]) for k, a in sorted(acc.items())}
+
+
+def _poisson(y, X, iters: int = 60):
+    """Quasi-Poisson regression by IRLS: (coefficients, standard errors, deviance)."""
+    import numpy as np
+    b = np.zeros(X.shape[1])
+    b[0] = math.log(max(y.mean(), 1e-9))
+    for _ in range(iters):
+        mu = np.exp(X @ b)
+        z = X @ b + (y - mu) / mu
+        b = np.linalg.solve((X * mu[:, None]).T @ X, (X * mu[:, None]).T @ z)
+    mu = np.exp(X @ b)
+    disp = float(((y - mu) ** 2 / mu).sum() / (len(y) - X.shape[1]))
+    se = np.sqrt(np.diag(np.linalg.inv((X * mu[:, None]).T @ X)) * disp)
+    dev = float(2 * np.sum(np.where(y > 0, y * np.log(np.where(y > 0, y, 1) / mu), 0) - (y - mu)))
+    return b, se, dev
+
+
+def fivehour() -> dict:
+    """Every check of the five-hour counting path, per gs account, from 14 September 12:00Z.
+
+    - `windows`: windows per regime, their first reading, peak, and weekly-at-100% windows;
+    - `drops`: five-hour drops that are not to 0, and drops to 0 away from the recorded reset;
+    - `reset_alignment`: recorded reset minus the account's first own turn after the
+      previous reset (a window opened by this account's own work resets 5 hours later);
+    - `variants`: five-hour points per seven-day point with each window's first one or two
+      points left out, and with seven-day steps at 95% or more left out;
+    - `by_headless`: the same ratio, and credits per 1% of each meter, by the headless
+      (`sdk-cli`) share of the step's credits;
+    - `poisson`: five-hour points per seven-day step on regime and account, then with the
+      headless share added.
+    """
+    import bisect
+    import collections
+    import statistics
+
+    import numpy as np
+
+    from tools.account_transcripts import entrypoint
+    from tracker import gs_passive as G
+    from tracker.usage_api import same_reset
+    since = C.CUT_AT
+    data = _data()
+    value = value_for("all_at_list")
+    ep: dict[str, bool] = {}
+
+    def headless(path: str) -> bool:
+        if "/subagents/" in path:
+            return False
+        if path not in ep:
+            ep[path] = entrypoint(path) == "sdk-cli"
+        return ep[path]
+
+    out: dict = {"windows": {}, "drops": {}, "reset_alignment": {}, "variants": {}}
+    steps = []
+    for name in ("jwork", "dave", "avis"):
+        smp = [x for x in G.load_samples(G.gs_accounts()[name]) if x.ts >= since]
+        by_k = collections.defaultdict(list)
+        for w in five_hour_windows(smp):
+            by_k[regime_of(w["first_ts"])].append(w)
+        out["windows"][name] = {
+            str(k): {"windows": len(ws), "first_value_0": sum(1 for w in ws if w["first_value"] == 0),
+                     "peak_median": statistics.median(w["peak"] for w in ws),
+                     "weekly_at_100": sum(1 for w in ws if (w["seven_max"] or 0) >= 100)}
+            for k, ws in by_k.items()}
+        live = sorted((x for x in smp if x.five_hour is not None), key=lambda x: x.ts)
+        nonzero = [(a.ts.isoformat(), a.five_hour, b.five_hour) for a, b in zip(live, live[1:])
+                   if 0 < b.five_hour < a.five_hour]
+        resets = []
+        for r in sorted(datetime.fromisoformat(x.resets_at) for x in smp if x.resets_at):
+            if not resets or (r - resets[-1]).total_seconds() > 120:
+                resets.append(r)
+        own = sorted(t.turn.ts for t in data[name]["own"])
+        offs = []
+        for prev, r in zip(resets, resets[1:]):
+            i = bisect.bisect_left(own, prev)
+            if i < len(own) and own[i] < r:
+                offs.append((r - own[i]).total_seconds() / 3600)
+        out["drops"][name] = {"to_nonzero": nonzero,
+                              "same_reset_dips": sum(1 for a, b in zip(live, live[1:])
+                                                     if 0 < b.five_hour < a.five_hour
+                                                     and same_reset(a.resets_at, b.resets_at))}
+        out["reset_alignment"][name] = {"resets": len(resets),
+                                        "median_h": statistics.median(offs),
+                                        "p10_h": sorted(offs)[len(offs) // 10],
+                                        "p90_h": sorted(offs)[9 * len(offs) // 10]}
+        out["variants"][name] = {
+            label: {str(k): v for k, v in ratio_by_regime(tiled_steps(smp, **kw)).items()}
+            for label, kw in (("all", {}), ("skip first point", {"skip_first_points": 1}),
+                              ("skip first two", {"skip_first_points": 2}),
+                              ("weekly below 95", {"weekly_below": 95}))}
+        turns = sorted(data[name]["own"], key=lambda x: x.turn.ts)
+        stamps = [x.turn.ts for x in turns]
+        for p in crossing_spans(smp):
+            k = regime_of(p["start"])
+            if k is None or k != regime_of(p["end"]):
+                continue
+            part = turns[bisect.bisect_left(stamps, p["start"]):bisect.bisect_left(stamps, p["end"])]
+            c = h = 0.0
+            for x in part:
+                v = value(turn_tokens(x.turn)) or 0.0
+                c += v
+                h += v if headless(x.path) else 0.0
+            if c > 0:
+                steps.append({"account": name, "regime": k, "d5": p["d5"], "credits": c, "headless": h / c})
+    bins = ((0, 0.2), (0.2, 0.8), (0.8, 1.01))
+    out["by_headless"] = {}
+    for scope in ("jwork", "dave", "avis", "all"):
+        row = {}
+        for lo, hi in bins:
+            rs = [r for r in steps if (scope == "all" or r["account"] == scope) and lo <= r["headless"] < hi]
+            if rs:
+                c, d5 = sum(r["credits"] for r in rs), sum(r["d5"] for r in rs)
+                row[f"{lo}-{hi}"] = {"seven_day_points": len(rs), "five_per_seven": d5 / len(rs),
+                                     "credits_per_7d_pct": c / len(rs), "credits_per_5h_pct": c / d5 if d5 else None}
+        out["by_headless"][scope] = row
+    y = np.array([r["d5"] for r in steps], float)
+    base = [np.ones(len(steps)), np.array([r["regime"] == 1 for r in steps], float),
+            np.array([r["regime"] == 2 for r in steps], float),
+            np.array([r["account"] == "dave" for r in steps], float),
+            np.array([r["account"] == "avis" for r in steps], float)]
+    out["poisson"] = {}
+    for label, cols in (("account", base), ("account + headless", base + [np.array([r["headless"] for r in steps])])):
+        b, se, dev = _poisson(y, np.column_stack(cols))
+        names = ["dave", "avis"] + (["headless"] if len(cols) > 5 else [])
+        out["poisson"][label] = {"deviance": dev, **{
+            n: [math.exp(b[3 + i]), math.exp(b[3 + i] - 1.96 * se[3 + i]), math.exp(b[3 + i] + 1.96 * se[3 + i])]
+            for i, n in enumerate(names)}}
     print(json.dumps(out, indent=1, default=str))
     return out
 

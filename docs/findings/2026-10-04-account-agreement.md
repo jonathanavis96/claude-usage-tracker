@@ -327,9 +327,171 @@ Reproduce: `python3 -m tools.account_agreement wpw` and `... meters`.
    account) shrinks the five-hour window is a question for whoever administers that seat.
    The data cannot settle it.
 
+## 4. Part 2: hunting a miscount in the five-hour count for a3 (2026-10-05)
+
+Decision 2 came back as "can't explain, feel like it's still being miscounted". The
+transcripts agree on the seven-day meter, so this section looks for the miscount on the
+meter side: in the log, in how five-hour points are counted, and in how resets and the
+weekly cap are handled.
+
+All figures are from 14 September 12:00Z on, from the gs meter logs read on 2026-10-05.
+Reproduce: `python3 -m tools.account_agreement fivehour`.
+
+### Summary
+
+**No miscount was found in the sampler, the log, the reset handling, window-start rounding
+or the weekly-at-100% spans.** Each is checked below and none moves a3's ratio by more than
+a few percent.
+
+What does move it is the kind of work:
+
+- In each seven-day step, five-hour points rise with the share of that step's credits that
+  comes from headless `claude -p` runs (`entrypoint: sdk-cli`). This holds on every
+  account, not only a3.
+- At a low headless share, the three accounts agree within ±10%.
+- Credits per 1% of the seven-day meter do not depend on the headless share. Credits per 1%
+  of the five-hour meter do.
+- So Anthropic's five-hour meter charges headless work about **1.5x** as much as
+  interactive work, measured against the seven-day meter.
+- a3's work is 97% headless after 22 September. Allowing for the headless share takes a3's
+  excess from **1.33x** to **1.10x [1.03, 1.18]**.
+
+So a3's ratio comes mostly into line, but not entirely. About 10% is left unexplained.
+
+The headless effect is in the meters themselves. Both counts are whole-percent meter
+crossings, and the transcripts only label which steps were headless. So it is not a
+miscount the tracker can fix in its own counting. It is a real difference in what the
+five-hour limit buys for headless work.
+
+### 4a. Sampler attribution: clean
+
+- Each log is written only by its own systemd timer: `tracker.meter_log --config-dir
+  ~/.claude-<acct> --account <acct>`, once a minute.
+- The token is read from that config dir's credentials file. The identity is a hash of
+  that dir's account uuid.
+- Each log carries exactly one identity across every row, and the three identities are
+  distinct.
+- No log has duplicate timestamps or out-of-order rows.
+- Two to three pairs per log are under 20 s apart: retries, not a second writer.
+- Every five-hour value is a whole number (a3: 0 of 8,899 readings are not).
+- Coverage, as the share of time between readings at most 15 minutes apart, is a3 97%,
+  95% and 88% by regime, against a2 100%, 92% and 99% and a4 93% and 85%.
+- The many error rows are the endpoint's `rate_limited` answers. They are spread evenly
+  across accounts (a2 7,356, a3 6,430, a4 6,524).
+
+### 4b. Window-start rounding: wrong direction, small
+
+If the meter showed 1% as soon as any usage landed, every window would carry up to a point
+of bias, and accounts with many small windows would read high. a3 is the opposite:
+
+| windows | 14-22 Sep | 22-29 Sep | from 29 Sep | median peak, by regime |
+|---|---|---|---|---|
+| a2 | 36 | 24 | 17 | 8, 5.5, 2 |
+| a3 | 18 | 6 | 15 | 25.5, 29, 4 |
+| a4 | | 28 | 18 | 0, 0 |
+
+- a3 opens 3.2 windows a day against a2's 4.2 and a4's 4.3, and its windows run fuller.
+- Almost every window's first reading is 0: a2 71 of 77, a3 36 of 39, a4 45 of 46.
+
+Leaving out each window's first one or two five-hour points (five-hour points per
+seven-day point, by regime):
+
+| | all | first point out | first two out |
+|---|---|---|---|
+| a2 | 4.40 / 4.13 / 5.00 | 4.19 / 3.87 / 4.17 | 3.97 / 3.60 / 3.33 |
+| a3 | 5.41 / 7.50 / 6.94 | 5.28 / 7.31 / 6.62 | 5.13 / 7.12 / 6.25 |
+| a4 | — / 4.03 / 5.15 | — / 3.86 / 5.08 | — / 3.69 / 5.00 |
+
+Every account falls by a similar amount, and a3 stays 1.2x to 1.9x above a2.
+
+### 4c. Reset handling: correct
+
+- **Resets match the transcripts.** For a window opened by the account's own work, the
+  recorded reset falls 4.94 h (median; p10 4.86, p90 5.00) after a3's first turn after the
+  previous reset. a2 reads 4.95 h and a4 4.93 h. A five-hour window starting at that turn,
+  with its reset on the hour, gives exactly this.
+- **No reset is missed or misread.** a3 shows 63 resets, a2 85 and a4 51, and none is
+  less than 4.95 h after the one before.
+- **No transient dips.** A drop within one `resets_at` to a non-zero value would be
+  counted as a new window and its points counted twice. There are 0 such dips on every
+  account.
+  - The non-zero drops that do occur (a3 2, a2 4, for example 73 to 1) are resets that fell
+    inside a sample gap.
+  - `crossings` does not count across them, which loses at most the new window's first
+    point or two.
+  - Every drop to 0 on a3 falls at its recorded reset. On a2, one is 3 minutes early.
+
+### 4d. Weekly at 100% with extra usage: excluded already
+
+- a3's seven-day meter sits at 100% for days at a time (extra usage on).
+- At 100% the seven-day meter cannot cross, so a tiled step never spans that time, and no
+  five-hour point from it enters a ratio.
+- Leaving out steps at a seven-day value of 95 or more changes a3 from 5.41 to 5.18 in
+  14-22 September and not at all after.
+- a3 shows no seven-day crossings from 24 to 27 September because it did no work then: its
+  transcripts hold 0.0, 0.0 and 0.7M credits on 25 to 27 September.
+
+### 4e. What differs: headless work moves the five-hour meter more
+
+Five-hour points per seven-day point, by the headless share of the step's credits. Seven-day
+points are in brackets.
+
+| headless share | a2 | a3 | a4 | all |
+|---|---|---|---|---|
+| under 0.2 | 4.33 (129) | 4.80 (64) | 4.03 (31) | 4.42 (224) |
+| 0.2 to 0.8 | 5.38 (8) | 5.86 (14) | 5.00 (2) | 5.62 (24) |
+| over 0.8 | | 7.24 (50) | 6.12 (8) | 7.09 (58) |
+
+Pooled over the accounts:
+
+- Steps under 0.2 headless cost 1.00M credits per seven-day point and 226k per five-hour
+  point.
+- Steps over 0.8 cost 1.15M per seven-day point and 163k per five-hour point.
+- So the seven-day meter charges both kinds of work alike, and the five-hour meter charges
+  headless work about 1.4x more per credit.
+
+A quasi-Poisson regression of five-hour points per seven-day step, on regime and account:
+
+| model | a3 | a4 | headless share 0 to 1 | deviance |
+|---|---|---|---|---|
+| account | 1.33x [1.25, 1.42] | 0.93x [0.83, 1.04] | | 116.6 |
+| account + headless | **1.10x [1.03, 1.18]** | 0.94x [0.85, 1.04] | **1.53x [1.41, 1.67]** | 90.5 |
+
+The headless share is the only work variable that does this.
+
+- Measured per standard deviation, on the same model, none of these does it:
+  - the cache-read share: 0.97x;
+  - the output share: 1.03x;
+  - the five-minute write share: 0.91x;
+  - turns per credit: 0.99x.
+
+  With any of them in place of the headless share, a3 stays at 1.29x to 1.34x.
+- The sub-agent share (0.94x) and the Opus 5.5 share (0.84x) add nothing once the headless
+  share is in.
+- The time of day does not do it either: a2's ratio is 4.1 to 4.8 in every weekday band
+  and at weekends.
+
+Pooled, a3's weekend steps (mostly 19-20 September, sub-agent-heavy) read 5.05, against
+a2's 4.81. Its weekday headless-heavy steps read 6 to 8.
+
+This is also the "headless reads about 1.8x" of section 2b, seen from the meter side.
+
+### What it means
+
+- The tracker is not miscounting a3's five-hour points. Each check of the counting path
+  holds, and the effect appears on a2 and a4 whenever they run headless work.
+- What differs is how Anthropic's five-hour meter treats headless `claude -p` traffic: about
+  1.5x interactive work, with the seven-day meter unmoved.
+- What causes it is not visible from here. It does not follow token classes, turn rates or
+  the time of day. It does follow the client.
+- After allowing for it, a3 reads 1.10x [1.03, 1.18] a2. That remainder is not explained.
+
+Any change to how five-hour figures handle headless work is an ADR 0001 rule change, so it
+gets its own PR. Nothing published changes here.
+
 ## Files
 
-- `tools/account_agreement.py`: `change`, `eras`, `checks`, `mix`, `meters`, `wpw`.
+- `tools/account_agreement.py`: `change`, `eras`, `checks`, `mix`, `meters`, `wpw`, `fivehour`.
 - `tools/account_transcripts.py`: reads the gs transcripts as the collector does, kept per
   file; delegate run totals.
 
