@@ -112,7 +112,8 @@ def steps_by_account(*reports: dict | None) -> dict[str, list[dict]]:
 
 
 def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.HarnessRun],
-                stretches: dict[str, list[dict]] | None = None) -> dict[str, list[dict]]:
+                stretches: dict[str, list[dict]] | None = None, *,
+                whole_history: bool = False) -> dict[str, list[dict]]:
     """The steps that read ordinary use, per account, as every other figure selects them.
 
     A step overlapping a harness run, or marked `cloud_session`, is left out
@@ -123,6 +124,10 @@ def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.Harne
     work no transcript on this host holds, so the step's credits read low. On 13-14 September
     a2's meter moved 15 points over such stretches at 59k to 242k credits a point, against
     about 1M on its other days.
+
+    With `whole_history` masterrig's history before MASTERRIG_FROM is read too, less
+    MASTERRIG_PHANTOM (`credits.masterrig_excluded`): the 14 September before side
+    (`credits.cut_direct_tests`) reads it back to the account's last certified boundary.
     """
     withheld: dict[str, list[tuple[datetime, datetime]]] = {}
     for account, rows in (stretches or {}).items():
@@ -140,7 +145,7 @@ def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.Harne
                 continue
             if any(a < end and b > start for a, b in withheld.get(account, ())):
                 continue
-            if account == "masterrig" and start < credit_model.MASTERRIG_FROM:
+            if credit_model.masterrig_excluded(account, start, end, whole_history):
                 continue
             rows.append(st)
         kept[account] = rows

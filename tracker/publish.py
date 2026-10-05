@@ -1407,9 +1407,16 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     after_cut = [datetime.fromisoformat(c["at"]) for c in announced["candidates"]
                  if datetime.fromisoformat(c["at"]) > credit_model.CUT_AT]
     if cut is not None:
+        # Its before side reads each account's whole clean history back to the account's
+        # last certified boundary (`credit_model.cut_before_start`, ADR 0001 rule 13).
+        whole = weekly_meter.clean_steps(
+            weekly_meter.steps_by_account(gs_passive, masterrig_passive), runs, by_account,
+            whole_history=True)
         cut["direct_tests"] = credit_model.cut_direct_tests(
-            by_account, runs, compare, labels, step_rows, weekly["max20"],
-            min(after_cut, default=None))
+            by_account, runs, compare, labels,
+            {labels.get(name, name): weekly_meter.valued(rows, compare)
+             for name, rows in whole.items()},
+            weekly["max20"], min(after_cut, default=None))
     five_hour = credit_model.five_hour_window_change(cut)
     five_hour_pct = five_hour["pct"] if five_hour else None
     window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct,

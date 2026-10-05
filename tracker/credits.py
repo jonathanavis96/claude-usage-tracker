@@ -80,6 +80,7 @@ from pathlib import Path
 from statistics import median
 
 from .detect import ratio_interval
+from .passive import PLAN_CHANGE_AT
 
 PRICES_PATH = Path(__file__).resolve().parent.parent / "data" / "prices.json"
 #: The meter's own per-model rates, fitted from the passive stretches by
@@ -611,6 +612,23 @@ def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *
 #: September the account is Claude Code on masterrig alone
 #: (docs/findings-2026-09-23-masterrig-admitted.md).
 MASTERRIG_FROM = datetime(2026, 9, 6, tzinfo=timezone.utc)
+#: The part of masterrig's history before MASTERRIG_FROM that is not ordinary use: the four
+#: whole UTC days the takeoff pipeline ran on the account. The rest of that history is read by
+#: the 14 September weekly before side (`cut_before_start`); its steps from before the
+#: transcripts survive on disk hold nothing, read capture 0.0 and fail the `status` gate, so
+#: no date is needed for them (docs/findings/2026-10-05-a1-long-before.md).
+MASTERRIG_PHANTOM = (datetime(2026, 9, 2, tzinfo=timezone.utc), MASTERRIG_FROM)
+
+
+def masterrig_excluded(account: str, start: datetime, end: datetime, whole_history: bool) -> bool:
+    """Whether masterrig's span [start, end) is left out: before MASTERRIG_FROM, or with
+    `whole_history` only where it overlaps MASTERRIG_PHANTOM."""
+    if account != "masterrig":
+        return False
+    if not whole_history:
+        return start < MASTERRIG_FROM
+    lo, hi = MASTERRIG_PHANTOM
+    return start < hi and end > lo
 
 
 def spans_cut(st: dict) -> bool:
@@ -3628,6 +3646,23 @@ def own_weekly_step_end(block: dict | None) -> datetime | None:
     return datetime.fromisoformat(block["regimes"][-2]["end"])
 
 
+def cut_before_start(block: dict | None) -> datetime:
+    """Where an account's before side for the 14 September change starts.
+
+    At the account's last certified boundary before the change: the start of a regime of
+    its own windows-per-week series (`block`, `weekly_windows.max20.by_account.<label>`)
+    that a certified step opened, before its own weekly step (or before CUT_AT without
+    one), else PLAN_CHANGE_AT, where every account's Max 20x series starts. The first
+    regime's start is where the account's points begin, not a boundary, so it bounds
+    nothing. Within those bounds every clean seven-day step is read: an account with a
+    longer clean history uses all of it (ADR 0001 rule 13).
+    """
+    regimes = (block or {}).get("regimes") or []
+    until = own_weekly_step_start(block) or CUT_AT
+    opened = [datetime.fromisoformat(r["start"]) for r in regimes[1:]]
+    return max([PLAN_CHANGE_AT, *(b for b in opened if b < until)])
+
+
 def _five_hour_from_ratio(rho: float, rho_lo: float, rho_hi: float) -> tuple[float, list[float]]:
     """The five-hour change in percent, and its interval, from a windows-per-week ratio."""
     return (round((1 / rho - 1) * 100, 1),
@@ -4012,8 +4047,14 @@ def cut_direct_tests(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
     """The 14 September weekly change on the direct measurements (CUT_DIRECT_METHOD).
 
     `value` values stretches and was used for `weekly_rows` (each account's valued seven-day
-    steps by label); `next_at` is the first change candidate after CUT_AT, which ends both
-    after sides.
+    steps by label, selected with `weekly_meter.clean_steps(whole_history=True)`); `next_at`
+    is the first change candidate after CUT_AT, which ends both after sides. On the seven-day
+    meter each account's before side starts at its last certified boundary
+    (`cut_before_start`) and reads its whole clean history from there. The window change
+    keeps the known-date selection (`announced_change_stretches`, masterrig from
+    MASTERRIG_FROM): on masterrig's five-hour meter late August is not the level of 6-13
+    September, while on its seven-day meter it is
+    (docs/findings/2026-10-05-a1-long-before.md).
     """
     from .weekly_meter import weekly_change
 
@@ -4030,9 +4071,10 @@ def cut_direct_tests(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
         if not rows:
             continue
         own_start = own_weekly_step_start(by_acc.get(label))
+        before_start = cut_before_start(by_acc.get(label))
         before_end = own_weekly_step_end(by_acc.get(label)) or CUT_AT
         after_start = own_start or CUT_AT
-        steps[label] = ([r for r in rows if r["end"] <= before_end],
+        steps[label] = ([r for r in rows if r["start"] >= before_start and r["end"] <= before_end],
                         [r for r in rows if r["start"] >= after_start
                          and (next_at is None or r["end"] <= next_at)])
     tests = {"window_change": window_change({"per_account": per_account}),
