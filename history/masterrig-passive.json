@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-05T18:15:37.402597+00:00",
+ "generated_at": "2026-10-05T19:15:49.595125+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 3947,
+    "reset_verified_samples": 3949,
     "since": null,
-    "samples": 15232,
+    "samples": 15246,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-10-05T20:13:00+02:00"
+    "last": "2026-10-05T21:13:52+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 5047,
-    "turns": 121218,
+    "files": 5049,
+    "turns": 121303,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -32917,6 +32917,68 @@
       }
      },
      "headless_turns": 6
+    },
+    {
+     "start": "2026-10-04T18:42:25+02:00",
+     "end": "2026-10-05T20:38:20+02:00",
+     "delta_pct": 10.0,
+     "windows": 3,
+     "usd": 31.1013,
+     "usd_per_pct": 3.1101,
+     "bounds": [
+      2.3924,
+      4.443
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1808,
+       "output": 506904,
+       "cache_read": 118013146,
+       "cache_write": 2706097,
+       "cache_write_1h": 2142697
+      },
+      "claude-sonnet-5-5": {
+       "input": 54,
+       "output": 26638,
+       "cache_read": 1493636,
+       "cache_write": 211445
+      },
+      "claude-sonnet-4-6": {
+       "input": 10,
+       "output": 3801,
+       "cache_read": 235672,
+       "cache_write": 24215,
+       "cache_write_1h": 24215
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 902,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 2.805,
+     "capture": 1.1088,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-04T16:42:30.924000+00:00",
+      "claude-sonnet-4-6": "2026-10-04T22:00:07.345000+00:00",
+      "claude-sonnet-5-5": "2026-10-04T16:50:40.582000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 10,
+       "output": 3801,
+       "cache_read": 235672,
+       "cache_write": 24215,
+       "cache_write_1h": 24215
+      }
+     },
+     "headless_turns": 8
     }
    ],
    "runs": [
@@ -33840,33 +33902,47 @@
      "pieces": 7,
      "reset_verified": false,
      "capture_diagnosed": 0
+    },
+    {
+     "date": "2026-10-05",
+     "usd_per_pct": 3.1101,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.3,
+     "bounds": [
+      2.3924,
+      4.443
+     ],
+     "pieces": 3,
+     "reset_verified": false,
+     "capture_diagnosed": 0
     }
    ],
    "split": {
-    "input": 9e-05,
-    "output": 0.00522,
-    "cache_read": 0.966921,
-    "cache_write": 0.027769,
-    "cache_write_1h": 0.014693
+    "input": 8.9e-05,
+    "output": 0.005211,
+    "cache_read": 0.96697,
+    "cache_write": 0.027729,
+    "cache_write_1h": 0.014723
    },
-   "last_usable_at": "2026-10-04T18:42:25+02:00",
+   "last_usable_at": "2026-10-05T20:38:20+02:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 237,
-     "median": 1.4805,
-     "half_range": 2.7406,
-     "mad": 0.3417,
-     "cv": 0.6544
+     "n": 238,
+     "median": 1.4845,
+     "half_range": 2.7332,
+     "mad": 0.3379,
+     "cv": 0.6535
     },
     "daily": {
-     "n": 35,
-     "median": 1.6692,
-     "half_range": 1.033,
-     "mad": 0.6256,
-     "cv": 0.4385
+     "n": 36,
+     "median": 1.6826,
+     "half_range": 1.0248,
+     "mad": 0.6254,
+     "cv": 0.4384
     }
    },
    "weekly_by_window": [
@@ -35839,12 +35915,12 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-05T20:13:00+02:00",
-     "windows": 3.0,
-     "five_hour_pct": 3.0,
+     "window_ending": "2026-10-05T21:13:52+02:00",
+     "windows": 4.0,
+     "five_hour_pct": 4.0,
      "seven_day_pct": 1.0,
      "rounding_interval": [
-      0.5561,
+      0.9451,
       null
      ],
      "pieces": 1,

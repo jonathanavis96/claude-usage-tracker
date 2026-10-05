@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-05T18:15:37.245922+00:00",
+ "generated_at": "2026-10-05T19:15:49.445208+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -277,7 +277,7 @@
    "interpolated": false
   },
   "2026-10-05": {
-   "tokens_per_pct": 9037191,
+   "tokens_per_pct": 9163498,
    "interpolated": false
   }
  },
@@ -5038,11 +5038,11 @@
    },
    {
     "window_ending": "2026-10-05T19:19:59.656685+00:00",
-    "windows": 3.0,
-    "five_hour_pct": 3.0,
+    "windows": 4.0,
+    "five_hour_pct": 4.0,
     "seven_day_pct": 1.0,
     "rounding_interval": [
-     0.5561,
+     0.9451,
      null
     ],
     "pieces": 1,
