@@ -110,13 +110,24 @@ def steps_by_account(*reports: dict | None) -> dict[str, list[dict]]:
     return out
 
 
-def clean_steps(by_account: dict[str, list[dict]],
-                runs: list[credit_model.HarnessRun]) -> dict[str, list[dict]]:
+def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.HarnessRun],
+                stretches: dict[str, list[dict]] | None = None) -> dict[str, list[dict]]:
     """The steps that read ordinary use, per account, as every other figure selects them.
 
     A step overlapping a harness run, or marked `cloud_session`, is left out
     (`credits.clean_stretches`), and masterrig enters from MASTERRIG_FROM as in the rate fits.
+    So is a step overlapping one of the account's `stretches` (`credits.stretches_by_account`)
+    whose `status` is not accepted, the column the known-date test selects on
+    (`credits.announced_change_stretches`): the capture check found the meter moving there on
+    work no transcript on this host holds, so the step's credits read low. On 13-14 September
+    a2's meter moved 15 points over such stretches at 59k to 242k credits a point, against
+    about 1M on its other days.
     """
+    withheld: dict[str, list[tuple[datetime, datetime]]] = {}
+    for account, rows in (stretches or {}).items():
+        withheld[account] = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
+                             for s in rows if s.get("start") and s.get("end")
+                             and s.get("status") != "accepted"]
     kept: dict[str, list[dict]] = {}
     for account, steps in by_account.items():
         rows = []
@@ -125,6 +136,8 @@ def clean_steps(by_account: dict[str, list[dict]],
             if st.get("cloud_session"):
                 continue
             if credit_model.overlapping_run(runs, account, start, end) is not None:
+                continue
+            if any(a < end and b > start for a, b in withheld.get(account, ())):
                 continue
             if account == "masterrig" and start < credit_model.MASTERRIG_FROM:
                 continue

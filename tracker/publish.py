@@ -1363,7 +1363,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # the same selection as the stretches. The change test values them as it values a
     # stretch; the per-week figures below as the regimes do.
     steps = weekly_meter.clean_steps(weekly_meter.steps_by_account(gs_passive, masterrig_passive),
-                                     runs)
+                                     runs, by_account)
     compare = credit_model.comparison_value(credits, model_rates)
     step_rows = {labels.get(name, name): weekly_meter.valued(rows, compare)
                  for name, rows in steps.items()}

@@ -95,6 +95,23 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([value(s["tokens"]) for s in kept["jwork"]], [1])
         self.assertEqual([value(s["tokens"]) for s in kept["masterrig"]], [5])
 
+    def test_a_step_over_work_the_transcripts_did_not_see_is_left_out(self):
+        # The capture check withheld the stretch (status not accepted): the meter moved with
+        # work no transcript on this host holds, so its steps read too few credits per point.
+        # Every stretch figure leaves such a stretch out; so does the weekly limit.
+        day = datetime(2026, 9, 13, tzinfo=timezone.utc)
+        by = {"jwork": [step(day, 900), step(day + timedelta(hours=1), 50),
+                        step(day + timedelta(hours=2), 60), step(day + timedelta(hours=4), 950)]}
+        stretches = {"jwork": [
+            {"start": (day + timedelta(minutes=50)).isoformat(),
+             "end": (day + timedelta(hours=3)).isoformat(), "status": "unaccounted"},
+            {"start": (day + timedelta(hours=3)).isoformat(),
+             "end": (day + timedelta(hours=6)).isoformat(), "status": "accepted"}]}
+        kept = W.clean_steps(by, [], stretches)
+        self.assertEqual([value(s["tokens"]) for s in kept["jwork"]], [950])
+        # Without the stretch record nothing is gated.
+        self.assertEqual(len(W.clean_steps(by, [])["jwork"]), 4)
+
     def test_steps_come_from_every_report_and_an_old_report_has_none(self):
         gs = {"accounts": {"jwork": {"weekly_steps": [step(T0, 1)]}, "dave": {}}}
         mr = {"accounts": {"masterrig": {"weekly_steps": [step(T0, 2)]}}}
