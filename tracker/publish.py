@@ -1103,6 +1103,22 @@ def _effort_credits(effort_meta: dict | None, credits: dict, window: dict,
     return out
 
 
+def _rate_in_use(fam: str, row: dict) -> dict:
+    """Which rate values a family's stretches, beside the fitted `times_opus`.
+
+    "list" where the joint fit at the family's first use cannot separate its rate from a
+    limit change (credits.list_until_separable, ADR 0001 rule 10), "anchor" for the unit,
+    "fitted" where the fit gives a rate or interval, "inferred" where the page shows an
+    inferred rate instead, and None where there is no rate at all. `list_times_opus` is the input list-price ratio to the anchor, or
+    None where data/prices.json has no row for the family.
+    """
+    in_use = row.get("rate_in_use") or ("anchor" if row.get("anchor") else
+                                        "fitted" if row.get("input") is not None or row.get("interval")
+                                        else "inferred" if row.get("inferred") else None)
+    return {"rate_in_use": in_use,
+            "list_times_opus": credit_model.list_price_ratio(fam, CREDITS)}
+
+
 def _measured_rates_block(model_rates: dict | None, labels: dict[str, str]) -> dict:
     """The measured-rate source as the page sees it: the rates, the fits behind them, no names.
 
@@ -1122,6 +1138,7 @@ def _measured_rates_block(model_rates: dict | None, labels: dict[str, str]) -> d
                                 "reference_input", "times_opus", "times_opus_interval",
                                 "n_fits", "agree", "per_fit", "why", "output_multiplier",
                                 "max_share_of_a_clean_stretch")}, labels)
+        | _rate_in_use(fam, row)
         for fam, row in model_rates["per_family"].items()}
     weight = dict(block.get("cache_read_weight") or {})
     if weight:

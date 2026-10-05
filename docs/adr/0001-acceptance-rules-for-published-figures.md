@@ -1,6 +1,6 @@
 # 0001. Acceptance rules for published figures
 
-Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04
+Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rule 10 added 2026-10-05
 
 ## Context
 
@@ -111,9 +111,20 @@ These are the acceptance rules. Each names where it lives.
    Both rules are also checked on every publish by `tracker/invariants.py`
    (`no_unproven_step`), which alerts without blocking.
 
+10. **A new model is valued at its list price until its rate separates from a limit
+    change, added 2026-10-05.** A family first used inside the measured record whose joint
+    fit there is not separable (rules 8 and 9's fit) is valued at its input list-price ratio
+    to Opus 5 from data/prices.json, with the fitted output and cache-read handling, in
+    every figure that values a stretch; its fitted rate is published beside it with a
+    sentence saying it is not used. The fitted rate takes over by itself once that fit
+    separates, and a family with no list price, or first used before any account had a
+    before side, keeps its fitted rate.
+    Source: `tracker/credits.py` (`list_until_separable`, `LIST_UNTIL_SEPARABLE`, applied in
+    `absorb_new_family_rates`), `tracker/publish.py` (`_rate_in_use`).
+
 ### Pending
 
-10. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
+11. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
    family's rate only if 3 or more of its stretches are at least 60% that family. Another
    PR is adding this; when it merges, this entry takes its source location and moves up
    into the list above. Until then the code has no such rule (the only dominance constant
