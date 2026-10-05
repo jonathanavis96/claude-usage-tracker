@@ -169,6 +169,49 @@ class NoUnprovenStepTest(unittest.TestCase):
         self.assertEqual(I.no_unproven_step(doc), [])
 
 
+class DirectWindowChangeTest(unittest.TestCase):
+    """A record carrying its direct window change (ADR 0001 rule 11) is proved by it."""
+
+    def _window(self, certified=True, plan_wide="passed", interval=(8.0, 33.0)):
+        return {"certified": certified, "plan_wide": {"state": plan_wide},
+                "interval_pct": list(interval) if interval else None}
+
+    def _scaled(self, window, applies=True):
+        doc = _good()
+        cand = _candidate(applies=applies, change_pct=20.0, interval_pct=[8.0, 33.0])
+        cand["window_change"] = window
+        doc["credits"]["five_hour_on_meters"]["candidates"] = [cand]
+        _wt(doc)["regimes"][2]["source"] = "previous_regime_scaled_by_known_date_change"
+        return doc
+
+    def test_a_certified_window_change_proves_its_step_without_a_separable_fit(self):
+        self.assertEqual(I.no_unproven_step(self._scaled(self._window())), [])
+
+    def test_an_uncertified_window_change_does_not(self):
+        (msg,) = I.no_unproven_step(self._scaled(
+            self._window(certified=False, plan_wide="failed", interval=(-2.0, 30.0))))
+        self.assertIn("plan-wide", msg)
+        self.assertIn("includes no change", msg)
+        self.assertIn("not certified", msg)
+
+    def test_a_withheld_candidate_does_not_even_with_a_certified_window(self):
+        (msg,) = I.no_unproven_step(self._scaled(self._window(), applies=False))
+        self.assertIn("withheld", msg)
+
+    def test_a_change_certified_on_the_weekly_limit_alone_is_no_five_hour_step(self):
+        # 22 September today: it applies on the seven-day meter, its window change is not
+        # certified, and the ratio points the other way. No five-hour step is published.
+        doc = _good()
+        cand = _candidate(applies=True, change_pct=31.7, interval_pct=[20.6, 43.8],
+                          ratio=1.0688, ratio_interval=(0.75, 1.6))
+        cand["window_change"] = self._window(certified=False, plan_wide="failed")
+        doc["credits"]["five_hour_on_meters"]["candidates"] = [cand]
+        self.assertEqual(I.steps_agree_with_meters(doc), [])
+        cand["window_change"]["certified"] = True
+        (msg,) = I.steps_agree_with_meters(doc)
+        self.assertIn("+31.7%", msg)
+
+
 class NoWithheldBoundaryTest(unittest.TestCase):
     SEP29 = "2026-09-29T18:25:18.212000+00:00"
 

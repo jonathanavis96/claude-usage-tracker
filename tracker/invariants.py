@@ -11,14 +11,16 @@ failures, an empty list when it holds.
 1. `headline_inside_accounts`: in the newest regime, with two or more accounts with a
    window, the headline family's figure lies between the lowest and highest account level,
    scaled the way the page scales them, within HEADLINE_TOLERANCE for rounding.
-2. `no_unproven_step`: a regime whose `source` scales by a change points at a change that is
-   separable and passes ADR 0001 rules 8 and 9.
+2. `no_unproven_step`: a regime whose `source` scales by a change points at a change whose
+   direct window change is certified (ADR 0001 rule 9), or, on a record without one, whose
+   joint fit is separable and passes rules 8 and 9.
 3. `direct_means_direct`: a headline family measured directly publishes exactly the newest
    regime's `measured_value`.
 4. `account_units`: each account's anchor-unit `window` times its regime's scale agrees with
    its direct `measured_window` within ACCOUNT_UNITS_TOLERANCE.
-5. `steps_agree_with_meters`: a published five-hour step whose windows-per-week ratio
-   interval includes no change points the same way as the ratio's own five-hour reading.
+5. `steps_agree_with_meters`: a published five-hour step (certified on its window change)
+   whose windows-per-week ratio interval includes no change points the same way as the
+   ratio's own five-hour reading.
 6. `no_withheld_boundary`: no `per_week_regimes` row and no `account_regimes` row opens at a
    five-hour change the tracker withholds (ADR 0001 rule 9); such a change opens no regime.
 
@@ -119,11 +121,34 @@ def _candidate_at(doc: dict, at: str) -> dict | None:
 def _proof_gaps(cand: dict, credits: dict | None = None) -> list[str]:
     """What a candidate lacks to scale a window: separable, rule 8, rule 9.
 
+    A candidate that records its direct window change (`window_change`) scales a window by
+    that change, so it is proved by that change's own certificate: plan-wide, its interval
+    excluding no change, certified, and the candidate applying. An older record is read as
+    before, against its joint fit:
+
     Besides the candidate's own records, its published rate interval is read again: against
     the span test (`credits.JOINT_SEPARABLE_SPAN`) and against the rate check on
     data/prices.json (`credits.joint_rate_check`), so a record written by older code, or
     none, cannot vouch for a fit today's rules refuse.
     """
+    window = cand.get("window_change")
+    if window is not None:
+        # The step is the direct window change itself (`credits.known_date_changes`), so its
+        # proof is that measurement's own rule 9, and that the candidate applies.
+        gaps = []
+        pw = window.get("plan_wide") or {}
+        if pw.get("state") != "passed":
+            gaps.append("its window change failed the plan-wide test (ADR 0001 rule 9)")
+        iv = window.get("interval_pct")
+        if not iv or iv[0] <= 0 <= iv[1]:
+            gaps.append("its window change's interval includes no change (ADR 0001 rule 9)")
+        if not window.get("certified"):
+            gaps.append("its window change is not certified")
+        if "withheld_reason" not in cand:
+            gaps.append("it carries no record of whether it was withheld (ADR 0001 rule 9)")
+        elif not cand.get("applies"):
+            gaps.append("it is withheld")
+        return gaps
     fit = cand.get("joint_fit") or {}
     gaps = []
     if not fit.get("separable"):
@@ -226,10 +251,19 @@ def account_units(doc: dict) -> list[str]:
     return out
 
 
+def _publishes_five_hour_step(cand: dict) -> bool:
+    """Whether a candidate publishes a five-hour step: it applies, and where it records its
+    direct window change, that is what it was certified on. A candidate certified on the
+    weekly limit alone applies and steps the week, not the window."""
+    window = cand.get("window_change")
+    return bool(cand.get("applies")) and (window is None or bool(window.get("certified")))
+
+
 def steps_agree_with_meters(doc: dict) -> list[str]:
     """Check 5: a published five-hour step agrees in sign with the meters where they are mute.
 
-    A published step is a candidate that `applies` with a five-hour change. Where its
+    A published step is a candidate that `applies` with a five-hour change, certified on its
+    direct window change where it records one (`_publishes_five_hour_step`). Where its
     windows-per-week ratio interval includes no change, the weekly cap is not shown to have
     moved, so a larger window means fewer windows per week: the ratio's own five-hour reading
     (1 / ratio - 1) must point the same way as the step.
@@ -238,7 +272,8 @@ def steps_agree_with_meters(doc: dict) -> list[str]:
     for cand in _candidates(doc):
         pct, ratio = cand.get("change_pct"), cand.get("windows_per_week_ratio")
         iv = cand.get("windows_per_week_ratio_interval")
-        if not cand.get("applies") or not pct or not ratio or not iv or not iv[0] <= 1 <= iv[1]:
+        if not _publishes_five_hour_step(cand) or not pct or not ratio or not iv \
+                or not iv[0] <= 1 <= iv[1]:
             continue
         reading = 1 / ratio - 1
         if reading * pct < 0:

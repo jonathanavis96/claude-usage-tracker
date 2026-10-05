@@ -82,7 +82,16 @@ _Avoid_: real-world mix, session profile, passive split
 
 **Weekly windows**:
 How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). `weekly_windows` publishes both raw series (`passive`, `probe`) plus one `{current, history}` object per plan. Each raw series also carries the same pairs bucketed by five-hour window (`by_window`, one `Window point` per window); the weekly rows are what the page charts, the window points are what detection and the live plan's `current` run on.
+Since 2026-10-05 this meter ratio is published for reference only: the windows per week the page states is the measured **Weekly limit** over the window.
 _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
+
+**Seven-day step**:
+One point of an account's seven-day meter: the span between two consecutive exact seven-day crossings in one unbroken weekly segment, each crossing placed at the upper reading of its bracket so the steps tile the segment, with the account's own tokens in it and the five-hour points crossed (`weekly_steps` on each account in the passive histories, tracker/weekly_meter.py). No step runs while the seven-day meter sits at 100%.
+_Avoid_: stretch (a five-hour unit), tick
+
+**Weekly limit**:
+Credits per 1% of the seven-day meter, pooled over every account's seven-day steps in a regime (total credits over total points), times 100, and in tokens through the anchor's credits per token as the window is converted. Measured directly; `per_week_regimes`, `account_regimes.per_week` and `per_week` state it. Windows per week on the page is derived from it: the weekly limit over the five-hour window (ADR 0001 rule 11).
+_Avoid_: window times windows per week, weekly cap (in prose about the measurement)
 
 **Window point**:
 One five-hour window's paired meter movement: `five_hour_pct` (d5) over `seven_day_pct` (d7), keyed by the window's reset time (`window_ending`), with `windows` = d5/d7 or null when the seven-day meter did not move. Every same-window pair in which neither meter fell counts, whichever of them moved: a seven-day tick with the five-hour meter still is denominator the ratio needs (audit 2026-09-16, finding 3). `pieces` is how many separately read stretches of the window it pools (one unless a gap broke the readings), `rounding_interval` the ratio's range under whole-percent rounding, and `reset_verified` whether the log named the window's reset.
@@ -161,7 +170,7 @@ An account-scoped change point in paired five-hour/seven-day movement. A split c
 _Avoid_: plan change (that is Jonathan's own subscription move, not a measured step)
 
 **Plan-wide**:
-A five-hour change candidate's figure that holds with each of its combined accounts left out in turn: refitted by the same estimator without that account, every refit keeps the direction with a 95% interval that still excludes no change. A plan limit changes for every account at the same instant, so a change one account alone produces, or a change resting on one account, is not plan-wide. Only a plan-wide candidate whose own interval excludes no change enters `events`, can become `last_change`, reaches the email and may scale a window regime (`plan_wide`, `applies`, `withheld_reason` in `credits.five_hour_on_meters.candidates`; ADR 0001 rule 9).
+A change candidate's direct measurement (the five-hour window change on the five-hour meter, or the weekly limit change on the seven-day meter) that holds with each of its combined accounts left out in turn: recombined without that account, every refit keeps the direction with a 95% interval that still excludes no change. A plan limit changes for every account at the same instant, so a change one account alone produces, or a change resting on one account, is not plan-wide. A candidate is certified once either measurement is plan-wide with an interval that excludes no change; only then does it enter `events`, become `last_change`, reach the email and step the measurement it was certified on (`window_change`, `weekly_change`, `certified_on`, `applies`, `withheld_reason` in `credits.five_hour_on_meters.candidates`; ADR 0001 rules 9 and 11).
 _Avoid_: consistent, agreed (the credit series' two-account agreement is a different rule)
 
 **Rate check**:
