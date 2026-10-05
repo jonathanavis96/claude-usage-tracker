@@ -408,7 +408,8 @@ def family_rate(fam: str, credits: dict, model_rates: dict | None) -> FamilyRate
     else:
         interval_out = None
     detail = {k: row[k] for k in ("n_fits", "agree", "per_fit", "times_opus", "provisional",
-                                  "times_opus_interval", "why", "max_share_of_a_clean_stretch")
+                                  "times_opus_interval", "why", "max_share_of_a_clean_stretch",
+                                  "rate_in_use", "list_times_opus")
               if k in row}
     detail["output_multiplier"] = mult
     if candidates:
@@ -1219,12 +1220,15 @@ def _rate_source(rate: FamilyRate) -> str:
     """Where a family's rate comes from, as one word, from the shape of the rate itself.
 
     "anchor" is the unit anchor and nothing tests it; "measured" is a rate the meter fit
-    produced; "envelope" is a family whose fits disagree, so only an interval survives;
+    produced; "list" is a list-price ratio standing in for a fit that cannot yet be told apart
+    from a limit change (`list_until_separable`); "envelope" is a family whose fits disagree, so only an interval survives;
     "none" is a family there is nothing at all to measure a rate from.
     """
     if rate.anchor:
         return "anchor"
     if rate.input is not None:
+        if rate.rate_source == LIST_UNTIL_SEPARABLE:
+            return "list"
         return "inferred" if rate.rate_source == "inferred" else "measured"
     if rate.input_interval:
         return "envelope"
@@ -1235,9 +1239,9 @@ def _conversion_sentence(anchor_fam: str, fam: str, source: str) -> str | None:
     """How one family's window tokens were got from the anchor's, or None where it was not."""
     if source == "anchor" or source == "none":
         return None
-    over = (f"the {source} {fam.capitalize()} input rate" if source in ("measured", "inferred")
+    over = (f"the {source} {fam.capitalize()} input rate" if source in ("measured", "inferred", "list")
             else f"the {fam.capitalize()} input-rate envelope")
-    tail = ("" if source in ("measured", "inferred") else
+    tail = ("" if source in ("measured", "inferred", "list") else
             " The envelope has no single rate, so there is no value, only the interval.")
     return (f"the {anchor_fam.capitalize()} window tokens times the {anchor_fam.capitalize()} input "
             f"rate over {over}, at the same token-class mix (`per_class` above, cache reads at the "
@@ -1836,7 +1840,9 @@ def comparison_rate(fam: str, credits: dict, model_rates: dict | None = None,
     across it. So, in order:
 
     - a family `absorb_new_family_rates` fitted at its first use (`joint_fit_at_first_use`):
-      that fitted rate, which was fitted against this same valuation;
+      that fitted rate, which was fitted against this same valuation; or one it valued at
+      its list price because that fit could not separate the rate from a limit change
+      (`LIST_UNTIL_SEPARABLE`, ADR 0001 rule 10): the list rate;
     - the pooled fit's point estimate (`pooled_fit_prices`), published or not;
     - where there is no pooled fit or it has no coefficient for the family, the reference
       table, and for Fable, which has no row there, the one held rate `across_cut` holds on
@@ -1845,7 +1851,7 @@ def comparison_rate(fam: str, credits: dict, model_rates: dict | None = None,
       as detection prices a family nobody has measured.
     """
     row = ((model_rates or {}).get("per_family") or {}).get(fam) or {}
-    if row.get("rate_source") == "joint_fit_at_first_use" and row.get("input") is not None:
+    if row.get("rate_source") in ABSORBED_SOURCES and row.get("input") is not None:
         return float(row["input"]), float(row["input"]) * float(row.get("output_multiplier") or 5)
     fit = pooled_fit_prices(model_rates)
     if fit is not None and fam in fit["input"]:
@@ -3165,6 +3171,61 @@ def joint_rate_fit(selected: dict[str, list[dict]], fam: str, at: datetime,
     return out
 
 
+#: `rate_source` of a family valued at its list-price ratio because the joint fit at its first
+#: use did not separate its rate from a limit change (`list_until_separable`).
+LIST_UNTIL_SEPARABLE = "list_price_until_separable"
+#: The `rate_source`s `absorb_new_family_rates` writes: the rate every valuation then uses.
+ABSORBED_SOURCES = ("joint_fit_at_first_use", LIST_UNTIL_SEPARABLE)
+
+
+def list_until_separable(fam: str, fit: dict, credits: dict, model_rates: dict,
+                         anchor: tuple[float, float] | None) -> dict | None:
+    """ADR 0001 rule 10: the rates row of a family valued at its list price, or None.
+
+    A family first used inside the measured record -- some account has the
+    ANNOUNCED_MIN_BEFORE stretches before it that the joint fit needs for a before side --
+    whose joint fit there is not separable has a rate no fit can tell apart from a limit
+    change at that instant: every stretch it appears in comes after the candidate, so a
+    bigger window reads exactly as a cheaper model. Such a family is valued at its input
+    list-price ratio to the Opus anchor (`list_price_ratio`), with output at the anchor's
+    multiple and cache reads wherever the pooled fit puts them, until the fit separates.
+    The row keeps the fitted `times_opus` and its interval beside the list rate, with a
+    status sentence saying it is not used and why. None -- the caller keeps the fitted rate
+    -- when the fit separates, when the family has no list price, when there is no anchor or
+    no measured-rate source at all (the caller checks that), and when no account has a
+    before side: a family first used before the measured record began has no limit change
+    at its first use in the record to be confounded with.
+    """
+    if fit.get("separable") or anchor is None:
+        return None
+    if not any(row.get("n_before", 0) >= ANNOUNCED_MIN_BEFORE
+               for row in (fit.get("per_account") or {}).values()):
+        return None
+    ratio = list_price_ratio(fam, credits)
+    if ratio is None:
+        return None
+    old = (model_rates.get("per_family") or {}).get(fam) or {}
+    pooled = model_rates.get("pooled_fit") or {}
+    fitted = old.get("times_opus", (pooled.get("times_opus") or {}).get(fam))
+    fitted_iv = old.get("times_opus_interval", (pooled.get("interval") or {}).get(fam))
+    fitted_txt = (f"the fitted {fitted:.3g}x Opus" if fitted is not None
+                  else "the fitted rate")
+    # The fit's own detail (its fits, intervals, why) stays on the row beside the list rate.
+    return {
+        **old,
+        "input": ratio * anchor[0], "interval": None, "output_multiplier": anchor[1],
+        "status": (f"{family_label(fam)} is valued at its list price, {ratio:.3g}x Opus; "
+                   f"{fitted_txt} is not used, because the joint fit at its first use "
+                   f"({fit.get('reason') or 'not separable'}) cannot tell that rate apart from "
+                   f"a five-hour limit change at that instant. The fitted rate takes over once "
+                   f"that fit separates."),
+        "rate_source": LIST_UNTIL_SEPARABLE, "anchor": False, "provisional": False,
+        "rate_in_use": "list", "list_times_opus": ratio,
+        "times_opus": fitted, "times_opus_interval": fitted_iv,
+        "replaced": {k: old.get(k) for k in ("input", "interval", "rate_source", "times_opus")},
+    }
+
+
 def _base_input_rate(fam: str, credits: dict, model_rates: dict | None) -> tuple[float, float] | None:
     """(input rate, output multiplier) of a family as the joint fit values stretches at it:
     `comparison_rate`, so the rate a fit is reported against is the one it was fitted with."""
@@ -3187,7 +3248,9 @@ def absorb_new_family_rates(by_account: dict[str, list[dict]], runs: list[Harnes
 
     Candidates are taken oldest first, and each one the fit separates replaces that family's
     row in the measured rates before the next is fitted, so a later candidate's known work
-    is valued at the earlier ones' fitted rates. `value_for(rates)` is the stretch valuation
+    is valued at the earlier ones' fitted rates. One it does not separate is valued at its
+    list price instead (`list_until_separable`, ADR 0001 rule 10), in its row and in the
+    pooled fit's coefficients alike, so every valuation downstream reads the same rate. `value_for(rates)` is the stretch valuation
     under a rates block; by default, and as the publisher passes it, `comparison_value`: the
     fit is a before-and-after comparison, so every known family is priced at the pooled
     fit's point estimate whether the page publishes that family's rate or not. Returns (the
@@ -3212,6 +3275,13 @@ def absorb_new_family_rates(by_account: dict[str, list[dict]], runs: list[Harnes
                              names, base_times_opus=(base[0] / anchor[0] if base and anchor else None))
         fits[(fam, _utc(at))] = fit
         if not fit["separable"] or base is None:
+            listed = list_until_separable(fam, fit, credits, rates_now, anchor) if model_rates else None
+            if listed is not None:
+                rates_now["per_family"][fam] = listed
+                pooled = rates_now.get("pooled_fit")
+                if isinstance(pooled, dict) and isinstance(pooled.get("times_opus"), dict):
+                    rates_now["pooled_fit"] = {**pooled, "times_opus": {
+                        **pooled["times_opus"], fam: listed["list_times_opus"]}}
             continue
         r, (r_lo, r_hi) = fit["rate_relative_to_base"], fit["rate_relative_interval"]
         old = rates_now["per_family"].get(fam) or {}
@@ -3219,13 +3289,15 @@ def absorb_new_family_rates(by_account: dict[str, list[dict]], runs: list[Harnes
             "input": base[0] * r, "interval": [base[0] * r_lo, base[0] * r_hi],
             "output_multiplier": base[1], "status": None,
             "rate_source": "joint_fit_at_first_use", "anchor": False, "provisional": False,
+            "rate_in_use": "fitted",
+            "list_times_opus": list_price_ratio(fam, credits),
             "times_opus": fit["times_opus"], "times_opus_interval": fit["times_opus_interval"],
             "joint_fit": {"at": _utc(at), "base_family": fit["base_family"],
                           "rate_relative_to_base": r, "rate_relative_interval": [r_lo, r_hi]},
             "replaced": {k: old.get(k) for k in ("input", "interval", "rate_source", "times_opus")},
         }
     # Nothing absorbed: the caller's block itself, so an empty one still reads as no source.
-    changed = any(r.get("rate_source") == "joint_fit_at_first_use"
+    changed = any(r.get("rate_source") in ABSORBED_SOURCES
                   for r in rates_now["per_family"].values())
     return (rates_now if changed else model_rates), fits
 

@@ -731,6 +731,114 @@ class PublishStateTests(unittest.TestCase):
         self.assertAlmostEqual(C.comparison_rate("opus-5-5", CREDITS, absorbed)[0], row["input"])
 
 
+def _with_new_family_fitted(times_opus=0.55):
+    """`_POOLED_RATES` with Opus 5.5 in the pooled fit at `times_opus`, as tools/model_rates.py
+    fits it after 22 September: a final rate, absorbing whatever limit change came with it."""
+    rates = copy.deepcopy(_POOLED_RATES)
+    rates["pooled_fit"]["times_opus"]["opus-5-5"] = times_opus
+    rates["pooled_fit"]["interval"]["opus-5-5"] = [times_opus * 0.85, times_opus * 1.15]
+    rates["per_family"]["opus-5-5"] = {
+        "input": times_opus * _OPUS_IN, "interval": [0.85 * times_opus * _OPUS_IN,
+                                                     1.15 * times_opus * _OPUS_IN],
+        "status": None, "rate_source": "measured", "provisional": False,
+        "times_opus": times_opus, "times_opus_interval": [times_opus * 0.85, times_opus * 1.15]}
+    return rates
+
+
+class ListUntilSeparableTests(unittest.TestCase):
+    """ADR 0001 rule 10: a new family is valued at its list price until the joint fit at its
+    first use separates its rate from a limit change."""
+
+    def setUp(self):
+        self.rates = _with_new_family_fitted(0.55)
+        self.list_ratio = C.list_price_ratio("opus-5-5", CREDITS)
+
+    def _absorb(self, by, credits=CREDITS):
+        return C.absorb_new_family_rates(by, [], credits, self.rates, LABELS,
+                                         lambda rates: _output_value)
+
+    def test_a_new_family_with_an_inseparable_fit_is_valued_at_list(self):
+        absorbed, fits = self._absorb(_mixed(share=0.5))
+        (fit,) = fits.values()
+        self.assertFalse(fit["separable"])
+        row = absorbed["per_family"]["opus-5-5"]
+        self.assertEqual(row["rate_source"], C.LIST_UNTIL_SEPARABLE)
+        self.assertEqual(row["rate_in_use"], "list")
+        self.assertAlmostEqual(row["input"], self.list_ratio * _OPUS_IN)
+        self.assertAlmostEqual(row["list_times_opus"], self.list_ratio)
+        # The fitted rate stays beside it, with a sentence saying why it is not used.
+        self.assertEqual(row["times_opus"], 0.55)
+        self.assertEqual(row["times_opus_interval"], self.rates["per_family"]["opus-5-5"]["times_opus_interval"])
+        self.assertIn("not used", row["status"])
+        # Every valuation reads the list rate: the comparison, the pooled fit, the published rate.
+        self.assertAlmostEqual(C.comparison_rate("opus-5-5", CREDITS, absorbed)[0],
+                               self.list_ratio * _OPUS_IN)
+        self.assertAlmostEqual(C.comparison_rate("opus-5-5", CREDITS, absorbed)[1],
+                               5 * self.list_ratio * _OPUS_IN)
+        self.assertAlmostEqual(C.pooled_fit_prices(absorbed)["times_opus"]["opus-5-5"], self.list_ratio)
+        self.assertAlmostEqual(C.family_rate("opus-5-5", CREDITS, absorbed).input,
+                               self.list_ratio * _OPUS_IN)
+        tok = {"output": 10, "cache_read": 1000}
+        self.assertAlmostEqual(C.across_cut_value(CREDITS, model_rates=absorbed)({"claude-opus-5-5": tok}),
+                               50 * self.list_ratio * _OPUS_IN + 1000 * 0.0047 * _OPUS_IN)
+        # The caller's block is not touched.
+        self.assertEqual(self.rates, _with_new_family_fitted(0.55))
+
+    def test_the_same_family_with_a_separable_fit_uses_its_fitted_rate(self):
+        absorbed, fits = self._absorb(_mixed(g=1.2, r=0.6))
+        (fit,) = fits.values()
+        self.assertTrue(fit["separable"])
+        row = absorbed["per_family"]["opus-5-5"]
+        self.assertEqual(row["rate_source"], "joint_fit_at_first_use")
+        self.assertEqual(row["rate_in_use"], "fitted")
+        self.assertAlmostEqual(row["list_times_opus"], self.list_ratio)
+        self.assertAlmostEqual(C.comparison_rate("opus-5-5", CREDITS, absorbed)[0],
+                               fit["rate_relative_to_base"] * _OPUS_IN)
+
+    def test_a_family_with_no_list_price_keeps_the_fitted_rate(self):
+        credits = copy.deepcopy(CREDITS)
+        credits.setdefault("list_price_model", {})["opus-5-5"] = "claude-not-in-the-price-table"
+        self.assertIsNone(C.list_price_ratio("opus-5-5", credits))
+        absorbed, fits = self._absorb(_mixed(share=0.5), credits)
+        (fit,) = fits.values()
+        self.assertFalse(fit["separable"])
+        self.assertIs(absorbed, self.rates)
+        self.assertAlmostEqual(C.comparison_rate("opus-5-5", credits, absorbed)[0], 0.55 * _OPUS_IN)
+
+    def test_a_family_first_used_before_any_measured_before_side_keeps_its_fit(self):
+        # Every account's first stretch already carries the new family's predecessor, but no
+        # account has ANNOUNCED_MIN_BEFORE stretches before it: the record holds no limit
+        # change at its first use to confound the rate with, as for Fable and Haiku.
+        by = _mixed(share=0.5)
+        for name, rows in by.items():
+            by[name] = rows[:1] + [r for r in rows if "claude-opus-5-5" in r["tokens"]]
+        absorbed, fits = self._absorb(by)
+        (fit,) = fits.values()
+        self.assertEqual(fit["accounts_combined"], [])
+        self.assertIs(absorbed, self.rates)
+        self.assertAlmostEqual(C.comparison_rate("opus-5-5", CREDITS, absorbed)[0], 0.55 * _OPUS_IN)
+
+    def test_an_older_family_with_a_final_fitted_rate_is_unchanged(self):
+        absorbed, _ = self._absorb(_mixed(share=0.5))
+        self.assertEqual(absorbed["per_family"]["sonnet"], self.rates["per_family"]["sonnet"])
+        self.assertEqual(absorbed["pooled_fit"]["times_opus"]["sonnet"], 0.3625)
+        self.assertAlmostEqual(C.comparison_rate("sonnet", CREDITS, absorbed)[0], 0.3625 * _OPUS_IN)
+        self.assertEqual(C.family_rate("sonnet", CREDITS, absorbed),
+                         C.family_rate("sonnet", CREDITS, self.rates))
+
+    def test_the_published_block_says_which_rate_is_in_use(self):
+        absorbed, _ = self._absorb(_mixed(share=0.5))
+        block = P._measured_rates_block(absorbed, LABELS)["per_family"]
+        new = block["opus-5-5"]
+        self.assertEqual((new["rate_in_use"], new["times_opus"]), ("list", 0.55))
+        self.assertAlmostEqual(new["list_times_opus"], self.list_ratio)
+        self.assertIn("not used", new["status"])
+        old = block["sonnet"]
+        self.assertEqual((old["rate_in_use"], old["times_opus"]), ("fitted", 0.3625))
+        self.assertAlmostEqual(old["list_times_opus"], C.list_price_ratio("sonnet", CREDITS))
+        self.assertEqual(block["opus"]["rate_in_use"], "anchor")
+
+
 class ComparisonValueTests(unittest.TestCase):
     def test_every_family_at_the_pooled_point_estimate_published_or_not(self):
         value = C.comparison_value(CREDITS, _POOLED_RATES)
