@@ -222,6 +222,12 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(r["last_usable_at"], (T0 + timedelta(minutes=200)).isoformat())
         self.assertEqual(r["spread"]["stretch"]["n"], 8)
         self.assertTrue(r["weekly_by_window"])
+        # The seven-day steps the weekly limit is measured on (tracker/weekly_meter.py), each
+        # with this account's own tokens in it.
+        self.assertIsInstance(r["weekly_steps"], list)
+        for step in r["weekly_steps"]:
+            self.assertEqual(step["d7"], 1)
+            self.assertIn("tokens", step)
 
     def test_fast_session_requests_stay_in_their_stretch_and_are_recorded(self):
         def opus_session(start_min, n, rate, prefix):

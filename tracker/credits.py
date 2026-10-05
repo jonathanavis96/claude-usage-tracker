@@ -3555,31 +3555,34 @@ WINDOWS_PER_WEEK_METHOD = (
     "new family's input list-price ratio to its base family (`joint_fit.rate_check`, ADR 0001 "
     "rule 8; a family with no list price skips that test and says so); `scope.reason` names "
     "the test that failed. "
-    "Once the fit separates the rate from g, `change_pct` is g at its point "
-    "estimate, and where the candidate `applies` it splits the window regimes' runs: a regime too "
-    "thin to be measured in its own family "
-    "scales the window by g and the week by g times the ratio at once, and the figures move "
-    "as readings arrive. `scope` only "
-    "describes which intervals exclude no change: `five_hour` g's alone, `weekly` the weekly "
-    "one alone, `both` both, `undetermined` neither. While the fit cannot separate the rate "
-    "from g, `change_pct` is null, the change joins the regimes either side into one run "
-    "whose window is measured as one cluster, a regime still too thin to be measured "
-    "carries the previous window and week, and `scope.reason` says why. The state says how settled the headline "
-    "figure is, from its own 95% interval (`change_state`): the five-hour limit change once "
-    "the fit separates it, else the windows-per-week change. It is measuring while that "
-    "interval includes no change, provisional once it excludes it, and measured once it also "
-    f"has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less; the notify step's "
-    "24 and 48 hour rules time the email and never set it. `headline` is the figure a "
-    "candidate would publish: g, or the weekly limit change where that moved more, or the "
-    "windows-per-week change while the fit cannot separate g. `plan_wide` refits that figure "
-    "with each combined account left out in turn (`plan_wide_method`). A candidate after the "
-    "weekly change that can be measured at all (one reading after on a combined account, "
-    "`measurable`) opens a window regime. It `applies` (ADR 0001 rule 9) -- enters `events`, "
-    "can become `last_change` and reach the email, and may scale its regime's window by g -- "
-    "only once its headline is plan-wide and its 95% interval excludes no change; every "
-    "publish recomputes it. Every other candidate stays here with its figures, state and "
-    "`withheld_reason`, which names each test it failed, and its regime carries the previous "
-    "window. `announcement` is reference metadata and changes no figure, state or scope.")
+    "`scope` describes which of the fit's intervals exclude no change: `five_hour` g's "
+    "alone, `weekly` g times the ratio's alone, `both` both, `undetermined` neither; it is "
+    "reference and certifies nothing. "
+    "A candidate is certified on the two direct measurements (ADR 0001 rules 9 and 11), "
+    "never on the meter ratio or the joint fit. `window_change` is the known-date test's "
+    "change in credits per 1% of the five-hour meter (`announced_change`, each account "
+    "against itself); `weekly_change` the same shape on the seven-day meter: each account's "
+    "credits over its seven-day points in its one-point steps either side (`weekly_meter."
+    "weekly_change`, the same bounds as the windows per week above, its standard error from "
+    "resampled whole UTC days, at least "
+    f"{ANNOUNCED_MIN_BEFORE} steps before and two days each side). Each combines the accounts "
+    "by inverse variance and is refitted with each account left out (`plan_wide`); it is "
+    "`certified` when that holds and its own 95% interval excludes no change. "
+    "`certified_on` names the certified ones, `headline` is a certified one (the larger "
+    "where both are), else the larger measured one, else the windows-per-week change, and "
+    "`state` reads its interval (`change_state`): measuring while it includes no change, "
+    "provisional once it excludes it, measured once it also has a half-width of "
+    f"{CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less; the notify step's 24 and 48 hour "
+    "rules time the email and never set it. `change_pct` and `interval_pct` are the window "
+    "change. A candidate after the weekly change that can be measured at all (`measurable`) "
+    "opens a window regime, which carries the previous window unless the candidate applies "
+    "on its window change. It `applies` -- enters `events`, can become `last_change` and "
+    "reach the email -- once one of the two is certified, and steps that measurement only: "
+    "a certified window change scales a thin regime's window by itself, a certified weekly "
+    "change opens a per-week regime, measured directly. Every publish recomputes it. Every "
+    "other candidate stays here with its figures, state and `withheld_reason`, which names "
+    "each measurement and the test it failed. `announcement` is reference metadata and "
+    "changes no figure, state or scope.")
 
 
 def own_weekly_step_start(block: dict | None) -> datetime | None:
@@ -3994,12 +3997,18 @@ def cut_direct_tests(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
     """
     from .weekly_meter import weekly_change
 
-    selected = announced_change_stretches(by_account, runs)
+    selected = {name: [st for st in rows if st.get("start") and st.get("end")]
+                for name, rows in announced_change_stretches(by_account, runs).items()}
     per_account, _paired, _shares = _known_date_rows(selected, value, CUT_AT, None, next_at,
                                                      labels, list(by_account))
+    # An account with no stretch on either side is no part of the test, so a history that
+    # lists an account with no readings publishes what a history without it does.
+    per_account = {k: v for k, v in per_account.items() if v["n_before"] or v["n_after"]}
     by_acc = (max20 or {}).get("by_account") or {}
     steps = {}
     for label, rows in sorted(weekly_rows.items()):
+        if not rows:
+            continue
         own_start = own_weekly_step_start(by_acc.get(label))
         before_end = own_weekly_step_end(by_acc.get(label)) or CUT_AT
         after_start = own_start or CUT_AT
@@ -4071,7 +4080,7 @@ PER_REGIME_METHOD = (
     "credits per 1% of the seven-day meter (`weekly_credits_per_pct`), from every one-point "
     "seven-day step of every account lying wholly in the regime "
     "(`weekly_meter.seven_day_steps`, tiled between exact crossings; harness runs and cloud "
-    "sessions out, masterrig from 6 September), each step's own tokens valued as `across_cut` "
+    "sessions out, the personal account from 6 September), each step's own tokens valued as `across_cut` "
     "values a stretch, pooled meter-weighted (every account's credits over every account's "
     "seven-day points), times 100, in the window's tokens through the anchor's credits per "
     "token at the published mix (`anchor_credits_per_token`). Its interval resamples each "

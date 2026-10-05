@@ -1,6 +1,6 @@
 # 0001. Acceptance rules for published figures
 
-Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rule 10 added 2026-10-05
+Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 and 11 added 2026-10-05
 
 ## Context
 
@@ -90,16 +90,18 @@ These are the acceptance rules. Each names where it lives.
    Findings: `docs/findings-2026-10-02-one-account-change.md`.
 
 9. **A five-hour change must hold on every account (plan-wide), added 2026-10-04.** A plan
-   limit change reaches every account at the same instant. A five-hour change candidate
-   whose combined figure draws on two or more accounts is refitted with each of them left
-   out in turn, by the estimator behind the figure it would publish (the joint fit's g, the
-   weekly limit change g times the windows-per-week ratio where that moved more, or the
-   combined windows-per-week ratio while the fit cannot separate g). It is plan-wide only if
+   limit change reaches every account at the same instant. A change candidate whose
+   combined figure draws on two or more accounts is refitted with each of them left out in
+   turn, by the estimator behind the figure (since rule 11, each of the two direct
+   measurements: the window change and the weekly limit change, each an inverse-variance
+   combination of the accounts' own changes; the windows-per-week ratio only where neither
+   is measured). It is plan-wide only if
    every refit keeps the direction with a 95% interval that still excludes no change; with
    two accounts that is each one alone, and a change resting on one account is not
    plan-wide. Only a plan-wide candidate whose own interval excludes no change `applies`:
-   enters `events`, can become `last_change`, reaches the subscriber email, and may scale a
-   window regime by its g. The rest stay in `credits.five_hour_on_meters.candidates` with a
+   enters `events`, can become `last_change`, reaches the subscriber email, and steps the
+   measurement it was certified on (rule 11). The rest stay in
+   `credits.five_hour_on_meters.candidates` with a
    `withheld_reason` that names each test it failed. A withheld candidate that can be
    measured still opens a regime boundary, which carries the previous window and does not
    split the window cluster.
@@ -122,9 +124,26 @@ These are the acceptance rules. Each names where it lives.
     Source: `tracker/credits.py` (`list_until_separable`, `LIST_UNTIL_SEPARABLE`, applied in
     `absorb_new_family_rates`), `tracker/publish.py` (`_rate_in_use`).
 
+11. **The weekly limit is measured on the seven-day meter, the window on the five-hour
+    meter, and windows per week is their quotient, added 2026-10-05.** The weekly limit is
+    credits per 1% of the seven-day meter, read between exact one-point seven-day crossings
+    and pooled over every account; the window is read on the five-hour meter as before; and
+    windows per week is the weekly limit divided by the window, never a meter ratio
+    multiplied back in (the ratio is published beside it for reference). A change is
+    certified on those two direct measurements: each account compared with itself either
+    side, the accounts combined by inverse variance, and rule 9 applied to each. A certified
+    change steps the measurement it was certified on and nothing else, and only a certified
+    change opens a regime.
+    Source: `tracker/weekly_meter.py` (`seven_day_steps`, `level`, `weekly_change`),
+    `tracker/credits.py` (`window_change`, `direct_change`, `five_hour_on_meters`,
+    `known_date_changes`, `regime_figures`, `cut_direct_tests`), `tracker/gs_passive.py`
+    (`weekly_steps` on each account's record).
+    Findings: `docs/findings/2026-10-04-account-agreement.md` (sections 2c and 3, branch
+    wf/139-account-agreement).
+
 ### Pending
 
-11. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
+12. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
    family's rate only if 3 or more of its stretches are at least 60% that family. Another
    PR is adding this; when it merges, this entry takes its source location and moves up
    into the list above. Until then the code has no such rule (the only dominance constant
