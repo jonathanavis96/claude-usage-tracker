@@ -627,7 +627,8 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         files, own_sessions, unclaimed_files = (_split_transcripts(account, since, withhold.get(name, ()), home)
                                                 if samples else ([], None, []))
         turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
-        stretches[name] = build_stretches(joined, turns, prices, fast=fast_session_ids(files))
+        fast = fast_session_ids(files)
+        stretches[name] = build_stretches(joined, turns, prices, fast=fast)
         if own_sessions is not None:
             # The same samples close the same stretches whatever the turns, so building them
             # again over the unclaimed turns gives each stretch the unclaimed work in its pairs.
@@ -639,7 +640,7 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         weekly[name] = window_points(joined)
         # The weekly limit measured directly: every one-point step of the seven-day meter
         # with this account's own tokens in it (tracker/weekly_meter.py).
-        steps = seven_day_steps(joined, turns, prices, cloud[name], fast=fast_session_ids(files))
+        steps = seven_day_steps(joined, turns, prices, cloud[name], fast=fast)
         root = account.config_dir / "projects"
         meta[name] = {
             "meter": {"log": str(account.meter_log), "format": account.meter_format,
