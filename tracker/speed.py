@@ -454,6 +454,27 @@ def speed_block(*histories: dict | None) -> dict:
 # ---- command line ---------------------------------------------------------------------
 
 
+def unreadable_record(path: Path | None) -> str | None:
+    """Why the record at `path`, which a run is about to rewrite, must be left alone, or None.
+
+    An absent file is no record and starts fresh. One that exists but does not parse to a
+    JSON object (conflict markers from a stopped rebase, a torn write) is never read as
+    absent: the rewrite would keep only the days the transcripts still reach.
+    """
+    if path is None:
+        return None
+    try:
+        body = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        return (f"error: {path} exists but cannot be read as JSON ({e}); not rewriting it. "
+                "Restore it from git (git checkout -- <file>) or fix it by hand.")
+    if not isinstance(body, dict):
+        return f"error: {path} holds {type(body).__name__}, not a record; not rewriting it."
+    return None
+
+
 def load_history(path: Path | None) -> dict | None:
     if path is None or not Path(path).exists():
         return None
@@ -487,6 +508,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--home", type=Path, default=Path.home())
     ap.add_argument("--history", type=Path, required=True)
     a = ap.parse_args(argv)
+    if (refusal := unreadable_record(a.history)) is not None:
+        print(refusal, file=sys.stderr)
+        return 2
     now = datetime.now(timezone.utc)
     stored = load_history(a.history)
     since_day, mtime_since = recompute_from(stored, now)
