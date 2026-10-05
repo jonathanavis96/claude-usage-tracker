@@ -2358,3 +2358,69 @@ class AccountFeedsTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             self.assertIn("a3", lines[0])
             self.assertNotIn("a1", lines[0])
+
+
+class FiveHourMeterTests(unittest.TestCase):
+    """The headless factor is fitted from the history's own seven-day steps at every publish,
+    and every five-hour figure reads stretches in interactive-equivalent tokens."""
+
+    NOW = datetime(2026, 9, 5, 20, 15, tzinfo=timezone.utc)
+
+    def report(self, split: bool = True) -> dict:
+        rpt = daily_report([15.0] * 5)
+        body = rpt["accounts"]["dave"]
+        sonnet = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1_000_000}
+        for st in body["stretches"]:
+            if split:
+                st["headless_tokens"] = {"claude-sonnet-5": dict(sonnet, cache_write=500_000)}
+        steps = []
+        for i in range(60):
+            start = datetime(2026, 9, 1, tzinfo=timezone.utc) + timedelta(hours=i)
+            share = (i % 6) / 5
+            step = {"start": start.isoformat(), "end": (start + timedelta(minutes=30)).isoformat(),
+                    "d7": 1, "d5": 4 * 1.5 ** share, "tokens": {"claude-sonnet-5": sonnet}}
+            if split:
+                step["headless_tokens"] = ({"claude-sonnet-5": dict(sonnet, cache_write=round(1_000_000 * share))}
+                                           if share else {})
+            steps.append(step)
+        body["weekly_steps"] = steps
+        return rpt
+
+    def build(self, rpt: dict):
+        from unittest import mock
+        import tracker.publish as P
+        seen = {}
+        real = P._credits_block
+
+        def spy(gs_passive, *args, **kw):
+            seen["gs"] = gs_passive
+            return real(gs_passive, *args, **kw)
+        with mock.patch.object(P, "_credits_block", side_effect=spy):
+            j = build_public_json([], PASSIVE, EFFORT, CACHE_READ_FREE, self.NOW, gs_passive=rpt)
+        return j, seen["gs"]
+
+    def test_the_factor_is_measured_and_the_stretches_weighted(self):
+        j, gs = self.build(self.report())
+        factor = j["five_hour_meter"]["headless_factor"]["value"]
+        self.assertAlmostEqual(factor, 1.5, places=2)
+        self.assertEqual(j["five_hour_meter"]["basis"], "interactive_equivalent")
+        st = gs["accounts"]["dave"]["stretches"][0]
+        self.assertEqual(st["tokens"]["claude-sonnet-5"]["cache_write"],
+                         round(st["metered_tokens"]["claude-sonnet-5"]["cache_write"] + 500_000 * (factor - 1)))
+        # The seven-day steps are not weighted.
+        self.assertEqual(gs["accounts"]["dave"]["weekly_steps"], self.report()["accounts"]["dave"]["weekly_steps"])
+
+    def test_the_unit_the_rates_were_fitted_in_is_published_beside_the_factor(self):
+        from unittest import mock
+        import tracker.publish as P
+        rates = {"per_family": {}, "five_hour_unit": {"headless_factor": 1.42}}
+        with mock.patch.object(P.credit_model, "load_model_rates", return_value=rates):
+            j, _ = self.build(self.report())
+        self.assertEqual(j["five_hour_meter"]["model_rates_fitted_at"], 1.42)
+
+    def test_without_a_recorded_split_nothing_is_weighted(self):
+        rpt = self.report(split=False)
+        j, gs = self.build(rpt)
+        self.assertIsNone(j["five_hour_meter"]["headless_factor"]["value"])
+        self.assertIn("not measured", j["five_hour_meter"]["headless_factor"]["status"])
+        self.assertIs(gs, rpt)

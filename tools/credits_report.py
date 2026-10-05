@@ -593,6 +593,7 @@ BLOCK_KIND = {
     "effort": "derived",
     "effort_usd": "derived",
     "events": "derived",
+    "five_hour_meter": "derived",
     "history": "derived",
     "instrument": "derived",
     "last_change": "derived",

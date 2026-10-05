@@ -89,6 +89,10 @@ _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured
 One point of an account's seven-day meter: the span between two consecutive exact seven-day crossings in one unbroken weekly segment, each crossing placed at the upper reading of its bracket so the steps tile the segment, with the account's own tokens in it and the five-hour points crossed (`weekly_steps` on each account in the passive histories, tracker/weekly_meter.py). No step runs while the seven-day meter sits at 100%.
 _Avoid_: stretch (a five-hour unit), tick
 
+**Interactive-equivalent**:
+The unit every five-hour figure is quoted in. A headless `claude -p` run's own tokens are counted at the five-hour meter's measured headless factor (`five_hour_meter.headless_factor`), and every other token counts once. The seven-day meter is never weighted.
+_Avoid_: weighted tokens, adjusted tokens
+
 **Weekly limit**:
 Credits per 1% of the seven-day meter, pooled over every account's seven-day steps in a regime (total credits over total points), times 100, and in tokens through the anchor's credits per token as the window is converted. Measured directly; `per_week_regimes`, `account_regimes.per_week` and `per_week` state it. Windows per week on the page is derived from it: the weekly limit over the five-hour window (ADR 0001 rule 11).
 _Avoid_: window times windows per week, weekly cap (in prose about the measurement)

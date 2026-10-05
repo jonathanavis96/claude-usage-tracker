@@ -1005,9 +1005,28 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
             mine = own(k, 1.0)
             cluster = {"family": anchor_fam, "n": counts.get(k, 0), "measured": mine, "anchor": mine}
         unmeasured = prev["value"] is None and prev["measured_value"] is None
+        extra: dict = {}
         if cluster["n"] >= MIN_AFTER_CLUSTER or (unmeasured and cluster["n"]):
             fig, measured, fam = cluster["anchor"], cluster["measured"], cluster["family"]
             source = KNOWN_DATE_CLUSTER_SOURCE
+            if (fam != anchor_fam and change.get("window_scaled") and prev["value"]
+                    and measured["value"] and measured["interval"]):
+                # A regime measured in a new family and opened by a certified window change:
+                # its anchor-unit figure goes through the bridge rate, as a run's does, so
+                # the step here is the certified change and not a rate conversion.
+                rate = prev["value"] * change["ratio"] / measured["value"]
+                lo, hi = measured["interval"]
+                extra = {"bridge_rate": rate,
+                         "bridge_rate_interval": [prev["value"] * change["ratio"] / hi,
+                                                  prev["value"] * change["ratio"] / lo],
+                         "bridge_rate_source": (
+                             f"derived: the rate that makes the step at {_utc(change['at'])} "
+                             f"equal the certified five-hour change there "
+                             f"({change['change_pct']:+.1f}%): the previous regime's "
+                             f"{anchor_fam} window times that change, over the regime's direct "
+                             f"{fam} window; its interval is the same over the regime's "
+                             f"highest and lowest reading")}
+                fig = _scaled(measured, rate, rate, rate)
         elif change.get("window_scaled", True):
             r_lo, r_hi = change["ratio_interval"]
             fig = _scaled({"value": prev["value"], "interval": prev["interval"]},
@@ -1021,8 +1040,8 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
             fig = {"value": prev["value"], "interval": prev["interval"]}
             measured = {"value": prev["measured_value"], "interval": prev["measured_interval"]}
             fam, source = prev["measured_family"], KNOWN_DATE_UNSCALED_SOURCE
-        regimes.append(row(fig, measured, fam, source, _utc(change["at"]), None,
-                           cluster["family"], cluster["n"]))
+        regimes.append(dict(row(fig, measured, fam, source, _utc(change["at"]), None,
+                                cluster["family"], cluster["n"]), **extra))
     return regimes, regimes[-1]["source"]
 
 
@@ -1497,7 +1516,8 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     # measured in that family, else its anchor-unit figure over the rate the history is
     # converted at -- the newest run's bridge rate where it has one, else the fitted rate.
     newest_run = regimes[-1].get("run_from")
-    bridge = next((r for r in regimes if newest_run and r.get("run_from") == newest_run
+    bridge = next((r for r in regimes
+                   if ((newest_run and r.get("run_from") == newest_run) or r is regimes[-1])
                    and r.get("bridge_rate") is not None), None)
     history_rate, history_source = None, None
     if measured_family == fam:
@@ -4282,13 +4302,36 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             if week_of[k0] == week_of[k1]:
                 steps_in.setdefault(week_of[k0], {}).setdefault(label, []).append(row)
 
+    # A boundary certified on the window alone steps the window and not the week (ADR 0001
+    # rule 11): the rows either side state one week, measured over the steps of both.
+    window_only = {datetime.fromisoformat(c["at"]) for c in (meters or {}).get("candidates", [])
+                   if c.get("at") and c.get("applies")
+                   and (c.get("window_change") or {}).get("certified")
+                   and not (c.get("weekly_change") or {}).get("certified", True)}
+    week_runs: list[list[int]] = []
+    for i, group in enumerate(weeks):
+        frm = regimes[group[0]]["from"]
+        if week_runs and frm and datetime.fromisoformat(frm) in window_only:
+            week_runs[-1].append(i)
+        else:
+            week_runs.append([i])
+    run_levels = {}
+    for run in week_runs:
+        pooled_steps: dict[str, list[dict]] = {}
+        for i in run:
+            for label, rows in steps_in.get(i, {}).items():
+                pooled_steps.setdefault(label, []).extend(rows)
+        lvl = level(pooled_steps, f"week:{regimes[weeks[run[0]][0]]['from']}")
+        for i in run:
+            run_levels[i] = lvl
+
     per_week, levels = [], []
     for i, group in enumerate(weeks):
         # The group's window is its newest regime's: a withheld boundary carries the window
         # across it, so every regime in a group carries one value.
         k, reg = group[0], regimes[group[-1]]
         start = regimes[k]["from"]
-        lvl = level(steps_in.get(i, {}), f"week:{start}")
+        lvl = run_levels[i]
         levels.append(lvl)
         week, week_iv = _week_tokens(lvl, anchor)
         window = reg["value"]

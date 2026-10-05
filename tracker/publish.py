@@ -30,7 +30,7 @@ from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
 from .speed import load_history as load_speed_history
 from .speed import speed_block
-from . import weekly_meter
+from . import five_hour_weight, weekly_meter
 from .weekly import _iso_week_ending, probe_weekly_windows
 
 # The credits table (she-llac.com/claude-limits) gives each plan's credits per
@@ -489,11 +489,23 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     series = sorted(verified_readings if verified_readings else all_readings)
     # The measured per-family credit rates, needed here and again for the credits block.
     model_rates = credit_model.load_model_rates() if model_rates is None else model_rates
+    # The five-hour meter's factor for headless work, fitted on the seven-day steps at this
+    # publish (tracker/five_hour_weight.py, ADR 0001 rule 12), and the stretches every
+    # five-hour figure reads rewritten in interactive-equivalent tokens. Seven-day steps are
+    # untouched, and so is everything else that reads the raw histories.
+    five_hour_meter = _five_hour_meter(gs_passive, masterrig_passive, credits, model_rates)
+    factor = five_hour_weight.factor_of(five_hour_meter)
+    # The factor the per-family rates were fitted at (tools/model_rates.py `five_hour_unit`):
+    # rates fitted in another unit price a headless-heavy family wrongly in every test.
+    five_hour_meter["model_rates_fitted_at"] = ((model_rates or {}).get("five_hour_unit") or {}).get(
+        "headless_factor")
+    gs_five = five_hour_weight.interactive_equivalent(gs_passive, factor)
+    mr_five = five_hour_weight.interactive_equivalent(masterrig_passive, factor)
     # Every new family's rate is fitted at its first use jointly with any five-hour limit
     # change there, and absorbed into the rates everything below values stretches at, so no
     # figure prices a new model at a rate the limit change is confounded with.
     model_rates, joint_fits = credit_model.absorb_new_family_rates(
-        credit_model.stretches_by_account(gs_passive, masterrig_passive),
+        credit_model.stretches_by_account(gs_five, mr_five),
         credit_model.harness_runs(), credits, model_rates, dict(ACCOUNT_LABELS),
         lambda rates: credit_model.comparison_value(credits, rates))
     # Detection runs per account, on that account's own stretches valued in meter
@@ -714,7 +726,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # history/model-rates.json"; an empty dict means there is no measurement to publish, and
     # every per-model row then carries a status sentence instead of a number.
     credits_block, across_cut = _credits_block(
-        gs_passive, masterrig_passive, all_probe_rows, effort_meta, credits, prices,
+        gs_five, mr_five, all_probe_rows, effort_meta, credits, prices,
         session_split, session_split_source, passive.get("session_tokens", {}),
         weekly_windows, weekly_events,
         model_rates, joint_fits)
@@ -756,6 +768,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "history": history,
         "weekly_windows": weekly_windows,
         "credits": credits_block,
+        "five_hour_meter": five_hour_meter,
         "reference": _reference_block(weekly_windows),
         "last_change": _with_announced_last_change(
             _latest_change_with_scope(events, weekly_events, across_cut, weekly_windows),
@@ -1309,6 +1322,20 @@ def _reference_block(weekly: dict) -> dict:
         "shortfall": _shortfall(weekly),
         "note": "a reference to compare a measurement against, never an input to one",
     }
+
+
+def _five_hour_meter(gs_passive: dict | None, masterrig_passive: dict | None, credits: dict,
+                     model_rates: dict | None) -> dict:
+    """The published `five_hour_meter` block: the headless factor fitted on the clean seven-day
+    steps, valued as the change tests value them, with regimes at the 14 September cut and
+    every family's first use (`credits.change_candidates`, which no valuation moves)."""
+    runs = credit_model.harness_runs()
+    by_account = credit_model.stretches_by_account(gs_passive, masterrig_passive)
+    steps = weekly_meter.clean_steps(weekly_meter.steps_by_account(gs_passive, masterrig_passive),
+                                     runs, by_account)
+    bounds = [credit_model.CUT_AT] + [c["at"] for c in credit_model.change_candidates(by_account, credits)]
+    return five_hour_weight.headless_factor(
+        steps, credit_model.comparison_value(credits, model_rates), dict(ACCOUNT_LABELS), bounds)
 
 
 def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, probe_rows: list[dict],

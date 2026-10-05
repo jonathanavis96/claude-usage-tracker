@@ -500,6 +500,9 @@ def _stretch_record(v: Verdict, reset_source: str = "logged",
             # stretch out of every fit and change figure.
             "remote_sourced_turns": s.remote_sourced_turns,
             "cloud_session": bool(s.remote_sourced_turns or overlaps(cloud or [], s.start, s.end)),
+            # The part of `tokens` from headless `claude -p` runs' own turns, which the
+            # five-hour meter charges more per credit (tracker/credits.py `headless_factor`).
+            "headless_tokens": s.headless_tokens, "headless_turns": s.headless_turns,
             # Only where the pooled-projects filter ran: the work no login claims, in this
             # stretch's pairs (`unclaimed_transcripts`); an empty dict when there was none.
             **({"unclaimed_tokens": unclaimed.get(s.start, {})} if unclaimed is not None else {})}

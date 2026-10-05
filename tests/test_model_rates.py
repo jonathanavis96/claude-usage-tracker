@@ -647,3 +647,49 @@ class MasterrigAdmissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FiveHourUnitTests(unittest.TestCase):
+    """The rates are fitted in the unit every published five-hour figure is in: headless tokens
+    count at the five-hour meter's factor, fitted from the same histories as the publisher
+    fits it, so a family used mostly headless does not take the factor into its rate."""
+
+    SONNET = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1_000_000}
+
+    def report(self, split: bool = True) -> dict:
+        from datetime import timedelta, timezone
+        steps = []
+        for i in range(60):
+            start = datetime(2026, 9, 1, tzinfo=timezone.utc) + timedelta(hours=i)
+            share = (i % 6) / 5
+            step = {"start": start.isoformat(), "end": (start + timedelta(minutes=30)).isoformat(),
+                    "d7": 1, "d5": 4 * 1.5 ** share, "tokens": {"claude-sonnet-5": self.SONNET}}
+            if split:
+                step["headless_tokens"] = ({"claude-sonnet-5": dict(self.SONNET, cache_write=round(1_000_000 * share))}
+                                           if share else {})
+            steps.append(step)
+        stretch = {"start": "2026-09-01T00:00:00+00:00", "end": "2026-09-01T03:00:00+00:00",
+                   "delta_pct": 10.0, "windows": 1, "status": "accepted", "capture_status": "accepted",
+                   "reset_verified": True, "tokens": {"claude-sonnet-5": self.SONNET}}
+        if split:
+            stretch["headless_tokens"] = {"claude-sonnet-5": dict(self.SONNET, cache_write=500_000)}
+        return {"accounts": {"dave": {"stretches": [stretch], "weekly_steps": steps}}}
+
+    def test_the_unit_is_the_factor_the_publisher_fits(self):
+        unit = M.five_hour_unit(self.report(), None, {})
+        self.assertAlmostEqual(unit["headless_factor"], 1.5, places=2)
+        self.assertEqual(len(unit["interval"]), 2)
+
+    def test_the_stretches_are_fitted_with_headless_tokens_at_the_factor(self):
+        S = M.stretches_in_five_hour_unit(self.report(), None, 1.5)
+        st = S["dave"][0]
+        self.assertEqual(st["tokens"]["claude-sonnet-5"]["cache_write"], 1_000_000 + 250_000)
+        self.assertEqual(st["metered_tokens"]["claude-sonnet-5"]["cache_write"], 1_000_000)
+
+    def test_without_a_recorded_split_nothing_is_weighted(self):
+        rpt = self.report(split=False)
+        unit = M.five_hour_unit(rpt, None, {})
+        self.assertIsNone(unit["headless_factor"])
+        self.assertIn("not measured", unit["status"])
+        S = M.stretches_in_five_hour_unit(rpt, None, unit["headless_factor"])
+        self.assertEqual(S["dave"][0]["tokens"], rpt["accounts"]["dave"]["stretches"][0]["tokens"])

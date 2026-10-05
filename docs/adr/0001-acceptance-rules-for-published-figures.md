@@ -149,9 +149,29 @@ These are the acceptance rules. Each names where it lives.
     Source: `tracker/credits.py` (`chain_certified_weeks`, `carry_across_withheld_windows`).
     Findings: `docs/findings/2026-10-05-headless-five-hour.md`.
 
+12. **The five-hour meter weights headless work at a measured factor, added 2026-10-05.**
+    The five-hour meter moves about 1.5 times as far per credit for a headless `claude -p`
+    run's own turns (entrypoint `sdk-cli`, sub-agents not counted) as for interactive work.
+    The seven-day meter treats the two alike. No counting error explains it, and concurrency,
+    burstiness, model mix, effort and time of day do not absorb it. So every five-hour figure
+    (the window, the five-hour change tests, the account lines) counts headless tokens at that
+    factor and is quoted in interactive-equivalent units. The seven-day meter is not weighted.
+    The factor is refitted from the seven-day steps at every publish: a quasi-Poisson fit of
+    five-hour points on regime, account and headless share. It is published with its interval
+    and per account (`five_hour_meter`), and it is never a hand-set constant. While fewer than
+    50 steps carry a headless split, nothing is weighted, and `five_hour_meter` says so.
+    The per-family credit rates are fitted in the same unit: `tools/model_rates.py` fits the
+    factor from the same histories and fits the rates on the weighted stretches, recording
+    the factor as `five_hour_unit`; the publish shows it as `model_rates_fitted_at`. Rates
+    fitted on metered tokens priced a headless-heavy family with the factor inside its rate.
+    Source: `tracker/five_hour_weight.py`, `tools/model_rates.py` (`five_hour_unit`), `tracker/turns.py` (`Turn.headless`),
+    `tracker/join.py` (`headless_tokens`), `tracker/publish.py` (`_five_hour_meter`).
+    Findings: `docs/findings/2026-10-05-headless-five-hour.md`,
+    `docs/findings/2026-10-05-headless-weight.md`.
+
 ### Pending
 
-12. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
+13. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
    family's rate only if 3 or more of its stretches are at least 60% that family. Another
    PR is adding this; when it merges, this entry takes its source location and moves up
    into the list above. Until then the code has no such rule (the only dominance constant

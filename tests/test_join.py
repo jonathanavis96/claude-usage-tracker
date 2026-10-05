@@ -163,6 +163,19 @@ class StretchTests(unittest.TestCase):
         self.assertEqual(st, plain)
         self.assertEqual((st.fast_session_tokens, st.fast_session_turns), ({}, 0))
 
+    def test_a_headless_turn_is_recorded_beside_the_tokens_it_is_part_of(self):
+        samples = [S(0, 0), S(5, 10)]
+        turns = [Turn(T0 + timedelta(minutes=1), "claude-opus-5", 10, 20, 30, 40, id="h",
+                      entrypoint="sdk-cli"),
+                 Turn(T0 + timedelta(minutes=2), "claude-opus-5", 1, 2, 3, 4, id="i", entrypoint="cli"),
+                 Turn(T0 + timedelta(minutes=3), "claude-opus-5", 5, 5, 5, 5, id="s",
+                      entrypoint="sdk-cli", subagent=True)]
+        (st,) = build_stretches(samples, turns, PRICES, stretch_pct=10)
+        self.assertEqual(st.headless_tokens, {"claude-opus-5": {"input": 10, "output": 20,
+                                                                "cache_read": 30, "cache_write": 40}})
+        self.assertEqual(st.headless_turns, 1)
+        self.assertEqual(st.tokens["claude-opus-5"]["input"], 16)
+
     def test_bounds_allow_one_point_of_rounding_per_window_piece(self):
         st = Stretch(T0, T0, delta_pct=10.0, windows=2, usd=10.0)
         self.assertEqual(st.bounds, (10 / 12, 10 / 8))

@@ -65,6 +65,24 @@ class TurnTests(unittest.TestCase):
             turns = list(iter_turns([p]))
         self.assertEqual([(t.id, t.remote) for t in turns], [("m1", True), ("m2", False)])
 
+    def test_a_headless_runs_own_turn_is_headless_and_its_sub_agents_are_not(self):
+        # `entrypoint` is on every line; a sub-agent's transcript sits under `subagents/`.
+        with tempfile.TemporaryDirectory() as d:
+            main = Path(d, "s.jsonl")
+            sub = Path(d, "s", "subagents", "agent-1.jsonl")
+            sub.parent.mkdir(parents=True)
+
+            def line(mid, entrypoint):
+                r = json.loads(rec(mid))
+                r["entrypoint"] = entrypoint
+                return json.dumps(r)
+            main.write_text("\n".join([line("h", "sdk-cli"), line("i", "cli")]) + "\n")
+            sub.write_text(line("s", "sdk-cli") + "\n")
+            turns = {t.id: t for t in iter_turns([main, sub])}
+        self.assertEqual({k: (t.entrypoint, t.subagent, t.headless) for k, t in turns.items()},
+                         {"h": ("sdk-cli", False, True), "i": ("cli", False, False),
+                          "s": ("sdk-cli", True, False)})
+
     def test_paths_filtered_by_mtime(self):
         with tempfile.TemporaryDirectory() as d:
             old = Path(d, "sub", "old.jsonl")
