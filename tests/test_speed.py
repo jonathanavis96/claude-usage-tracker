@@ -292,6 +292,19 @@ class HistoryTest(unittest.TestCase):
                            datetime(2026, 9, 23, tzinfo=timezone.utc))
             self.assertEqual([r["day"] for r in body2["rows"]], ["2026-09-20"])
 
+    def test_cli_refuses_an_unreadable_history(self):
+        # A torn write or a stopped rebase leaves the file unparseable. Read as absent,
+        # the run would rescan from the transcripts alone and drop every day they no
+        # longer reach; it must refuse and leave the bytes as they are.
+        with tempfile.TemporaryDirectory() as d:
+            hist = Path(d, "h.json")
+            hist.write_text(json.dumps({"method": speed.METHOD_ID, "rows": [row("2026-08-01", 7)]})[:-9])
+            before = hist.read_bytes()
+            extract = Path(d, "x.jsonl")
+            extract.write_text("\n".join(json.dumps({**x, "file": "f"}) for x in session(40, 70)) + "\n")
+            self.assertNotEqual(speed.main(["--lines", str(extract), "--history", str(hist)]), 0)
+            self.assertEqual(hist.read_bytes(), before)
+
     def test_an_older_method_rescans_everything(self):
         # A history written before speed kept every claude-* id lacks the new models'
         # rows on every day its transcripts still hold, not only the last two.

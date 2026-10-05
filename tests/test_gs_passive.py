@@ -694,3 +694,37 @@ class MeterLogBytesTests(unittest.TestCase):
             p.write_bytes(b"2026-10-02T01:40:00+02:00 5-hour 8% / 7-day 18%\n\xff\xfe junk\n"
                           b"2026-10-02T01:45:00+02:00 5-hour 9% / 7-day 18%\n")
             self.assertEqual([s.five_hour for s in _read(p, "ceiling", None)], [8.0, 9.0])
+
+
+class UnreadableOutTest(unittest.TestCase):
+    """An --out record that exists but cannot be parsed is never read as absent: its
+    stored speed rows would be rebuilt from the transcripts alone, losing every day
+    they no longer reach."""
+
+    def _run(self, text):
+        from unittest import mock
+
+        from tracker import gs_passive
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d, "gs-passive.json")
+            out.write_text(text)
+            before = out.read_bytes()
+            prices = Path(d, "prices.json")
+            prices.write_text("{}\n")
+            empty = {"accounts": {}, "changes": []}
+            with mock.patch.object(gs_passive, "gs_accounts", return_value={}), \
+                    mock.patch.object(gs_passive, "report", return_value=empty):
+                code = gs_passive.main(["--home", d, "--prices", str(prices),
+                                        "--probes", str(Path(d, "none.jsonl")), "--out", str(out)])
+            return code, before, out.read_bytes()
+
+    def test_truncated_out_is_refused_and_left_alone(self):
+        whole = json.dumps({"accounts": {}, "speed": {"rows": [{"day": "2026-08-01"}]}})
+        code, before, after = self._run(whole[:-7])
+        self.assertNotEqual(code, 0)
+        self.assertEqual(after, before)
+
+    def test_non_object_out_is_refused_and_left_alone(self):
+        code, before, after = self._run("[1, 2]\n")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(after, before)

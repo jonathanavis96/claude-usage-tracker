@@ -1102,6 +1102,11 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.calibrate and (a.since is None or a.until is None):
         ap.error("--calibrate requires --since and --until")
+    if a.out and not (a.calibrate or a.fit_output_weight):
+        from .speed import unreadable_record
+        if (refusal := unreadable_record(a.out)) is not None:
+            print(refusal, file=sys.stderr)
+            return 2
     accounts = {"masterrig": masterrig_account(a.home)} if a.masterrig else gs_accounts(a.home)
     if a.account:
         unknown = set(a.account) - set(accounts)
