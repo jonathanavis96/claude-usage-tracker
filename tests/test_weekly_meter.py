@@ -293,5 +293,121 @@ class CutBeforeSideTests(unittest.TestCase):
         self.assertEqual(out["weekly_change"]["per_account"]["a1"]["days_before"], 5)
 
 
+class CutRatioRouteTests(unittest.TestCase):
+    """ADR 0001 rule 15: the 14 September ratio route (windows per week times the window) is
+    read on the direct weekly test's own sides, selection, unit and estimator, so on one set
+    of readings it equals credits per 1% of the seven-day meter by identity."""
+
+    AUG = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    STEP = datetime(2026, 9, 14, 11, 30, tzinfo=timezone.utc)
+    NEXT = datetime(2026, 9, 22, 19, 41, tzinfo=timezone.utc)
+
+    def block(self):
+        return {"regimes": [regime(self.AUG, self.STEP - timedelta(minutes=10)),
+                            regime(self.STEP, datetime(2026, 10, 5, tzinfo=timezone.utc))],
+                "step": {"onset": "2026-09-14"}}
+
+    @staticmethod
+    def window(t, d5, d7=1.0):
+        return {"window_ending": t.isoformat(), "five_hour_pct": d5, "seven_day_pct": d7,
+                "pieces": 1, "account": "a2"}
+
+    @staticmethod
+    def stretch(t, credits_per_pct, delta=6.0, **extra):
+        return {"start": (t - timedelta(hours=4)).isoformat(), "end": (t - timedelta(hours=1)).isoformat(),
+                "delta_pct": delta, "tokens": {"claude-opus-5": {"output": credits_per_pct * delta}},
+                "status": "accepted", **extra}
+
+    def history(self, wpw_before=6.0, wpw_after=4.5, win_before=1000.0, win_after=1100.0):
+        windows, stretches = [], []
+        for day in range(20):  # 20 August to 8 September
+            for h in (6, 12, 18):
+                t = datetime(2026, 8, 20, h, tzinfo=timezone.utc) + timedelta(days=day)
+                windows.append(self.window(t, wpw_before))
+                stretches.append(self.stretch(t, win_before))
+        for day in range(6):  # 15 to 20 September
+            for h in (6, 12, 18):
+                t = datetime(2026, 9, 15, h, tzinfo=timezone.utc) + timedelta(days=day)
+                windows.append(self.window(t, wpw_after))
+                stretches.append(self.stretch(t, win_after))
+        return windows, stretches
+
+    def route(self, windows, stretches, raw=None, clean=None, runs=()):
+        max20 = {"by_window": windows, "by_account": {"a2": self.block()}}
+        return C.cut_ratio_route({"jwork": stretches}, list(runs), value, {"jwork": "a2"},
+                                 {"jwork": raw or []}, {"jwork": clean or []}, max20, self.NEXT)
+
+    def test_the_product_of_its_factors_on_the_direct_tests_sides(self):
+        out = self.route(*self.history())
+        row = out["per_account"]["a2"]
+        self.assertAlmostEqual(row["windows_per_week_ratio"], 0.75, places=4)
+        self.assertAlmostEqual(row["window_ratio"], 1.1, places=4)
+        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
+        self.assertEqual(row["change_pct"], -17.5)
+        lo, hi = row["ratio_interval"]
+        self.assertLess(lo, 0.825)
+        self.assertGreater(hi, 0.825)
+        # The sides are the direct weekly test's own instants.
+        sides = C.cut_weekly_sides(self.block(), self.NEXT)
+        self.assertEqual((row["before_from"], row["before_until"], row["after_from"], row["after_until"]),
+                         tuple(C._utc(x) for x in sides))
+        self.assertEqual(out["accounts"], ["a2"])
+        self.assertAlmostEqual(out["ratio_after_over_before"], 0.825, places=4)
+
+    def test_the_window_factor_is_in_metered_tokens(self):
+        # Rule 12 weights a stretch's headless tokens on the five-hour figures it publishes; the
+        # meter ratio beside it counts raw five-hour points, so the compound reads metered tokens.
+        windows, stretches = self.history()
+        weighted = []
+        for st in stretches:
+            if st["start"] >= "2026-09-15":
+                st = dict(st, metered_tokens=st["tokens"],
+                          tokens={"claude-opus-5": {"output": st["tokens"]["claude-opus-5"]["output"] * 1.5}},
+                          headless_tokens={"claude-opus-5": {"output": 1}})
+            weighted.append(st)
+        row = self.route(windows, weighted)["per_account"]["a2"]
+        self.assertAlmostEqual(row["window_ratio"], 1.1, places=4)
+
+    def test_nothing_outside_the_sides_enters(self):
+        windows, stretches = self.history()
+        late = self.NEXT + timedelta(days=2)
+        early = datetime(2026, 8, 13, tzinfo=timezone.utc)  # before PLAN_CHANGE_AT
+        windows += [self.window(late, 40.0), self.window(early, 40.0)]
+        stretches += [self.stretch(late, 9000.0), self.stretch(early, 9000.0)]
+        row = self.route(windows, stretches)["per_account"]["a2"]
+        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
+
+    def test_what_the_weekly_selection_leaves_out_the_ratio_leaves_out(self):
+        windows, stretches = self.history()
+        t = datetime(2026, 9, 10, 9, tzinfo=timezone.utc)
+        # A five-hour window whose hours a rejected seven-day step covers, a stretch the
+        # status gate fails, a cloud stretch and one under a harness run.
+        windows.append(self.window(t, 40.0))
+        raw = [{"start": (t - timedelta(hours=2)).isoformat(), "end": (t - timedelta(hours=1)).isoformat()}]
+        stretches += [self.stretch(t, 9000.0, status="unaccounted"),
+                      self.stretch(t + timedelta(hours=1), 9000.0, cloud_session=True),
+                      self.stretch(t + timedelta(hours=2), 9000.0)]
+        run = C.HarnessRun("jwork", t - timedelta(hours=3), t + timedelta(hours=1, minutes=30), "probe")
+        row = self.route(windows, stretches, raw=raw, clean=[], runs=[run])["per_account"]["a2"]
+        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
+        self.assertEqual(row["before"]["n_windows_left_out"], 1)
+
+    def test_an_own_step_before_the_cut_opens_the_after_side_there(self):
+        # The account's own step (11:30) is its split, as in the direct test: a window ending
+        # at 13:00 is after it, not a window straddling CUT_AT.
+        windows, stretches = self.history()
+        windows.append(self.window(datetime(2026, 9, 14, 13, tzinfo=timezone.utc), 4.5))
+        row = self.route(windows, stretches)["per_account"]["a2"]
+        self.assertEqual(row["after"]["n_windows"], 19)
+
+    def test_an_account_with_too_few_stretches_a_side_is_not_measured(self):
+        windows, stretches = self.history()
+        stretches = [st for st in stretches if st["start"] < "2026-09-15"] + \
+            [st for st in stretches if st["start"] >= "2026-09-15"][:C.FIVE_HOUR_MIN_SIDE - 1]
+        out = self.route(windows, stretches)
+        self.assertEqual(out["per_account"], {})
+        self.assertIsNone(out["ratio_after_over_before"])
+
+
 if __name__ == "__main__":
     unittest.main()

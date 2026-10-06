@@ -29,11 +29,18 @@ failures, an empty list when it holds.
    step) - 1, and none is drawn by dividing by a window carried across a withheld change.
 9. `one_figure_per_change`: no two charts or published changes label one dated change with
    different percents for the same metric.
+10. `weekly_routes_agree`: on each certified weekly event, the direct weekly change
+   (`five_hour_window_credits.direct_tests.weekly_change`) and the ratio route
+   (`tokens_per_week_change`, windows per week times the window) agree, per account and
+   combined, within their combined interval: their log difference is no more than the root
+   sum of squares of their two log half-widths. On identical readings the two are one
+   quantity (ADR 0001 rule 15); on 2026-10-06 the page put 14 September at -9.9% one way and
+   -28.0% the other.
 
 Checks 7-9 read the steps the page draws the way it draws them (`chart_steps`); on
 2026-10-05 the page said "+30%" in its headline and "+32%" on two charts for 22 September.
 
-A failure of checks 1-6 does NOT block the publish (exit 1). A failure of checks 7-9
+A failure of checks 1-6 or 10 does NOT block the publish (exit 1). A failure of checks 7-9
 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change. bin/daily.sh runs
 this after the publish, beside tracker.publish_gate, with the same incident semantics
@@ -527,6 +534,52 @@ def one_figure_per_change(doc: dict) -> list[str]:
     return out
 
 
+def _log_reach(pct: float, interval: list | None) -> tuple[float, float] | None:
+    """(log ratio, log half-width) of a change in percent with its percent interval."""
+    if pct is None or not interval or None in interval or min(interval) <= -100:
+        return None
+    lo, hi = (math.log(1 + x / 100) for x in interval)
+    return math.log(1 + pct / 100), (hi - lo) / 2
+
+
+def weekly_routes_agree(doc: dict) -> list[str]:
+    """Check 10: a certified weekly event's two routes to the weekly change agree.
+
+    The direct route is credits per 1% of the seven-day meter either side
+    (`direct_tests.weekly_change`); the ratio route is windows per week times the window
+    (`tokens_per_week_change`). Per account (where the direct test combined it) and for the
+    combined figures, the gap in log terms must be within the root sum of squares of the two
+    log half-widths. An event without both routes is not read.
+    """
+    out = []
+    for e in doc.get("events") or []:
+        if e.get("scope") != "weekly" or e.get("evidence_quality") != "certified":
+            continue
+        direct = (((e.get("five_hour_window_credits") or {}).get("direct_tests") or {})
+                  .get("weekly_change") or {})
+        ratio = e.get("tokens_per_week_change") or {}
+        if not direct or not ratio:
+            continue
+        pairs = [("combined", (direct.get("change_pct"), direct.get("interval_pct")),
+                  (ratio.get("signed_pct"), ratio.get("signed_interval_pct")))]
+        for label, r in sorted((ratio.get("per_account") or {}).items()):
+            d = (direct.get("per_account") or {}).get(label) or {}
+            if d.get("combined"):
+                pairs.append((label, (d.get("change_pct"), d.get("interval_pct")),
+                              (r.get("signed_pct"), r.get("signed_interval_pct"))))
+        for who, (dp, di), (rp, ri) in pairs:
+            a, b = _log_reach(dp, di), _log_reach(rp, ri)
+            if a is None or b is None:
+                continue
+            gap, reach = abs(a[0] - b[0]), math.hypot(a[1], b[1])
+            if gap > reach:
+                out.append(f"The {e.get('date')} weekly change ({who}) is {dp:+.1f}% {list(di)} on the "
+                           f"seven-day meter directly but {rp:+.1f}% {list(ri)} as windows per week "
+                           f"times the window: {gap:.3f} apart in log terms, beyond their combined "
+                           f"interval of {reach:.3f}.")
+    return out
+
+
 CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_inside_accounts", headline_inside_accounts),
     ("no_unproven_step", no_unproven_step),
@@ -537,6 +590,7 @@ CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_matches_chart", headline_matches_chart),
     ("windows_per_week_implied", windows_per_week_implied),
     ("one_figure_per_change", one_figure_per_change),
+    ("weekly_routes_agree", weekly_routes_agree),
 ]
 #: The checks whose failure stops the page being published (exit 2): figures that contradict
 #: each other on the page itself. The rest alert and publish anyway (exit 1).

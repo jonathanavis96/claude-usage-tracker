@@ -1930,35 +1930,34 @@ class SameAccountChangeTests(unittest.TestCase):
         self.assertAlmostEqual(sum(a["weight"] for a in note["per_account"].values()), 1.0, places=3)
 
 
-def ratio_note(**accounts):
-    """A windows_per_week_ratio note carrying only what _tokens_per_week_change reads:
-    each paired account's own ratio (after over before), its interval and its weight."""
-    return {"per_account": {label: {"ratio_after_over_before": ratio, "ratio_interval": list(interval),
-                                    "weight": weight}
-                            for label, (ratio, interval, weight) in accounts.items()}}
+def ratio_route(**accounts):
+    """An across-the-cut block carrying only what _tokens_per_week_change reads: the
+    ratio route (`credit_model.cut_ratio_route`), each account's windows-per-week factor
+    with its interval, its window factor, and its weight, all read on one set of sides."""
+    per = {}
+    for label, (wpw, interval, window, weight) in accounts.items():
+        per[label] = {"windows_per_week_ratio": wpw, "windows_per_week_interval": list(interval),
+                      "window_ratio": window, "ratio_after_over_before": wpw * window,
+                      "ratio_interval": [interval[0] * window, interval[1] * window], "weight": weight}
+    return {"per_account": {}, "ratio_route": {"per_account": per}}
 
 
 class TokensPerWeekChangeTests(unittest.TestCase):
     """What a week's tokens did across the cut: windows per week compounded with the
-    five-hour window, each account against itself, then combined."""
+    five-hour window, both read on the same sides and in one unit (ADR 0001 rule 15),
+    each account against itself, then combined."""
 
-    RATIO_NOTE: ClassVar[dict] = ratio_note(a1=(0.75, (0.66, 0.85), 0.6),
-                                            a2=(0.782, (0.70, 0.87), 0.4))
-    ACROSS: ClassVar[dict] = {"per_account": {
-        "a1": {"change_pct": 17.2, "n_with_capture": 0, "n_before": 166, "n_after": 32},
-        "a2": {"change_pct": 8.6, "n_with_capture": 56, "n_before": 40, "n_after": 15},
-        "a3": {"change_pct": None, "n_with_capture": 19, "n_before": 0, "n_after": 18}}}
+    ACROSS: ClassVar[dict] = ratio_route(a2=(0.782, (0.70, 0.87), 1.086, 1.0))
+    BOTH: ClassVar[dict] = ratio_route(a1=(0.75, (0.66, 0.85), 0.92, 0.6),
+                                       a2=(0.782, (0.70, 0.87), 1.0, 0.4))
 
     UNSET: ClassVar[object] = object()
 
-    def change(self, note=UNSET, across=UNSET):
+    def change(self, across=UNSET):
         from tracker.publish import _tokens_per_week_change
-        return _tokens_per_week_change(self.RATIO_NOTE if note is self.UNSET else note,
-                                       self.ACROSS if across is self.UNSET else across)
+        return _tokens_per_week_change(self.ACROSS if across is self.UNSET else across)
 
     def test_the_two_measured_changes_compound(self):
-        # a1 has a windows-per-week change but no usable five-hour one, so only a2,
-        # which has both, carries the compound.
         out = self.change()
         self.assertEqual({k: out[k] for k in ("percent", "direction", "signed_pct", "windows_per_week_pct",
                                               "five_hour_window_pct", "five_hour_accounts", "accounts",
@@ -1971,10 +1970,8 @@ class TokensPerWeekChangeTests(unittest.TestCase):
         self.assertIn("windows_per_week_pct", out["method"])
 
     def test_the_arithmetic_is_the_published_numbers_own(self):
-        both = {"per_account": {"a1": {"change_pct": -8.0, "n_with_capture": 9, "n_before": 30, "n_after": 20},
-                                "a2": {"change_pct": 0.0, "n_with_capture": 9, "n_before": 30, "n_after": 20}}}
-        for across in (self.ACROSS, both):
-            with self.subTest(accounts=sorted(across["per_account"])):
+        for across in (self.ACROSS, self.BOTH):
+            with self.subTest(accounts=sorted(across["ratio_route"]["per_account"])):
                 out = self.change(across=across)
                 expected = ((1 + out["windows_per_week_pct"] / 100)
                             * (1 + out["five_hour_window_pct"] / 100) - 1) * 100
@@ -1982,9 +1979,7 @@ class TokensPerWeekChangeTests(unittest.TestCase):
                 self.assertEqual(out["percent"], round(abs(out["signed_pct"])))
 
     def test_two_accounts_combine_by_weight_in_log_terms(self):
-        both = {"per_account": {"a1": {"change_pct": -8.0, "n_with_capture": 9, "n_before": 30, "n_after": 20},
-                                "a2": {"change_pct": 0.0, "n_with_capture": 9, "n_before": 30, "n_after": 20}}}
-        out = self.change(across=both)
+        out = self.change(across=self.BOTH)
         log = 0.6 * math.log(0.75 * 0.92) + 0.4 * math.log(0.782)
         self.assertAlmostEqual(out["signed_pct"], (math.exp(log) - 1) * 100, delta=0.1)
         lo = 0.6 * math.log(0.66 * 0.92) + 0.4 * math.log(0.70)
@@ -1994,34 +1989,22 @@ class TokensPerWeekChangeTests(unittest.TestCase):
         self.assertEqual(out["per_account"]["a1"]["signed_pct"], round((0.75 * 0.92 - 1) * 100, 1))
         self.assertEqual(out["accounts"], ["a1", "a2"])
 
-    def test_an_account_with_a_five_hour_change_but_no_windows_change_of_its_own_is_left_out(self):
-        # a3 reads a five-hour change, but its meter log starts after the cut, so it has
-        # no windows-per-week change of its own and cannot enter the compound.
-        across = {"per_account": dict(self.ACROSS["per_account"],
-                                      a3={"change_pct": 30.0, "n_with_capture": 19,
-                                          "n_before": 20, "n_after": 18})}
-        self.assertEqual(self.change(across=across)["signed_pct"], self.change()["signed_pct"])
-        self.assertEqual(self.change(across=across)["accounts"], ["a2"])
+    def test_the_across_cut_medians_are_not_read(self):
+        # The headless-weighted medians in `per_account` are the five-hour figure the page
+        # publishes; the compound never multiplies them into the raw meter ratio.
+        across = dict(self.ACROSS, per_account={
+            "a2": {"change_pct": 40.0, "n_with_capture": 56, "n_before": 40, "n_after": 15}})
+        self.assertEqual(self.change(across=across), self.change())
 
     def test_a_rise_reads_as_a_rise(self):
-        out = self.change(note=ratio_note(a2=(1.10, (1.0, 1.2), 1.0)),
-                          across={"per_account": {"a2": {"change_pct": 5.0, "n_with_capture": 4,
-                                                         "n_before": 10, "n_after": 10}}})
+        out = self.change(across=ratio_route(a2=(1.10, (1.0, 1.2), 1.05, 1.0)))
         self.assertEqual((out["direction"], out["signed_pct"], out["percent"]),
                          ("increased", 15.5, 16))
 
-    def test_with_no_account_able_to_state_a_five_hour_change_there_is_no_figure(self):
-        blind = {"per_account": {"a1": {"change_pct": 17.2, "n_with_capture": 0,
-                                        "n_before": 166, "n_after": 32}}}
-        self.assertIsNone(self.change(across=blind))
-        for empty in (None, {}, {"per_account": {}}):
+    def test_with_no_ratio_route_there_is_no_figure(self):
+        for empty in (None, {}, {"per_account": {}}, {"ratio_route": {"per_account": {}}}):
             with self.subTest(across=empty):
                 self.assertIsNone(self.change(across=empty))
-
-    def test_with_no_windows_per_week_change_there_is_no_figure(self):
-        # Two regimes are what a before-and-after change is taken from; with one there
-        # is no note, and nothing is published in its place.
-        self.assertIsNone(self.change(note=None))
 
     def test_last_change_carries_the_same_object_as_the_event(self):
         from tracker.detect import ChangeEvent
