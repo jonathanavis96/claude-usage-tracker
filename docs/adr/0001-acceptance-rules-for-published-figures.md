@@ -302,6 +302,28 @@ These are the acceptance rules. Each names where it lives.
     `_align_markers`, `_event_record`), `tracker/invariants.py` (`one_figure_per_change`,
     `_event_off_its_marker`).
 
+18. **A per-week row's window and week read one span of each account's history, added
+    2026-10-06.** A `per_week_regimes` row's windows per week is its week over its window,
+    with its interval the week's ends over the window's opposite ends. Both are therefore read
+    over the same span of each account's history: a stretch enters the window cluster
+    (`window_credits`, `window_tokens`, every window regime) only where the account's
+    seven-day steps are read for the row's week (`weekly_meter.clean_steps`, the
+    `masterrig_excluded` gate without `whole_history`), on top of the capture test it already
+    passes. So Max account 1 enters the window from `MASTERRIG_FROM`, as it enters the rows'
+    weeks and the rate fits. The rule names no account and no date of its own: it reuses the
+    gate the weeks already apply, and moves with it.
+    Before this rule the window cluster read Max account 1's whole capture-accepted history.
+    One pure-Opus stretch from 2 September, inside the takeoff-pipeline days
+    (`MASTERRIG_PHANTOM`), read 86,003 credits per 1% against 175,934 to 208,197 for the ten
+    Max account 2 stretches beside it. As the before window's lowest reading (173.5M tokens
+    against a median of 673.6M) it set the first row's windows-per-week interval at
+    [3.99, 20.75] around 5.11, and the 14 September event's interval at [-82.8, +388.0]%.
+    The row's week (interval within 6% of its value) and its readings were not the cause:
+    none of them starts before `PLAN_CHANGE_AT`, and the per-week figure never reads the
+    five-hour windows of 15-18 August.
+    Source: `tracker/credits.py` (`window_stretches`, `selection_sentence`),
+    `tracker/publish.py` (the `window_stretches` call).
+
 ### Pending
 
 14. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a

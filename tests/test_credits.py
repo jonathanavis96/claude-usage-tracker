@@ -560,6 +560,40 @@ class RateFitSelectionTests(unittest.TestCase):
         self.assertEqual(kept["jwork"], [early])
 
 
+class WindowSelectionTests(unittest.TestCase):
+    """The window cluster's selection reads each account over its weeks' own history (rule 18)."""
+
+    def _s(self, start, end, **fields):
+        return dict(stretch(start, {"claude-opus-5": tok(input=1_000_000)}), end=end, **fields)
+
+    def test_masterrig_counts_from_six_september_as_its_seven_day_steps_do(self):
+        phantom = self._s("2026-09-02T01:41:00+00:00", "2026-09-02T14:26:00+00:00")
+        august = self._s("2026-08-20T00:00:00+00:00", "2026-08-20T05:00:00+00:00")
+        late = self._s("2026-09-07T00:00:00+00:00", "2026-09-07T05:00:00+00:00")
+        kept = C.window_stretches({"masterrig": [august, phantom, late], "jwork": [phantom]}, [])
+        self.assertEqual(kept["masterrig"], [late])
+        self.assertEqual(kept["jwork"], [phantom])
+
+    def test_the_gate_is_the_one_the_rows_week_reads_its_steps_through(self):
+        from tracker import weekly_meter
+        spans = [("2026-08-20T00:00:00+00:00", "2026-08-20T05:00:00+00:00"),
+                 ("2026-09-02T01:41:00+00:00", "2026-09-02T14:26:00+00:00"),
+                 ("2026-09-05T22:00:00+00:00", "2026-09-06T02:00:00+00:00"),
+                 ("2026-09-07T00:00:00+00:00", "2026-09-07T05:00:00+00:00")]
+        for start, end in spans:
+            kept = C.window_stretches({"masterrig": [self._s(start, end)]}, [])["masterrig"]
+            steps = weekly_meter.clean_steps({"masterrig": [{"start": start, "end": end}]},
+                                             [])["masterrig"]
+            self.assertEqual(bool(kept), bool(steps), start)
+
+    def test_it_keeps_the_capture_test_and_every_other_account_as_before(self):
+        early = self._s("2026-08-20T00:00:00+00:00", "2026-08-20T05:00:00+00:00")
+        unaccounted = dict(early, capture_status="unaccounted")
+        by_account = {"jwork": [early, unaccounted], "dave": [early]}
+        self.assertEqual(C.window_stretches(by_account, []),
+                         C.clean_stretches(by_account, [], require="capture_status"))
+
+
 def _published(gs=None, masterrig=None, passive=None, effort_meta=None, prices=None,
                model_rates=None):
     """A public JSON built over planted stretches, with everything else minimal."""
@@ -863,6 +897,24 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertEqual(window["n"], 3)
         self.assertEqual(window["accounts"]["a1"]["n"], 0)
         self.assertEqual(window["value"], 20_000_000)
+
+    def test_the_window_reads_the_third_account_over_its_weeks_own_history(self):
+        """ADR 0001 rule 18: a stretch from before MASTERRIG_FROM prices no window regime.
+
+        On 2 September the takeoff pipeline was running on the account; one capture-accepted
+        pure-Opus stretch from that day read 86k credits per 1% against 176k-208k on the other
+        account, and as the before window's lowest reading it set the first windows-per-week
+        row's upper end at 20.75 against a level of 5.11.
+        """
+        masterrig = report("masterrig", [opus_stretch("2026-09-02T02:00:00+00:00", 86_000),
+                                         opus_stretch("2026-09-06T00:00:00+00:00", 150_000)])
+        credits = _published(gs=self.gs, masterrig=masterrig)["credits"]
+        window = credits["window_credits"]
+        self.assertEqual(window["n"], 4)
+        self.assertEqual(window["accounts"]["a1"]["n"], 1)
+        self.assertEqual(window["accounts"]["a1"]["interval"], [15_000_000, 15_000_000])
+        self.assertEqual(credits["window_tokens"]["accounts"]["a1"]["n"], 1)
+        self.assertIn("from 6 September", window["method"])
 
     def test_no_account_name_reaches_the_public_json(self):
         masterrig = report("masterrig", [opus_stretch("2026-09-06T00:00:00+00:00", 150_000)])

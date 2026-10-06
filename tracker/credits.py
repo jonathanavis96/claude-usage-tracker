@@ -658,6 +658,27 @@ def rate_fit_stretches(by_account: dict[str, list[dict]],
     return {account: [st for st in rows if not spans_cut(st)] for account, rows in kept.items()}
 
 
+def window_stretches(by_account: dict[str, list[dict]],
+                     runs: list[HarnessRun]) -> dict[str, list[dict]]:
+    """The selection the window cluster (`window_credits`, `window_tokens`) is read over.
+
+    `clean_stretches` with the capture test on every account, and each account over the
+    span of its history its seven-day steps are read over (`weekly_meter.clean_steps`,
+    `masterrig_excluded` without `whole_history`): masterrig from MASTERRIG_FROM. A
+    per-week row's windows per week is its week over its window, so the two are read over
+    one span of each account's history (ADR 0001 rule 18). Before this, one masterrig
+    stretch from 2 September, inside MASTERRIG_PHANTOM, read 86k credits per 1% against
+    176k-208k on jwork and set the first row's windows-per-week interval at [3.99, 20.75].
+    A stretch spanning the cut stays in: `cut_side` files it by its start, as before.
+    """
+    kept = clean_stretches(by_account, runs, require="capture_status")
+    return {account: [st for st in rows
+                      if not (st.get("start") and st.get("end")
+                              and masterrig_excluded(account, datetime.fromisoformat(st["start"]),
+                                                     datetime.fromisoformat(st["end"]), False))]
+            for account, rows in kept.items()}
+
+
 def pure_family_rows(clean: dict[str, list[dict]], credits: dict, fam: str,
                      weight: float | None = None) -> dict[str, list[dict]]:
     """Per account, the stretches whose every model belongs to `fam`, priced per 1%.
@@ -695,7 +716,8 @@ def selection_sentence(min_delta_pct: float = MIN_DELTA_PCT) -> str:
     """
     return (f"A stretch counts when it moved the meter at least {min_delta_pct:g}%, carries "
             f"tokens, does not overlap one of the tracker's own runs on its own account (a "
-            f"probe row or the effort-matrix run), and reads capture_status 'accepted'.")
+            f"probe row or the effort-matrix run), and reads capture_status 'accepted'. The "
+            f"Max account 1 counts from 6 September, as its seven-day steps do.")
 
 
 def five_hour_window_changes(across: dict | None) -> dict[str, float]:
