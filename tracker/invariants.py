@@ -36,11 +36,17 @@ failures, an empty list when it holds.
    sum of squares of their two log half-widths. On identical readings the two are one
    quantity (ADR 0001 rule 15); on 2026-10-06 the page put 14 September at -9.9% one way and
    -28.0% the other.
+11. `detected_windows_per_week_agree`: the windows-per-week levels the detector finds on the
+   meters (`weekly_windows.max20.regimes`, interactive-equivalent, ADR 0001 rule 16) agree
+   with the week over the window (`per_week_regimes` `windows_per_week`, rule 11): each
+   per-week row, read against the detected level it overlaps longest, within the root sum of
+   squares of their two log half-widths. Before rule 16 the detector read the raw meter
+   ratio, which moves with an account's headless share and not only with a limit.
 
 Checks 7-9 read the steps the page draws the way it draws them (`chart_steps`); on
 2026-10-05 the page said "+30%" in its headline and "+32%" on two charts for 22 September.
 
-A failure of checks 1-6 or 10 does NOT block the publish (exit 1). A failure of checks 7-9
+A failure of checks 1-6, 10 or 11 does NOT block the publish (exit 1). A failure of checks 7-9
 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change. bin/daily.sh runs
 this after the publish, beside tracker.publish_gate, with the same incident semantics
@@ -580,6 +586,57 @@ def weekly_routes_agree(doc: dict) -> list[str]:
     return out
 
 
+def _span(start: str | None, end: str | None, lo: datetime, hi: datetime) -> tuple[datetime, datetime]:
+    """A row's span with its open ends clamped to (lo, hi)."""
+    return (datetime.fromisoformat(start) if start else lo, datetime.fromisoformat(end) if end else hi)
+
+
+def detected_windows_per_week_agree(doc: dict) -> list[str]:
+    """Check 11: the detector's windows-per-week levels agree with the week over the window.
+
+    Both are windows per week in interactive-equivalent units (ADR 0001 rules 11 and 16): one
+    read on the meters (`weekly_windows.max20.regimes`), one derived from the weekly limit on
+    the seven-day meter and the window on the five-hour meter (`per_week_regimes`). Each
+    per-week row with an interval is read against the detected level whose span overlaps it
+    longest; their log gap must be within the root sum of squares of their log half-widths.
+    A level or a row without a bounded interval is not read.
+    """
+    detected = [r for r in ((doc.get("weekly_windows") or {}).get("max20") or {}).get("regimes") or []
+                if r.get("windows") and r.get("start") and r.get("end")]
+    weeks = [r for r in _wt(doc).get("per_week_regimes") or []
+             if r.get("windows_per_week") and r.get("windows_per_week_interval")]
+    if not detected or not weeks:
+        return []
+    lo = min(datetime.fromisoformat(r["start"]) for r in detected)
+    hi = max(datetime.fromisoformat(r["end"]) for r in detected)
+    out = []
+    for row in weeks:
+        a, b = _span(row.get("from"), row.get("until"), lo, hi)
+        overlap = [(min(b, e) - max(a, s), r) for r in detected
+                   for s, e in [_span(r["start"], r["end"], lo, hi)]]
+        span, level = max(overlap, key=lambda x: x[0])
+        if span.total_seconds() <= 0:
+            continue
+        d = _log_reach((level["windows"] - 1) * 100,
+                       [(x - 1) * 100 if x is not None else None
+                        for x in level.get("rounding_interval") or []])
+        w = _log_reach((row["windows_per_week"] - 1) * 100,
+                       [(x - 1) * 100 if x is not None else None
+                        for x in row["windows_per_week_interval"]])
+        if d is None or w is None:
+            continue
+        gap, reach = abs(d[0] - w[0]), math.hypot(d[1], w[1])
+        if gap > reach:
+            iv = level["rounding_interval"]
+            out.append(f"The detector's windows per week from {level['start'][:10]} is "
+                       f"{level['windows']:g} [{iv[0]:g}, {iv[1]:g}], but the week over the window "
+                       f"from {(row.get('from') or 'the start')[:10]} is "
+                       f"{row['windows_per_week']:g} {list(row['windows_per_week_interval'])}: "
+                       f"{gap:.3f} apart in log terms, beyond their combined interval of "
+                       f"{reach:.3f}.")
+    return out
+
+
 CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_inside_accounts", headline_inside_accounts),
     ("no_unproven_step", no_unproven_step),
@@ -591,6 +648,7 @@ CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("windows_per_week_implied", windows_per_week_implied),
     ("one_figure_per_change", one_figure_per_change),
     ("weekly_routes_agree", weekly_routes_agree),
+    ("detected_windows_per_week_agree", detected_windows_per_week_agree),
 ]
 #: The checks whose failure stops the page being published (exit 2): figures that contradict
 #: each other on the page itself. The rest alert and publish anyway (exit 1).

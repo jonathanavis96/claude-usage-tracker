@@ -495,6 +495,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # untouched, and so is everything else that reads the raw histories.
     five_hour_meter = _five_hour_meter(gs_passive, masterrig_passive, credits, model_rates)
     factor = five_hour_weight.factor_of(five_hour_meter)
+    # The valuation the factor was fitted with, which reads each window's headless share too.
+    five_hour_value = credit_model.comparison_value(credits, model_rates)
     # The factor the per-family rates were fitted at (tools/model_rates.py `five_hour_unit`):
     # rates fitted in another unit price a headless-heavy family wrongly in every test.
     five_hour_meter["model_rates_fitted_at"] = ((model_rates or {}).get("five_hour_unit") or {}).get(
@@ -712,7 +714,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         history[model] = hist
 
     weekly_windows, weekly_events = _weekly_block(passive.get("weekly_windows"), probe_weekly, now,
-                                                  gs_passive=gs_passive)
+                                                  gs_passive=gs_passive,
+                                                  masterrig_passive=masterrig_passive,
+                                                  five_hour=(factor, five_hour_value))
     # The cache split the session figures assume is the watched accounts' own, from
     # history/passive.json. An archive or a fixture without one falls back to the frozen
     # reference mix and says which it used, rather than publishing a session count whose
@@ -1392,7 +1396,9 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     steps = weekly_meter.clean_steps(weekly_meter.steps_by_account(gs_passive, masterrig_passive),
                                      runs, by_account)
     compare = credit_model.comparison_value(credits, model_rates)
-    step_rows = {labels.get(name, name): weekly_meter.valued(rows, compare)
+    # The steps' five-hour points in the unit windows per week is in (ADR 0001 rule 16).
+    factor = weekly["max20"].get("headless_factor")
+    step_rows = {labels.get(name, name): weekly_meter.valued(rows, compare, factor)
                  for name, rows in steps.items()}
     meters = credit_model.five_hour_on_meters(announced, weekly["max20"], step_rows)
     # The five-hour change across the cut, its after side ending at the first measured
@@ -1413,7 +1419,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         whole = weekly_meter.clean_steps(raw_steps, runs, by_account, whole_history=True)
         cut["direct_tests"] = credit_model.cut_direct_tests(
             by_account, runs, compare, labels,
-            {labels.get(name, name): weekly_meter.valued(rows, compare)
+            {labels.get(name, name): weekly_meter.valued(rows, compare, factor)
              for name, rows in whole.items()},
             weekly["max20"], min(after_cut, default=None))
         # The same change read as windows per week times the window, on the direct test's own
@@ -1584,10 +1590,31 @@ def _account_window_dicts(passive_points: list[dict],
 
 
 def _point_tuples(points: list[dict], label: str) -> list[tuple]:
-    """Window-point dicts as the (window_ending, d5, d7, pieces, account) tuples
-    the detector takes."""
+    """Window-point dicts as the (window_ending, d5, d7, pieces, account, raw d5) tuples
+    the detector takes: d5 in interactive-equivalent units where the point was weighted
+    (`_interactive_windows`), raw d5 the meter's own movement, for its rounding."""
     return [(datetime.fromisoformat(p["window_ending"]), p["five_hour_pct"], p["seven_day_pct"],
-             p.get("pieces", 1), label) for p in points]
+             p.get("pieces", 1), label, p.get("raw_five_hour_pct")) for p in points]
+
+
+def _interactive_windows(account_dicts: dict[str, list[dict]], gs_passive: dict | None,
+                         masterrig_passive: dict | None, factor: float | None,
+                         value) -> dict[str, list[dict]]:
+    """Each account's window points in interactive-equivalent units (ADR 0001 rule 16).
+
+    The five-hour meter moves `factor` times as far per credit of headless work as of
+    interactive work, and the seven-day meter does not (rule 12), so a raw meter ratio moves
+    when an account's headless share does, with no limit change. Each window is divided by
+    its own headless inflation, read from the account's seven-day steps and stretches
+    (`five_hour_weight.interactive_windows`), and keeps the meter's own figures as `raw_*`.
+    """
+    steps = weekly_meter.steps_by_account(gs_passive, masterrig_passive)
+    stretches = credit_model.stretches_by_account(gs_passive, masterrig_passive)
+    names = {label: name for name, label in ACCOUNT_LABELS}
+    return {label: five_hour_weight.interactive_windows(
+                pts, steps.get(names.get(label), []), stretches.get(names.get(label), []),
+                value, factor)
+            for label, pts in account_dicts.items()}
 
 
 def _account_block(points: list[tuple], now: datetime) -> dict:
@@ -1632,8 +1659,10 @@ def _pooled_weeks(points: list[tuple], now: datetime) -> list[dict]:
     for week_ending in sorted(weeks):
         pool = weeks[week_ending]
         d5, d7 = sum(p[1] for p in pool), sum(p[2] for p in pool)
+        raw = sum(p[5] if len(p) > 5 and p[5] is not None else p[1] for p in pool)
         lo, hi = pooled_interval(pool)
         rows.append({"week_ending": week_ending, "windows": round(d5 / d7, 2) if d7 > 0 else None,
+                     "raw_windows": round(raw / d7, 2) if d7 > 0 else None,
                      "rounding_interval": [round(x, 4) if x is not None else None
                                            for x in (lo, hi)],
                      "n": len(pool), "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1),
@@ -1732,7 +1761,8 @@ def _week_open_now(h: dict, now: datetime) -> dict:
 
 
 def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime,
-                  gs_passive: dict | None = None) -> tuple[dict, list]:
+                  gs_passive: dict | None = None, masterrig_passive: dict | None = None,
+                  five_hour: tuple | None = None) -> tuple[dict, list]:
     """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
 
     `max20` is the live plan, and since 2026-09-20 it is measured over every
@@ -1743,7 +1773,11 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     pooled points. `by_account` carries each account's own count, current,
     regimes and step, because the weekly cut reaches each account at its own
     seven-day reset and the pooled series dates it at whichever stepped first;
-    the pooled event is re-dated from those onsets (_account_dated).
+    the pooled event is re-dated from those onsets (_account_dated). Every max20 window
+    point is in interactive-equivalent units (`_interactive_windows`, ADR 0001 rule 16): its
+    five-hour movement over its headless inflation, the meter's own kept as `raw_*`, so
+    everything computed from them -- the detector, the regimes, the paired step and the
+    account blocks -- reads windows per week in the unit the window and the week are in.
 
     `max5` is measured history: its weekly rows and regimes are the account's own
     Jun-Aug Max 5x era, and its last regime begins before PLAN_CHANGE, a date
@@ -1773,6 +1807,12 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     points = passive_weekly.get("by_window", [])
     legacy_only = bool(points) and not any(_repaired(p) for p in points)
     account_dicts = _account_window_dicts(points, gs_passive)
+    # Windows per week is in interactive-equivalent units, as the window and the week are
+    # (ADR 0001 rule 16). `five_hour` is (the fitted headless factor, the valuation it was
+    # fitted with); without it the points are the meter's own.
+    factor = five_hour[0] if five_hour else None
+    if five_hour:
+        account_dicts = _interactive_windows(account_dicts, gs_passive, masterrig_passive, *five_hour)
     by_account = {label: _account_block(_point_tuples(account_dicts[label], label), now)
                   for _name, label in ACCOUNT_LABELS}
     max20_points = sorted((p for label in by_account
@@ -1818,6 +1858,9 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                   "weekly": _pooled_weeks(max20_points, now), "by_window": max20_by_window,
                   "by_account": by_account,
                   "regimes": regimes, "regimes_pooled_all_accounts": pooled_regimes,
+                  "unit": "interactive_equivalent" if five_hour else "meter",
+                  "headless_factor": factor,
+                  "unit_method": five_hour_weight.WINDOWS_METHOD if five_hour else None,
                   "assumed": False,
                   "availability": max20_availability},
         "max5": {**inferred("max5"), "history": max5_history, "regimes": _regimes(max5_points),

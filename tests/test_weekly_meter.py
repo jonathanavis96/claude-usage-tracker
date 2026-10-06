@@ -169,6 +169,18 @@ class LevelTests(unittest.TestCase):
         self.assertAlmostEqual(lvl["windows_per_week_meters"], 5.0)
         self.assertEqual(W.level({"a1": a, "a2": b}, "t"), lvl)  # reproducible
 
+    def test_a_steps_five_hour_points_are_read_over_its_headless_inflation(self):
+        # ADR 0001 rule 16: half the step's credits are headless, so at a factor of 1.5 its
+        # 10 five-hour points are 8 interactive-equivalent ones; credits and d7 do not move.
+        t = datetime(2026, 9, 20, tzinfo=timezone.utc)
+        st = {"start": t.isoformat(), "end": (t + timedelta(hours=1)).isoformat(), "d7": 1, "d5": 10,
+              "tokens": {"m": {"output": 100}}, "headless_tokens": {"m": {"output": 50}}}
+        (row,) = W.valued([st], value, 1.5)
+        self.assertEqual((row["d5"], row["raw_d5"], row["credits"], row["d7"]), (8.0, 10, 100.0, 1))
+        self.assertEqual(W.valued([st], value)[0]["d5"], 10)
+        lvl = W.level({"a1": [row]}, "t")
+        self.assertEqual((lvl["windows_per_week_meters"], lvl["raw_windows_per_week_meters"]), (8.0, 10.0))
+
     def test_no_steps_is_no_level(self):
         lvl = W.level({"a1": []}, "t")
         self.assertIsNone(lvl["credits_per_pct"])
@@ -354,19 +366,27 @@ class CutRatioRouteTests(unittest.TestCase):
         self.assertEqual(out["accounts"], ["a2"])
         self.assertAlmostEqual(out["ratio_after_over_before"], 0.825, places=4)
 
-    def test_the_window_factor_is_in_metered_tokens(self):
-        # Rule 12 weights a stretch's headless tokens on the five-hour figures it publishes; the
-        # meter ratio beside it counts raw five-hour points, so the compound reads metered tokens.
+    def test_both_factors_are_interactive_equivalent_and_the_product_is_not_moved(self):
+        # ADR 0001 rule 16: the windows read the five-hour meter over each window's headless
+        # inflation, so the window factor reads the headless-weighted tokens. After the cut
+        # every window and stretch is wholly headless at a factor of 1.5: windows per week falls
+        # by a further third and the window rises by half, and their product, credits per 1% of
+        # the seven-day meter, is what it was.
         windows, stretches = self.history()
+        windows = [dict(w, five_hour_pct=w["five_hour_pct"] / 1.5, raw_five_hour_pct=w["five_hour_pct"])
+                   if w["window_ending"] >= "2026-09-15" else w for w in windows]
         weighted = []
         for st in stretches:
             if st["start"] >= "2026-09-15":
                 st = dict(st, metered_tokens=st["tokens"],
                           tokens={"claude-opus-5": {"output": st["tokens"]["claude-opus-5"]["output"] * 1.5}},
-                          headless_tokens={"claude-opus-5": {"output": 1}})
+                          headless_tokens=st["tokens"])
             weighted.append(st)
         row = self.route(windows, weighted)["per_account"]["a2"]
-        self.assertAlmostEqual(row["window_ratio"], 1.1, places=4)
+        self.assertAlmostEqual(row["windows_per_week_ratio"], 0.5, places=4)
+        self.assertAlmostEqual(row["window_ratio"], 1.65, places=4)
+        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
+        self.assertAlmostEqual(row["after"]["raw_windows_per_week"], 4.5, places=4)
 
     def test_nothing_outside_the_sides_enters(self):
         windows, stretches = self.history()

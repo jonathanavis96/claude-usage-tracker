@@ -342,7 +342,8 @@ class RunAllTest(unittest.TestCase):
                          ["headline_inside_accounts", "no_unproven_step", "direct_means_direct",
                           "account_units", "steps_agree_with_meters", "no_withheld_boundary",
                           "headline_matches_chart", "windows_per_week_implied",
-                          "one_figure_per_change", "weekly_routes_agree"])
+                          "one_figure_per_change", "weekly_routes_agree",
+                          "detected_windows_per_week_agree"])
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()
@@ -587,6 +588,53 @@ class WeeklyRoutesAgreeTest(unittest.TestCase):
     def test_it_is_a_registered_check_that_does_not_block(self):
         self.assertIn("weekly_routes_agree", dict(I.CHECKS))
         self.assertNotIn("weekly_routes_agree", I.BLOCKING)
+
+
+class DetectedWindowsPerWeekAgreeTest(unittest.TestCase):
+    """Check 11: the detector's windows-per-week levels, in interactive-equivalent units,
+    agree with the week over the window (ADR 0001 rules 11 and 16) within their intervals."""
+
+    def doc(self, detected, derived):
+        return {"weekly_windows": {"max20": {"regimes": [
+                    {"start": s, "end": e, "windows": w, "rounding_interval": list(iv)}
+                    for s, e, w, iv in detected]}},
+                "credits": {"window_tokens": {"per_week_regimes": [
+                    {"from": f, "until": u, "windows_per_week": w,
+                     "windows_per_week_interval": list(iv) if iv else None}
+                    for f, u, w, iv in derived]}}}
+
+    START, END = "2026-08-15T00:00:00+00:00", "2026-10-06T00:00:00+00:00"
+    BEFORE_END = "2026-09-14T09:00:00+00:00"
+
+    def test_levels_inside_each_others_reach_pass(self):
+        doc = self.doc([(self.START, self.BEFORE_END, 5.6, (5.2, 6.0)), (CUT, self.END, 4.9, (4.5, 5.3))],
+                       [(None, CUT, 5.5, (4.6, 6.6)), (CUT, None, 4.8, (4.0, 5.8))])
+        self.assertEqual(I.detected_windows_per_week_agree(doc), [])
+
+    def test_a_detected_level_outside_the_derived_one_fails_by_date(self):
+        doc = self.doc([(self.START, self.BEFORE_END, 5.6, (5.2, 6.0)), (CUT, self.END, 4.0, (3.8, 4.2))],
+                       [(None, CUT, 5.5, (4.6, 6.6)), (CUT, None, 5.5, (5.0, 6.0))])
+        out = I.detected_windows_per_week_agree(doc)
+        self.assertEqual(len(out), 1)
+        self.assertIn("2026-09-14", out[0])
+        self.assertIn("is 4 [3.8, 4.2]", out[0])
+
+    def test_each_derived_row_is_read_against_the_level_it_overlaps_most(self):
+        # The detector draws one level across 22 September; the derived rows step there by
+        # less than either interval, so both read the one level and pass.
+        doc = self.doc([(self.START, self.BEFORE_END, 5.6, (5.2, 6.0)), (CUT, self.END, 4.9, (4.5, 5.3))],
+                       [(None, CUT, 5.5, (4.6, 6.6)), (CUT, SEP22, 4.6, (4.0, 5.3)),
+                        (SEP22, None, 5.1, (4.4, 5.9))])
+        self.assertEqual(I.detected_windows_per_week_agree(doc), [])
+
+    def test_a_row_without_an_interval_or_an_unbounded_level_is_not_read(self):
+        doc = self.doc([(self.START, self.END, 9.0, (5.0, None))], [(None, None, 5.0, None)])
+        self.assertEqual(I.detected_windows_per_week_agree(doc), [])
+        self.assertEqual(I.detected_windows_per_week_agree({}), [])
+
+    def test_it_is_a_registered_check_that_does_not_block(self):
+        self.assertIn("detected_windows_per_week_agree", dict(I.CHECKS))
+        self.assertNotIn("detected_windows_per_week_agree", I.BLOCKING)
 
 
 class BlockingTest(unittest.TestCase):
