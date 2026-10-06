@@ -324,6 +324,24 @@ These are the acceptance rules. Each names where it lives.
     Source: `tracker/credits.py` (`window_stretches`, `selection_sentence`),
     `tracker/publish.py` (the `window_stretches` call).
 
+19. **A window regime set by a measured change keeps that change through rounding, added
+    2026-10-06.** A window regime whose value is the previous regime's times a measured
+    change (the bridge rate of a run or a new family, `bridge_rate`; the before cluster
+    scaled by the five-hour change, `before_cluster_scaled_by_five_hour_change`) states that
+    change as its step by construction. The change is the meters' published one-decimal
+    percent, so the step can sit exactly on a whole-percent half (+19.5%). Each regime value
+    was rounded to a whole token on its own, so the step the chart draws from two rounded
+    values fell either side of the half by chance (+19.50000002% or +19.49999999%), and the
+    chart's label (+20% or +19%) with it, while the event states the change's own rounding.
+    So such a regime is published at the whole value nearest the previous regime's published
+    value times the change, moved one unit toward the change while the drawn step rounds
+    (halves up, as the page rounds) to another whole percent than the change does. A regime
+    carrying the previous value unchanged is published at the same value. The drawn step's
+    label is then the change's, never across its rounding. Every other regime is rounded as
+    before. Found while recomputing rule 18: the
+    previous regime moved 2.6% and the 22 September step crossed the half.
+    Source: `tracker/credits.py` (`window_regimes` `step`, `_rounded_regimes`).
+
 ### Pending
 
 14. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a

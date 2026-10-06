@@ -2178,6 +2178,52 @@ def opus55_window(start: str, window: int, delta_pct: float = 10.0) -> dict:
                            model="claude-opus-5-5")
 
 
+class SteppedRoundingTests(unittest.TestCase):
+    """ADR 0001 rule 19: a regime set by a measured change keeps it through rounding."""
+
+    @staticmethod
+    def drawn(regimes):
+        from tracker.invariants import _page_round
+        return [_page_round((b["value"] - a["value"]) / a["value"] * 100)
+                for a, b in zip(regimes, regimes[1:])]
+
+    def regimes(self, before: float, step: float, **extra):
+        row = {"interval": None, "measured_value": None, "measured_interval": None}
+        return [dict(row, value=before), dict(row, value=before * step, step=step, **extra),
+                dict(row, value=before * step)]
+
+    def test_a_step_on_a_half_is_drawn_as_the_change_rounds(self):
+        # The 22 September case: rounded on its own, 686,128,836 x 1.195 drew +19.49999999%.
+        self.assertEqual(round(686_128_836.4 * 1.195) / round(686_128_836.4), 819_923_959 / 686_128_836)
+        published = C._rounded_regimes(self.regimes(686_128_836.4, 1.195))
+        self.assertGreaterEqual((published[1]["value"] - published[0]["value"])
+                                / published[0]["value"] * 100, 19.5)
+        self.assertEqual(self.drawn(published), [20, 0])
+
+    def test_a_fall_keeps_its_side_too(self):
+        from tracker.invariants import _page_round
+        for before in (668_922_266.0, 686_128_836.4, 173_516_520.0, 29_449_873.0):
+            for step in (0.995, 0.985, 0.993):
+                with self.subTest(before=before, step=step):
+                    published = C._rounded_regimes(self.regimes(before, step))
+                    self.assertEqual(self.drawn(published)[0],
+                                     _page_round(round((step - 1) * 100, 9)))
+
+    def test_it_moves_the_value_by_no_more_than_rounding(self):
+        published = C._rounded_regimes(self.regimes(686_128_836.4, 1.195))
+        self.assertLessEqual(abs(published[1]["value"] - 686_128_836 * 1.195), 1)
+
+    def test_a_carried_regime_is_published_at_the_same_value_and_step_is_not_published(self):
+        published = C._rounded_regimes(self.regimes(686_128_836.4, 1.195))
+        self.assertEqual(published[2]["value"], published[1]["value"])
+        self.assertTrue(all("step" not in r for r in published))
+
+    def test_a_regime_with_no_step_rounds_as_before(self):
+        row = {"interval": None, "measured_value": None, "measured_interval": None}
+        published = C._rounded_regimes([dict(row, value=100.4), dict(row, value=119.4)])
+        self.assertEqual([r["value"] for r in published], [100, 119])
+
+
 class RegimeFamilyTests(unittest.TestCase):
     """A regime is measured in the family actually in use: the family with the most pure
     clean stretches starting in it. Once Opus 5.5 replaced Opus 5 there is no pure Opus 5

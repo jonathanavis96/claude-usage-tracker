@@ -1016,7 +1016,7 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
                         f"the previous regime's {anchor_fam} window times that change, over "
                         f"the run's direct {cluster['family']} window; its interval is the same "
                         f"over the run's highest and lowest reading")}
-                extra = bridges[first]
+                extra = dict(bridges[first], step=g)
         if first in bridges:
             rate = bridges[first]["bridge_rate"]
             anchor_fig = _scaled(cluster["measured"], rate, rate, rate)
@@ -1034,6 +1034,8 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
         fig = own({"before": 0, "after": 1, "whole": "whole"}[chosen], factor)
         regimes.append(row(fig, fig, anchor_fam, source, CUT_AT.isoformat(), None,
                            anchor_fam, counts.get(1, 0)))
+        if chosen == "before" and factor != 1.0:
+            regimes[-1]["step"] = factor
     for k, change in enumerate(changes, start=2):
         prev = regimes[-1]
         prev["until"] = _utc(change["at"])
@@ -1065,7 +1067,8 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
                              f"({change['change_pct']:+.1f}%): the previous regime's "
                              f"{anchor_fam} window times that change, over the regime's direct "
                              f"{fam} window; its interval is the same over the regime's "
-                             f"highest and lowest reading")}
+                             f"highest and lowest reading"),
+                         "step": change["ratio"]}
                 fig = _scaled(measured, rate, rate, rate)
         elif change.get("window_scaled", True):
             r_lo, r_hi = change["ratio_interval"]
@@ -1074,6 +1077,7 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
             measured = _scaled({"value": prev["measured_value"], "interval": prev["measured_interval"]},
                                change["ratio"], r_lo, r_hi)
             fam, source = prev["measured_family"], KNOWN_DATE_SCALED_SOURCE
+            extra = {"step": change["ratio"]}
         else:
             # No separable fit, so no estimate of the limit change, and too few readings to
             # state the regime: the previous regime's figure carries, in its own family.
@@ -1085,19 +1089,52 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
     return regimes, regimes[-1]["source"]
 
 
+def _stepped(prev: int, step: float) -> int:
+    """The whole value nearest `prev` times `step`, moved by one unit toward the change while
+    the step drawn from the two rounds (as the page and `invariants` round it, halves up) to
+    another whole percent than the change does, so rounding never carries the drawn step
+    across the change's own rounding (ADR 0001 rule 19)."""
+    def label(pct: float) -> int:
+        return math.floor(pct + 0.5)
+    value = round(prev * step)
+    want = label(round((step - 1) * 100, 9))
+    for _ in range(3):
+        drawn = label((value - prev) / prev * 100)
+        if drawn == want:
+            break
+        value += 1 if drawn < want else -1
+    return value
+
+
 def _rounded_regimes(regimes: list[dict], unit: float = 1.0) -> list[dict]:
-    """The regimes as published: values and interval edges times `unit`, rounded."""
+    """The regimes as published: values and interval edges times `unit`, rounded.
+
+    A regime set as the previous one times a measured change (`step`, popped here) is
+    published at the previous published value times that change (`_stepped`, ADR 0001
+    rule 19), and one carrying the previous value unchanged at the same published value.
+    """
     def edges(iv):
         return [_round(x * unit) for x in iv] if iv else None
-    return [dict(r, value=_round(r["value"] * unit if r["value"] is not None else None),
-                 interval=edges(r["interval"]),
-                 measured_value=_round(r["measured_value"] * unit
-                                       if r.get("measured_value") is not None else None),
-                 measured_interval=edges(r.get("measured_interval")),
-                 **({"bridge_rate": round(r["bridge_rate"], 4),
-                     "bridge_rate_interval": [round(x, 4) for x in r["bridge_rate_interval"]]}
-                    if r.get("bridge_rate") is not None else {}))
-            for r in regimes]
+    out = []
+    for r in regimes:
+        r = dict(r)
+        step = r.pop("step", None)
+        prev = out[-1] if out else None
+        value = _round(r["value"] * unit if r["value"] is not None else None)
+        if prev and prev["value"] and value is not None:
+            if step is not None and step != 1.0:
+                value = _stepped(prev["value"], step)
+            elif r["value"] == regimes[len(out) - 1]["value"]:
+                value = prev["value"]
+        out.append(dict(r, value=value,
+                        interval=edges(r["interval"]),
+                        measured_value=_round(r["measured_value"] * unit
+                                              if r.get("measured_value") is not None else None),
+                        measured_interval=edges(r.get("measured_interval")),
+                        **({"bridge_rate": round(r["bridge_rate"], 4),
+                            "bridge_rate_interval": [round(x, 4) for x in r["bridge_rate_interval"]]}
+                           if r.get("bridge_rate") is not None else {})))
+    return out
 
 
 def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
