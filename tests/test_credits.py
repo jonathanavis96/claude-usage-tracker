@@ -560,6 +560,40 @@ class RateFitSelectionTests(unittest.TestCase):
         self.assertEqual(kept["jwork"], [early])
 
 
+class WindowSelectionTests(unittest.TestCase):
+    """The window cluster's selection reads each account over its weeks' own history (rule 18)."""
+
+    def _s(self, start, end, **fields):
+        return dict(stretch(start, {"claude-opus-5": tok(input=1_000_000)}), end=end, **fields)
+
+    def test_masterrig_counts_from_six_september_as_its_seven_day_steps_do(self):
+        phantom = self._s("2026-09-02T01:41:00+00:00", "2026-09-02T14:26:00+00:00")
+        august = self._s("2026-08-20T00:00:00+00:00", "2026-08-20T05:00:00+00:00")
+        late = self._s("2026-09-07T00:00:00+00:00", "2026-09-07T05:00:00+00:00")
+        kept = C.window_stretches({"masterrig": [august, phantom, late], "jwork": [phantom]}, [])
+        self.assertEqual(kept["masterrig"], [late])
+        self.assertEqual(kept["jwork"], [phantom])
+
+    def test_the_gate_is_the_one_the_rows_week_reads_its_steps_through(self):
+        from tracker import weekly_meter
+        spans = [("2026-08-20T00:00:00+00:00", "2026-08-20T05:00:00+00:00"),
+                 ("2026-09-02T01:41:00+00:00", "2026-09-02T14:26:00+00:00"),
+                 ("2026-09-05T22:00:00+00:00", "2026-09-06T02:00:00+00:00"),
+                 ("2026-09-07T00:00:00+00:00", "2026-09-07T05:00:00+00:00")]
+        for start, end in spans:
+            kept = C.window_stretches({"masterrig": [self._s(start, end)]}, [])["masterrig"]
+            steps = weekly_meter.clean_steps({"masterrig": [{"start": start, "end": end}]},
+                                             [])["masterrig"]
+            self.assertEqual(bool(kept), bool(steps), start)
+
+    def test_it_keeps_the_capture_test_and_every_other_account_as_before(self):
+        early = self._s("2026-08-20T00:00:00+00:00", "2026-08-20T05:00:00+00:00")
+        unaccounted = dict(early, capture_status="unaccounted")
+        by_account = {"jwork": [early, unaccounted], "dave": [early]}
+        self.assertEqual(C.window_stretches(by_account, []),
+                         C.clean_stretches(by_account, [], require="capture_status"))
+
+
 def _published(gs=None, masterrig=None, passive=None, effort_meta=None, prices=None,
                model_rates=None):
     """A public JSON built over planted stretches, with everything else minimal."""
@@ -863,6 +897,24 @@ class PublishedBlockTests(unittest.TestCase):
         self.assertEqual(window["n"], 3)
         self.assertEqual(window["accounts"]["a1"]["n"], 0)
         self.assertEqual(window["value"], 20_000_000)
+
+    def test_the_window_reads_the_third_account_over_its_weeks_own_history(self):
+        """ADR 0001 rule 18: a stretch from before MASTERRIG_FROM prices no window regime.
+
+        On 2 September the takeoff pipeline was running on the account; one capture-accepted
+        pure-Opus stretch from that day read 86k credits per 1% against 176k-208k on the other
+        account, and as the before window's lowest reading it set the first windows-per-week
+        row's upper end at 20.75 against a level of 5.11.
+        """
+        masterrig = report("masterrig", [opus_stretch("2026-09-02T02:00:00+00:00", 86_000),
+                                         opus_stretch("2026-09-06T00:00:00+00:00", 150_000)])
+        credits = _published(gs=self.gs, masterrig=masterrig)["credits"]
+        window = credits["window_credits"]
+        self.assertEqual(window["n"], 4)
+        self.assertEqual(window["accounts"]["a1"]["n"], 1)
+        self.assertEqual(window["accounts"]["a1"]["interval"], [15_000_000, 15_000_000])
+        self.assertEqual(credits["window_tokens"]["accounts"]["a1"]["n"], 1)
+        self.assertIn("from 6 September", window["method"])
 
     def test_no_account_name_reaches_the_public_json(self):
         masterrig = report("masterrig", [opus_stretch("2026-09-06T00:00:00+00:00", 150_000)])
@@ -2124,6 +2176,52 @@ def opus55_window(start: str, window: int, delta_pct: float = 10.0) -> dict:
     total = round(window * delta_pct / 100)
     return classed_stretch(start, 100, 1_000, total - 1_600, 500, delta_pct=delta_pct,
                            model="claude-opus-5-5")
+
+
+class SteppedRoundingTests(unittest.TestCase):
+    """ADR 0001 rule 19: a regime set by a measured change keeps it through rounding."""
+
+    @staticmethod
+    def drawn(regimes):
+        from tracker.invariants import _page_round
+        return [_page_round((b["value"] - a["value"]) / a["value"] * 100)
+                for a, b in zip(regimes, regimes[1:])]
+
+    def regimes(self, before: float, step: float, **extra):
+        row = {"interval": None, "measured_value": None, "measured_interval": None}
+        return [dict(row, value=before), dict(row, value=before * step, step=step, **extra),
+                dict(row, value=before * step)]
+
+    def test_a_step_on_a_half_is_drawn_as_the_change_rounds(self):
+        # The 22 September case: rounded on its own, 686,128,836 x 1.195 drew +19.49999999%.
+        self.assertEqual(round(686_128_836.4 * 1.195) / round(686_128_836.4), 819_923_959 / 686_128_836)
+        published = C._rounded_regimes(self.regimes(686_128_836.4, 1.195))
+        self.assertGreaterEqual((published[1]["value"] - published[0]["value"])
+                                / published[0]["value"] * 100, 19.5)
+        self.assertEqual(self.drawn(published), [20, 0])
+
+    def test_a_fall_keeps_its_side_too(self):
+        from tracker.invariants import _page_round
+        for before in (668_922_266.0, 686_128_836.4, 173_516_520.0, 29_449_873.0):
+            for step in (0.995, 0.985, 0.993):
+                with self.subTest(before=before, step=step):
+                    published = C._rounded_regimes(self.regimes(before, step))
+                    self.assertEqual(self.drawn(published)[0],
+                                     _page_round(round((step - 1) * 100, 9)))
+
+    def test_it_moves_the_value_by_no_more_than_rounding(self):
+        published = C._rounded_regimes(self.regimes(686_128_836.4, 1.195))
+        self.assertLessEqual(abs(published[1]["value"] - 686_128_836 * 1.195), 1)
+
+    def test_a_carried_regime_is_published_at_the_same_value_and_step_is_not_published(self):
+        published = C._rounded_regimes(self.regimes(686_128_836.4, 1.195))
+        self.assertEqual(published[2]["value"], published[1]["value"])
+        self.assertTrue(all("step" not in r for r in published))
+
+    def test_a_regime_with_no_step_rounds_as_before(self):
+        row = {"interval": None, "measured_value": None, "measured_interval": None}
+        published = C._rounded_regimes([dict(row, value=100.4), dict(row, value=119.4)])
+        self.assertEqual([r["value"] for r in published], [100, 119])
 
 
 class RegimeFamilyTests(unittest.TestCase):

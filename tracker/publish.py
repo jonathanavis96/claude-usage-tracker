@@ -1378,7 +1378,10 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # account, masterrig from 6 September, no stretch spanning the cut) and the pooled fit's
     # rates, so the comparison is measured on the stretches its prices were measured on
     # (docs/findings-2026-09-23-pooled-rates.md).
-    clean = credit_model.clean_stretches(by_account, runs, require="capture_status")
+    # The window's selection reads each account over the span its seven-day steps are read
+    # over (masterrig from MASTERRIG_FROM), since a per-week row's windows per week is its
+    # week over its window (ADR 0001 rule 18).
+    clean = credit_model.window_stretches(by_account, runs)
     priceable = credit_model.rate_fit_stretches(by_account, runs)
     # The known-date test of every change candidate (each family's first-seen stretch),
     # beside the unknown-date detector. Stretches are valued at the pooled fit's point
