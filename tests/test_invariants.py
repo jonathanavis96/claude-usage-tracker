@@ -342,7 +342,7 @@ class RunAllTest(unittest.TestCase):
                          ["headline_inside_accounts", "no_unproven_step", "direct_means_direct",
                           "account_units", "steps_agree_with_meters", "no_withheld_boundary",
                           "headline_matches_chart", "windows_per_week_implied",
-                          "one_figure_per_change"])
+                          "one_figure_per_change", "weekly_routes_agree"])
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()
@@ -534,6 +534,59 @@ class OneFigurePerChangeTest(unittest.TestCase):
         doc = _fixed(_live_2026_10_05())
         doc["events"][1]["percent"] = 29
         self.assertTrue(I.one_figure_per_change(doc))
+
+
+def _weekly_event(direct: dict, ratio: dict, *, quality="certified") -> dict:
+    """A weekly event carrying both routes: the direct weekly test and the ratio route.
+    Each argument maps a label (or "pooled") to (change_pct, interval_pct)."""
+    def pa(rows, key, iv):
+        return {k: {key: v[0], iv: list(v[1]), "combined": True} for k, v in rows.items() if k != "pooled"}
+    return {"kind": "change", "scope": "weekly", "date": "2026-09-14", "evidence_quality": quality,
+            "five_hour_window_credits": {"direct_tests": {"weekly_change": {
+                "change_pct": direct["pooled"][0], "interval_pct": list(direct["pooled"][1]),
+                "per_account": pa(direct, "change_pct", "interval_pct")}}},
+            "tokens_per_week_change": {
+                "signed_pct": ratio["pooled"][0], "signed_interval_pct": list(ratio["pooled"][1]),
+                "per_account": pa(ratio, "signed_pct", "signed_interval_pct")}}
+
+
+class WeeklyRoutesAgreeTest(unittest.TestCase):
+    """Check 10: on a certified weekly event the direct weekly change and the ratio route
+    (windows per week times the window) agree within their combined interval."""
+
+    # The live page of 2026-10-06 12:01Z, 14 September.
+    LIVE = _weekly_event({"a1": (-9.0, (-29.3, 17.0)), "a2": (-10.4, (-26.3, 8.8)),
+                          "pooled": (-9.9, (-22.3, 4.4))},
+                         {"a1": (-28.0, (-37.6, -16.8)), "a2": (-28.2, (-40.3, -13.1)),
+                          "pooled": (-28.0, (-38.6, -15.4))})
+
+    def test_the_live_page_fails_on_the_pooled_figure(self):
+        out = I.weekly_routes_agree({"events": [self.LIVE]})
+        self.assertEqual(len(out), 1)
+        self.assertIn("combined", out[0])
+        self.assertIn("-9.9%", out[0])
+        self.assertIn("-28.0%", out[0])
+
+    def test_routes_inside_each_others_reach_pass(self):
+        ok = _weekly_event({"a1": (-9.0, (-29.3, 17.0)), "pooled": (-9.9, (-22.3, 4.4))},
+                           {"a1": (-14.7, (-22.0, -6.6)), "pooled": (-14.0, (-21.0, -6.0))})
+        self.assertEqual(I.weekly_routes_agree({"events": [ok]}), [])
+
+    def test_one_account_apart_fails_by_name(self):
+        bad = _weekly_event({"a2": (-10.4, (-14.0, -6.0)), "pooled": (-10.4, (-14.0, -6.0))},
+                            {"a2": (-30.0, (-33.0, -27.0)), "pooled": (-10.4, (-14.0, -6.0))})
+        out = I.weekly_routes_agree({"events": [bad]})
+        self.assertEqual(len(out), 1)
+        self.assertIn("a2", out[0])
+
+    def test_a_provisional_event_or_a_missing_route_is_not_read(self):
+        prov = dict(self.LIVE, evidence_quality="provisional")
+        bare = {k: v for k, v in self.LIVE.items() if k != "tokens_per_week_change"}
+        self.assertEqual(I.weekly_routes_agree({"events": [prov, bare]}), [])
+
+    def test_it_is_a_registered_check_that_does_not_block(self):
+        self.assertIn("weekly_routes_agree", dict(I.CHECKS))
+        self.assertNotIn("weekly_routes_agree", I.BLOCKING)
 
 
 class BlockingTest(unittest.TestCase):

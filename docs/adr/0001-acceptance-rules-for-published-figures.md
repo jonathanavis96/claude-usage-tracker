@@ -1,6 +1,7 @@
 # 0001. Acceptance rules for published figures
 
-Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 to 13 added 2026-10-05
+Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 to 13 added 2026-10-05;
+rule 15 added 2026-10-06
 
 ## Context
 
@@ -187,6 +188,33 @@ These are the acceptance rules. Each names where it lives.
     `MASTERRIG_PHANTOM`, `cut_direct_tests`), `tracker/weekly_meter.py` (`clean_steps`,
     `whole_history`), `tracker/publish.py` (the `cut_direct_tests` call).
     Findings: `docs/findings/2026-10-05-a1-long-before.md`.
+
+15. **Windows per week times the window is read on one set of readings, in one unit,
+    added 2026-10-06.** Weekly credits per 1% of the seven-day meter equal credits per 1% of
+    the five-hour meter times five-hour points per seven-day point, on the same readings.
+    So a weekly change stated as windows per week times the window (the 14 September
+    `tokens_per_week_change`, the ratio route) reads both factors on the direct weekly
+    test's own sides (`cut_weekly_sides`: the rule 13 start, each account's own step, the
+    first change candidate after the cut), with its selection (a five-hour meter window that
+    meets a seven-day step the weekly selection leaves out is left out, and the stretches
+    pass the same harness, cloud, status and takeoff-phantom gates), with its valuation, and
+    by pooled sums. Both factors are in one unit. The meter ratio counts raw five-hour points,
+    so the window factor values metered tokens. The headless weight of rule 12 belongs to
+    five-hour figures published on their own, and is never multiplied into a raw meter
+    ratio. On identical readings the two routes are then one number. What remains between
+    them is the two kinds of reading: five-hour windows against one-point seven-day steps.
+    `tracker/invariants.py` check 10 (`weekly_routes_agree`, advisory) fails when, on a
+    certified weekly event, the two differ by more than their combined interval.
+    Before this rule the route compounded the detector's raw meter ratio, over the account's
+    own regimes (Max account 1 from 15 August, both accounts to 5 October, across the
+    certified 22 September change), with the headless-weighted median window on the
+    known-date selection. That put 14 September at -28.0% against a direct -9.9%. The
+    largest single cause was Max account 2's headless share, which fell from 46% to 3% of
+    its credits across the cut.
+    Source: `tracker/credits.py` (`cut_weekly_sides`, `cut_ratio_route`),
+    `tracker/publish.py` (`_tokens_per_week_change`), `tracker/invariants.py`
+    (`weekly_routes_agree`).
+    Findings: `docs/findings-2026-10-06-14-sep-routes.md`.
 
 ### Pending
 

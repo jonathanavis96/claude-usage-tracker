@@ -4041,6 +4041,21 @@ CUT_DIRECT_METHOD = (
     "re-decided by them.")
 
 
+def cut_weekly_sides(block: dict | None, next_at: datetime | None
+                     ) -> tuple[datetime, datetime, datetime, datetime | None]:
+    """(before from, before until, after from, after until): one account's sides of the
+    14 September weekly change, as the direct weekly test reads them and the ratio route
+    with it (`cut_ratio_route`, ADR 0001 rule 15).
+
+    The before side starts at the account's last certified boundary (`cut_before_start`,
+    rule 13) and ends where its own weekly step's regime ends; the after side starts at its
+    own step (the change reaches each account at its own seven-day reset), else at CUT_AT,
+    and ends at `next_at`, the first change candidate after the cut.
+    """
+    return (cut_before_start(block), own_weekly_step_end(block) or CUT_AT,
+            own_weekly_step_start(block) or CUT_AT, next_at)
+
+
 def cut_direct_tests(by_account: dict[str, list[dict]], runs: list[HarnessRun], value,
                      labels: dict[str, str], weekly_rows: dict[str, list[dict]],
                      max20: dict | None, next_at: datetime | None) -> dict:
@@ -4070,18 +4085,141 @@ def cut_direct_tests(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
     for label, rows in sorted(weekly_rows.items()):
         if not rows:
             continue
-        own_start = own_weekly_step_start(by_acc.get(label))
-        before_start = cut_before_start(by_acc.get(label))
-        before_end = own_weekly_step_end(by_acc.get(label)) or CUT_AT
-        after_start = own_start or CUT_AT
+        before_start, before_end, after_start, after_end = cut_weekly_sides(by_acc.get(label), next_at)
         steps[label] = ([r for r in rows if r["start"] >= before_start and r["end"] <= before_end],
                         [r for r in rows if r["start"] >= after_start
-                         and (next_at is None or r["end"] <= next_at)])
+                         and (after_end is None or r["end"] <= after_end)])
     tests = {"window_change": window_change({"per_account": per_account}),
              "weekly_change": weekly_change(steps, f"cut:{_utc(CUT_AT)}")}
     return {"at": _utc(CUT_AT), **tests,
             "certified_on": [m for m, key, _ in DIRECT_MEASUREMENTS if tests[key]["certified"]],
             "method": CUT_DIRECT_METHOD}
+
+
+CUT_RATIO_ROUTE_METHOD = (
+    "The 14 September weekly change read the second way: windows per week (five-hour meter "
+    "points over seven-day meter points, pooled over the account's own five-hour meter windows) "
+    "times the window (credits per 1% of the five-hour meter, pooled sums over its clean "
+    "stretches), each account against itself. Both factors are read on the direct weekly test's "
+    "own sides (`cut_weekly_sides`), with its selection (a window whose five hours meet a "
+    "seven-day step the weekly selection leaves out is left out, and the stretches pass the same "
+    "harness, cloud, status and takeoff-phantom gates), its valuation, and in one unit: the meter "
+    "ratio counts raw five-hour points, so the window factor values each stretch's metered "
+    "tokens, never the headless-weighted ones (ADR 0001 rules 12 and 15). Pooled sums make the "
+    "product credits over seven-day points, so on one set of readings it is the direct weekly "
+    "change by identity; what is left between the two is the two kinds of reading (five-hour "
+    "windows against one-point seven-day steps). The interval is the windows-per-week rounding "
+    "interval at its far ends, times the window factor; the accounts combine as "
+    "`combine_log_ratios` combines them.")
+
+
+def cut_ratio_route(by_account: dict[str, list[dict]], runs: list[HarnessRun], value,
+                    labels: dict[str, str], raw_steps: dict[str, list[dict]],
+                    clean_steps: dict[str, list[dict]], max20: dict | None,
+                    next_at: datetime | None) -> dict:
+    """The 14 September weekly change as windows per week times the window (CUT_RATIO_ROUTE_METHOD).
+
+    `by_account` is each account's stretches by name (headless-weighted ones keep their
+    `metered_tokens`), `raw_steps` and `clean_steps` its seven-day steps before and after
+    `weekly_meter.clean_steps(whole_history=True)`: a step in the first and not the second is
+    one the weekly selection left out, and a five-hour meter window (`max20.by_window`, the
+    five hours before its `window_ending`) that meets one is left out of the ratio.
+    An account is measured with at least FIVE_HOUR_MIN_SIDE stretches a side and a bounded
+    rounding interval on both sides of its ratio.
+    """
+    by_window = (max20 or {}).get("by_window") or []
+    by_acc = (max20 or {}).get("by_account") or {}
+    per_account: dict[str, dict] = {}
+    for name, label in labels.items():
+        bs, be, as_, ae = cut_weekly_sides(by_acc.get(label), next_at)
+        kept = {(st["start"], st["end"]) for st in clean_steps.get(name, [])}
+        left_out = [(datetime.fromisoformat(st["start"]), datetime.fromisoformat(st["end"]))
+                    for st in raw_steps.get(name, []) if (st["start"], st["end"]) not in kept]
+        # Without an own step the split is CUT_AT, and a window ending within five hours
+        # after it began before it: it straddles the change and is on neither side.
+        own = own_weekly_step_start(by_acc.get(label)) is not None
+        after_from = as_ if own else CUT_AT + FIVE_HOUR_SPAN
+
+        windows: dict[str, list[dict]] = {"before": [], "after": []}
+        dropped = {"before": 0, "after": 0}
+        for r in by_window:
+            if r.get("account") != label:
+                continue
+            t = datetime.fromisoformat(r["window_ending"])
+            if bs <= t <= be:
+                side = "before"
+            elif t >= after_from and t > be and (ae is None or t <= ae):
+                side = "after"
+            else:
+                continue
+            if any(a < t and b > t - FIVE_HOUR_SPAN for a, b in left_out):
+                dropped[side] += 1
+                continue
+            windows[side].append(r)
+        stretches: dict[str, list[tuple[float, float]]] = {"before": [], "after": []}
+        for st in clean_stretches({name: by_account.get(name, [])}, runs, require="status").get(name, []):
+            if not (st.get("start") and st.get("end")):
+                continue
+            start, end = datetime.fromisoformat(st["start"]), datetime.fromisoformat(st["end"])
+            if masterrig_excluded(name, start, end, True):
+                continue
+            credits = value(st.get("metered_tokens") or st["tokens"])
+            if credits is None:
+                continue
+            if start >= bs and end <= be:
+                stretches["before"].append((credits, st["delta_pct"]))
+            elif start >= as_ and end > be and (ae is None or end <= ae):
+                stretches["after"].append((credits, st["delta_pct"]))
+        sides = {}
+        for side in ("before", "after"):
+            d5 = sum(r["five_hour_pct"] for r in windows[side])
+            d7 = sum(r["seven_day_pct"] for r in windows[side])
+            pct = sum(p for _, p in stretches[side])
+            if not d7 or not d5 or not pct or len(stretches[side]) < FIVE_HOUR_MIN_SIDE:
+                break
+            lo, hi = ratio_interval(d5, d7, sum(r.get("pieces", 1) for r in windows[side]))
+            if lo is None or hi is None or lo <= 0:
+                break
+            sides[side] = {"n_windows": len(windows[side]), "n_windows_left_out": dropped[side],
+                           "sum_five_hour_pct": round(d5, 1), "sum_seven_day_pct": round(d7, 1),
+                           "windows_per_week": d5 / d7, "rounding_interval": (lo, hi),
+                           "n_stretches": len(stretches[side]),
+                           "credits_per_pct": sum(c for c, _ in stretches[side]) / pct}
+        if len(sides) < 2:
+            continue
+        b, a = sides["before"], sides["after"]
+        wpw = a["windows_per_week"] / b["windows_per_week"]
+        wpw_iv = (a["rounding_interval"][0] / b["rounding_interval"][1],
+                  a["rounding_interval"][1] / b["rounding_interval"][0])
+        window = a["credits_per_pct"] / b["credits_per_pct"]
+        rho, rho_iv = wpw * window, (wpw_iv[0] * window, wpw_iv[1] * window)
+        for row in (b, a):
+            row["windows_per_week"] = round(row["windows_per_week"], 4)
+            row["rounding_interval"] = [round(x, 4) for x in row["rounding_interval"]]
+            row["credits_per_pct"] = round(row["credits_per_pct"])
+        per_account[label] = {
+            "before_from": _utc(bs), "before_until": _utc(be),
+            "after_from": _utc(as_), "after_until": _utc(ae) if ae else None,
+            "before": b, "after": a,
+            "windows_per_week_ratio": round(wpw, 4),
+            "windows_per_week_interval": [round(x, 4) for x in wpw_iv],
+            "window_ratio": round(window, 4),
+            "ratio_after_over_before": round(rho, 4),
+            "ratio_interval": [round(x, 4) for x in rho_iv],
+            "change_pct": _pct_of(rho), "change_interval_pct": [_pct_of(x) for x in rho_iv]}
+    out = {"accounts": sorted(per_account), "per_account": per_account,
+           "ratio_after_over_before": None, "ratio_interval": None,
+           "change_pct": None, "change_interval_pct": None,
+           "unit": "credits per 1% of the seven-day meter", "method": CUT_RATIO_ROUTE_METHOD}
+    if per_account:
+        combined = combine_log_ratios(per_account)
+        for label, w in combined["weights"].items():
+            per_account[label]["weight"] = w
+        out.update(ratio_after_over_before=round(combined["ratio"], 4),
+                   ratio_interval=[round(x, 4) for x in combined["interval"]],
+                   change_pct=_pct_of(combined["ratio"]),
+                   change_interval_pct=[_pct_of(x) for x in combined["interval"]])
+    return out
 
 
 def five_hour_meter_events(block: dict | None) -> list[dict]:

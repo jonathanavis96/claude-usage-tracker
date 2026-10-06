@@ -1409,13 +1409,18 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     if cut is not None:
         # Its before side reads each account's whole clean history back to the account's
         # last certified boundary (`credit_model.cut_before_start`, ADR 0001 rule 13).
-        whole = weekly_meter.clean_steps(
-            weekly_meter.steps_by_account(gs_passive, masterrig_passive), runs, by_account,
-            whole_history=True)
+        raw_steps = weekly_meter.steps_by_account(gs_passive, masterrig_passive)
+        whole = weekly_meter.clean_steps(raw_steps, runs, by_account, whole_history=True)
         cut["direct_tests"] = credit_model.cut_direct_tests(
             by_account, runs, compare, labels,
             {labels.get(name, name): weekly_meter.valued(rows, compare)
              for name, rows in whole.items()},
+            weekly["max20"], min(after_cut, default=None))
+        # The same change read as windows per week times the window, on the direct test's own
+        # sides, selection and unit, so the two agree by identity (ADR 0001 rule 15); the
+        # event's `tokens_per_week_change` is this route.
+        cut["ratio_route"] = credit_model.cut_ratio_route(
+            by_account, runs, compare, labels, raw_steps, whole,
             weekly["max20"], min(after_cut, default=None))
     five_hour = credit_model.five_hour_window_change(cut)
     five_hour_pct = five_hour["pct"] if five_hour else None
@@ -2001,36 +2006,35 @@ def _provisional(scope: str) -> bool:
     return scope == "window"
 
 
-def _tokens_per_week_change(ratio_note: dict | None, across_cut: dict | None) -> dict | None:
-    """How much the tokens a week holds moved, from the two measured changes at the cut.
+def _tokens_per_week_change(across_cut: dict | None) -> dict | None:
+    """How much the tokens a week holds moved across the cut, as windows per week times the window.
 
-    The weekly series measures windows per week -- five-hour meter movement over
-    seven-day meter movement. It is not the change in what a week buys, because the
-    five-hour window can move at the same date: the accounts' own credits per 1% either
-    side of 14 September (`credit_model.five_hour_window_changes`, the accounts whose
-    capture column can carry the reading). A week holding fewer windows, each of a
-    different size, holds tokens in proportion to both, so the page states the tokens
-    figure in the headline while the windows-per-week chart keeps its own.
+    The two factors are the ratio route's (`credit_model.cut_ratio_route`, carried on the
+    across-the-cut block as `ratio_route`): each account's windows per week and its window,
+    both read on the direct weekly test's own sides, with its selection, in one unit (the
+    window on metered tokens, as the meter ratio counts raw five-hour points) and by pooled
+    sums, so their product is the account's credits per 1% of the seven-day meter and agrees
+    with `direct_tests.weekly_change` by identity on the same readings (ADR 0001 rule 15).
+    The headless-weighted five-hour medians beside it (`per_account`) are not read: an
+    earlier version multiplied them into the raw meter ratio, a weighting applied to one
+    factor only, and on 2026-10-06 that put the 14 September week at -28% against a direct
+    -9.9% (docs/findings-2026-10-06-14-sep-routes.md).
 
-    Both changes are taken per account, each account against itself: only an account
-    with its own windows-per-week change (`windows_per_week_ratio.per_account`, readings
-    on both sides) and its own five-hour change counts. Its tokens per week move by
-    its own windows-per-week ratio times its own five-hour ratio, and the accounts are
-    combined with the windows-per-week weights (`credit_model.combine_log_ratios`),
-    renormalised over the accounts that have both. `windows_per_week_pct` and
-    `five_hour_window_pct` are the same weighted means taken separately, so compounding
-    those two published figures reproduces `signed_pct`. The interval carries the
-    windows-per-week rounding interval only: the five-hour medians carry none.
+    Each account's tokens per week move by its own windows-per-week ratio times its own window
+    ratio, and the accounts are combined with the route's weights (the windows-per-week
+    rounding intervals, `credit_model.combine_log_ratios`). `windows_per_week_pct` and
+    `five_hour_window_pct` are the same weighted means taken separately, so compounding those
+    two published figures reproduces `signed_pct`. The interval carries the windows-per-week
+    rounding interval only.
 
-    None when no account has both changes: the compound is then not measured, and no
-    number is published in its place.
+    None when no account has the route: the compound is then not measured, and no number is
+    published in its place.
     """
-    five_hour = credit_model.five_hour_window_changes(across_cut)
-    per_wpw = (ratio_note or {}).get("per_account") or {}
-    accounts = sorted(label for label in per_wpw if label in five_hour)
+    route = ((across_cut or {}).get("ratio_route") or {}).get("per_account") or {}
+    accounts = sorted(route)
     if not accounts:
         return None
-    raw = {label: per_wpw[label].get("weight") or 0.0 for label in accounts}
+    raw = {label: route[label].get("weight") or 0.0 for label in accounts}
     if not sum(raw.values()):
         raw = dict.fromkeys(accounts, 1.0)
     weights = {label: w / sum(raw.values()) for label, w in raw.items()}
@@ -2038,20 +2042,20 @@ def _tokens_per_week_change(ratio_note: dict | None, across_cut: dict | None) ->
     def mean(f) -> float:
         return sum(weights[label] * f(label) for label in accounts)
 
-    log_windows = mean(lambda k: math.log(per_wpw[k]["ratio_after_over_before"]))
-    log_five = mean(lambda k: math.log(1 + five_hour[k] / 100))
-    log_lo = mean(lambda k: math.log(per_wpw[k]["ratio_interval"][0])) + log_five
-    log_hi = mean(lambda k: math.log(per_wpw[k]["ratio_interval"][1])) + log_five
+    log_windows = mean(lambda k: math.log(route[k]["windows_per_week_ratio"]))
+    log_five = mean(lambda k: math.log(route[k]["window_ratio"]))
+    log_lo = mean(lambda k: math.log(route[k]["windows_per_week_interval"][0])) + log_five
+    log_hi = mean(lambda k: math.log(route[k]["windows_per_week_interval"][1])) + log_five
     windows_pct = round((math.exp(log_windows) - 1) * 100, 1)
     five_hour_pct = round((math.exp(log_five) - 1) * 100, 1)
     signed = round(((1 + windows_pct / 100) * (1 + five_hour_pct / 100) - 1) * 100, 1)
     per_account = {}
     for label in accounts:
-        rho, (lo, hi) = per_wpw[label]["ratio_after_over_before"], per_wpw[label]["ratio_interval"]
-        f = 1 + five_hour[label] / 100
+        rho, (lo, hi) = route[label]["windows_per_week_ratio"], route[label]["windows_per_week_interval"]
+        f = route[label]["window_ratio"]
         per_account[label] = {
             "windows_per_week_pct": round((rho - 1) * 100, 1),
-            "five_hour_window_pct": five_hour[label] + 0.0,  # -0.0 publishes as 0.0
+            "five_hour_window_pct": round((f - 1) * 100, 1) + 0.0,  # -0.0 publishes as 0.0
             "signed_pct": round((rho * f - 1) * 100, 1),
             "signed_interval_pct": [round((lo * f - 1) * 100, 1), round((hi * f - 1) * 100, 1)],
             "weight": round(weights[label], 4)}
@@ -2063,16 +2067,20 @@ def _tokens_per_week_change(ratio_note: dict | None, across_cut: dict | None) ->
                                 round((math.exp(log_hi) - 1) * 100, 1)],
         "windows_per_week_pct": windows_pct,
         "five_hour_window_pct": five_hour_pct,
+        "five_hour_unit": "metered",
         "five_hour_accounts": accounts,
         "accounts": accounts,
         "per_account": per_account,
         "method": ("each account against itself: its own before-to-after ratio of windows per "
-                   "week times its own measured five-hour window ratio across the same cut (a week "
-                   "holds fewer windows, each of a different size), only for accounts with both; "
-                   "combined as a weighted mean of the accounts' log changes, weighted by their "
-                   "windows-per-week rounding intervals. (1 + windows_per_week_pct / 100) x "
-                   "(1 + five_hour_window_pct / 100) - 1 reproduces signed_pct. The interval is "
-                   "the windows-per-week rounding interval; the five-hour medians carry none."),
+                   "week times its own five-hour window ratio, both read on the direct weekly "
+                   "test's sides and selection, the window on metered tokens (the unit the meter "
+                   "ratio counts in) and both by pooled sums (`five_hour_window_credits."
+                   "ratio_route`, ADR 0001 rule 15); combined as a weighted mean of the accounts' "
+                   "log changes, weighted by their windows-per-week rounding intervals. "
+                   "(1 + windows_per_week_pct / 100) x (1 + five_hour_window_pct / 100) - 1 "
+                   "reproduces signed_pct. The interval is the windows-per-week rounding "
+                   "interval. five_hour_window_pct is this compound's factor, not the page's "
+                   "headless-weighted five-hour change."),
     }
 
 
@@ -2150,7 +2158,7 @@ def _event_record(e, scope: str, across_cut: dict | None = None,
                                    # week holds, which is not what its windows did
                                    # (_tokens_per_week_change).
                                    "tokens_per_week_change": _tokens_per_week_change(
-                                       ratio_note, across_cut)}),
+                                       across_cut)}),
     }
 
 
