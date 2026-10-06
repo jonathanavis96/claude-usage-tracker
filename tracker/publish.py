@@ -1709,7 +1709,7 @@ def event_instant(intervals: dict[str, tuple[datetime, datetime]],
     if not intervals:
         return None
     starts = [e for e, _ in intervals.values()]
-    ends = [l for _, l in intervals.values()]
+    ends = [last for _, last in intervals.values()]
     inside = sorted(b for b in pooled if max(starts) <= b <= min(ends))
     if inside:
         return inside[0], "pooled_boundary"
