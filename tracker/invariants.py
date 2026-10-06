@@ -352,8 +352,11 @@ def no_withheld_boundary(doc: dict) -> list[str]:
 # steps are the same percents.
 
 #: The chart each published change metric is drawn on.
+#: Five-hour over seven-day movement (`weekly_to_five_hour_ratio`) is windows per week, so an
+#: event stating it is read on that chart too (ADR 0001 rule 17).
 CHART_OF_METRIC = {"weekly_limit": "tokens_per_week", "five_hour_limit": "window",
-                   "windows_per_week": "windows_per_week"}
+                   "windows_per_week": "windows_per_week",
+                   "weekly_to_five_hour_ratio": "windows_per_week"}
 #: What each chart is called in a failure.
 CHART_NAMES = {"window": "window-size", "tokens_per_week": "tokens-per-week",
                "windows_per_week": "windows-per-week"}
@@ -505,7 +508,14 @@ def one_figure_per_change(doc: dict) -> list[str]:
     For each chart, its drawn step labels; for each published change (`events` of kind
     `change` and `last_change`) whose metric a chart draws, its own whole percent. Every
     figure for the same metric within NEAR_DAYS of one date must be the same whole percent.
-    A meter-ratio metric no chart draws (`weekly_to_five_hour_ratio`) is not read.
+    The meter ratio (`weekly_to_five_hour_ratio`) is windows per week and is read on that
+    chart: on 2026-10-06 the 14 September event said -25% (one account's detector step)
+    beside a -10% step.
+
+    And each published change event sits at its marker (ADR 0001 rule 17): its chart draws
+    a step within NEAR_DAYS of it, and the event's instant (`at`, else its `date`) is that
+    step's own, so the event, the per-week and account boundaries and the chart markers
+    carry one date.
     """
     steps = chart_steps(doc)
     if not steps:
@@ -518,12 +528,14 @@ def one_figure_per_change(doc: dict) -> list[str]:
     records = [("an event", e) for e in doc.get("events") or [] if e.get("kind") == "change"]
     if doc.get("last_change"):
         records.append(("the headline", doc["last_change"]))
+    out = []
     for where, rec in records:
         chart = CHART_OF_METRIC.get(rec.get("metric"))
         said = _signed(rec)
         if chart and said is not None and rec.get("date"):
             figures[chart].append((rec["date"], where, said))
-    out = []
+            if where == "an event":
+                out += _event_off_its_marker(rec, chart, steps[chart])
     for chart, figs in figures.items():
         seen: set[tuple] = set()
         for i, (at, where, pct) in enumerate(figs):
@@ -538,6 +550,21 @@ def one_figure_per_change(doc: dict) -> list[str]:
                            f"{pct2:+d}% on {at2[:10]}, both for the {CHART_NAMES[chart]} chart's "
                            f"quantity.")
     return out
+
+
+def _event_off_its_marker(event: dict, chart: str, steps: list[dict]) -> list[str]:
+    """Check 9's marker test: the event's chart steps at the event's own instant."""
+    step = _marked(steps, event["date"])
+    name = CHART_NAMES[chart]
+    if step is None or _page_round(step["pct"]) == 0:
+        return [(f"An event says {_signed(event):+d}% on {event['date']} ({event.get('metric')}), "
+                 f"but the {name} chart draws no step there.")]
+    same = (_same_instant(event["at"], step["at"]) if event.get("at")
+            else step["at"][:10] == event["date"])
+    if same:
+        return []
+    return [(f"An event is dated {event.get('at') or event['date']}, but its marker on the "
+             f"{name} chart is at {step['at']}: one change carries one date everywhere.")]
 
 
 def _log_reach(pct: float, interval: list | None) -> tuple[float, float] | None:

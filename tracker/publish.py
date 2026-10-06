@@ -6,6 +6,7 @@ import math
 import sys
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
+from itertools import pairwise
 from pathlib import Path
 from statistics import median
 
@@ -288,8 +289,8 @@ def _account_credit_points(gs_passive: dict | None, prices: dict, credits: dict,
 def _merged_dollar_event(cluster: list[tuple]) -> ChangeEvent:
     """One change from the agreeing accounts' own events, dated at the earliest onset.
 
-    The mirror of _account_dated on the weekly series: a change reaches each account at
-    its own pace, so the bounds are the earliest and the latest onset the agreeing
+    Like _rule_dated on the weekly series, a change reaches each account at
+    its own pace: so the bounds are the earliest and the latest onset the agreeing
     accounts saw and the date is the earliest of them; it is confirmed only once the last
     of them confirmed, and it carries every account's readings as its evidence count. The
     percent here is the detector's own -- _percent_from_held_levels restates it as the
@@ -734,6 +735,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         session_split, session_split_source, passive.get("session_tokens", {}),
         weekly_windows, weekly_events,
         model_rates, joint_fits)
+    # ADR 0001 rule 17: the windows-per-week event states the step its chart draws, and
+    # every boundary for it is drawn at the event's own instant.
+    weekly_events = _chart_figure(weekly_events, credits_block)
+    _align_markers(credits_block, weekly_events)
     # Accounts behind the passive evidence: those with an accepted stretch (the rates)
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
@@ -1672,40 +1677,193 @@ def _pooled_weeks(points: list[tuple], now: datetime) -> list[dict]:
 
 
 @dataclass(frozen=True)
-class _AccountDatedEvent(ChangeEvent):
-    """A pooled weekly event whose date and onset bounds come from the accounts' own steps.
+class _RuleDatedEvent(ChangeEvent):
+    """A pooled weekly event dated by ADR 0001 rule 17, and the figure its chart states.
 
     The detector's own bounds -- the last pooled window at the old level and the
     first at the new one -- are kept in `window_onset_*` and published under
-    `onset.from_windows`, so re-dating never loses them.
+    `onset.from_windows`, so re-dating never loses them. `at` is the event instant
+    (`event_instant`) and `evidence` what dated it and each certifying account's own step.
+    `change_pct`, `interval_pct` and `chart` are the windows-per-week step the chart draws
+    at the event's marker (`_chart_figure`), None until it is read.
     """
     window_onset_earliest: date | None = None
     window_onset_latest: date | None = None
     account_dated: bool = False
+    at: datetime | None = None
+    evidence: dict | None = None
+    change_pct: float | None = None
+    interval_pct: list | None = None
+    chart: dict | None = None
 
 
-def _account_dated(events: list, by_account: dict) -> list:
-    """The pooled weekly events with the newest one re-dated from the per-account onsets.
+def event_instant(intervals: dict[str, tuple[datetime, datetime]],
+                  pooled: list[datetime]) -> tuple[datetime, str] | None:
+    """(the event instant, which branch of ADR 0001 rule 17 gave it), or None.
 
-    Anthropic's cut reaches each account at that account's own seven-day reset, so
-    the honest bounds on the pooled event are the earliest and the latest onset the
-    watched accounts saw, and its date is the earliest of them. Only the newest
-    pooled event is re-dated: an older one predates the accounts being watched
-    together. With no per-account step at all the events are returned unchanged.
+    `intervals` are the certifying accounts' own step intervals (end of the last window at
+    the old level, end of the first at the new one), `pooled` the pooled detector's
+    boundaries (end of its last window at each old level). With no certifying account
+    there is no instant here: the caller keeps the pooled detector's own boundary.
     """
-    onsets = sorted(date.fromisoformat(a["step"]["onset"]) for a in by_account.values()
-                    if a["step"] and a["step"]["onset"])
-    if not events or not onsets:
+    if not intervals:
+        return None
+    starts = [e for e, _ in intervals.values()]
+    ends = [last for _, last in intervals.values()]
+    inside = sorted(b for b in pooled if max(starts) <= b <= min(ends))
+    if inside:
+        return inside[0], "pooled_boundary"
+    if len(intervals) == 1:
+        return starts[0], "single_account"
+    if max(starts) <= min(ends):
+        return max(starts), "earliest_common"
+    return min(starts), "earliest_account"
+
+
+def _signed_pct(e) -> int:
+    return -e.percent if e.direction == "decreased" else e.percent
+
+
+def _rule_dated(events: list, note: dict | None, pooled_regimes: list[dict]) -> list:
+    """The pooled weekly events with the newest one dated by ADR 0001 rule 17.
+
+    The certifying accounts are those with readings on both sides of their own certified
+    step (`note.per_account`, `credit_model.windows_per_week_ratio_note`); their step
+    intervals and the pooled detector's boundaries give the instant (`event_instant`).
+    With no certifying account it is the pooled detector's own boundary for the step. Only
+    the newest pooled event is re-dated: an older one predates the accounts being watched
+    together. Each certifying account's own step, the paired accounts' combined figure and
+    the pooled boundaries travel with it as `evidence`.
+    """
+    if not events:
         return events
     e = events[-1]
-    dated = _AccountDatedEvent(
-        date=onsets[0], direction=e.direction, percent=e.percent, model=e.model,
-        onset_earliest=onsets[0], onset_latest=onsets[-1], confirmed_at=e.confirmed_at,
+    per_account = (note or {}).get("per_account") or {}
+    intervals = {label: (datetime.fromisoformat(a["before"]["end"]),
+                         datetime.fromisoformat(a["after"]["start"]))
+                 for label, a in per_account.items()}
+    boundaries = [datetime.fromisoformat(r["end"]) for r in pooled_regimes[:-1]]
+    found = event_instant(intervals, boundaries)
+    if found is None:
+        own = next((datetime.fromisoformat(prev["end"])
+                    for prev, cur in pairwise(pooled_regimes)
+                    if cur["start"][:10] == e.date.isoformat()), None)
+        if own is None:
+            return events
+        at, branch = own, "no_certifying_account"
+        earliest, latest = e.onset_earliest, e.onset_latest
+    else:
+        at, branch = found
+        earliest = min(lo for lo, _ in intervals.values()).date()
+        latest = max(hi for _, hi in intervals.values()).date()
+    evidence = {
+        "date_rule": branch, "rule": "ADR 0001 rule 17",
+        "certifying_accounts": sorted(intervals),
+        "single_account": len(intervals) == 1,
+        "per_account_steps": {label: {
+            "interval": [lo.isoformat(), hi.isoformat()],
+            "before": per_account[label]["before"]["ratio"],
+            "after": per_account[label]["after"]["ratio"],
+            "change_pct": per_account[label].get("change_pct"),
+            "change_interval_pct": per_account[label].get("change_interval_pct")}
+            for label, (lo, hi) in sorted(intervals.items())},
+        "excluded_accounts": (note or {}).get("excluded") or {},
+        "paired_accounts_change_pct": (-note["ratio_fell_pct"]
+                                       if (note or {}).get("ratio_fell_pct") is not None else None),
+        "paired_accounts_change_interval_pct": (
+            [-x for x in reversed(note["ratio_fell_interval_pct"])]
+            if (note or {}).get("ratio_fell_interval_pct") else None),
+        "pooled_detector": {"date": e.date.isoformat(),
+                            "boundaries": [b.isoformat() for b in boundaries]},
+    }
+    if len(intervals) == 1:
+        label = next(iter(intervals))
+        evidence["note"] = (f"Only {label} has readings on both sides of its own certified step, "
+                            f"so the date is {label}'s own step interval.")
+    dated = _RuleDatedEvent(
+        date=at.date(), direction=e.direction, percent=e.percent, model=e.model,
+        onset_earliest=earliest, onset_latest=latest, confirmed_at=e.confirmed_at,
         evidence_points=e.evidence_points, denominator_pct=e.denominator_pct,
         before_interval=e.before_interval, after_interval=e.after_interval,
-        window_onset_earliest=e.onset_earliest, window_onset_latest=e.onset_latest,
-        account_dated=onsets[0] != e.date)
+        window_onset_earliest=getattr(e, "window_onset_earliest", None) or e.onset_earliest,
+        window_onset_latest=getattr(e, "window_onset_latest", None) or e.onset_latest,
+        account_dated=at.date() != e.date, at=at, evidence=evidence)
     return sorted([*events[:-1], dated], key=lambda ev: ev.date)
+
+
+#: How far an event may sit from the boundary its chart draws for it: the page matches a
+#: change to a step within three days (`NEAR_MS`, tracker/invariants.py NEAR_DAYS).
+MARKER_NEAR = timedelta(days=3)
+
+
+def _marker_index(rows: list[dict], split: str | None, at: datetime | None) -> int | None:
+    """The row the chart opens for an event at `at`: the one starting at `split`, near `at`."""
+    if not split or at is None or abs(datetime.fromisoformat(split) - at) > MARKER_NEAR:
+        return None
+    return next((i for i, r in enumerate(rows) if i and r.get("from")
+                 and datetime.fromisoformat(r["from"]) == datetime.fromisoformat(split)), None)
+
+
+def _page_round(x: float) -> int:
+    """Whole percent as the page rounds it (JavaScript `Math.round`), as tracker/invariants.py."""
+    return math.floor(x + 0.5)
+
+
+def _chart_figure(events: list, credits_block: dict | None) -> list:
+    """The rule-dated weekly event with the windows-per-week step its chart draws (rule 17).
+
+    The windows-per-week chart steps between the `per_week_regimes` rows either side of the
+    boundary it draws for the change (the row opened at `window_tokens.cut_at`), so that
+    step, with the after row's interval ends over the before row's opposite ends, is the
+    event's figure. The figure it carried -- the paired accounts' detector step -- stays in
+    `evidence`. Unchanged without both rows' windows per week.
+    """
+    wt = (credits_block or {}).get("window_tokens") or {}
+    rows = wt.get("per_week_regimes") or []
+    out = []
+    for e in events:
+        i = _marker_index(rows, wt.get("cut_at"), getattr(e, "at", None))
+        before, after = (rows[i - 1], rows[i]) if i else ({}, {})
+        b, a = before.get("windows_per_week"), after.get("windows_per_week")
+        if not b or a is None:
+            out.append(e)
+            continue
+        step = (a / b - 1) * 100
+        b_iv, a_iv = before.get("windows_per_week_interval"), after.get("windows_per_week_interval")
+        interval = ([round((a_iv[0] / b_iv[1] - 1) * 100, 1), round((a_iv[1] / b_iv[0] - 1) * 100, 1)]
+                    if a_iv and b_iv and b_iv[0] and b_iv[1] else None)
+        out.append(replace(
+            e, percent=abs(_page_round(step)), change_pct=round(step, 1), interval_pct=interval,
+            direction="decreased" if step < 0 else "increased",
+            evidence={**(e.evidence or {}), "detector_percent": _signed_pct(e)},
+            chart={"chart": "windows_per_week", "source": "per_week_regimes",
+                   "before": b, "after": a, "before_interval": b_iv, "after_interval": a_iv}))
+    return out
+
+
+def _align_markers(credits_block: dict | None, events: list) -> None:
+    """Draw the boundary for a rule-dated event at the event's own instant (rule 17).
+
+    `window_tokens.regimes`, `per_week_regimes` and every `account_regimes` row opened at
+    `cut_at` start at the event's `at` instead, the rows before them end there, and
+    `cut_at` is that instant; `split_at` keeps the instant the readings without an own
+    step were split at. No figure moves. Edits `credits_block` in place.
+    """
+    wt = (credits_block or {}).get("window_tokens") or {}
+    split = wt.get("cut_at")
+    for e in events:
+        at = getattr(e, "at", None)
+        if _marker_index(wt.get("per_week_regimes") or [], split, at) is None:
+            continue
+        old, new = datetime.fromisoformat(split), at.isoformat()
+        for rows in (wt.get("regimes") or [], wt.get("per_week_regimes") or [],
+                     *(wt.get("account_regimes") or {}).values()):
+            for r in rows:
+                for key in ("from", "until"):
+                    if r.get(key) and datetime.fromisoformat(r[key]) == old:
+                        r[key] = new
+        wt["cut_at"], wt["split_at"] = new, split
+        return
 
 
 def _paired_step(pooled_regimes: list[dict], by_window: list[dict], by_account: dict,
@@ -1773,7 +1931,7 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     pooled points. `by_account` carries each account's own count, current,
     regimes and step, because the weekly cut reaches each account at its own
     seven-day reset and the pooled series dates it at whichever stepped first;
-    the pooled event is re-dated from those onsets (_account_dated). Every max20 window
+    the pooled event is dated by ADR 0001 rule 17 (_rule_dated). Every max20 window
     point is in interactive-equivalent units (`_interactive_windows`, ADR 0001 rule 16): its
     five-hour movement over its headless inflation, the meter's own kept as `raw_*`, so
     everything computed from them -- the detector, the regimes, the paired step and the
@@ -1822,10 +1980,15 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                               for label, pts in account_dicts.items() for p in pts),
                              key=lambda p: p["window_ending"])
     max5_points = _max5_window_points(points)
-    events = _account_dated(detect_weighted_changes(max20_points), by_account)
+    events = detect_weighted_changes(max20_points)
     estimate = _regime_current(max20_points, now)
     pooled_regimes = _regimes(max20_points)
     regimes, events = _paired_step(pooled_regimes, max20_by_window, by_account, events)
+    # Dated by ADR 0001 rule 17 from the certifying accounts' own steps and the pooled
+    # detector's boundaries; its figure is the chart's, read once the credits are built.
+    events = _rule_dated(events, credit_model.windows_per_week_ratio_note(
+        {"max20": {"regimes": pooled_regimes, "by_window": max20_by_window,
+                   "by_account": by_account}}), pooled_regimes)
 
     if estimate is not None:
         max20_availability = {"status": "measured", "reason": "evidence_stale" if estimate["stale"] else None}
@@ -2021,8 +2184,8 @@ def _latest_change_with_scope(window_events: list, weekly_events: list,
     """The most recent change across both event series, as its full event record.
 
     Recency is judged on the evidence's own newest window, not on the published
-    date: a pooled weekly event re-dated from the accounts' own onsets
-    (_account_dated) carries a date earlier than the windows it was certified on,
+    date: a pooled weekly event dated from the accounts' own steps
+    (_rule_dated) carries a date earlier than the windows it was certified on,
     and a staggered cut can certify more than one pooled split inside that span.
     Without this the account-dated event lost `last_change` to an older split of
     the same transition.
@@ -2164,11 +2327,17 @@ def _event_record(e, scope: str, across_cut: dict | None = None,
     the five-hour window -- into what a week's tokens did across the cut, which is the
     figure the page states in the headline; `percent` and the windows-per-week chart keep
     the ratio's own fall. It is null where either measurement is missing.
+
+    A weekly event dated by ADR 0001 rule 17 (_rule_dated) carries its instant as `at`
+    and what dated it as `evidence`. Once its chart's step is read (_chart_figure) its
+    `percent` is that step's whole percent, `change_pct` and `interval_pct` the step and
+    its interval, `windows_per_week_step` the two per-week rows, and `metric`
+    `windows_per_week`, the quantity the chart draws.
     """
     provisional = _provisional(scope)
     ratio_note = (credit_model.windows_per_week_ratio_note(weekly_windows)
                   if weekly_windows and not provisional else None)
-    # A pooled weekly event re-dated from the accounts' own onsets (_account_dated)
+    # A pooled weekly event dated from the accounts' own steps (_rule_dated)
     # says so in `attribution`, and keeps the detector's own window bounds under
     # `onset.from_windows` so the re-dating never loses them.
     window_onset = (getattr(e, "window_onset_earliest", None),
@@ -2202,7 +2371,21 @@ def _event_record(e, scope: str, across_cut: dict | None = None,
                                    # (_tokens_per_week_change).
                                    "tokens_per_week_change": _tokens_per_week_change(
                                        across_cut)}),
+        **_rule_17_fields(e),
     }
+
+
+def _rule_17_fields(e) -> dict:
+    """The fields a rule-17 event adds to its record (_event_record), or none."""
+    at = getattr(e, "at", None)
+    if at is None:
+        return {}
+    fields = {"at": at.isoformat(), "evidence": e.evidence}
+    chart = getattr(e, "chart", None)
+    if chart:
+        fields.update(metric="windows_per_week", change_pct=e.change_pct,
+                      interval_pct=e.interval_pct, windows_per_week_step=chart)
+    return fields
 
 
 def _rounded(interval: tuple | None) -> list | None:

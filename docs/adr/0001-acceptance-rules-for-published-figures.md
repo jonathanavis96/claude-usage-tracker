@@ -1,7 +1,7 @@
 # 0001. Acceptance rules for published figures
 
 Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 to 13 added 2026-10-05;
-rule 15 added 2026-10-06
+rule 15 added 2026-10-06; rule 17 added 2026-10-06
 
 ## Context
 
@@ -250,6 +250,57 @@ These are the acceptance rules. Each names where it lives.
     `tracker/weekly_meter.py` (`valued`, `level`), `tracker/credits.py`
     (`_side`, `paired_levels`, `windows_per_week_ratio_note`, `cut_ratio_route`),
     `tracker/invariants.py` (`detected_windows_per_week_agree`).
+
+17. **A published change states its chart's pooled step, dated by one rule, added
+    2026-10-06.** A change event's figure is the pooled figure of the metric the chart
+    beside it draws, at the marker that chart draws for it: the windows-per-week event
+    states the `per_week_regimes` windows-per-week step at its boundary (`change_pct`, the
+    whole `percent`, `metric` `windows_per_week`), with that step's interval
+    (`interval_pct`: the after row's interval ends over the before row's opposite ends).
+    One account's detector step is never the figure; each certifying account's own step,
+    the paired accounts' combined figure and the pooled detector's boundaries are published
+    beside it under `evidence`. Without two `per_week_regimes` rows, or without windows per
+    week on both, the event keeps the detector's figure and `metric`
+    `weekly_to_five_hour_ratio`.
+    Every event is dated by one rule, written here before any figure was recomputed with it.
+    A certifying account is one with readings on both sides of its own certified detector
+    step (`windows_per_week_ratio_note.per_account`). Its step interval is
+    [e, l]: e is the end of its last window at the old level, l the end of its first window
+    at the new level. A pooled detector boundary (between adjacent
+    `regimes_pooled_all_accounts` rows) is the end of the last pooled window at the old
+    level.
+    - (a) With one or more certifying accounts, the event instant is the earliest pooled
+      detector boundary lying inside every certifying account's interval, [max e, min l],
+      if one does. A pooled boundary outside an account's interval contradicts that
+      account's own step: one account's earlier step can be lost in the pool, and an account
+      that joins the pool late moves its split.
+    - (b) Otherwise it is the earliest instant inside every certifying account's interval:
+      max e, when max e <= min l.
+    - (c) When no instant is inside every interval (the accounts stepped at seven-day
+      resets too far apart), it is min e: the change had reached the first account by then.
+    - With exactly one certifying account, (a) to (c) reduce to that account's interval, and
+      `evidence.single_account` says so.
+    - With no certifying account, the instant is the pooled detector's own boundary for the
+      step.
+    - A change certified on the meters directly (rule 9, `five_hour_on_meters`) is dated at
+      its candidate instant, a boundary found in the data (a family's first turn).
+    - An announcement date never dates an event or a marker.
+    The event's `at` is that instant and `date` its UTC day. The boundary the chart draws for
+    the change is moved to that same instant in `window_tokens.regimes`,
+    `per_week_regimes` and every `account_regimes` row, and in `window_tokens.cut_at`. So the
+    event, the per-week and account boundaries and every chart marker carry one value. The
+    readings either side are still split at each account's own step, or at `split_at`
+    (`credits.CUT_AT`) for an account without one, and `split_at` is published.
+    `tracker/invariants.py` check 9 (`one_figure_per_change`, blocking) reads the meter ratio
+    on the windows-per-week chart. It fails when an event's whole percent is not its chart's
+    step label at its marker, when that chart draws no step there, or when the event's
+    instant is not the marker's.
+    Before this rule the 14 September event said windows per week "fell about 25% around
+    2026-09-13", Max account 1's own detector step alone (6.32 to 4.75). The chart beside it
+    stepped -10% (5.11 to 4.60) at the announced 14 September 12:00Z.
+    Source: `tracker/publish.py` (`event_instant`, `_rule_dated`, `_chart_figure`,
+    `_align_markers`, `_event_record`), `tracker/invariants.py` (`one_figure_per_change`,
+    `_event_off_its_marker`).
 
 ### Pending
 
