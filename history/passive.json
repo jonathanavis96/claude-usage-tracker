@@ -1,11 +1,11 @@
 {
- "generated_at": "2026-10-05T19:15:49.445208+00:00",
+ "generated_at": "2026-10-06T13:15:57.038557+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
-  "output": 0.005,
-  "cache_read": 0.9689,
-  "cache_write": 0.0258
+  "output": 0.0048,
+  "cache_read": 0.9697,
+  "cache_write": 0.025
  },
  "history": {
   "2026-07-30": {
@@ -277,18 +277,22 @@
    "interpolated": false
   },
   "2026-10-05": {
-   "tokens_per_pct": 9163498,
+   "tokens_per_pct": 9037191,
    "interpolated": false
+  },
+  "2026-10-06": {
+   "tokens_per_pct": 9037191,
+   "interpolated": true
   }
  },
  "session_tokens": {
-  "claude-sonnet-4-6": 263698,
-  "claude-opus-5": 2903578,
-  "claude-sonnet-5": 645700,
-  "claude-opus-4-7": 134982,
-  "claude-fable-5-1": 5451419,
-  "claude-opus-5-5": 1861024,
-  "claude-haiku-4-5": 217691,
+  "claude-sonnet-4-6": 255187,
+  "claude-opus-5": 3131938,
+  "claude-sonnet-5": 591082,
+  "claude-opus-4-7": 146253,
+  "claude-fable-5-1": 6038066,
+  "claude-opus-5-5": 1856328,
+  "claude-haiku-4-5": 211871,
   "claude-opus-4-8": 852622
  },
  "weekly_windows": {
@@ -5043,6 +5047,42 @@
     "seven_day_pct": 1.0,
     "rounding_interval": [
      0.9451,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-06T00:19:59.641128+00:00",
+    "windows": null,
+    "five_hour_pct": 1.0,
+    "seven_day_pct": 0.0,
+    "rounding_interval": [
+     0.0,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-06T11:30:00.299520+00:00",
+    "windows": null,
+    "five_hour_pct": 1.0,
+    "seven_day_pct": 0.0,
+    "rounding_interval": [
+     0.0,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-06T16:29:59.924913+00:00",
+    "windows": 1.0,
+    "five_hour_pct": 1.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     0.0,
      null
     ],
     "pieces": 1,
