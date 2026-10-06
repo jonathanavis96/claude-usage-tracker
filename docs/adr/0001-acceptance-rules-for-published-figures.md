@@ -270,7 +270,10 @@ These are the acceptance rules. Each names where it lives.
     `regimes_pooled_all_accounts` rows) is the end of the last pooled window at the old
     level.
     - (a) With one or more certifying accounts, the event instant is the earliest pooled
-      detector boundary lying in [min e, max l] over the certifying accounts, if one does.
+      detector boundary lying inside every certifying account's interval, [max e, min l],
+      if one does. A pooled boundary outside an account's interval contradicts that
+      account's own step: one account's earlier step can be lost in the pool, and an account
+      that joins the pool late moves its split.
     - (b) Otherwise it is the earliest instant inside every certifying account's interval:
       max e, when max e <= min l.
     - (c) When no instant is inside every interval (the accounts stepped at seven-day

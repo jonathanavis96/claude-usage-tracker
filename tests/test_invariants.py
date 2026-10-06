@@ -432,6 +432,9 @@ def _fixed(doc: dict) -> dict:
     weeks[2]["windows_per_week"] = weeks[1]["windows_per_week"]
     a1 = _wt(doc)["account_regimes"]["a1"]
     a1[2]["windows_per_week"] = a1[1]["windows_per_week"]
+    # The 14 September event states the windows-per-week chart's own step at its marker
+    # (ADR 0001 rule 17), not one account's detector step.
+    doc["events"][0].update(percent=20, metric="windows_per_week", at=CUT)
     return doc
 
 
@@ -518,23 +521,98 @@ class WindowsPerWeekImpliedTest(unittest.TestCase):
 class OneFigurePerChangeTest(unittest.TestCase):
     def test_the_live_page_fails(self):
         out = I.one_figure_per_change(_live_2026_10_05())
-        self.assertEqual(out, ["The tokens-per-week chart says +32% on 2026-09-22 and an event "
-                               "says +30% on 2026-09-22, both for the tokens-per-week chart's "
-                               "quantity."])
+        self.assertIn("The tokens-per-week chart says +32% on 2026-09-22 and an event "
+                      "says +30% on 2026-09-22, both for the tokens-per-week chart's "
+                      "quantity.", out)
+        # Its 14 September event (-25%) is read on the windows-per-week chart (-20%) too.
+        self.assertIn("The windows-per-week chart says -20% on 2026-09-14 and an event says "
+                      "-25% on 2026-09-14, both for the windows-per-week chart's quantity.", out)
 
     def test_the_fixed_page_passes(self):
         self.assertEqual(I.one_figure_per_change(_fixed(_live_2026_10_05())), [])
 
-    def test_a_meter_ratio_no_chart_draws_is_not_read(self):
+    def test_the_meter_ratio_is_read_on_the_windows_per_week_chart(self):
+        # Five-hour over seven-day movement is windows per week: an event stating it is read
+        # against the windows-per-week chart's step at its marker (ADR 0001 rule 17).
         doc = _fixed(_live_2026_10_05())
         doc["events"].append({"kind": "change", "date": "2026-09-14", "percent": 19,
                               "direction": "decreased", "metric": "weekly_to_five_hour_ratio"})
-        self.assertEqual(I.one_figure_per_change(doc), [])
+        out = I.one_figure_per_change(doc)
+        self.assertEqual(len(out), 1)
+        self.assertIn("-20% on 2026-09-14", out[0])
+        self.assertIn("-19% on 2026-09-14", out[0])
 
     def test_two_published_changes_disagreeing_fail(self):
         doc = _fixed(_live_2026_10_05())
         doc["events"][1]["percent"] = 29
         self.assertTrue(I.one_figure_per_change(doc))
+
+
+def _live_2026_10_06() -> dict:
+    """The page as built on 2026-10-06 after #128, cut to what check 9 reads: the 14
+    September event stated Max account 1's own detector step (-25%, dated 13 September)
+    beside a windows-per-week chart stepping -10% at the 14 September 12:00Z boundary."""
+    regimes = [{"from": None, "until": CUT, "value": 673637730},
+               {"from": CUT, "until": SEP22, "value": 668922266},
+               {"from": SEP22, "until": None, "value": 799362108}]
+    weeks = [{"from": None, "until": CUT, "value": 3440589040, "windows_per_week": 5.1075},
+             {"from": CUT, "until": SEP22, "value": 3074969024, "windows_per_week": 4.5969},
+             {"from": SEP22, "until": None, "value": 3600788727, "windows_per_week": 4.5046}]
+    sep22 = {"kind": "change", "date": "2026-09-22", "at": SEP22, "scope": "both",
+             "metric": "five_hour_limit", "percent": 20, "change_pct": 19.5,
+             "direction": "increased"}
+    return {"last_change": {k: v for k, v in sep22.items() if k != "kind"}, "events": [
+        {"kind": "change", "date": "2026-09-13", "scope": "weekly", "percent": 25,
+         "direction": "decreased", "metric": "weekly_to_five_hour_ratio"}, sep22],
+        "credits": {"window_tokens": {"regimes": regimes, "per_week_regimes": weeks},
+                    "five_hour_on_meters": {"candidates": []}}}
+
+
+A1_STEP = "2026-09-13T16:30:00.008149+00:00"
+
+
+def _relabelled(doc: dict, at: str = A1_STEP) -> dict:
+    """The 2026-10-06 page with this branch's rule 17: the boundary drawn at the event's own
+    instant on every chart, and the event stating the windows-per-week step there."""
+    wt = _wt(doc)
+    for rows in (wt["regimes"], wt["per_week_regimes"]):
+        rows[0]["until"], rows[1]["from"] = at, at
+    doc["events"][0].update(date=at[:10], at=at, percent=10, metric="windows_per_week")
+    return doc
+
+
+class EventAtItsMarkerTest(unittest.TestCase):
+    """Check 9 on 2026-10-06: an event's figure is its chart's step at its marker, and its
+    date is the marker's."""
+
+    def test_the_live_page_fails_on_the_percent_and_the_date(self):
+        out = I.one_figure_per_change(_live_2026_10_06())
+        self.assertIn("The windows-per-week chart says -10% on 2026-09-14 and an event says "
+                      "-25% on 2026-09-13, both for the windows-per-week chart's quantity.", out)
+        self.assertTrue(any("dated 2026-09-13" in o and "marker" in o for o in out), out)
+        self.assertIn("one_figure_per_change", I.BLOCKING)
+
+    def test_the_relabelled_page_passes(self):
+        self.assertEqual(I.one_figure_per_change(_relabelled(_live_2026_10_06())), [])
+
+    def test_one_point_off_fails(self):
+        doc = _relabelled(_live_2026_10_06())
+        doc["events"][0]["percent"] = 11
+        self.assertEqual(len(I.one_figure_per_change(doc)), 1)
+
+    def test_the_right_percent_on_another_instant_fails(self):
+        doc = _relabelled(_live_2026_10_06())
+        doc["events"][0]["at"] = CUT
+        doc["events"][0]["date"] = CUT[:10]
+        out = I.one_figure_per_change(doc)
+        self.assertEqual(len(out), 1)
+        self.assertIn(f"its marker on the windows-per-week chart is at {A1_STEP}", out[0])
+
+    def test_an_event_with_no_step_at_its_marker_fails(self):
+        doc = _relabelled(_live_2026_10_06())
+        _wt(doc)["per_week_regimes"][1]["windows_per_week"] = 5.1075
+        out = I.one_figure_per_change(doc)
+        self.assertTrue(any("draws no step" in o for o in out), out)
 
 
 def _weekly_event(direct: dict, ratio: dict, *, quality="certified") -> dict:
