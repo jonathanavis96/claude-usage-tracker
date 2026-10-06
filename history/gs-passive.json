@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-06T09:00:05.373743+00:00",
+ "generated_at": "2026-10-06T09:30:05.641548+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 7089,
+    "reset_verified_samples": 7099,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 11185,
+    "samples": 11195,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-06T08:58:38+00:00"
+    "last": "2026-10-06T09:28:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -37,11 +37,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 3245,
-     "dropped": 2677,
+     "dropped": 2678,
      "subagent_files": 956,
      "dropped_to": {
       ".claude": 556,
-      ".claude-avis": 1331,
+      ".claude-avis": 1332,
       ".claude-dave": 8
      },
      "attributed_by_record": {
@@ -35978,11 +35978,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 6589,
+    "reset_verified_samples": 6600,
     "since": null,
-    "samples": 7423,
+    "samples": 7434,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-06T08:59:43+00:00"
+    "last": "2026-10-06T09:29:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -35992,11 +35992,11 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 899,
-    "turns": 21604,
+    "files": 900,
+    "turns": 21606,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 899,
+     "kept": 900,
      "dropped": 1394,
      "subagent_files": 246,
      "dropped_to": {
@@ -39347,7 +39347,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-06T09:01:03.988516+00:00",
+  "generated_at": "2026-10-06T09:31:04.298923+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -81949,12 +81949,16 @@
     "model": "claude-haiku-4-5",
     "account": "a4",
     "entrypoint": "sdk-cli",
-    "n": 1,
+    "n": 3,
     "fast_session_requests": 0,
     "output_hist": {
+     "219": 1,
+     "211": 1,
      "216": 1
     },
     "ttfb_hist": {
+     "113": 1,
+     "83": 1,
      "117": 1
     },
     "fast_output_hist": {},
