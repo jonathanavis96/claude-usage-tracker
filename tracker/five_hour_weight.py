@@ -23,7 +23,9 @@ from __future__ import annotations
 import copy
 import math
 from bisect import bisect_right
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from .weekly import _ratio_interval
 
 #: Fewer clean steps than this, or a headless share that hardly varies, and an account's own
 #: factor is not fitted (the pooled one still is).
@@ -217,4 +219,83 @@ def interactive_equivalent(report: dict | None, factor: float | None) -> dict | 
         if "stretches" in body:
             body["stretches"] = stretches
         out["accounts"][name] = body
+    return out
+
+
+#: A five-hour meter window: a `by_window` point covers the five hours before its `window_ending`.
+WINDOW_SPAN = timedelta(hours=5)
+
+WINDOWS_METHOD = (
+    "Windows per week in interactive-equivalent units (ADR 0001 rule 16): each five-hour meter "
+    "window's movement (`raw_five_hour_pct`) over its headless inflation, 1 + (factor - 1) x the "
+    "window's headless share of credits, with the factor fitted at this publish "
+    "(`five_hour_meter.headless_factor`). The share is read from the account's seven-day steps "
+    "that overlap the window's five hours, each counted by the part of its span inside them, "
+    "valued as the factor's own fit values them; a window no step overlaps reads the stretches "
+    "the same way; a window neither overlaps (`headless_share` null) is counted as recorded, "
+    "unweighted. `five_hour_pct`, `windows` and `rounding_interval` are in that unit; the "
+    "meter's own figures are kept as `raw_five_hour_pct`, `raw_windows` and "
+    "`raw_rounding_interval`, a diagnostic. The seven-day meter is not weighted.")
+
+
+def _spans(items: list[dict], value) -> list[tuple[datetime, datetime, float, float]]:
+    """(start, end, credits, headless credits) of every item with a headless split and credits."""
+    out = []
+    for it in items or []:
+        if "headless_tokens" not in it or not it.get("start") or not it.get("end"):
+            continue
+        total = value(it.get("tokens") or {})
+        head = value(it["headless_tokens"]) if it["headless_tokens"] else 0.0
+        if not total or head is None:
+            continue
+        out.append((datetime.fromisoformat(it["start"]), datetime.fromisoformat(it["end"]),
+                    total, head))
+    return sorted(out, key=lambda r: r[0])
+
+
+def _share(spans: list[tuple], start: datetime, end: datetime) -> float | None:
+    """Headless credits over credits in the spans overlapping (start, end], each counted by
+    the fraction of its own span inside it; None when none overlaps."""
+    total = head = 0.0
+    for a, b, c, h in spans:
+        if a >= end:
+            break
+        if b <= start:
+            continue
+        span = (b - a).total_seconds()
+        f = 1.0 if span <= 0 else (min(b, end) - max(a, start)).total_seconds() / span
+        total += f * c
+        head += f * h
+    return min(max(head / total, 0.0), 1.0) if total > 0 else None
+
+
+def interactive_windows(points: list[dict], steps: list[dict], stretches: list[dict], value,
+                        factor: float | None) -> list[dict]:
+    """One account's `by_window` points in interactive-equivalent units (WINDOWS_METHOD).
+
+    `steps` and `stretches` are the account's own seven-day steps and stretches with their
+    metered `tokens` and `headless_tokens`; `value` is the credit valuation the factor was
+    fitted with. Each point is copied with its five-hour movement, ratio and rounding interval
+    divided by its headless inflation, the meter's own kept under `raw_*`, and its
+    `headless_share` (null where nothing records one), `headless_share_source` and
+    `headless_inflation`. With no factor nothing is weighted, and the fields are still there.
+    """
+    by_step, by_stretch = _spans(steps, value), _spans(stretches, value)
+    out = []
+    for p in points:
+        end = datetime.fromisoformat(p["window_ending"])
+        share, source = _share(by_step, end - WINDOW_SPAN, end), "seven_day_steps"
+        if share is None:
+            share, source = _share(by_stretch, end - WINDOW_SPAN, end), "stretches"
+        inflation = 1 + (factor - 1) * share if factor and share is not None else 1.0
+        d5, d7 = p["five_hour_pct"], p["seven_day_pct"]
+        raw_iv = p.get("rounding_interval") or _ratio_interval(d5, d7, p.get("pieces", 1))
+        out.append(dict(
+            p, five_hour_pct=round(d5 / inflation, 3),
+            windows=round(d5 / inflation / d7, 2) if d7 > 0 else None,
+            rounding_interval=[round(x / inflation, 4) if x is not None else None for x in raw_iv],
+            raw_five_hour_pct=d5, raw_windows=p.get("windows"), raw_rounding_interval=raw_iv,
+            headless_share=round(share, 4) if share is not None else None,
+            headless_share_source=source if share is not None else None,
+            headless_inflation=round(inflation, 4)))
     return out

@@ -122,5 +122,71 @@ class InteractiveEquivalentTest(unittest.TestCase):
         self.assertIs(W.interactive_equivalent(rpt, None), rpt)
 
 
+class InteractiveWindowsTest(unittest.TestCase):
+    """Windows per week in interactive-equivalent units (ADR 0001 rule 16): each five-hour
+    meter window's movement over its headless inflation, 1 + (factor - 1) x headless share."""
+
+    END = T0 + timedelta(hours=10)
+
+    def window(self, d5=30.0, d7=4.0, end=None):
+        end = end or self.END
+        return {"window_ending": end.isoformat(), "windows": round(d5 / d7, 2), "five_hour_pct": d5,
+                "seven_day_pct": d7, "rounding_interval": [5.0, 9.0], "pieces": 1,
+                "reset_verified": True}
+
+    def item(self, start, end, total, head):
+        row = {"start": start.isoformat(), "end": end.isoformat(), "tokens": {"m": {"v": total}}}
+        if head is not None:
+            row["headless_tokens"] = {"m": {"v": head}} if head else {}
+        return row
+
+    def test_a_window_is_divided_by_its_headless_inflation(self):
+        steps = [self.item(self.END - timedelta(hours=2), self.END - timedelta(hours=1), 100.0, 50.0)]
+        (out,) = W.interactive_windows([self.window()], steps, [], value, 1.5)
+        self.assertEqual(out["headless_share"], 0.5)
+        self.assertEqual(out["headless_inflation"], 1.25)
+        self.assertAlmostEqual(out["five_hour_pct"], 24.0)
+        self.assertEqual(out["windows"], 6.0)
+        self.assertEqual(out["rounding_interval"], [4.0, 7.2])
+        self.assertEqual((out["raw_five_hour_pct"], out["raw_windows"], out["raw_rounding_interval"]),
+                         (30.0, 7.5, [5.0, 9.0]))
+        self.assertEqual(out["headless_share_source"], "seven_day_steps")
+        self.assertEqual(out["seven_day_pct"], 4.0)
+
+    def test_a_step_counts_by_the_part_of_it_inside_the_window(self):
+        # Half of the all-headless step lies inside the window: 50 headless of 150 credits.
+        steps = [self.item(self.END - timedelta(hours=6), self.END - timedelta(hours=4), 100.0, 100.0),
+                 self.item(self.END - timedelta(hours=1), self.END, 100.0, 0.0)]
+        (out,) = W.interactive_windows([self.window()], steps, [], value, 1.5)
+        self.assertAlmostEqual(out["headless_share"], round(50 / 150, 4))
+
+    def test_without_a_step_the_stretches_give_the_share(self):
+        stretches = [self.item(self.END - timedelta(hours=20), self.END + timedelta(hours=20),
+                               400.0, 100.0)]
+        (out,) = W.interactive_windows([self.window()], [], stretches, value, 2.0)
+        self.assertEqual(out["headless_share"], 0.25)
+        self.assertEqual(out["headless_share_source"], "stretches")
+        self.assertAlmostEqual(out["five_hour_pct"], 24.0)
+
+    def test_no_split_recorded_is_counted_as_recorded(self):
+        steps = [self.item(self.END - timedelta(hours=2), self.END, 100.0, None)]
+        (out,) = W.interactive_windows([self.window()], steps, [], value, 1.5)
+        self.assertIsNone(out["headless_share"])
+        self.assertEqual(out["headless_inflation"], 1.0)
+        self.assertEqual((out["five_hour_pct"], out["windows"]), (30.0, 7.5))
+
+    def test_no_factor_is_no_weight_and_the_raw_fields_are_still_there(self):
+        steps = [self.item(self.END - timedelta(hours=2), self.END, 100.0, 100.0)]
+        (out,) = W.interactive_windows([self.window()], steps, [], value, None)
+        self.assertEqual((out["five_hour_pct"], out["raw_five_hour_pct"]), (30.0, 30.0))
+        self.assertEqual(out["headless_inflation"], 1.0)
+
+    def test_the_input_points_are_not_changed(self):
+        pts = [self.window()]
+        W.interactive_windows(pts, [self.item(self.END - timedelta(hours=1), self.END, 1.0, 1.0)],
+                              [], value, 1.5)
+        self.assertEqual(pts, [self.window()])
+
+
 if __name__ == "__main__":
     unittest.main()

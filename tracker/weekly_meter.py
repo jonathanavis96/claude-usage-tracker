@@ -152,13 +152,16 @@ def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.Harne
     return kept
 
 
-def valued(steps: list[dict], value) -> list[dict]:
-    """Each step as {start, end, day, credits, d7, d5}, its tokens at `value(tokens)`.
+def valued(steps: list[dict], value, factor: float | None = None) -> list[dict]:
+    """Each step as {start, end, day, credits, d7, d5, raw_d5}, its tokens at `value(tokens)`.
 
     A step `value` cannot price (a model in no family) is left out, with its seven-day point.
     A step with no tokens at all is kept at zero credits: the meter moved a point and the
     account's own transcripts spent nothing in it, which is part of what that point bought.
     `day` is the UTC day the step ends in, the unit every interval here resamples.
+    With the fitted headless `factor`, `d5` is the step's five-hour points over its headless
+    inflation, 1 + (factor - 1) x its headless share of credits (ADR 0001 rule 16), and
+    `raw_d5` the meter's own; the seven-day point is not weighted.
     """
     out = []
     for st in steps:
@@ -166,20 +169,26 @@ def valued(steps: list[dict], value) -> list[dict]:
         if credits is None:
             continue
         end = datetime.fromisoformat(st["end"])
+        raw = st.get("d5", 0)
+        head = value(st["headless_tokens"]) if st.get("headless_tokens") else 0.0
+        share = min(max(head / credits, 0.0), 1.0) if factor and credits and head else 0.0
         out.append({"start": datetime.fromisoformat(st["start"]), "end": end,
                     "day": end.astimezone(timezone.utc).date().isoformat(), "credits": float(credits),
-                    "d7": st.get("d7", 1), "d5": st.get("d5", 0)})
+                    "d7": st.get("d7", 1), "d5": raw / (1 + (factor - 1) * share) if share else raw,
+                    "raw_d5": raw})
     return out
 
 
 def _by_day(rows: list[dict]) -> list[tuple[float, ...]]:
-    """A side's steps summed per UTC day: (credits, seven-day points, five-hour points)."""
+    """A side's steps summed per UTC day: (credits, seven-day points, five-hour points, the
+    meter's own five-hour points)."""
     days: dict[str, list[float]] = {}
     for r in rows:
-        acc = days.setdefault(r["day"], [0.0, 0.0, 0.0])
+        acc = days.setdefault(r["day"], [0.0, 0.0, 0.0, 0.0])
         acc[0] += r["credits"]
         acc[1] += r["d7"]
         acc[2] += r["d5"]
+        acc[3] += r.get("raw_d5", r["d5"])
     return [tuple(v) for _, v in sorted(days.items())]
 
 
@@ -201,8 +210,9 @@ def level(rows_by_label: dict[str, list[dict]], seed: str) -> dict:
     an account weighs by how far its own meter moved, as the window pools. Its 95% interval
     resamples each account's whole UTC days independently (`WEEKLY_BOOTSTRAP` draws) and
     recomputes the pooled ratio; each account's own interval is read off the same draws.
-    `windows_per_week_meters` is five-hour over seven-day points in the same steps: the meter
-    ratio, for reference, never an input.
+    `windows_per_week_meters` is five-hour over seven-day points in the same steps, in the
+    steps' unit (`valued`), for reference, never an input; `raw_windows_per_week_meters` is
+    the meter's own ratio.
     """
     days = {label: _by_day(rows) for label, rows in rows_by_label.items() if rows}
 
@@ -210,9 +220,11 @@ def level(rows_by_label: dict[str, list[dict]], seed: str) -> dict:
         c = sum(x[0] for g in groups for x in g)
         d7 = sum(x[1] for g in groups for x in g)
         d5 = sum(x[2] for g in groups for x in g)
+        raw = sum(x[3] for g in groups for x in g)
         return {"credits_per_pct": c / d7 if d7 else None, "seven_day_points": d7,
                 "five_hour_points": d5, "days": sum(len(g) for g in groups),
-                "windows_per_week_meters": d5 / d7 if d7 else None}
+                "windows_per_week_meters": d5 / d7 if d7 else None,
+                "raw_windows_per_week_meters": raw / d7 if d7 else None}
 
     out = summary(list(days.values()))
     out["accounts"] = sorted(days)

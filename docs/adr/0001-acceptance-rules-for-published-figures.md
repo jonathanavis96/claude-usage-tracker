@@ -201,7 +201,8 @@ These are the acceptance rules. Each names where it lives.
     by pooled sums. Both factors are in one unit. The meter ratio counts raw five-hour points,
     so the window factor values metered tokens. The headless weight of rule 12 belongs to
     five-hour figures published on their own, and is never multiplied into a raw meter
-    ratio. On identical readings the two routes are then one number. What remains between
+    ratio. (Amended by rule 16: the ratio is now itself interactive-equivalent, so the
+    window factor values headless-weighted tokens; still one unit.) On identical readings the two routes are then one number. What remains between
     them is the two kinds of reading: five-hour windows against one-point seven-day steps.
     `tracker/invariants.py` check 10 (`weekly_routes_agree`, advisory) fails when, on a
     certified weekly event, the two differ by more than their combined interval.
@@ -215,6 +216,40 @@ These are the acceptance rules. Each names where it lives.
     `tracker/publish.py` (`_tokens_per_week_change`), `tracker/invariants.py`
     (`weekly_routes_agree`).
     Findings: `docs/findings-2026-10-06-14-sep-routes.md`.
+
+16. **Windows per week is read in interactive-equivalent units, added 2026-10-06.** Rule 12
+    puts the window in interactive-equivalent units and rule 11 makes windows per week the
+    week over the window, but the windows per week the meters themselves show (the change
+    detector's input, its regimes and the account regimes, `max20.by_window`, the 14
+    September event's `percent` and `windows_per_week_ratio`, the windows-per-week candidates
+    and the chart's meter levels) was the raw five-hour over seven-day meter ratio. Headless
+    work moves the five-hour meter by the fitted factor per credit and the seven-day meter not
+    at all, so a raw ratio moves when an account's headless share moves, with no limit
+    change: Max account 2 went from 46% to 3% headless across 14 September. So each five-hour
+    meter window's movement is divided by its headless inflation, 1 + (factor - 1) x the
+    window's headless share of credits, before anything reads it. The factor is the one
+    fitted at the same publish (`five_hour_meter.headless_factor`), never a constant. The
+    share is read from the account's seven-day steps that overlap the window's five hours,
+    each counted by the part of its span inside them and valued as the factor's own fit
+    values them. A window no step overlaps reads the stretches the same way, and a window
+    neither overlaps is counted as recorded, unweighted, as rule 12 counts an account with
+    no split. A seven-day step's own five-hour points (`windows_per_week_meters`) are divided
+    by the step's own inflation the same way. The rounding error stays the meter's, scaled
+    into the new unit. The meter's
+    own figures stay published beside them as `raw_*`, a diagnostic that no figure reads.
+    The ratio route of rule 15 is then in this unit on both factors: windows per week over
+    each window's inflation, the window on headless-weighted tokens. The inflation cancels
+    in the product, so the identity with the direct weekly change still holds. The seven-day
+    meter is not weighted. `tracker/invariants.py` check 11
+    (`detected_windows_per_week_agree`, advisory) fails when a detected windows-per-week
+    level and the week over the window it overlaps longest differ by more than their
+    combined interval.
+    Source: `tracker/five_hour_weight.py` (`interactive_windows`, `WINDOWS_METHOD`),
+    `tracker/publish.py` (`_interactive_windows`, `_weekly_block`, `_point_tuples`),
+    `tracker/detect.py` (`ratio_interval` `raw_d5`, `pooled_interval`),
+    `tracker/weekly_meter.py` (`valued`, `level`), `tracker/credits.py`
+    (`_side`, `paired_levels`, `windows_per_week_ratio_note`, `cut_ratio_route`),
+    `tracker/invariants.py` (`detected_windows_per_week_agree`).
 
 ### Pending
 

@@ -464,14 +464,24 @@ def rounding_error(pieces: int, series: WeightedSeries = WINDOWS) -> float:
 
 
 def ratio_interval(d5: float, d7: float, pieces: int,
-                   series: WeightedSeries = WINDOWS) -> tuple[float | None, float | None]:
+                   series: WeightedSeries = WINDOWS,
+                   raw_d5: float | None = None) -> tuple[float | None, float | None]:
     """The lowest and highest d5/d7 the whole-percent readings allow (module docstring, 3.).
 
     The upper end is None when the conceded error could take d7 to zero: the pool
     cannot bound the ratio from above at all. `series.numerator_scale` says how much
     of the same error the numerator carries -- all of it where the numerator is a
     meter reading too, none of it where it is an exact credit total.
+
+    `raw_d5` is the meter's own movement when `d5` is that movement in
+    interactive-equivalent units (each window over its headless inflation, ADR 0001
+    rule 16): the rounding is the meter's, so the interval is the meter's own, scaled
+    by d5 / raw_d5 into d5's unit.
     """
+    if raw_d5 is not None and raw_d5 > 0 and raw_d5 != d5:
+        lo, hi = ratio_interval(raw_d5, d7, pieces, series)
+        k = d5 / raw_d5
+        return (lo * k if lo is not None else None), (hi * k if hi is not None else None)
     e = rounding_error(pieces, series)
     en = e * series.numerator_scale
     lo = max(0.0, d5 - en) / (d7 + e) if d7 + e > 0 else None
@@ -479,12 +489,19 @@ def ratio_interval(d5: float, d7: float, pieces: int,
     return lo, hi
 
 
+def _raw_d5(point: tuple) -> float:
+    """The meter's own five-hour movement in a point: its sixth element where the point
+    carries d5 in interactive-equivalent units (tracker/publish.py `_point_tuples`), else d5."""
+    return point[5] if len(point) > 5 and point[5] is not None else point[1]
+
+
 def pooled_interval(points: list[tuple], series: WeightedSeries = WINDOWS) -> tuple[float | None, float | None]:
     """ratio_interval over a pool of window points."""
     if not points:
         return None, None
     return ratio_interval(sum(p[1] for p in points), sum(p[2] for p in points),
-                          sum(_pieces(p) for p in points), series)
+                          sum(_pieces(p) for p in points), series,
+                          raw_d5=sum(_raw_d5(p) for p in points))
 
 
 def _certified_change(before: list[tuple], after: list[tuple], threshold: float,
@@ -565,11 +582,13 @@ def weighted_regimes(points: list[tuple], threshold: float = 0.15,
     level sit.
 
     Each regime is {"start", "end", "windows", "seven_day_pct", "points", "pieces",
-    "rounding_interval", "quality"}: `windows` is `pooled_windows` over the regime,
+    "rounding_interval", "quality"[, "raw_windows"]}: `windows` is `pooled_windows` over the regime,
     `seven_day_pct` its pooled denominator, `points` its window count and `pieces`
     the separate rounded differences behind it; `rounding_interval` is
     `pooled_interval`, and `quality` is "bounded", or "insufficient_precision" when
-    the rounding could take the denominator to zero. `end` is the last window's
+    the rounding could take the denominator to zero. Where the points carry the meter's
+    own five-hour movement beside an interactive-equivalent one (ADR 0001 rule 16),
+    `raw_windows` is the meter's ratio over the same windows. `end` is the last window's
     timestamp; the newest regime's end is simply the newest window, not a claim
     that it has finished.
     """
@@ -592,6 +611,11 @@ def weighted_regimes(points: list[tuple], threshold: float = 0.15,
             "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
             "quality": "bounded" if hi is not None else "insufficient_precision",
         })
+        if any(len(p) > 5 for p in span):
+            # The meter's own ratio over the same windows, beside the interactive-equivalent
+            # level (ADR 0001 rule 16): a diagnostic, never a level.
+            regimes[-1]["raw_windows"] = round(sum(_raw_d5(p) for p in span)
+                                               / sum(p[2] for p in span), 2)
     return regimes
 
 

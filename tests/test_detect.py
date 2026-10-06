@@ -12,6 +12,7 @@ from tracker.detect import (
     detect_smoothed_changes,
     detect_weighted_changes,
     latest_change,
+    pooled_interval,
     pooled_windows,
     ratio_interval,
     rounding_error,
@@ -486,6 +487,16 @@ class CreditStretchTests(unittest.TestCase):
         e = rounding_error(4)
         self.assertEqual(ratio_interval(60.0, 10.0, 4), ((60.0 - e) / (10.0 + e), (60.0 + e) / (10.0 - e)))
         self.assertNotEqual(rounding_error(4), rounding_error(4, CREDIT_STRETCHES))
+
+    def test_an_interactive_equivalent_numerator_concedes_the_meter_error_in_its_own_unit(self):
+        # d5 is the meter's 60 points over a headless inflation of 1.25: the rounding error is
+        # the meter's, so the interval is the raw one scaled by 48 / 60.
+        raw = ratio_interval(60.0, 10.0, 4)
+        self.assertEqual(ratio_interval(48.0, 10.0, 4, raw_d5=60.0), (raw[0] * 0.8, raw[1] * 0.8))
+        pts = [(datetime(2026, 9, 1, tzinfo=timezone.utc), 24.0, 5.0, 2, "a1", 30.0),
+               (datetime(2026, 9, 2, tzinfo=timezone.utc), 24.0, 5.0, 2, "a1", 30.0)]
+        self.assertEqual(pooled_interval(pts), ratio_interval(48.0, 10.0, 4, raw_d5=60.0))
+        self.assertEqual(weighted_regimes(pts)[0]["raw_windows"], 6.0)
 
     def test_a_staircase_measures_each_step_against_its_own_neighbours(self):
         pts = (self.points([100_000] * 20) + self.points([50_000] * 20, start=20)

@@ -2096,15 +2096,27 @@ def _regime_rows(by_window: list[dict], regime: dict,
             and datetime.fromisoformat(r["window_ending"]) != exclude_at]
 
 
+def _raw_five_hour(rows: list[dict]) -> float:
+    """The meter's own five-hour movement over `by_window` rows: `raw_five_hour_pct` where a
+    row is in interactive-equivalent units (ADR 0001 rule 16), else `five_hour_pct`."""
+    return sum(r["raw_five_hour_pct"] if r.get("raw_five_hour_pct") is not None
+               else r["five_hour_pct"] for r in rows)
+
+
 def _side(rows: list[dict], regime: dict) -> dict | None:
-    """One side of a before/after comparison: the rows' pooled sums, ratio and rounding interval."""
+    """One side of a before/after comparison: the rows' pooled sums, ratio and rounding interval.
+
+    `ratio` is in the rows' unit (interactive-equivalent, ADR 0001 rule 16); `raw_ratio` is
+    the meter's own five-hour over seven-day movement on the same rows, a diagnostic."""
     d5 = sum(r["five_hour_pct"] for r in rows)
     d7 = sum(r["seven_day_pct"] for r in rows)
     if not d7:
         return None
-    lo, hi = ratio_interval(d5, d7, sum(r.get("pieces", 1) for r in rows))
+    raw = _raw_five_hour(rows)
+    lo, hi = ratio_interval(d5, d7, sum(r.get("pieces", 1) for r in rows), raw_d5=raw)
     return {"n_windows": len(rows), "sum_five_hour_pct": round(d5, 1),
             "sum_seven_day_pct": round(d7, 1), "ratio": round(d5 / d7, 4),
+            "raw_sum_five_hour_pct": round(raw, 1), "raw_ratio": round(raw / d7, 4),
             "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
             "accounts": sorted({r["account"] for r in rows if r.get("account")}),
             "start": regime["start"], "end": regime["end"]}
@@ -2143,6 +2155,7 @@ def _paired_account(rows: list[dict], block: dict) -> dict | None:
     rho = after["ratio"] / before["ratio"]
     rho_lo, rho_hi = a_lo / b_hi, a_hi / b_lo
     return {"before": before, "after": after, "ratio_after_over_before": round(rho, 4),
+            "raw_ratio_after_over_before": round(after["raw_ratio"] / before["raw_ratio"], 4),
             "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)],
             "change_pct": round((rho - 1) * 100, 2),
             "change_interval_pct": [round((rho_lo - 1) * 100, 2), round((rho_hi - 1) * 100, 2)]}
@@ -3427,8 +3440,10 @@ def paired_levels(note: dict | None, by_window: list[dict]) -> tuple[dict, dict]
         d5 = sum(r["five_hour_pct"] for r in pool)
         d7 = sum(r["seven_day_pct"] for r in pool)
         pieces = sum(r.get("pieces", 1) for r in pool)
-        lo, hi = ratio_interval(d5, d7, pieces)
+        raw = _raw_five_hour(pool)
+        lo, hi = ratio_interval(d5, d7, pieces, raw_d5=raw)
         return {"start": start, "end": end, "windows": round(d5 / d7, 2) if d7 else None,
+                "raw_windows": round(raw / d7, 2) if d7 else None,
                 "seven_day_pct": round(d7, 1), "points": len(pool), "pieces": pieces,
                 "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
                 "quality": "bounded" if hi is not None else "insufficient_precision",
@@ -3521,6 +3536,11 @@ def windows_per_week_ratio_note(weekly: dict) -> dict | None:
     rho = combined["ratio"]
     rho_lo, rho_hi = combined["interval"]
     fall_pct = round((1 - rho) * 100, 2)
+    # The meter's own ratio on the same sides and weights: what the raw meter ratio said,
+    # before each window's headless inflation was taken out (ADR 0001 rule 16).
+    raw_rho = math.exp(sum(w * math.log(per_account[k]["raw_ratio_after_over_before"])
+                           for k, w in combined["weights"].items())
+                       / sum(combined["weights"].values()))
 
     def pct(x: float) -> float:
         return round(x * 100, 2)
@@ -3533,6 +3553,8 @@ def windows_per_week_ratio_note(weekly: dict) -> dict | None:
         "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)],
         "ratio_fell_pct": fall_pct,
         "ratio_fell_interval_pct": [pct(1 - rho_hi), pct(1 - rho_lo)],
+        "raw_ratio_after_over_before": round(raw_rho, 4),
+        "raw_ratio_fell_pct": round((1 - raw_rho) * 100, 2),
         "pooled_all_accounts": pooled,
         "consistent_with": [
             {"description": "the weekly cap falls by the whole measured amount, the five-hour "
@@ -3543,16 +3565,19 @@ def windows_per_week_ratio_note(weekly: dict) -> dict | None:
              "weekly_cap_change_pct": 0.0, "five_hour_window_change_pct": pct(1 / rho - 1),
              "five_hour_window_change_interval_pct": [pct(1 / rho_hi - 1), pct(1 / rho_lo - 1)]},
         ],
-        "unit": "percent",
+        "unit": "percent", "windows_unit": "interactive_equivalent",
         "method": ("each account with readings on both sides against itself: the pooled ratio of "
-                   "five-hour to seven-day meter movement over its own last two certified regimes "
+                   "five-hour meter movement, each window over its headless inflation (ADR 0001 "
+                   "rule 16), to seven-day meter movement over its own last two certified regimes "
                    "(tracker/detect.py weighted_regimes), after over before, with an interval from "
                    "both sides' rounding intervals at their far ends; then a weighted mean of the "
                    "accounts' log ratios, each weighted by the inverse square of its own log "
                    "interval's half-width, and the same weighted mean of their interval ends as "
                    "the combined interval. The fall is one equation in the ratio of the two meters' "
                    "own budget changes; `consistent_with` lists example splits that reproduce it "
-                   "exactly, not measurements of which one moved."),
+                   "exactly, not measurements of which one moved. `raw_ratio_after_over_before` "
+                   "and `raw_ratio_fell_pct` are the meter's own ratio on the same sides and "
+                   "weights, a diagnostic: it moves with an account's headless share."),
     }
 
 
@@ -3563,7 +3588,8 @@ FIVE_HOUR_SPAN = timedelta(hours=5)
 WINDOWS_PER_WEEK_METHOD = (
     "Every change candidate (each model family's first use, `announced_change`) is measured; "
     "no announcement decides whether or how. Per account, the windows per week (five-hour "
-    "meter movement over seven-day meter movement, pooled over the account's own "
+    "meter movement, each window over its headless inflation as ADR 0001 rule 16 reads it, "
+    "over seven-day meter movement, pooled over the account's own "
     "`weekly_windows.max20.by_window` readings, the same pooling and rounding interval as the "
     "14 September paired measurement) is compared either side of the candidate instant. The "
     "before side runs from the previous boundary (the 14 September weekly change or an earlier "
@@ -3928,8 +3954,10 @@ def five_hour_on_meters(announced: dict | None, max20: dict | None,
             a = _side(after, span) if after else None
             if b:
                 row["windows_per_week_before"] = b["ratio"]
+                row["raw_windows_per_week_before"] = b["raw_ratio"]
             if a:
                 row["windows_per_week_after"] = a["ratio"]
+                row["raw_windows_per_week_after"] = a["raw_ratio"]
             if (len(before) >= ANNOUNCED_MIN_BEFORE and b and a
                     and all(b["rounding_interval"]) and all(a["rounding_interval"])):
                 (b_lo, b_hi), (a_lo, a_hi) = b["rounding_interval"], a["rounding_interval"]
@@ -4103,12 +4131,14 @@ CUT_RATIO_ROUTE_METHOD = (
     "stretches), each account against itself. Both factors are read on the direct weekly test's "
     "own sides (`cut_weekly_sides`), with its selection (a window whose five hours meet a "
     "seven-day step the weekly selection leaves out is left out, and the stretches pass the same "
-    "harness, cloud, status and takeoff-phantom gates), its valuation, and in one unit: the meter "
-    "ratio counts raw five-hour points, so the window factor values each stretch's metered "
-    "tokens, never the headless-weighted ones (ADR 0001 rules 12 and 15). Pooled sums make the "
-    "product credits over seven-day points, so on one set of readings it is the direct weekly "
-    "change by identity; what is left between the two is the two kinds of reading (five-hour "
-    "windows against one-point seven-day steps). The interval is the windows-per-week rounding "
+    "harness, cloud, status and takeoff-phantom gates), its valuation, and in one unit: windows "
+    "per week counts each window's five-hour points over its headless inflation, so the window "
+    "factor values each stretch's headless-weighted tokens, interactive-equivalent both (ADR 0001 "
+    "rules 12, 15 and 16). Pooled sums make the product credits over seven-day points, the "
+    "inflation cancelling, so on one set of readings it is the direct weekly change by identity; "
+    "what is left between the two is the two kinds of reading (five-hour windows against "
+    "one-point seven-day steps, each with its own headless share). The interval is the "
+    "windows-per-week rounding "
     "interval at its far ends, times the window factor; the accounts combine as "
     "`combine_log_ratios` combines them.")
 
@@ -4119,8 +4149,8 @@ def cut_ratio_route(by_account: dict[str, list[dict]], runs: list[HarnessRun], v
                     next_at: datetime | None) -> dict:
     """The 14 September weekly change as windows per week times the window (CUT_RATIO_ROUTE_METHOD).
 
-    `by_account` is each account's stretches by name (headless-weighted ones keep their
-    `metered_tokens`), `raw_steps` and `clean_steps` its seven-day steps before and after
+    `by_account` is each account's stretches by name, headless-weighted (rule 12), as the
+    windows are (rule 16), `raw_steps` and `clean_steps` its seven-day steps before and after
     `weekly_meter.clean_steps(whole_history=True)`: a step in the first and not the second is
     one the weekly selection left out, and a five-hour meter window (`max20.by_window`, the
     five hours before its `window_ending`) that meets one is left out of the ratio.
@@ -4163,7 +4193,7 @@ def cut_ratio_route(by_account: dict[str, list[dict]], runs: list[HarnessRun], v
             start, end = datetime.fromisoformat(st["start"]), datetime.fromisoformat(st["end"])
             if masterrig_excluded(name, start, end, True):
                 continue
-            credits = value(st.get("metered_tokens") or st["tokens"])
+            credits = value(st["tokens"])
             if credits is None:
                 continue
             if start >= bs and end <= be:
@@ -4174,15 +4204,18 @@ def cut_ratio_route(by_account: dict[str, list[dict]], runs: list[HarnessRun], v
         for side in ("before", "after"):
             d5 = sum(r["five_hour_pct"] for r in windows[side])
             d7 = sum(r["seven_day_pct"] for r in windows[side])
+            raw = _raw_five_hour(windows[side])
             pct = sum(p for _, p in stretches[side])
             if not d7 or not d5 or not pct or len(stretches[side]) < FIVE_HOUR_MIN_SIDE:
                 break
-            lo, hi = ratio_interval(d5, d7, sum(r.get("pieces", 1) for r in windows[side]))
+            lo, hi = ratio_interval(d5, d7, sum(r.get("pieces", 1) for r in windows[side]),
+                                    raw_d5=raw)
             if lo is None or hi is None or lo <= 0:
                 break
             sides[side] = {"n_windows": len(windows[side]), "n_windows_left_out": dropped[side],
                            "sum_five_hour_pct": round(d5, 1), "sum_seven_day_pct": round(d7, 1),
                            "windows_per_week": d5 / d7, "rounding_interval": (lo, hi),
+                           "raw_windows_per_week": raw / d7,
                            "n_stretches": len(stretches[side]),
                            "credits_per_pct": sum(c for c, _ in stretches[side]) / pct}
         if len(sides) < 2:
@@ -4195,6 +4228,7 @@ def cut_ratio_route(by_account: dict[str, list[dict]], runs: list[HarnessRun], v
         rho, rho_iv = wpw * window, (wpw_iv[0] * window, wpw_iv[1] * window)
         for row in (b, a):
             row["windows_per_week"] = round(row["windows_per_week"], 4)
+            row["raw_windows_per_week"] = round(row["raw_windows_per_week"], 4)
             row["rounding_interval"] = [round(x, 4) for x in row["rounding_interval"]]
             row["credits_per_pct"] = round(row["credits_per_pct"])
         per_account[label] = {
@@ -4264,13 +4298,15 @@ def _stretch_regime_index(st: dict, regimes: list[dict]) -> int | None:
 
 
 def _pooled_windows_per_week(rows: list[dict]) -> dict:
-    """Pooled five-hour over seven-day movement with its rounding interval, or nulls."""
+    """Pooled five-hour over seven-day movement with its rounding interval, or nulls, in the
+    rows' unit; `raw` is the meter's own ratio (ADR 0001 rule 16)."""
     d7 = sum(r["seven_day_pct"] for r in rows)
     if not rows or not d7:
-        return {"value": None, "interval": None, "n": len(rows)}
+        return {"value": None, "interval": None, "n": len(rows), "raw": None}
     side = _side(rows, {"start": "", "end": ""})
     lo, hi = side["rounding_interval"]
-    return {"value": side["ratio"], "interval": [lo, hi] if lo and hi else None, "n": len(rows)}
+    return {"value": side["ratio"], "interval": [lo, hi] if lo and hi else None, "n": len(rows),
+            "raw": side["raw_ratio"]}
 
 
 PER_REGIME_METHOD = (
@@ -4292,7 +4328,10 @@ PER_REGIME_METHOD = (
     "window's opposite ends. The meter ratio is published beside it for reference only: "
     "`windows_per_week_meters`, five-hour over seven-day points in the same steps, and "
     "`windows_per_week_pooled`, five-hour over seven-day movement pooled over every account's "
-    "`weekly_windows.max20.by_window` readings in the regime, with its rounding interval. "
+    "`weekly_windows.max20.by_window` readings in the regime, with its rounding interval, both "
+    "with each step's or window's five-hour points over its headless inflation (ADR 0001 rule "
+    "16), the meter's own beside them as `raw_windows_per_week_meters` and "
+    "`raw_windows_per_week_pooled`. "
     "A change the tracker withholds (ADR 0001 rule 9 on both direct measurements: `applies` "
     "false) opens no regime here or in `account_regimes`: the regime it would have opened is "
     "pooled with the one before, one row from the earlier regime's start to the later one's "
@@ -4473,10 +4512,12 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
         k = _weekly_regime_index(datetime.fromisoformat(r["window_ending"]), own_end(label), regimes)
         rows_in.setdefault(label, {}).setdefault(week_of[k], []).append(r)
 
-    # Every clean seven-day step lying wholly in one per-week regime, valued, by account label.
+    # Every clean seven-day step lying wholly in one per-week regime, valued, by account label,
+    # its five-hour points in the unit windows per week is in (ADR 0001 rule 16).
+    factor = (max20 or {}).get("headless_factor")
     steps_in: dict[int, dict[str, list[dict]]] = {}
     for name, label in labels.items():
-        for row in valued((steps or {}).get(name, []), value):
+        for row in valued((steps or {}).get(name, []), value, factor):
             k0 = _weekly_regime_index(row["start"], own_end(label), regimes)
             k1 = _weekly_regime_index(row["end"], own_end(label), regimes)
             if week_of[k0] == week_of[k1]:
@@ -4532,8 +4573,11 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             "windows_per_week_source": "weekly_over_window" if wpw is not None else None,
             "windows_per_week_meters": (round(lvl["windows_per_week_meters"], 4)
                                         if lvl["windows_per_week_meters"] else None),
+            "raw_windows_per_week_meters": (round(lvl["raw_windows_per_week_meters"], 4)
+                                            if lvl.get("raw_windows_per_week_meters") else None),
             "windows_per_week_pooled": pooled["value"],
             "windows_per_week_pooled_interval": pooled["interval"],
+            "raw_windows_per_week_pooled": pooled["raw"],
             "n_windows_per_week": pooled["n"]})
     chain_certified_weeks(per_week, meters)
 
@@ -4613,6 +4657,7 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                          "windows_per_week": wpw,
                          "windows_per_week_source": "weekly_over_window" if wpw is not None else None,
                          "windows_per_week_meters": meters_wpw["value"],
+                         "raw_windows_per_week_meters": meters_wpw["raw"],
                          "n_window": len(own), "n_measured_window": len(readings),
                          "n_wpw": meters_wpw["n"]})
         carry_across_withheld_windows(rows, meters)
