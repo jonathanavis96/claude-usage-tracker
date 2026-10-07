@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-06T16:15:55.138411+00:00",
+ "generated_at": "2026-10-07T13:15:38.001608+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -281,18 +281,18 @@
    "interpolated": false
   },
   "2026-10-06": {
-   "tokens_per_pct": 8681942,
+   "tokens_per_pct": 8925508,
    "interpolated": false
   }
  },
  "session_tokens": {
   "claude-sonnet-4-6": 255187,
   "claude-opus-5": 3131938,
-  "claude-sonnet-5": 598484,
-  "claude-opus-4-7": 146253,
-  "claude-fable-5-1": 5744742,
-  "claude-opus-5-5": 1856328,
-  "claude-haiku-4-5": 211871,
+  "claude-sonnet-5": 594783,
+  "claude-opus-4-7": 144078,
+  "claude-fable-5-1": 6038066,
+  "claude-opus-5-5": 1879532,
+  "claude-haiku-4-5": 206051,
   "claude-opus-4-8": 852622
  },
  "weekly_windows": {

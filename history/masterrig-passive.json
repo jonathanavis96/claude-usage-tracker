@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-06T16:15:55.347628+00:00",
+ "generated_at": "2026-10-07T13:15:38.101662+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 3987,
+    "reset_verified_samples": 4003,
     "since": null,
-    "samples": 15524,
+    "samples": 15650,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-10-06T18:10:58+02:00"
+    "last": "2026-10-07T15:15:26+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 5054,
-    "turns": 121756,
+    "files": 5059,
+    "turns": 121913,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -35988,12 +35988,24 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-06T18:10:58+02:00",
+     "window_ending": "2026-10-06T18:26:11+02:00",
      "windows": 3.0,
      "five_hour_pct": 3.0,
      "seven_day_pct": 1.0,
      "rounding_interval": [
       0.5561,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-07T00:46:35+02:00",
+     "windows": null,
+     "five_hour_pct": 1.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.0,
       null
      ],
      "pieces": 1,
