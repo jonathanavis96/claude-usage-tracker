@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-08T07:30:05.830829+00:00",
+ "generated_at": "2026-10-08T08:00:05.883887+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 7804,
+    "reset_verified_samples": 7814,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 12024,
+    "samples": 12034,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-08T07:29:38+00:00"
+    "last": "2026-10-08T07:59:23+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -24843,18 +24843,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 7748,
+    "reset_verified_samples": 7760,
     "since": null,
-    "samples": 10550,
+    "samples": 10562,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-08T07:29:38+00:00"
+    "last": "2026-10-08T07:59:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1589,
-    "turns": 57133,
+    "files": 1590,
+    "turns": 57134,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -38708,11 +38708,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 7526,
+    "reset_verified_samples": 7538,
     "since": null,
-    "samples": 8562,
+    "samples": 8574,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-08T07:29:38+00:00"
+    "last": "2026-10-08T07:59:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -42597,7 +42597,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-08T07:31:20.519564+00:00",
+  "generated_at": "2026-10-08T08:01:23.695850+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
