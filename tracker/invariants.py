@@ -35,7 +35,10 @@ failures, an empty list when it holds.
    combined, within their combined interval: their log difference is no more than the root
    sum of squares of their two log half-widths. On identical readings the two are one
    quantity (ADR 0001 rule 15); on 2026-10-06 the page put 14 September at -9.9% one way and
-   -28.0% the other.
+   -28.0% the other. The tokens-per-week chart's step at the event's marker
+   (`per_week_regimes` `value`) must also be the direct combined change to its one decimal,
+   each account against itself (rule 20); on 2026-10-08 it drew -10.75%, a level ratio with
+   Max account 3 on the after side only, beside a direct -9.9%.
 11. `detected_windows_per_week_agree`: the windows-per-week levels the detector finds on the
    meters (`weekly_windows.max20.regimes`, interactive-equivalent, ADR 0001 rule 16) agree
    with the week over the window (`per_week_regimes` `windows_per_week`, rule 11): each
@@ -62,6 +65,7 @@ import sys
 import time
 from collections.abc import Callable
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 
 from tracker import credits as credit_model
@@ -610,7 +614,23 @@ def weekly_routes_agree(doc: dict) -> list[str]:
                            f"seven-day meter directly but {rp:+.1f}% {list(ri)} as windows per week "
                            f"times the window: {gap:.3f} apart in log terms, beyond their combined "
                            f"interval of {reach:.3f}.")
+        drawn = _week_step_at(doc, e.get("at"))
+        if drawn is not None and direct.get("change_pct") is not None \
+                and abs(drawn - direct["change_pct"]) > 0.05 + 1e-9:
+            out.append(f"The tokens-per-week chart steps {drawn:+.2f}% at the {e.get('date')} weekly "
+                       f"change, but the same accounts' direct change there is "
+                       f"{direct['change_pct']:+.1f}% (ADR 0001 rule 20).")
     return out
+
+
+def _week_step_at(doc: dict, at: str | None) -> float | None:
+    """The tokens-per-week chart's step in percent at the `per_week_regimes` row opening at
+    `at`, or None without one or without both values."""
+    rows = _wt(doc).get("per_week_regimes") or []
+    for prev, row in pairwise(rows):
+        if _same_instant(row.get("from"), at) and row.get("value") and prev.get("value"):
+            return (row["value"] / prev["value"] - 1) * 100
+    return None
 
 
 def _span(start: str | None, end: str | None, lo: datetime, hi: datetime) -> tuple[datetime, datetime]:

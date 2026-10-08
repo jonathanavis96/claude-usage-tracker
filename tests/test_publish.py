@@ -1952,25 +1952,31 @@ class SameAccountChangeTests(unittest.TestCase):
 
 
 def ratio_route(**accounts):
-    """An across-the-cut block carrying only what _tokens_per_week_change reads: the
-    ratio route (`credit_model.cut_ratio_route`), each account's windows-per-week factor
-    with its interval, its window factor, and its weight, all read on one set of sides."""
-    per = {}
-    for label, (wpw, interval, window, weight) in accounts.items():
-        per[label] = {"windows_per_week_ratio": wpw, "windows_per_week_interval": list(interval),
-                      "window_ratio": window, "ratio_after_over_before": wpw * window,
-                      "ratio_interval": [interval[0] * window, interval[1] * window], "weight": weight}
-    return {"per_account": {}, "ratio_route": {"per_account": per}}
+    """An across-the-cut block carrying only what _tokens_per_week_change reads: the ratio
+    route (`credit_model.cut_ratio_route`), each account's weekly change with its interval, its
+    window and windows-per-week changes on the same steps, and its weight, combined at those
+    weights (ADR 0001 rule 20)."""
+    per, logs = {}, {"weekly": 0.0, "window": 0.0, "windows_per_week": 0.0}
+    for label, (wpw, window, interval, weight) in accounts.items():
+        per[label] = {"weekly": {"change_pct": round((wpw * window - 1) * 100, 1),
+                                 "interval_pct": list(interval)},
+                      "window": {"change_pct": round((window - 1) * 100, 1)},
+                      "windows_per_week": {"change_pct": round((wpw - 1) * 100, 1)},
+                      "weight": weight}
+        for q, r in (("weekly", wpw * window), ("window", window), ("windows_per_week", wpw)):
+            logs[q] += weight * math.log(r)
+    combined = {q: {"change_pct": round((math.exp(x) - 1) * 100, 1)} for q, x in logs.items()}
+    combined["weekly"]["interval_pct"] = [-24.0, -5.5]
+    return {"per_account": {}, "ratio_route": {"per_account": per, "combined": combined}}
 
 
 class TokensPerWeekChangeTests(unittest.TestCase):
-    """What a week's tokens did across the cut: windows per week compounded with the
-    five-hour window, both read on the same sides and in one unit (ADR 0001 rule 15),
-    each account against itself, then combined."""
+    """What a week's tokens did across the cut: the direct weekly change, each account
+    against itself, with its two factors read on the same steps (ADR 0001 rule 20)."""
 
-    ACROSS: ClassVar[dict] = ratio_route(a2=(0.782, (0.70, 0.87), 1.086, 1.0))
-    BOTH: ClassVar[dict] = ratio_route(a1=(0.75, (0.66, 0.85), 0.92, 0.6),
-                                       a2=(0.782, (0.70, 0.87), 1.0, 0.4))
+    ACROSS: ClassVar[dict] = ratio_route(a2=(0.782, 1.086, (-24.0, -5.5), 1.0))
+    BOTH: ClassVar[dict] = ratio_route(a1=(0.75, 0.92, (-40.0, -15.0), 0.6),
+                                       a2=(0.782, 1.0, (-30.0, -13.0), 0.4))
 
     UNSET: ClassVar[object] = object()
 
@@ -1978,7 +1984,7 @@ class TokensPerWeekChangeTests(unittest.TestCase):
         from tracker.publish import _tokens_per_week_change
         return _tokens_per_week_change(self.ACROSS if across is self.UNSET else across)
 
-    def test_the_two_measured_changes_compound(self):
+    def test_the_figure_is_the_direct_weekly_change_with_its_factors(self):
         out = self.change()
         self.assertEqual({k: out[k] for k in ("percent", "direction", "signed_pct", "windows_per_week_pct",
                                               "five_hour_window_pct", "five_hour_accounts", "accounts",
@@ -1988,26 +1994,24 @@ class TokensPerWeekChangeTests(unittest.TestCase):
                           "five_hour_accounts": ["a2"], "accounts": ["a2"],
                           "signed_interval_pct": [-24.0, -5.5]})
         self.assertEqual(out["per_account"]["a2"]["weight"], 1.0)
+        self.assertEqual(out["per_account"]["a2"]["signed_interval_pct"], [-24.0, -5.5])
         self.assertIn("windows_per_week_pct", out["method"])
 
-    def test_the_arithmetic_is_the_published_numbers_own(self):
+    def test_the_factors_compound_to_the_figure_up_to_rounding(self):
         for across in (self.ACROSS, self.BOTH):
             with self.subTest(accounts=sorted(across["ratio_route"]["per_account"])):
                 out = self.change(across=across)
                 expected = ((1 + out["windows_per_week_pct"] / 100)
                             * (1 + out["five_hour_window_pct"] / 100) - 1) * 100
-                self.assertEqual(out["signed_pct"], round(expected, 1))
+                self.assertAlmostEqual(out["signed_pct"], expected, delta=0.15)
                 self.assertEqual(out["percent"], round(abs(out["signed_pct"])))
 
-    def test_two_accounts_combine_by_weight_in_log_terms(self):
+    def test_two_accounts_are_the_routes_combined_figures(self):
         out = self.change(across=self.BOTH)
         log = 0.6 * math.log(0.75 * 0.92) + 0.4 * math.log(0.782)
         self.assertAlmostEqual(out["signed_pct"], (math.exp(log) - 1) * 100, delta=0.1)
-        lo = 0.6 * math.log(0.66 * 0.92) + 0.4 * math.log(0.70)
-        hi = 0.6 * math.log(0.85 * 0.92) + 0.4 * math.log(0.87)
-        self.assertEqual(out["signed_interval_pct"],
-                         [round((math.exp(lo) - 1) * 100, 1), round((math.exp(hi) - 1) * 100, 1)])
         self.assertEqual(out["per_account"]["a1"]["signed_pct"], round((0.75 * 0.92 - 1) * 100, 1))
+        self.assertEqual(out["per_account"]["a1"]["signed_interval_pct"], [-40.0, -15.0])
         self.assertEqual(out["accounts"], ["a1", "a2"])
 
     def test_the_across_cut_medians_are_not_read(self):
@@ -2018,12 +2022,13 @@ class TokensPerWeekChangeTests(unittest.TestCase):
         self.assertEqual(self.change(across=across), self.change())
 
     def test_a_rise_reads_as_a_rise(self):
-        out = self.change(across=ratio_route(a2=(1.10, (1.0, 1.2), 1.05, 1.0)))
+        out = self.change(across=ratio_route(a2=(1.10, 1.05, (5.0, 26.0), 1.0)))
         self.assertEqual((out["direction"], out["signed_pct"], out["percent"]),
                          ("increased", 15.5, 16))
 
     def test_with_no_ratio_route_there_is_no_figure(self):
-        for empty in (None, {}, {"per_account": {}}, {"ratio_route": {"per_account": {}}}):
+        for empty in (None, {}, {"per_account": {}}, {"ratio_route": {"per_account": {}}},
+                      {"ratio_route": {"per_account": {"a2": {}}, "combined": {"weekly": None}}}):
             with self.subTest(across=empty):
                 self.assertIsNone(self.change(across=empty))
 

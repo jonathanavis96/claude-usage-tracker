@@ -667,6 +667,28 @@ class WeeklyRoutesAgreeTest(unittest.TestCase):
         self.assertIn("weekly_routes_agree", dict(I.CHECKS))
         self.assertNotIn("weekly_routes_agree", I.BLOCKING)
 
+    @staticmethod
+    def _charted(event: dict, before: int, after: int) -> dict:
+        """`event` at 13 Sep 16:30Z beside a tokens-per-week chart stepping there."""
+        at = "2026-09-13T16:30:00+00:00"
+        return {"events": [dict(event, at=at)],
+                "credits": {"window_tokens": {"per_week_regimes": [
+                    {"from": None, "until": at, "value": before},
+                    {"from": at, "until": None, "value": after}]}}}
+
+    def test_the_charts_week_step_is_the_same_accounts_direct_change(self):
+        # ADR 0001 rule 20. The page of 2026-10-08 12:02Z drew 1,313,529 to 1,172,293 credits
+        # per 1% (-10.75%), Max account 3 on the after side only, beside a direct -9.9%.
+        same = _weekly_event({"a1": (-9.1, (-29.3, 16.9)), "a2": (-10.4, (-25.9, 8.4)),
+                              "pooled": (-9.9, (-22.1, 4.1))},
+                             {"a1": (-9.1, (-29.3, 16.9)), "a2": (-10.4, (-25.9, 8.4)),
+                              "pooled": (-9.9, (-22.1, 4.1))})
+        out = I.weekly_routes_agree(self._charted(same, 1313529, 1172293))
+        self.assertEqual(len(out), 1)
+        self.assertIn("-10.75%", out[0])
+        self.assertIn("rule 20", out[0])
+        self.assertEqual(I.weekly_routes_agree(self._charted(same, 3369340315, 3035775624)), [])
+
 
 class DetectedWindowsPerWeekAgreeTest(unittest.TestCase):
     """Check 11: the detector's windows-per-week levels, in interactive-equivalent units,

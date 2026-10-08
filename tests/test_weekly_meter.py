@@ -306,9 +306,9 @@ class CutBeforeSideTests(unittest.TestCase):
 
 
 class CutRatioRouteTests(unittest.TestCase):
-    """ADR 0001 rule 15: the 14 September ratio route (windows per week times the window) is
-    read on the direct weekly test's own sides, selection, unit and estimator, so on one set
-    of readings it equals credits per 1% of the seven-day meter by identity."""
+    """ADR 0001 rule 20: the 14 September ratio route is the direct weekly change with its two
+    factors, windows per week and the window, read on the direct test's own seven-day steps,
+    so per account and combined the week is the window times windows per week exactly."""
 
     AUG = datetime(2026, 8, 15, tzinfo=timezone.utc)
     STEP = datetime(2026, 9, 14, 11, 30, tzinfo=timezone.utc)
@@ -320,113 +320,91 @@ class CutRatioRouteTests(unittest.TestCase):
                 "step": {"onset": "2026-09-14"}}
 
     @staticmethod
-    def window(t, d5, d7=1.0):
-        return {"window_ending": t.isoformat(), "five_hour_pct": d5, "seven_day_pct": d7,
-                "pieces": 1, "account": "a2"}
+    def rows(first_day, n_days, credits, d5, rng, per_day=6):
+        """Valued one-point steps about `credits` per seven-day point and `d5` five-hour
+        points each, with day-to-day scatter on both."""
+        out = []
+        for k in range(n_days):
+            for i in range(per_day):
+                start = first_day + timedelta(days=k, hours=i)
+                out.append({"start": start, "end": start + timedelta(minutes=30),
+                            "day": start.date().isoformat(),
+                            "credits": credits * math.exp(rng.gauss(0, 0.05)),
+                            "d7": 1, "d5": d5 * math.exp(rng.gauss(0, 0.03)), "raw_d5": d5})
+        return out
 
-    @staticmethod
-    def stretch(t, credits_per_pct, delta=6.0, **extra):
-        return {"start": (t - timedelta(hours=4)).isoformat(), "end": (t - timedelta(hours=1)).isoformat(),
-                "delta_pct": delta, "tokens": {"claude-opus-5": {"output": credits_per_pct * delta}},
-                "status": "accepted", **extra}
+    def history(self, seed=3, after=(900.0, 4.5)):
+        rng = random.Random(seed)
+        return (self.rows(datetime(2026, 8, 20, tzinfo=timezone.utc), 12, 1000.0, 6.0, rng)
+                + self.rows(datetime(2026, 9, 15, tzinfo=timezone.utc), 6, *after, rng))
 
-    def history(self, wpw_before=6.0, wpw_after=4.5, win_before=1000.0, win_after=1100.0):
-        windows, stretches = [], []
-        for day in range(20):  # 20 August to 8 September
-            for h in (6, 12, 18):
-                t = datetime(2026, 8, 20, h, tzinfo=timezone.utc) + timedelta(days=day)
-                windows.append(self.window(t, wpw_before))
-                stretches.append(self.stretch(t, win_before))
-        for day in range(6):  # 15 to 20 September
-            for h in (6, 12, 18):
-                t = datetime(2026, 9, 15, h, tzinfo=timezone.utc) + timedelta(days=day)
-                windows.append(self.window(t, wpw_after))
-                stretches.append(self.stretch(t, win_after))
-        return windows, stretches
+    def route(self, **rows_by_label):
+        max20 = {"by_account": {label: self.block() for label in rows_by_label}}
+        return C.cut_ratio_route(rows_by_label, max20, self.NEXT)
 
-    def route(self, windows, stretches, raw=None, clean=None, runs=()):
-        max20 = {"by_window": windows, "by_account": {"a2": self.block()}}
-        return C.cut_ratio_route({"jwork": stretches}, list(runs), value, {"jwork": "a2"},
-                                 {"jwork": raw or []}, {"jwork": clean or []}, max20, self.NEXT)
+    def test_the_week_is_the_window_times_windows_per_week_on_the_same_steps(self):
+        out = self.route(a1=self.history(3), a2=self.history(4, after=(950.0, 5.0)))
+        for label in ("a1", "a2"):
+            row = out["per_account"][label]
+            self.assertAlmostEqual(row["weekly"]["log_ratio"],
+                                   row["window"]["log_ratio"] + row["windows_per_week"]["log_ratio"],
+                                   places=5)
+            self.assertEqual(row["identity_gap"], 0.0)
+        comb = out["combined"]
+        self.assertAlmostEqual(comb["weekly"]["log_ratio"],
+                               comb["window"]["log_ratio"] + comb["windows_per_week"]["log_ratio"],
+                               places=5)
+        self.assertAlmostEqual(comb["windows_per_week"]["change_pct"], -21.5, delta=3.0)
+        self.assertAlmostEqual(comb["weekly"]["change_pct"], -7.5, delta=3.0)
 
-    def test_the_product_of_its_factors_on_the_direct_tests_sides(self):
-        out = self.route(*self.history())
-        row = out["per_account"]["a2"]
-        self.assertAlmostEqual(row["windows_per_week_ratio"], 0.75, places=4)
-        self.assertAlmostEqual(row["window_ratio"], 1.1, places=4)
-        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
-        self.assertEqual(row["change_pct"], -17.5)
-        lo, hi = row["ratio_interval"]
-        self.assertLess(lo, 0.825)
-        self.assertGreater(hi, 0.825)
-        # The sides are the direct weekly test's own instants.
+    def test_its_weekly_figures_are_the_direct_tests_own(self):
+        rows = {"a1": self.history(3), "a2": self.history(4, after=(950.0, 5.0))}
+        max20 = {"by_account": {label: self.block() for label in rows}}
+        direct = C.cut_direct_tests({}, [], value, {}, rows, max20, self.NEXT)["weekly_change"]
+        out = self.route(**rows)
+        self.assertEqual(out["combined"]["weekly"]["change_pct"], direct["change_pct"])
+        self.assertEqual(out["combined"]["weekly"]["interval_pct"], direct["interval_pct"])
+        self.assertEqual(out["combined"]["weekly"]["plan_wide"]["state"], direct["plan_wide"]["state"])
+        for label in rows:
+            mine, theirs = out["per_account"][label], direct["per_account"][label]
+            self.assertEqual(mine["weekly"]["change_pct"], theirs["change_pct"])
+            self.assertEqual(mine["weekly"]["interval_pct"], theirs["interval_pct"])
+            self.assertEqual(mine["weight"], theirs["weight"])
+
+    def test_the_sides_are_the_direct_tests_and_nothing_outside_them_enters(self):
+        rows = self.history()
+        late = self.NEXT + timedelta(days=2)
+        early = datetime(2026, 8, 13, tzinfo=timezone.utc)  # before PLAN_CHANGE_AT
+        extra = [{"start": t, "end": t + timedelta(minutes=30), "day": t.date().isoformat(),
+                  "credits": 9000.0, "d7": 1, "d5": 40.0} for t in (late, early)]
+        row = self.route(a2=rows)["per_account"]["a2"]
+        self.assertEqual(self.route(a2=rows + extra)["per_account"]["a2"], row)
         sides = C.cut_weekly_sides(self.block(), self.NEXT)
         self.assertEqual((row["before_from"], row["before_until"], row["after_from"], row["after_until"]),
                          tuple(C._utc(x) for x in sides))
+
+    def test_each_account_against_itself(self):
+        # An account with readings only after the change adds nothing: its level is no part of
+        # any comparison, however far from the others it sits.
+        rows = {"a1": self.history(3), "a2": self.history(4)}
+        late = self.rows(datetime(2026, 9, 16, tzinfo=timezone.utc), 5, 400.0, 2.0, random.Random(9))
+        both = self.route(**rows)
+        with_a3 = self.route(**rows, a3=late)
+        self.assertEqual(with_a3["accounts"], ["a1", "a2"])
+        self.assertEqual(with_a3["combined"], both["combined"])
+
+    def test_one_account_is_not_plan_wide(self):
+        out = self.route(a2=self.history())
         self.assertEqual(out["accounts"], ["a2"])
-        self.assertAlmostEqual(out["ratio_after_over_before"], 0.825, places=4)
+        for q in W.QUANTITIES:
+            self.assertEqual(out["combined"][q]["plan_wide"]["state"], "failed")
+            self.assertFalse(out["combined"][q]["certified"])
 
-    def test_both_factors_are_interactive_equivalent_and_the_product_is_not_moved(self):
-        # ADR 0001 rule 16: the windows read the five-hour meter over each window's headless
-        # inflation, so the window factor reads the headless-weighted tokens. After the cut
-        # every window and stretch is wholly headless at a factor of 1.5: windows per week falls
-        # by a further third and the window rises by half, and their product, credits per 1% of
-        # the seven-day meter, is what it was.
-        windows, stretches = self.history()
-        windows = [dict(w, five_hour_pct=w["five_hour_pct"] / 1.5, raw_five_hour_pct=w["five_hour_pct"])
-                   if w["window_ending"] >= "2026-09-15" else w for w in windows]
-        weighted = []
-        for st in stretches:
-            if st["start"] >= "2026-09-15":
-                st = dict(st, metered_tokens=st["tokens"],
-                          tokens={"claude-opus-5": {"output": st["tokens"]["claude-opus-5"]["output"] * 1.5}},
-                          headless_tokens=st["tokens"])
-            weighted.append(st)
-        row = self.route(windows, weighted)["per_account"]["a2"]
-        self.assertAlmostEqual(row["windows_per_week_ratio"], 0.5, places=4)
-        self.assertAlmostEqual(row["window_ratio"], 1.65, places=4)
-        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
-        self.assertAlmostEqual(row["after"]["raw_windows_per_week"], 4.5, places=4)
-
-    def test_nothing_outside_the_sides_enters(self):
-        windows, stretches = self.history()
-        late = self.NEXT + timedelta(days=2)
-        early = datetime(2026, 8, 13, tzinfo=timezone.utc)  # before PLAN_CHANGE_AT
-        windows += [self.window(late, 40.0), self.window(early, 40.0)]
-        stretches += [self.stretch(late, 9000.0), self.stretch(early, 9000.0)]
-        row = self.route(windows, stretches)["per_account"]["a2"]
-        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
-
-    def test_what_the_weekly_selection_leaves_out_the_ratio_leaves_out(self):
-        windows, stretches = self.history()
-        t = datetime(2026, 9, 10, 9, tzinfo=timezone.utc)
-        # A five-hour window whose hours a rejected seven-day step covers, a stretch the
-        # status gate fails, a cloud stretch and one under a harness run.
-        windows.append(self.window(t, 40.0))
-        raw = [{"start": (t - timedelta(hours=2)).isoformat(), "end": (t - timedelta(hours=1)).isoformat()}]
-        stretches += [self.stretch(t, 9000.0, status="unaccounted"),
-                      self.stretch(t + timedelta(hours=1), 9000.0, cloud_session=True),
-                      self.stretch(t + timedelta(hours=2), 9000.0)]
-        run = C.HarnessRun("jwork", t - timedelta(hours=3), t + timedelta(hours=1, minutes=30), "probe")
-        row = self.route(windows, stretches, raw=raw, clean=[], runs=[run])["per_account"]["a2"]
-        self.assertAlmostEqual(row["ratio_after_over_before"], 0.825, places=4)
-        self.assertEqual(row["before"]["n_windows_left_out"], 1)
-
-    def test_an_own_step_before_the_cut_opens_the_after_side_there(self):
-        # The account's own step (11:30) is its split, as in the direct test: a window ending
-        # at 13:00 is after it, not a window straddling CUT_AT.
-        windows, stretches = self.history()
-        windows.append(self.window(datetime(2026, 9, 14, 13, tzinfo=timezone.utc), 4.5))
-        row = self.route(windows, stretches)["per_account"]["a2"]
-        self.assertEqual(row["after"]["n_windows"], 19)
-
-    def test_an_account_with_too_few_stretches_a_side_is_not_measured(self):
-        windows, stretches = self.history()
-        stretches = [st for st in stretches if st["start"] < "2026-09-15"] + \
-            [st for st in stretches if st["start"] >= "2026-09-15"][:C.FIVE_HOUR_MIN_SIDE - 1]
-        out = self.route(windows, stretches)
+    def test_no_account_with_both_sides_is_no_route(self):
+        rows = [r for r in self.history() if r["start"] < self.STEP]
+        out = self.route(a2=rows)
         self.assertEqual(out["per_account"], {})
-        self.assertIsNone(out["ratio_after_over_before"])
+        self.assertEqual(out["combined"], dict.fromkeys(W.QUANTITIES))
 
 
 if __name__ == "__main__":
