@@ -201,3 +201,106 @@ class TwoTurnTests(unittest.TestCase):
             out = Path(d) / "other.json"
             self.assertEqual(main(["--recompute", str(src), "--prices", str(prices), "--out", str(out)]), 0)
             self.assertEqual(json.loads(out.read_text())["usd"], live["usd"])
+
+
+class MergeTests(unittest.TestCase):
+    """A new model joins the matrix by merging its cells in; no existing cell or run is discarded."""
+
+    PRICES: ClassVar[dict] = {m: {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5,
+                                  "meter_weight": 1.0,
+                                  "class_weight": {"input": 1.0, "output": 1.0, "cache_read": 0.0, "cache_write": 1.0}}
+                              for m in ("old", "new")}
+
+    @staticmethod
+    def _read():
+        return Utilization(datetime.now(timezone.utc), 10.0, 5.0, "r")
+
+    @staticmethod
+    def _run(prompt, model, effort):
+        return RunUsage(model, 2, {"low": 1000, "high": 3000}[effort], 20000, 0, 0.0, 1.0)
+
+    def _base(self):
+        m = calibrate(["old"], ["low", "high"], 3, self._run, self._read, lambda s: None, prices=self.PRICES)
+        m["_meta"]["finished"] = "2026-09-09T14:53:22+00:00"
+        return m
+
+    def test_merge_keeps_every_existing_cell_and_adds_the_new_ones(self):
+        import json
+
+        from tracker.calibrate import merge
+        base = self._base()
+        before = json.loads(json.dumps(base))
+        new = calibrate(["new"], ["low", "high"], 2, self._run, self._read, lambda s: None, prices=self.PRICES)
+        got = merge(base, new, "jwork")
+        self.assertEqual(base, before)  # the argument is not changed
+        self.assertEqual(got["old"], base["old"])
+        self.assertEqual(got["new"], new["new"])
+        self.assertEqual(got["usd"], {"old": base["usd"]["old"], "new": new["usd"]["new"]})
+        for key in ("runs", "cells", "usage_deltas"):
+            self.assertEqual(got["_meta"][key], {**base["_meta"][key], **new["_meta"][key]})
+        for key in ("started", "finished", "repeats", "cell_rule"):
+            self.assertEqual(got["_meta"][key], base["_meta"][key])
+        (batch,) = got["_meta"]["batches"]
+        self.assertEqual((batch["account"], batch["repeats"], batch["cells"], batch["started"], batch["finished"]),
+                         ("jwork", 2, ["new/low", "new/high"], new["_meta"]["started"], new["_meta"]["finished"]))
+
+    def test_merge_refuses_to_replace_a_cell_with_runs(self):
+        from tracker.calibrate import merge
+        base = self._base()
+        again = calibrate(["old"], ["low"], 1, self._run, self._read, lambda s: None, prices=self.PRICES)
+        with self.assertRaisesRegex(ValueError, "old/low"):
+            merge(base, again)
+
+    def test_a_cell_whose_runs_all_failed_may_be_filled(self):
+        from tracker.calibrate import merge
+        base = self._base()
+        base["_meta"]["runs"]["new/low"] = []
+        new = calibrate(["new"], ["low"], 1, self._run, self._read, lambda s: None, prices=self.PRICES)
+        self.assertEqual(len(merge(base, new)["_meta"]["runs"]["new/low"]), 1)
+
+    def test_main_merge_runs_only_missing_cells_and_resumes(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from tracker import calibrate as C
+        sent = []
+
+        def run_prompt(prompt, model, effort, config_dir):
+            sent.append(f"{model}/{effort}")
+            if len(sent) == 3:  # the process dies during the second cell: its runs are never written
+                raise KeyboardInterrupt
+            return self._run(prompt, model, effort)
+
+        with tempfile.TemporaryDirectory() as d:
+            out, prices, log = Path(d) / "m.json", Path(d) / "p.json", Path(d) / "meter.log"
+            base = self._base()
+            out.write_text(json.dumps(base))
+            prices.write_text(json.dumps({"_source": "t", **self.PRICES}))
+            log.write_text(json.dumps({"ts": "2026-10-08T10:00:00+00:00", "error": "429"}) + "\n"
+                           + json.dumps({"ts": "2026-10-08T09:58:00+00:00",
+                                         "five_hour": {"utilization": 4.0, "resets_at": "x"},
+                                         "seven_day": {"utilization": 9.0}}) + "\n")
+            argv = ["--merge", "--models", "new,old", "--efforts", "low", "high", "--repeats", "2",
+                    "--out", str(out), "--prices", str(prices), "--account", "jwork", "--meter-log", str(log)]
+            with mock.patch("tracker.cli_run.run_prompt", run_prompt), mock.patch("time.sleep", lambda s: None):
+                with self.assertRaises(KeyboardInterrupt):
+                    C.main(argv)
+                partial = json.loads(out.read_text())  # the checkpoint after new/low
+                self.assertEqual(sent, ["new/low", "new/low", "new/high"])
+                self.assertEqual(set(partial["_meta"]["runs"]), set(base["_meta"]["runs"]) | {"new/low"})
+                self.assertIsNone(partial["_meta"]["batches"][0]["finished"])
+                self.assertIsNotNone(partial["_meta"]["batches"][0]["merged"])
+                self.assertEqual(partial["_meta"]["usage_deltas"]["new/low"], 0.0)
+
+                sent.clear()
+                self.assertEqual(C.main(argv), 0)
+            self.assertEqual(sent, ["new/high", "new/high"])  # old/* and new/low are not sent again
+            done = json.loads(out.read_text())
+            self.assertEqual(done["old"], base["old"])
+            self.assertEqual(done["_meta"]["runs"]["new/low"], partial["_meta"]["runs"]["new/low"])
+            self.assertEqual(len(done["_meta"]["runs"]["new/high"]), 2)
+            self.assertEqual([b["cells"] for b in done["_meta"]["batches"]], [["new/low"], ["new/high"]])
+            self.assertIsNotNone(done["_meta"]["batches"][1]["finished"])
+            self.assertEqual(done["_meta"]["finished"], base["_meta"]["finished"])
