@@ -28,6 +28,14 @@ expose the real call count.
 
 `--recompute PATH` re-derives tokens and usd from an existing file's `_meta.runs` without
 sending anything, pricing them from `--prices` (default data/prices.json).
+
+`--merge` adds cells to the existing `--out` file instead of replacing it, which is how a new
+model joins the matrix (`--models claude-sonnet-5-5,claude-opus-5-5 --merge`). Every cell
+already in `_meta.runs` is kept as it is and is not sent again, so a merge that dies part way is
+resumed by running the same command: only the missing cells run. The file's own `started`,
+`finished` and `repeats` stay those of the first run; each merged batch records its own span,
+account, repeats and cells under `_meta.batches`, which tools/harness_runs.py reads so the
+batch's traffic is excluded from that account's passive stretches like the first run's.
 """
 from __future__ import annotations
 
@@ -130,8 +138,11 @@ def recompute(matrix: dict, prices: dict) -> dict:
 
 
 def calibrate(models: list[str], efforts: list[str], repeats: int, run: Callable, read: Callable, sleep: Callable,
-              checkpoint: Callable[[dict], None] | None = None, prices: dict | None = None) -> dict:
+              checkpoint: Callable[[dict], None] | None = None, prices: dict | None = None,
+              skip: set[str] | frozenset[str] = frozenset()) -> dict:
     """Run every cell; a run that fails twice is skipped and its cell left out (recorded under _meta.failed).
+
+    A cell named in `skip` ("model/effort") is not run and does not appear in the result.
 
     Each cell publishes median tokens and median meter dollars per CELL_RULE (see derive_cell);
     `prices` is data/prices.json's content, and a model missing from it gets no usd value.
@@ -144,6 +155,8 @@ def calibrate(models: list[str], efforts: list[str], repeats: int, run: Callable
     for model in models:
         matrix[model] = {}
         for effort in efforts:
+            if f"{model}/{effort}" in skip:
+                continue
             before = read()
             runs = []
             for _ in range(repeats):
@@ -170,14 +183,81 @@ def calibrate(models: list[str], efforts: list[str], repeats: int, run: Callable
     return matrix
 
 
+def merge(base: dict, new: dict, account: str | None = None) -> dict:
+    """`base` with `new`'s cells added, as a new dict; neither argument is changed.
+
+    Every cell of `base` is kept exactly as it is -- its runs, usage delta, tokens, usd and
+    `_meta.cells` entry -- and a cell that `new` also holds is refused rather than replaced:
+    a calibration run is never discarded. A cell of `base` with no runs at all (every run
+    failed) holds nothing to discard and is the one a later batch may fill. `new`'s failures are appended to `_meta.failed`,
+    and its span, `account`, repeats and cell names become one entry of `_meta.batches`.
+    """
+    out = json.loads(json.dumps(base))
+    meta, nmeta = out["_meta"], new["_meta"]
+    clash = {c for c, r in nmeta.get("runs", {}).items() if meta.get("runs", {}).get(c)}
+    if clash:
+        raise ValueError(f"cells already calibrated, refusing to replace them: {sorted(clash)}")
+    for cell, runs in nmeta.get("runs", {}).items():
+        model, effort = cell.rsplit("/", 1)
+        meta.setdefault("runs", {})[cell] = runs
+        meta.setdefault("usage_deltas", {})[cell] = nmeta.get("usage_deltas", {}).get(cell)
+        if cell in nmeta.get("cells", {}):
+            meta.setdefault("cells", {})[cell] = nmeta["cells"][cell]
+        if effort in new.get(model, {}):
+            out.setdefault(model, {})[effort] = new[model][effort]
+        if effort in new.get("usd", {}).get(model, {}):
+            out.setdefault("usd", {}).setdefault(model, {})[effort] = new["usd"][model][effort]
+    meta.setdefault("failed", []).extend(nmeta.get("failed", []))
+    # `merged` is when this merge was made: for a checkpoint of a batch still running (or one
+    # that died) it is the last moment the batch is known to have been sending, so a batch
+    # without `finished` still has an end.
+    batch = {"started": nmeta.get("started"), "finished": nmeta.get("finished"),
+             "merged": datetime.now(timezone.utc).isoformat(), "account": account,
+             "repeats": nmeta.get("repeats"), "cells": list(nmeta.get("runs", {}))}
+    meta.setdefault("batches", []).append(batch)
+    return out
+
+
+def _meter_log_reader(path: Path) -> Callable:
+    """A `read` for calibrate() that takes the last successful reading from a tracker.meter_log log.
+
+    The usage endpoint's limiter is shared by every account on a host and the meters already
+    poll it every minute, so a second reader of the same account is refused often and costs the
+    other accounts too (tracker/usage_cache.py). The log already holds the reading.
+    """
+    from .usage_api import Utilization
+
+    def read() -> Utilization:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for line in reversed(lines):
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            fh = row.get("five_hour")
+            if isinstance(fh, dict) and fh.get("utilization") is not None:
+                sd = row.get("seven_day") or {}
+                return Utilization(datetime.fromisoformat(row["ts"]), fh["utilization"],
+                                   sd.get("utilization"), fh.get("resets_at"))
+        raise RuntimeError(f"no five-hour reading in {path}")
+    return read
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Run the effort calibration (spends real usage), "
                                              "or --recompute an existing matrix file without sending anything")
     ap.add_argument("--config-dir", type=Path, default=None)
     ap.add_argument("--repeats", type=int, default=3)
-    ap.add_argument("--models", nargs="*", default=MODELS)
+    ap.add_argument("--models", nargs="*", default=MODELS, help="space- or comma-separated model ids")
     ap.add_argument("--efforts", nargs="*", default=EFFORTS)
+    ap.add_argument("--merge", action="store_true",
+                    help="add the cells to the existing --out file, keeping every cell it holds; "
+                         "cells it already holds are not run again")
+    ap.add_argument("--account", default=None,
+                    help="the account label the batch runs on, recorded under _meta.batches with --merge")
+    ap.add_argument("--meter-log", type=Path, default=None,
+                    help="read the five-hour meter from this tracker.meter_log log instead of the usage endpoint")
     ap.add_argument("--out", type=Path, default=None,
                     help="default data/effort_matrix.json, or the --recompute file itself")
     ap.add_argument("--recompute", type=Path, default=None, metavar="PATH",
@@ -185,11 +265,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"),
                     help="per-model list prices and weights used to value each run in meter dollars")
     a = ap.parse_args(argv)
+    a.models = [m for arg in a.models for m in arg.split(",") if m]
+    a.efforts = [e for arg in a.efforts for e in arg.split(",") if e]
     out = a.out or a.recompute or Path("data/effort_matrix.json")
     prices = {k: v for k, v in json.loads(a.prices.read_text(encoding="utf-8")).items() if not k.startswith("_")}
 
+    base = json.loads(out.read_text(encoding="utf-8")) if a.merge and not a.recompute else None
+    skip = {c for c, r in base["_meta"].get("runs", {}).items() if r} if base else set()
+
     def write(m: dict) -> None:
         write_text_atomic(out, json.dumps(m, indent=1) + "\n")
+
+    def checkpoint(m: dict) -> None:
+        write(merge(base, m, a.account) if base is not None else m)
 
     if a.recompute:
         m = recompute(json.loads(a.recompute.read_text(encoding="utf-8")), prices)
@@ -201,9 +289,12 @@ def main(argv: list[str] | None = None) -> int:
         from .cli_run import run_prompt
         from .usage_api import read_usage
         cfg = a.config_dir or Path.home() / ".claude"
+        read = _meter_log_reader(a.meter_log) if a.meter_log else (lambda: read_usage(cfg))
         m = calibrate(a.models, a.efforts, a.repeats,
-                      lambda p, mo, ef: run_prompt(p, mo, ef, a.config_dir), lambda: read_usage(cfg), time.sleep,
-                      checkpoint=write, prices=prices)
+                      lambda p, mo, ef: run_prompt(p, mo, ef, a.config_dir), read, time.sleep,
+                      checkpoint=checkpoint, prices=prices, skip=skip)
+        if base is not None:
+            m = merge(base, m, a.account)
     write(m)
     print(json.dumps({k: v for k, v in m.items() if not k.startswith("_")}, indent=1))
     return 0

@@ -162,7 +162,8 @@ class CollectTests(unittest.TestCase):
                  mock.patch.object(H, "OUTPUT_PROBE_LOG", Path(d) / "absent.log"), \
                  mock.patch.object(H, "meter_series", lambda: {}), \
                  mock.patch.object(H, "probe_rows", lambda: [dict(r) for r in rows]), \
-                 mock.patch.object(H, "effort_matrix_row", lambda: dict(self.MATRIX)):
+                 mock.patch.object(H, "effort_matrix_row", lambda: dict(self.MATRIX)), \
+                 mock.patch.object(H, "effort_matrix_batch_rows", lambda: []):
                 return collect()
 
     def test_a_row_of_the_same_window_is_the_same_run_and_is_not_emitted_twice(self):
@@ -256,6 +257,26 @@ class RowShapeTests(unittest.TestCase):
         runs = self._written([row])
         self.assertEqual([(r.account, r.start, r.end) for r in runs],
                          [(row["account"], row["start"], row["end"])])
+
+    def test_each_merged_batch_is_a_run_of_its_own_account(self):
+        meta = {"_meta": {"started": "2026-09-09T11:28:37+00:00", "finished": "2026-09-09T14:53:22+00:00",
+                          "batches": [
+                              {"started": "2026-10-08T11:00:00+00:00", "finished": "2026-10-08T13:00:00+00:00",
+                               "merged": "2026-10-08T13:00:01+00:00", "account": "jwork",
+                               "cells": ["claude-opus-5-5/low", "claude-sonnet-5-5/low"]},
+                              {"started": "2026-10-09T11:00:00+00:00", "finished": None,
+                               "merged": "2026-10-09T11:30:00+00:00", "account": None, "cells": ["m/max"]}]}}
+        path = Path(self.dir.name) / "matrix.json"
+        path.write_text(json.dumps(meta), encoding="utf-8")
+        rows = H.effort_matrix_batch_rows(path)
+        self.assertEqual([(r["outcome"], r["end"].isoformat(), r["detail"]) for r in rows],
+                         [("completed", "2026-10-08T13:00:00+00:00", "claude-opus-5-5, claude-sonnet-5-5"),
+                          ("crashed", "2026-10-09T11:30:00+00:00", "m")])
+        runs = self._written(rows)
+        self.assertEqual([(r.account, r.start) for r in runs],
+                         [("jwork", rows[0]["start"]), (H.EFFORT_MATRIX_ACCOUNT, rows[1]["start"])])
+        self.assertIsNotNone(C.overlapping_run(runs, "jwork", rows[0]["start"] + timedelta(minutes=5),
+                                               rows[0]["start"] + timedelta(minutes=50)))
 
 
 if __name__ == "__main__":

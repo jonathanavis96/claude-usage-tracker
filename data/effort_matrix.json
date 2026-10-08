@@ -17,7 +17,17 @@
    "claude-fable-5-1/medium": 5.0,
    "claude-fable-5-1/high": 5.0,
    "claude-fable-5-1/xhigh": 11.0,
-   "claude-fable-5-1/max": 22.0
+   "claude-fable-5-1/max": 22.0,
+   "claude-sonnet-5-5/low": 0.0,
+   "claude-sonnet-5-5/medium": 0.0,
+   "claude-sonnet-5-5/high": 1.0,
+   "claude-sonnet-5-5/xhigh": 0.0,
+   "claude-sonnet-5-5/max": -2.0,
+   "claude-opus-5-5/low": 1.0,
+   "claude-opus-5-5/medium": 1.0,
+   "claude-opus-5-5/high": 1.0,
+   "claude-opus-5-5/xhigh": 1.0,
+   "claude-opus-5-5/max": 16.0
   },
   "runs": {
    "claude-sonnet-5/low": [
@@ -777,6 +787,516 @@
      "cache_write": 0,
      "total": 42694
     }
+   ],
+   "claude-sonnet-5-5/low": [
+    {
+     "input": 2,
+     "output": 2104,
+     "cache_read": 9133,
+     "cache_write": 6378,
+     "total": 17617
+    },
+    {
+     "input": 2,
+     "output": 2435,
+     "cache_read": 15511,
+     "cache_write": 0,
+     "total": 17948
+    },
+    {
+     "input": 2,
+     "output": 1927,
+     "cache_read": 15511,
+     "cache_write": 0,
+     "total": 17440
+    },
+    {
+     "input": 2,
+     "output": 2035,
+     "cache_read": 10249,
+     "cache_write": 4353,
+     "total": 16639
+    },
+    {
+     "input": 2,
+     "output": 2077,
+     "cache_read": 15511,
+     "cache_write": 0,
+     "total": 17590
+    },
+    {
+     "input": 2,
+     "output": 2582,
+     "cache_read": 15511,
+     "cache_write": 0,
+     "total": 18095
+    },
+    {
+     "input": 2,
+     "output": 2106,
+     "cache_read": 15511,
+     "cache_write": 0,
+     "total": 17619
+    }
+   ],
+   "claude-sonnet-5-5/medium": [
+    {
+     "input": 2,
+     "output": 2498,
+     "cache_read": 10249,
+     "cache_write": 5274,
+     "total": 18023
+    },
+    {
+     "input": 2,
+     "output": 2714,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 18239
+    },
+    {
+     "input": 2,
+     "output": 2382,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 17907
+    },
+    {
+     "input": 2,
+     "output": 2121,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 17646
+    },
+    {
+     "input": 2,
+     "output": 2530,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 18055
+    },
+    {
+     "input": 2,
+     "output": 2206,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 17731
+    },
+    {
+     "input": 2,
+     "output": 2292,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 17817
+    }
+   ],
+   "claude-sonnet-5-5/high": [
+    {
+     "input": 2,
+     "output": 3582,
+     "cache_read": 10249,
+     "cache_write": 5286,
+     "total": 19119
+    },
+    {
+     "input": 2,
+     "output": 2907,
+     "cache_read": 10249,
+     "cache_write": 5274,
+     "total": 18432
+    },
+    {
+     "input": 2,
+     "output": 3869,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 19394
+    },
+    {
+     "input": 2,
+     "output": 2910,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 18435
+    },
+    {
+     "input": 2,
+     "output": 2839,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 18364
+    },
+    {
+     "input": 2,
+     "output": 2791,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 18316
+    },
+    {
+     "input": 2,
+     "output": 2750,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 18275
+    }
+   ],
+   "claude-sonnet-5-5/xhigh": [
+    {
+     "input": 2,
+     "output": 5545,
+     "cache_read": 10249,
+     "cache_write": 5274,
+     "total": 21070
+    },
+    {
+     "input": 2,
+     "output": 5844,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 21369
+    },
+    {
+     "input": 2,
+     "output": 5886,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 21411
+    },
+    {
+     "input": 2,
+     "output": 5796,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 21321
+    },
+    {
+     "input": 2,
+     "output": 6383,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 21908
+    },
+    {
+     "input": 2,
+     "output": 4910,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 20435
+    },
+    {
+     "input": 2,
+     "output": 5854,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 21379
+    }
+   ],
+   "claude-sonnet-5-5/max": [
+    {
+     "input": 2,
+     "output": 43915,
+     "cache_read": 10249,
+     "cache_write": 5274,
+     "total": 59440
+    },
+    {
+     "input": 2,
+     "output": 40052,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 55577
+    },
+    {
+     "input": 2,
+     "output": 40114,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 55639
+    },
+    {
+     "input": 2,
+     "output": 44886,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 60411
+    },
+    {
+     "input": 2,
+     "output": 41844,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 57369
+    },
+    {
+     "input": 2,
+     "output": 46098,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 61623
+    },
+    {
+     "input": 2,
+     "output": 38375,
+     "cache_read": 15523,
+     "cache_write": 0,
+     "total": 53900
+    }
+   ],
+   "claude-opus-5-5/low": [
+    {
+     "input": 2,
+     "output": 2793,
+     "cache_read": 8740,
+     "cache_write": 7368,
+     "total": 18903
+    },
+    {
+     "input": 2,
+     "output": 2795,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 18905
+    },
+    {
+     "input": 2,
+     "output": 2904,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 19014
+    },
+    {
+     "input": 2,
+     "output": 3158,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 19268
+    },
+    {
+     "input": 2,
+     "output": 2803,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 18913
+    },
+    {
+     "input": 2,
+     "output": 2477,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 18587
+    },
+    {
+     "input": 2,
+     "output": 2761,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 18871
+    }
+   ],
+   "claude-opus-5-5/medium": [
+    {
+     "input": 2,
+     "output": 4319,
+     "cache_read": 10054,
+     "cache_write": 6054,
+     "total": 20429
+    },
+    {
+     "input": 2,
+     "output": 4658,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 20768
+    },
+    {
+     "input": 2,
+     "output": 4835,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 20945
+    },
+    {
+     "input": 2,
+     "output": 5248,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 21358
+    },
+    {
+     "input": 2,
+     "output": 5090,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 21200
+    },
+    {
+     "input": 2,
+     "output": 4877,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 20987
+    },
+    {
+     "input": 2,
+     "output": 4743,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 20853
+    }
+   ],
+   "claude-opus-5-5/high": [
+    {
+     "input": 2,
+     "output": 5571,
+     "cache_read": 10054,
+     "cache_write": 6054,
+     "total": 21681
+    },
+    {
+     "input": 2,
+     "output": 5454,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 21564
+    },
+    {
+     "input": 2,
+     "output": 6111,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 22221
+    },
+    {
+     "input": 2,
+     "output": 5817,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 21927
+    },
+    {
+     "input": 2,
+     "output": 6855,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 22965
+    },
+    {
+     "input": 2,
+     "output": 5065,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 21175
+    },
+    {
+     "input": 2,
+     "output": 5576,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 21686
+    }
+   ],
+   "claude-opus-5-5/xhigh": [
+    {
+     "input": 2,
+     "output": 16307,
+     "cache_read": 10054,
+     "cache_write": 6054,
+     "total": 32417
+    },
+    {
+     "input": 2,
+     "output": 15852,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 31962
+    },
+    {
+     "input": 2,
+     "output": 19765,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 35875
+    },
+    {
+     "input": 2,
+     "output": 12093,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 28203
+    },
+    {
+     "input": 2,
+     "output": 10415,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 26525
+    },
+    {
+     "input": 2,
+     "output": 13664,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 29774
+    },
+    {
+     "input": 2,
+     "output": 15611,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 31721
+    }
+   ],
+   "claude-opus-5-5/max": [
+    {
+     "input": 2,
+     "output": 47547,
+     "cache_read": 10054,
+     "cache_write": 6054,
+     "total": 63657
+    },
+    {
+     "input": 2,
+     "output": 54053,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 70163
+    },
+    {
+     "input": 2,
+     "output": 56760,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 72870
+    },
+    {
+     "input": 2,
+     "output": 60491,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 76601
+    },
+    {
+     "input": 2,
+     "output": 51468,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 67578
+    },
+    {
+     "input": 2,
+     "output": 49184,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 65294
+    },
+    {
+     "input": 2,
+     "output": 52794,
+     "cache_read": 16108,
+     "cache_write": 0,
+     "total": 68904
+    }
    ]
   },
   "failed": [
@@ -1011,10 +1531,181 @@
      1
     ],
     "spread_usd": 2.3041
+   },
+   "claude-sonnet-5-5/low": {
+    "median_tokens": 17617,
+    "median_usd": 0.024354,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.9191
+   },
+   "claude-sonnet-5-5/medium": {
+    "median_tokens": 17907,
+    "median_usd": 0.023824,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.7992
+   },
+   "claude-sonnet-5-5/high": {
+    "median_tokens": 18432,
+    "median_usd": 0.029104,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.783
+   },
+   "claude-sonnet-5-5/xhigh": {
+    "median_tokens": 21369,
+    "median_usd": 0.058544,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.3978
+   },
+   "claude-sonnet-5-5/max": {
+    "median_tokens": 57369,
+    "median_usd": 0.418444,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.2012
+   },
+   "claude-opus-5-5/low": {
+    "median_tokens": 18905,
+    "median_usd": 0.056068,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.8711
+   },
+   "claude-opus-5-5/medium": {
+    "median_tokens": 20945,
+    "median_usd": 0.097548,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.2521
+   },
+   "claude-opus-5-5/high": {
+    "median_tokens": 21686,
+    "median_usd": 0.116348,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.3987
+   },
+   "claude-opus-5-5/xhigh": {
+    "median_tokens": 31721,
+    "median_usd": 0.312228,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.8977
+   },
+   "claude-opus-5-5/max": {
+    "median_tokens": 68904,
+    "median_usd": 1.055888,
+    "runs": 7,
+    "turns": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "spread_usd": 1.233
    }
   },
   "recomputed_from": "data/effort_matrix.json",
-  "recomputed": "2026-09-09T15:46:06.274807+00:00"
+  "recomputed": "2026-09-09T15:46:06.274807+00:00",
+  "batches": [
+   {
+    "started": "2026-10-08T10:43:04.962826+00:00",
+    "finished": "2026-10-08T12:55:37.057090+00:00",
+    "merged": "2026-10-08T12:55:37.058022+00:00",
+    "account": "jwork",
+    "repeats": 7,
+    "cells": [
+     "claude-sonnet-5-5/low",
+     "claude-sonnet-5-5/medium",
+     "claude-sonnet-5-5/high",
+     "claude-sonnet-5-5/xhigh",
+     "claude-sonnet-5-5/max",
+     "claude-opus-5-5/low",
+     "claude-opus-5-5/medium",
+     "claude-opus-5-5/high",
+     "claude-opus-5-5/xhigh",
+     "claude-opus-5-5/max"
+    ]
+   }
+  ]
  },
  "claude-sonnet-5": {
   "low": 41881,
@@ -1058,6 +1749,34 @@
    "high": 0.56279,
    "xhigh": 1.60994,
    "max": 2.600274
+  },
+  "claude-sonnet-5-5": {
+   "low": 0.024354,
+   "medium": 0.023824,
+   "high": 0.029104,
+   "xhigh": 0.058544,
+   "max": 0.418444
+  },
+  "claude-opus-5-5": {
+   "low": 0.056068,
+   "medium": 0.097548,
+   "high": 0.116348,
+   "xhigh": 0.312228,
+   "max": 1.055888
   }
+ },
+ "claude-sonnet-5-5": {
+  "low": 17617,
+  "medium": 17907,
+  "high": 18432,
+  "xhigh": 21369,
+  "max": 57369
+ },
+ "claude-opus-5-5": {
+  "low": 18905,
+  "medium": 20945,
+  "high": 21686,
+  "xhigh": 31721,
+  "max": 68904
  }
 }

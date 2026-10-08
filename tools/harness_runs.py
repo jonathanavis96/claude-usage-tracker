@@ -204,6 +204,27 @@ def effort_matrix_row() -> dict:
             "precision": "recorded", "account_source": "effort_matrix", "source": "data/effort_matrix.json:_meta"}
 
 
+def effort_matrix_batch_rows(path: Path = Path("data/effort_matrix.json")) -> list[dict]:
+    """One row per batch merged into the matrix later (tracker.calibrate --merge, `_meta.batches`).
+
+    A batch that died before it finished has no `finished`; its last checkpoint (`merged`) is
+    the last moment it is known to have been sending, so that is its end.
+    """
+    meta = json.loads(Path(path).read_text(encoding="utf-8"))["_meta"]
+    rows = []
+    for i, b in enumerate(meta.get("batches") or []):
+        end = b.get("finished") or b.get("merged")
+        if not b.get("started") or not end:
+            continue
+        rows.append({"account": b.get("account") or EFFORT_MATRIX_ACCOUNT, "start": P(b["started"]), "end": P(end),
+                     "kind": "effort-matrix", "outcome": "completed" if b.get("finished") else "crashed",
+                     "model": None, "effort": None, "tokens_per_pct": None,
+                     "precision": "recorded", "account_source": "effort_matrix",
+                     "detail": ", ".join(sorted({c.rsplit("/", 1)[0] for c in b.get("cells") or []})),
+                     "source": f"data/effort_matrix.json:_meta.batches[{i}]"})
+    return rows
+
+
 def same_run(row: dict, account: str, model: str | None, tokens_per_pct: float | None,
              start: datetime, end: datetime) -> bool:
     """Is this probes.jsonl row the same run as a completed run in the log?
@@ -228,7 +249,7 @@ def same_run(row: dict, account: str, model: str | None, tokens_per_pct: float |
 
 def collect() -> list[dict]:
     series = meter_series()
-    rows = probe_rows() + [effort_matrix_row()]
+    rows = probe_rows() + [effort_matrix_row()] + effort_matrix_batch_rows()
     for path, kind in ((PROBE_LOG, "probe"), (OUTPUT_PROBE_LOG, "output-probe")):
         for run in parse_log(path, kind):
             account, how = (run["account"], "log") if run["account"] else attribute(run, series)
