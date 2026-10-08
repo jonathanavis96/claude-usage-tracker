@@ -204,6 +204,8 @@ These are the acceptance rules. Each names where it lives.
     ratio. (Amended by rule 16: the ratio is now itself interactive-equivalent, so the
     window factor values headless-weighted tokens; still one unit.) On identical readings the two routes are then one number. What remains between
     them is the two kinds of reading: five-hour windows against one-point seven-day steps.
+    (Amended by rule 20: both factors are now read on the direct test's own seven-day steps,
+    so nothing remains between the routes.)
     `tracker/invariants.py` check 10 (`weekly_routes_agree`, advisory) fails when, on a
     certified weekly event, the two differ by more than their combined interval.
     Before this rule the route compounded the detector's raw meter ratio, over the account's
@@ -341,6 +343,44 @@ These are the acceptance rules. Each names where it lives.
     before. Found while recomputing rule 18: the
     previous regime moved 2.6% and the 22 September step crossed the half.
     Source: `tracker/credits.py` (`window_regimes` `step`, `_rounded_regimes`).
+
+20. **The 14 September weekly step compares each account with itself, on one set of
+    readings, added 2026-10-08.** The weekly change is measured directly, credits per 1% of
+    the seven-day meter, on the direct weekly test's clean seven-day steps and sides (rules
+    11 and 13). Its two factors are read on those same steps and days: the window, as credits
+    per five-hour point, with each step's five-hour points over its headless inflation (rule
+    16), and windows per week, as five-hour over seven-day points, the derived quotient. So
+    weekly = window x windows per week holds exactly for each account. The accounts are
+    combined at one set of weights, the weekly figure's inverse variances, so the identity
+    also holds for the combined figures (`weekly_meter.reconcile`, `credits.cut_ratio_route`).
+    `tokens_per_week_change` states the direct combined weekly change, with its interval, and
+    carries the other two as its factors. A weekly figure is never built from them. Each
+    combined change is tested under rule 9, and its verdict is published even when it fails.
+    The tokens-per-week chart's 14 September step (`per_week_regimes`) is bridged to that
+    same combined change (`chain_certified_weeks`, `week_bridge`), whether or not rule 9
+    certifies it. The boundary is the detector's certified step, and the chart draws a step
+    there either way. An account with readings on one side only moves no step.
+    `tracker/invariants.py` check 10 (`weekly_routes_agree`, advisory) also fails when that
+    chart step is not the direct combined change to its one decimal.
+    Written before any figure was recomputed with it: the readings, valuation, sides,
+    quantities and bootstrap above. Five alternatives were declared in advance: Max account
+    1's before side from 6 September only, raw five-hour points, the after side to the newest
+    reading, meter windows for windows per week, and the before side from the detector's
+    regime start.
+    Before this rule, three figures for Max account 1 did not reconcile. Windows per week
+    read -24.9% on meter windows from 15 August to 7 October. The weekly change read -9.1% on
+    steps from 20 August to 22 September. The window read +3.4% on stretches from 6
+    September. The chart stepped -10.75%: a level pooled over Max accounts 1 and 2 against
+    one over Max accounts 1, 2 and 3, whose log starts after the change. The route stated
+    -14.6%. On the common basis the figures are: Max account 1 weekly -9.1%, window +9.0%,
+    windows per week -16.6%; Max account 2 -10.4%, +3.2%, -13.1%; combined -9.9% [-22.1,
+    +4.1], +5.2%, -14.3% [-19.0, -9.4]. The weekly change fails both rule 9 tests. Windows per
+    week on the same steps passes both.
+    Source: `tracker/weekly_meter.py` (`QUANTITIES`, `account_change`, `reconcile`),
+    `tracker/credits.py` (`cut_weekly_steps`, `cut_ratio_route`, `chain_certified_weeks`,
+    `regime_figures`), `tracker/publish.py` (`_tokens_per_week_change`, `_align_markers`),
+    `tracker/invariants.py` (`weekly_routes_agree`, `_week_step_at`).
+    Findings: `docs/findings-2026-10-08-14sep-reconcile.md`.
 
 ### Pending
 

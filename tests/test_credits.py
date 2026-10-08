@@ -2940,6 +2940,22 @@ class CertifiedWeekChainTests(unittest.TestCase):
         self.assertEqual(rows[2]["windows_per_week"], rows[1]["windows_per_week"])
         self.assertEqual(rows[2]["windows_per_week_source"], "carried_across_withheld_window")
 
+    def test_the_cut_boundary_is_bridged_to_the_same_accounts_change(self):
+        # ADR 0001 rule 20: the second row's step is the 14 September direct weekly change,
+        # each account against itself, certified there or not; the 22 September step stays
+        # its own certified change.
+        rows = self.rows()
+        C.chain_certified_weeks(rows, self.meters(), {"change_pct": -9.9, "certified": False})
+        self.assertAlmostEqual(rows[1]["value"] / rows[0]["value"] - 1, -0.099, places=3)
+        self.assertAlmostEqual(rows[2]["value"] / rows[1]["value"] - 1, 0.296, places=3)
+        self.assertEqual(rows[0]["week_bridge"]["at"], [self.AT, C.CUT_AT.isoformat()])
+        self.assertAlmostEqual(rows[0]["windows_per_week"] / rows[0]["week_bridge"]["factor"], 5.7,
+                               places=3)
+        # Without a measured change there the boundary keeps its levels.
+        rows = self.rows()
+        C.chain_certified_weeks(rows, self.meters(), {"change_pct": None})
+        self.assertAlmostEqual(rows[1]["value"] / rows[0]["value"], 2300 / 2600, places=3)
+
     def test_a_withheld_candidate_changes_nothing(self):
         rows = self.rows()
         C.chain_certified_weeks(rows, self.meters(applies=False))
