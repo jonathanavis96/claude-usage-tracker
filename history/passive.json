@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-08T10:15:44.278305+00:00",
+ "generated_at": "2026-10-08T14:15:40.095935+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -292,10 +292,10 @@
  "session_tokens": {
   "claude-sonnet-4-6": 255187,
   "claude-opus-5": 3131938,
-  "claude-sonnet-5": 598484,
-  "claude-opus-4-7": 144295,
-  "claude-fable-5-1": 6159876,
-  "claude-opus-5-5": 1893343,
+  "claude-sonnet-5": 591082,
+  "claude-opus-4-7": 146253,
+  "claude-fable-5-1": 6038066,
+  "claude-opus-5-5": 1909196,
   "claude-haiku-4-5": 191635,
   "claude-opus-4-8": 852622
  },
