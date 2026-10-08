@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-08T02:30:06.763747+00:00",
+ "generated_at": "2026-10-08T03:00:06.299578+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 7781,
+    "reset_verified_samples": 7785,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 11943,
+    "samples": 11947,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-08T02:28:53+00:00"
+    "last": "2026-10-08T02:37:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -24822,7 +24822,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-08T02:28:53+00:00",
+     "window_ending": "2026-10-08T02:37:10+00:00",
      "windows": 1.0,
      "five_hour_pct": 1.0,
      "seven_day_pct": 1.0,
@@ -24845,16 +24845,16 @@
     "note": null,
     "reset_verified_samples": 7638,
     "since": null,
-    "samples": 10428,
+    "samples": 10440,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-08T02:28:53+00:00"
+    "last": "2026-10-08T02:58:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1588,
-    "turns": 57127,
+    "files": 1589,
+    "turns": 57133,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -38708,11 +38708,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 7496,
+    "reset_verified_samples": 7503,
     "since": null,
-    "samples": 8440,
+    "samples": 8452,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-08T02:28:53+00:00"
+    "last": "2026-10-08T02:58:10+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -42597,7 +42597,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-08T02:31:29.464664+00:00",
+  "generated_at": "2026-10-08T03:01:23.967018+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -87375,14 +87375,18 @@
     "model": "claude-sonnet-5-5",
     "account": "a3",
     "entrypoint": "sdk-cli",
-    "n": 3,
+    "n": 5,
     "fast_session_requests": 0,
     "output_hist": {
+     "243": 1,
+     "245": 1,
      "236": 1,
      "246": 1,
      "242": 1
     },
     "ttfb_hist": {
+     "24": 1,
+     "58": 1,
      "50": 1,
      "39": 1,
      "62": 1
