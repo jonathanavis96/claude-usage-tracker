@@ -946,6 +946,28 @@ class EffortCacheMixTests(unittest.TestCase):
         self.assertEqual(mix["low"]["runs"], 7)
         self.assertLess(mix["medium"]["cold_cache_runs"], mix["low"]["cold_cache_runs"])
 
+    def test_a_5_5_cell_publishes_exactly_as_the_older_cells_do(self):
+        """Sonnet 5.5 and Opus 5.5 joined the matrix on 2026-10-08 beside the Sonnet 5 and Opus 5 cells.
+
+        Each gets a cache-mix and a credits cell from its own runs, at its own family's rate
+        (Sonnet 5.5 is a family of its own, tracker/credits.py auto_family), and the older
+        cells stay in the block.
+        """
+        runs = self.META["runs"]["claude-sonnet-5/low"]
+        meta = {"runs": {f"{m}/low": runs for m in ("claude-sonnet-5", "claude-sonnet-5-5",
+                                                    "claude-opus-5", "claude-opus-5-5")}}
+        credits = _published(effort_meta=meta)["credits"]
+        for model in ("claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5"):
+            mix = credits["effort_cache_mix"][model]["low"]
+            self.assertEqual((mix["runs"], mix["cold_cache_runs"]), (2, 1), model)
+            self.assertAlmostEqual(mix["cache_read_share"], 0.649, msg=model)
+            cell = credits["effort_credits"][model]["low"]
+            self.assertEqual(cell["runs"], 2, model)
+            self.assertIsNotNone(cell["median_credits"]["value"], model)
+            self.assertIn("percent_of_window", cell)
+        self.assertEqual(C.family("claude-sonnet-5-5", CREDITS), "sonnet-5-5")
+        self.assertEqual(C.family("claude-opus-5-5", CREDITS), "opus-5-5")
+
 
 class EventAndReferenceTests(unittest.TestCase):
     def setUp(self):
