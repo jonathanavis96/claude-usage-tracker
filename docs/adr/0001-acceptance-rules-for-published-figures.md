@@ -382,6 +382,32 @@ These are the acceptance rules. Each names where it lives.
     `tracker/invariants.py` (`weekly_routes_agree`, `_week_step_at`).
     Findings: `docs/findings-2026-10-08-14sep-reconcile.md`.
 
+21. **The 14 September weekly step is frozen at -9.9%, added 2026-10-09.** The size of the
+    14 September weekly change is the rule 20 figure, -9.9% [-22.1, +4.1] as recorded on
+    2026-10-08 (the interval read [-22.1, +4.3] on the 2026-10-09 inputs). The size is frozen
+    at -9.9%. It is reopened only for a counting error shown with evidence. It is never
+    reopened because a different method gives a different number. Reopening it means changing
+    this rule, and `FROZEN_14SEP_WEEKLY_PCT` with it, in their own PR.
+    `tracker/invariants.py` check 12 (`fourteen_sep_weekly_frozen`, advisory) fails when the
+    published step moves from -9.9% at one decimal: the direct weekly change, the
+    `tokens_per_week_change` and the tokens-per-week chart's step at the event's marker.
+    The live figure is still recomputed each publish, and its credit valuation moves with each
+    refit of the rates, so the check is how a move shows. A test reads this rule and fails
+    when its figure and the constant differ.
+    The alternative tested first was the window headline's own reading moved to the seven-day
+    meter: raw tokens per seven-day point on pure-Opus steps (Opus 5 only, Opus 5.5 being its
+    own family), each account against itself on rule 20's sides. Its rules, the estimator, the
+    interval, a thin-sample floor (3 UTC days and 20 points a side for Max accounts 1 and 2)
+    and the choice rule were committed before any figure was computed. The sample was
+    thin: Max account 1 had 8 pure-Opus steps before and none after, and Max account 2 had 15
+    before (2 days) and 3 after (1 day). No account gave a figure, so the choice rule kept
+    rule 20's. No publisher code changed.
+    The announced 17% reduction is inside rule 20's interval. It was used as a test of the
+    method only, never as an input.
+    Source: `tracker/invariants.py` (`FROZEN_14SEP_WEEKLY_PCT`, `fourteen_sep_weekly_frozen`),
+    `tests/test_invariants.py` (`FourteenSepFrozenTest`).
+    Findings: `docs/findings-2026-10-09-14sep-pure-opus.md`.
+
 ### Pending
 
 14. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
