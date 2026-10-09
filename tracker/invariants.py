@@ -45,11 +45,18 @@ failures, an empty list when it holds.
    per-week row, read against the detected level it overlaps longest, within the root sum of
    squares of their two log half-widths. Before rule 16 the detector read the raw meter
    ratio, which moves with an account's headless share and not only with a limit.
+12. `fourteen_sep_weekly_frozen`: the 14 September weekly step is the figure ADR 0001 rule 21
+   froze it at (`FROZEN_14SEP_WEEKLY_PCT`), to its one decimal, wherever the page states it:
+   the direct weekly change, `tokens_per_week_change` and the tokens-per-week chart's step at
+   the event's marker. The live figure is recomputed on every publish, and its credit
+   valuation moves with each refit of the rates; this check says when that moves the size.
+   The size is reopened only for a counting error shown with evidence, and then the ADR and
+   this constant change together (tests/test_invariants.py reads the ADR for it).
 
 Checks 7-9 read the steps the page draws the way it draws them (`chart_steps`); on
 2026-10-05 the page said "+30%" in its headline and "+32%" on two charts for 22 September.
 
-A failure of checks 1-6, 10 or 11 does NOT block the publish (exit 1). A failure of checks 7-9
+A failure of checks 1-6 or 10-12 does NOT block the publish (exit 1). A failure of checks 7-9
 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change. bin/daily.sh runs
 this after the publish, beside tracker.publish_gate, with the same incident semantics
@@ -78,6 +85,11 @@ REASON_CHARS = 160
 #: Check 4's bound. One figure is relative to the pool and one is direct, so this is a
 #: sanity bound on units, not an equality.
 ACCOUNT_UNITS_TOLERANCE = 0.25
+#: The 14 September weekly step in percent, frozen by ADR 0001 rule 21 (check 12), and how far
+#: from its own instant (`credits.CUT_AT`) a weekly event may be marked and still be that change
+#: (rule 17 marks it at Max account 1's own step, 13 Sep 16:30Z).
+FROZEN_14SEP_WEEKLY_PCT = -9.9
+FROZEN_14SEP_REACH_DAYS = 2
 STATE = health.GS_OPS / "claude-usage-invariants.json"
 
 
@@ -633,6 +645,34 @@ def _week_step_at(doc: dict, at: str | None) -> float | None:
     return None
 
 
+def fourteen_sep_weekly_frozen(doc: dict) -> list[str]:
+    """Check 12: the 14 September weekly step is still the size ADR 0001 rule 21 froze.
+
+    Reads the weekly event marked within FROZEN_14SEP_REACH_DAYS of `credits.CUT_AT`: its direct
+    weekly change, its `tokens_per_week_change` and the tokens-per-week chart's step at its
+    marker must each round to FROZEN_14SEP_WEEKLY_PCT at one decimal. A page without that event
+    is not read.
+    """
+    out = []
+    for e in doc.get("events") or []:
+        if e.get("scope") != "weekly" or not e.get("at"):
+            continue
+        if abs((datetime.fromisoformat(e["at"]) - credit_model.CUT_AT).total_seconds()) \
+                > FROZEN_14SEP_REACH_DAYS * 86400:
+            continue
+        direct = (((e.get("five_hour_window_credits") or {}).get("direct_tests") or {})
+                  .get("weekly_change") or {})
+        stated = [("the direct weekly change", direct.get("change_pct")),
+                  ("tokens_per_week_change", (e.get("tokens_per_week_change") or {}).get("signed_pct")),
+                  ("the tokens-per-week chart's step", _week_step_at(doc, e["at"]))]
+        for where, pct in stated:
+            if pct is not None and round(pct, 1) != FROZEN_14SEP_WEEKLY_PCT:
+                out.append(f"The 14 September weekly step reads {pct:+.2f}% in {where}, but ADR 0001 "
+                           f"rule 21 froze it at {FROZEN_14SEP_WEEKLY_PCT:+.1f}%. Only a counting "
+                           f"error shown with evidence reopens it.")
+    return out
+
+
 def _span(start: str | None, end: str | None, lo: datetime, hi: datetime) -> tuple[datetime, datetime]:
     """A row's span with its open ends clamped to (lo, hi)."""
     return (datetime.fromisoformat(start) if start else lo, datetime.fromisoformat(end) if end else hi)
@@ -696,6 +736,7 @@ CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("one_figure_per_change", one_figure_per_change),
     ("weekly_routes_agree", weekly_routes_agree),
     ("detected_windows_per_week_agree", detected_windows_per_week_agree),
+    ("fourteen_sep_weekly_frozen", fourteen_sep_weekly_frozen),
 ]
 #: The checks whose failure stops the page being published (exit 2): figures that contradict
 #: each other on the page itself. The rest alert and publish anyway (exit 1).

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -343,7 +344,7 @@ class RunAllTest(unittest.TestCase):
                           "account_units", "steps_agree_with_meters", "no_withheld_boundary",
                           "headline_matches_chart", "windows_per_week_implied",
                           "one_figure_per_change", "weekly_routes_agree",
-                          "detected_windows_per_week_agree"])
+                          "detected_windows_per_week_agree", "fourteen_sep_weekly_frozen"])
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()
@@ -419,6 +420,18 @@ def _live_2026_10_05() -> dict:
         "credits": {"window_tokens": {"regimes": regimes, "per_week_regimes": weeks,
                                       "account_regimes": accounts},
                     "five_hour_on_meters": {"candidates": [sep22, sep29]}}}
+
+
+def _frozen(doc: dict) -> dict:
+    """A `_fixed` page with the 14 September week step bridged to the direct combined change
+    (ADR 0001 rule 20) at the size rule 21 froze, the windows-per-week chart and its event
+    following it (checks 7-9 and 12)."""
+    weeks = _wt(doc)["per_week_regimes"]
+    factor = weeks[1]["value"] / (1 + I.FROZEN_14SEP_WEEKLY_PCT / 100) / weeks[0]["value"]
+    weeks[0]["value"] = round(weeks[0]["value"] * factor)
+    weeks[0]["windows_per_week"] = round(weeks[0]["windows_per_week"] * factor, 4)
+    doc["events"][0]["percent"] = 19
+    return doc
 
 
 def _fixed(doc: dict) -> dict:
@@ -737,6 +750,49 @@ class DetectedWindowsPerWeekAgreeTest(unittest.TestCase):
         self.assertNotIn("detected_windows_per_week_agree", I.BLOCKING)
 
 
+class FourteenSepFrozenTest(unittest.TestCase):
+    """Check 12: the 14 September weekly step stays at the size ADR 0001 rule 21 froze."""
+
+    AT = "2026-09-13T16:30:00+00:00"
+
+    def _page(self, direct: float, route: float, before: int = 1000, after: int = 901) -> dict:
+        event = _weekly_event({"pooled": (direct, (-22.1, 4.3))}, {"pooled": (route, (-22.1, 4.3))})
+        return {"events": [dict(event, at=self.AT)],
+                "credits": {"window_tokens": {"per_week_regimes": [
+                    {"from": None, "until": self.AT, "value": before},
+                    {"from": self.AT, "until": None, "value": after}]}}}
+
+    def test_the_frozen_figure_passes(self):
+        # The live page of 2026-10-09 15:02Z: -9.9% on both routes and the chart.
+        self.assertEqual(I.fourteen_sep_weekly_frozen(self._page(-9.9, -9.9)), [])
+
+    def test_a_moved_figure_fails_where_it_moved(self):
+        out = I.fourteen_sep_weekly_frozen(self._page(-10.0, -9.9))
+        self.assertEqual(len(out), 1)
+        self.assertIn("direct weekly change", out[0])
+        self.assertIn("rule 21", out[0])
+        out = I.fourteen_sep_weekly_frozen(self._page(-9.9, -9.9, 1000, 880))
+        self.assertEqual(len(out), 1)
+        self.assertIn("chart", out[0])
+
+    def test_a_later_weekly_event_is_not_read(self):
+        page = self._page(17.4, 17.4)
+        page["events"][0]["at"] = "2026-09-22T19:41:49+00:00"
+        self.assertEqual(I.fourteen_sep_weekly_frozen(page), [])
+
+    def test_it_is_a_registered_check_that_does_not_block(self):
+        self.assertIn("fourteen_sep_weekly_frozen", dict(I.CHECKS))
+        self.assertNotIn("fourteen_sep_weekly_frozen", I.BLOCKING)
+
+    def test_the_adr_states_the_frozen_figure(self):
+        # Moving the constant without changing ADR 0001 rule 21 (or the reverse) fails here.
+        adr = (Path(__file__).resolve().parents[1] / "docs" / "adr"
+               / "0001-acceptance-rules-for-published-figures.md").read_text(encoding="utf-8")
+        m = re.search(r"^21\. \*\*The 14 September weekly step is frozen at (-?\d+\.\d)%", adr, re.MULTILINE)
+        self.assertIsNotNone(m)
+        self.assertEqual(float(m.group(1)), I.FROZEN_14SEP_WEEKLY_PCT)
+
+
 class BlockingTest(unittest.TestCase):
     def setUp(self):
         d = Path(tempfile.mkdtemp())
@@ -753,7 +809,7 @@ class BlockingTest(unittest.TestCase):
         self.assertIn("Not published", self.sent[0])
 
     def test_the_fixed_page_exits_0(self):
-        self.doc.write_text(json.dumps(_fixed(_live_2026_10_05())))
+        self.doc.write_text(json.dumps(_frozen(_fixed(_live_2026_10_05()))))
         self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 0)
 
 
