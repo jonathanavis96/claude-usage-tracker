@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-09T08:00:05.543137+00:00",
+ "generated_at": "2026-10-09T08:30:05.432151+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 8198,
+    "reset_verified_samples": 8208,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 12460,
+    "samples": 12470,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-09T07:59:10+00:00"
+    "last": "2026-10-09T08:28:48+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -37,7 +37,7 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 3369,
-     "dropped": 4611,
+     "dropped": 4652,
      "subagent_files": 966,
      "dropped_to": {
       ".claude": 556,
@@ -49,7 +49,7 @@
       "auto_mail_default_login": 555,
       "harness_run": 465
      },
-     "unclaimed": 2540
+     "unclaimed": 2581
     }
    },
    "cloud_sessions": {
@@ -12059,6 +12059,36 @@
       }
      },
      "headless_turns": 5,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-09T07:06:07+00:00",
+     "end": "2026-10-09T08:14:03+00:00",
+     "seven_day": 24,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 40,
+       "output": 16820,
+       "cache_read": 6204439,
+       "cache_write": 38047,
+       "cache_write_1h": 38047
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 19,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "claude-opus-5-5": {
+       "input": 4,
+       "output": 9596,
+       "cache_read": 3330,
+       "cache_write": 22981,
+       "cache_write_1h": 22981
+      }
+     },
+     "headless_turns": 2,
      "cloud_session": false
     }
    ],
@@ -25712,13 +25742,13 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-09T07:59:10+00:00",
-     "windows": 6.0,
-     "five_hour_pct": 6.0,
-     "seven_day_pct": 1.0,
+     "window_ending": "2026-10-09T08:28:48+00:00",
+     "windows": 4.5,
+     "five_hour_pct": 9.0,
+     "seven_day_pct": 2.0,
      "rounding_interval": [
-      1.7231,
-      null
+      2.0807,
+      24.6149
      ],
      "pieces": 1,
      "reset_verified": false
@@ -25733,11 +25763,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 8310,
+    "reset_verified_samples": 8324,
     "since": null,
-    "samples": 11117,
+    "samples": 11131,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-09T08:00:10+00:00"
+    "last": "2026-10-09T08:29:49+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -41169,7 +41199,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-09T08:00:10+00:00",
+     "window_ending": "2026-10-09T08:29:49+00:00",
      "windows": 7.0,
      "five_hour_pct": 7.0,
      "seven_day_pct": 1.0,
@@ -41190,11 +41220,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 8019,
+    "reset_verified_samples": 8031,
     "since": null,
-    "samples": 9159,
+    "samples": 9171,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-09T07:59:10+00:00"
+    "last": "2026-10-09T08:28:48+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -41209,7 +41239,7 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1075,
-     "dropped": 3276,
+     "dropped": 3317,
      "subagent_files": 323,
      "dropped_to": {
       ".claude-javiswork": 1014
@@ -41217,7 +41247,7 @@
      "attributed_by_record": {
       "airlock_tune_env": 299
      },
-     "unclaimed": 2262
+     "unclaimed": 2303
     }
    },
    "cloud_sessions": {
@@ -45103,7 +45133,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-09T08:01:31.396240+00:00",
+  "generated_at": "2026-10-09T08:31:29.510746+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
