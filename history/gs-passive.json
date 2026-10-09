@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-09T04:00:04.982721+00:00",
+ "generated_at": "2026-10-09T04:30:05.382051+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 8141,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 12390,
+    "samples": 12397,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-09T03:58:03+00:00"
+    "last": "2026-10-09T04:27:28+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -25622,18 +25622,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 8218,
+    "reset_verified_samples": 8225,
     "since": null,
-    "samples": 11020,
+    "samples": 11032,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-09T03:59:08+00:00"
+    "last": "2026-10-09T04:28:33+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1678,
-    "turns": 64897,
+    "files": 1679,
+    "turns": 64901,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -41025,9 +41025,9 @@
     "note": null,
     "reset_verified_samples": 7985,
     "since": null,
-    "samples": 9061,
+    "samples": 9075,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-09T04:00:09+00:00"
+    "last": "2026-10-09T04:29:38+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -44936,7 +44936,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-09T04:01:29.943723+00:00",
+  "generated_at": "2026-10-09T04:31:25.283549+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -90851,9 +90851,10 @@
     "model": "claude-sonnet-5-5",
     "account": "a3",
     "entrypoint": "sdk-cli",
-    "n": 5,
+    "n": 6,
     "fast_session_requests": 0,
     "output_hist": {
+     "245": 1,
      "242": 1,
      "251": 1,
      "249": 1,
@@ -90861,6 +90862,7 @@
      "247": 1
     },
     "ttfb_hist": {
+     "54": 1,
      "39": 1,
      "93": 1,
      "48": 1,
