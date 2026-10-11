@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-10T23:30:05.677091+00:00",
+ "generated_at": "2026-10-11T00:00:04.794289+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 8895,
+    "reset_verified_samples": 8905,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 13185,
+    "samples": 13195,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-10T23:28:39+00:00"
+    "last": "2026-10-10T23:58:14+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -26022,7 +26022,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-10T23:28:39+00:00",
+     "window_ending": "2026-10-10T23:58:14+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -26043,11 +26043,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 9173,
+    "reset_verified_samples": 9185,
     "since": null,
-    "samples": 12021,
+    "samples": 12033,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-10T23:29:43+00:00"
+    "last": "2026-10-10T23:59:18+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -42496,11 +42496,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 8858,
+    "reset_verified_samples": 8870,
     "since": null,
-    "samples": 10114,
+    "samples": 10126,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-10T23:28:38+00:00"
+    "last": "2026-10-11T00:00:23+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -46423,7 +46423,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-10T23:31:28.956800+00:00",
+  "generated_at": "2026-10-11T00:01:28.354243+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
