@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-12T07:15:36.278078+00:00",
+ "generated_at": "2026-10-12T22:15:46.583750+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 4182,
+    "reset_verified_samples": 4212,
     "since": null,
-    "samples": 17013,
+    "samples": 17196,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-10-12T09:10:56+02:00"
+    "last": "2026-10-13T00:00:01.864169+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 5085,
-    "turns": 122821,
+    "files": 5102,
+    "turns": 123474,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -16425,6 +16425,28 @@
      },
      "unpriced_tokens": 0,
      "turns": 402,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-12T12:58:59+02:00",
+     "end": "2026-10-12T15:10:53+02:00",
+     "seven_day": 2,
+     "d7": 1,
+     "d5": 2,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 374,
+       "output": 214897,
+       "cache_read": 32214024,
+       "cache_write": 437557,
+       "cache_write_1h": 437557
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 187,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -33106,6 +33128,82 @@
       }
      },
      "headless_turns": 11
+    },
+    {
+     "start": "2026-10-07T18:17:00+02:00",
+     "end": "2026-10-12T18:03:29+02:00",
+     "delta_pct": 10.0,
+     "windows": 11,
+     "usd": 33.8344,
+     "usd_per_pct": 3.3834,
+     "bounds": [
+      1.6112,
+      null
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1868,
+       "output": 556292,
+       "cache_read": 135891617,
+       "cache_write": 2772572,
+       "cache_write_1h": 2407057
+      },
+      "claude-sonnet-5-5": {
+       "input": 44,
+       "output": 9445,
+       "cache_read": 1518228,
+       "cache_write": 92643
+      },
+      "claude-sonnet-4-6": {
+       "input": 35,
+       "output": 13288,
+       "cache_read": 639120,
+       "cache_write": 181909,
+       "cache_write_1h": 181909
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 954,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 2.9761,
+     "capture": 1.1369,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "<synthetic>": "2026-10-12T13:58:53.353000+00:00",
+      "claude-opus-5-5": "2026-10-07T16:17:03.510000+00:00",
+      "claude-sonnet-4-6": "2026-10-07T22:00:08.705000+00:00",
+      "claude-sonnet-5-5": "2026-10-07T19:10:40.582000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 35,
+       "output": 13288,
+       "cache_read": 639120,
+       "cache_write": 181909,
+       "cache_write_1h": 181909
+      }
+     },
+     "headless_turns": 25
     }
    ],
    "runs": [
@@ -34057,33 +34155,47 @@
      "pieces": 6,
      "reset_verified": false,
      "capture_diagnosed": 0
+    },
+    {
+     "date": "2026-10-12",
+     "usd_per_pct": 3.3834,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 1.1,
+     "bounds": [
+      1.6112,
+      null
+     ],
+     "pieces": 11,
+     "reset_verified": false,
+     "capture_diagnosed": 0
     }
    ],
    "split": {
     "input": 8.8e-05,
-    "output": 0.005196,
-    "cache_read": 0.967063,
-    "cache_write": 0.027653,
-    "cache_write_1h": 0.014726
+    "output": 0.005183,
+    "cache_read": 0.967148,
+    "cache_write": 0.027581,
+    "cache_write_1h": 0.014767
    },
-   "last_usable_at": "2026-10-07T18:17:00+02:00",
+   "last_usable_at": "2026-10-12T18:03:29+02:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 239,
-     "median": 1.4885,
+     "n": 240,
+     "median": 1.4886,
      "half_range": 2.7257,
-     "mad": 0.3408,
-     "cv": 0.6521
+     "mad": 0.3411,
+     "cv": 0.6519
     },
     "daily": {
-     "n": 37,
-     "median": 1.696,
-     "half_range": 1.0167,
-     "mad": 0.6252,
-     "cv": 0.4352
+     "n": 38,
+     "median": 1.7637,
+     "half_range": 0.9776,
+     "mad": 0.5652,
+     "cv": 0.438
     }
    },
    "weekly_by_window": [
@@ -36182,6 +36294,42 @@
      "seven_day_pct": 0.0,
      "rounding_interval": [
       0.0,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-12T15:36:16+02:00",
+     "windows": 1.5,
+     "five_hour_pct": 3.0,
+     "seven_day_pct": 2.0,
+     "rounding_interval": [
+      0.4003,
+      10.6431
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-12T20:35:41+02:00",
+     "windows": null,
+     "five_hour_pct": 2.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.2734,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-12T22:39:44+02:00",
+     "windows": null,
+     "five_hour_pct": 2.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.2734,
       null
      ],
      "pieces": 1,
