@@ -1,10 +1,12 @@
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from tracker.meter_log import NO_RETRY_FETCH, account_identity, main, sample
 from tracker.samples import parse_meter_log, parse_moonlighter
@@ -224,6 +226,8 @@ class UnitFileTests(unittest.TestCase):
         self.assertIn("--config-dir %h/.claude-dave", service)
         self.assertIn("--account dave", service)
         self.assertIn("--log %h/.paperclip/ops/claude-usage-meter-dave.log", service)
+        # Dave's seat is a setup-token seat since 2026-10-12: read from rate-limit headers.
+        self.assertIn("--token-env GS_DAVE_CLAUDE_OAUTH_TOKEN", service)
         self.assertNotIn("gs-usage-ceiling.log", service)
         self.assertNotIn("--enforce", service)  # a meter read, never a seat pause
         self.assertIn("SuccessExitStatus=0 4", service)
@@ -258,6 +262,127 @@ class UnitFileTests(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=1min", timer)
         self.assertIn("Unit=claude-usage-meter-jwork.service", timer)
         self.assertIn("WantedBy=timers.target", timer)
+
+
+HEADERS = {"anthropic-ratelimit-unified-5h-utilization": "0.05",
+           "anthropic-ratelimit-unified-5h-reset": str(int(datetime(2026, 9, 15, 23, tzinfo=timezone.utc).timestamp())),
+           "anthropic-ratelimit-unified-7d-utilization": "0.22",
+           "anthropic-ratelimit-unified-7d-reset": str(int(datetime(2026, 9, 17, 23, tzinfo=timezone.utc).timestamp())),
+           "anthropic-ratelimit-unified-status": "allowed"}
+SETUP_TOKEN = "fake-setup-token-never-logged"
+
+
+class HeaderModeTests(unittest.TestCase):
+    """--token-env: a setup-token seat read from rate-limit headers, never from .credentials.json."""
+
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.addCleanup(self.d.cleanup)
+        root = Path(self.d.name)
+        self.cfg = config_dir(root)
+        # The credentials file is blank on a revoked seat; header mode must not need it at all.
+        (self.cfg / ".credentials.json").unlink()
+        self.log = root / "meter.log"
+        self.env = root / "env"
+        self.env.write_text(f"GS_FAKE_TOKEN={SETUP_TOKEN}\n")
+        self.calls = []
+
+    def post(self, headers=HEADERS, error=None):
+        def _post(url, hdrs, body):
+            self.calls.append(json.loads(body))
+            if error:
+                raise urllib.error.HTTPError(url, error, "x", {"Retry-After": "120"} if error == 429 else {}, None)
+            return headers
+        return _post
+
+    def run_sample(self, post, now=NOW, model="claude-haiku-5-5"):
+        return sample(self.cfg, "dave", self.log, now=lambda: now, token_env="GS_FAKE_TOKEN",
+                      env_file=self.env, model=model, post=post)
+
+    def write(self, *rows):
+        self.log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def reading(self, ts, five_reset="2026-09-15T23:00:00+00:00", seven=22.0,
+                seven_reset="2026-09-17T23:00:00+00:00"):
+        return {"ts": ts, "account": "dave", "identity": account_identity(self.cfg), "source": "ratelimit_headers",
+                "five_hour": {"utilization": 5.0, "resets_at": five_reset},
+                "seven_day": {"utilization": seven, "resets_at": seven_reset}}
+
+    def test_a_reading_is_logged_in_the_endpoint_shape_with_its_source(self):
+        self.assertEqual(self.run_sample(self.post(), model="claude-haiku-5-5"), 0)
+        text = self.log.read_text()
+        self.assertNotIn(SETUP_TOKEN, text)
+        row = json.loads(text)
+        self.assertEqual((row["five_hour"]["utilization"], row["seven_day"]["utilization"]), (5.0, 22.0))
+        self.assertEqual(row["five_hour"]["resets_at"], "2026-09-15T23:00:00+00:00")
+        self.assertEqual((row["source"], row["model"]), ("ratelimit_headers", "claude-haiku-5-5"))
+        self.assertEqual(row["ratelimit"], {"status": "allowed"})
+        self.assertEqual(parse_meter_log(text.splitlines())[0].resets_at, "2026-09-15T23:00:00+00:00")
+        self.assertIsNotNone(parse_row(row))
+        self.assertEqual(self.calls[0]["max_tokens"], 1)
+
+    def test_probes_are_spaced_five_minutes_apart(self):
+        self.write(self.reading("2026-09-15T20:56:03+00:00"))   # 240 s before NOW
+        self.assertEqual(self.run_sample(self.post()), 0)
+        self.assertEqual(self.calls, [])
+        self.write(self.reading("2026-09-15T20:54:03+00:00"))   # 360 s before NOW
+        self.assertEqual(self.run_sample(self.post()), 0)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_401_is_token_rejected_logged_and_spaced(self):
+        self.assertEqual(self.run_sample(self.post(error=401)), 4)
+        row = json.loads(self.log.read_text().splitlines()[-1])
+        self.assertEqual(row["reason"], "token_rejected")
+        self.assertNotIn(SETUP_TOKEN, self.log.read_text())
+        later = datetime(2026, 9, 15, 21, 3, 0, tzinfo=timezone.utc)
+        self.assertEqual(self.run_sample(self.post(), now=later), 0)
+        self.assertEqual(len(self.calls), 1)   # still inside the 300 s spacing
+
+    def test_429_is_rate_limited_with_its_retry_after(self):
+        self.assertEqual(self.run_sample(self.post(error=429)), 4)
+        row = json.loads(self.log.read_text().splitlines()[-1])
+        self.assertEqual((row["reason"], row["retry_after_s"]), ("rate_limited", 120.0))
+
+    def test_a_missing_token_is_a_gap_naming_the_variable(self):
+        self.env.write_text("SOMETHING_ELSE=1\n")
+        self.assertEqual(self.run_sample(self.post()), 4)
+        self.assertIn("GS_FAKE_TOKEN", json.loads(self.log.read_text())["error"])
+        self.assertEqual(self.calls, [])
+
+    def test_a_lapsed_window_is_not_probed_until_a_session_runs(self):
+        # Last reading's window reset at 20:00; NOW is 21:00.
+        self.write(self.reading("2026-09-15T19:30:00+00:00", five_reset="2026-09-15T20:00:00+00:00"))
+        sessions = self.cfg / "sessions"
+        sessions.mkdir()
+        before = datetime(2026, 9, 15, 19, 45, tzinfo=timezone.utc).timestamp()
+        os.utime(sessions, (before, before))
+        self.assertEqual(self.run_sample(self.post()), 0)
+        self.assertEqual(self.calls, [])
+        after = datetime(2026, 9, 15, 20, 30, tzinfo=timezone.utc).timestamp()
+        os.utime(sessions, (after, after))   # the warden's anchor (or anyone's claude run) started a window
+        self.assertEqual(self.run_sample(self.post()), 0)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_capped_week_is_not_probed_until_its_reset(self):
+        self.write(self.reading("2026-09-15T20:00:00+00:00", seven=100.0))
+        self.assertEqual(self.run_sample(self.post()), 0)
+        self.assertEqual(self.calls, [])
+        after_reset = datetime(2026, 9, 17, 23, 5, tzinfo=timezone.utc)
+        # The five-hour window lapsed long before; a session (the warden's anchor) starts the next.
+        (self.cfg / "sessions").mkdir()
+        self.assertEqual(self.run_sample(self.post(), now=after_reset), 0)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_cli_flags(self):
+        import tracker.meter_log as ml
+        with mock.patch.object(ml, "read_header_usage",
+                               lambda tok, model, post=None, now=None: __import__("tracker.header_usage", fromlist=["x"])
+                               .parse_ratelimit_headers(HEADERS, NOW)):
+            rc = main(["--config-dir", str(self.cfg), "--account", "dave", "--log", str(self.log),
+                       "--token-env", "GS_FAKE_TOKEN", "--env-file", str(self.env), "--model", "claude-haiku-5-5"],
+                      now=lambda: NOW)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(self.log.read_text())["model"], "claude-haiku-5-5")
 
 
 class LastLineTests(unittest.TestCase):

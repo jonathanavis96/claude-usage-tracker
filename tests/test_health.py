@@ -213,6 +213,31 @@ class GsProfileTest(unittest.TestCase):
         self.assertIn("meters: newest usable reading in claude-usage-meter-dave.log is 20m old",
                       health.first_failure(self.c, NOW))
 
+    def write_header_meter(self, ts, five_reset, seven=22.0, seven_reset=NOW + 86400, trailing=()):
+        rows = [{"ts": iso(ts), "account": "dave", "source": "ratelimit_headers",
+                 "five_hour": {"utilization": 5.0, "resets_at": iso(five_reset)},
+                 "seven_day": {"utilization": seven, "resets_at": iso(seven_reset)}}]
+        rows += list(trailing)
+        (self.ops / "claude-usage-meter-dave.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def test_a_held_header_probe_is_not_stale(self):
+        # Window lapsed 2 h ago and meter_log holds its probe until a session runs: no lines, no failure.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+        # Seven-day meter at 100% until tomorrow: held as well.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW + 3600, seven=100.0)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_a_header_probe_in_a_live_window_still_goes_stale(self):
+        self.write_header_meter(NOW - 1800, five_reset=NOW + 3600)
+        self.assertIn("claude-usage-meter-dave.log is 30m old", health.first_failure(self.c, NOW))
+
+    def test_a_rejected_setup_token_is_named(self):
+        gaps = [{"ts": iso(NOW - 1200 + 300 * i), "account": "dave", "error": "TokenRejected: 401",
+                 "reason": "token_rejected"} for i in range(4)]
+        self.write_header_meter(NOW - 1800, five_reset=NOW - 600, trailing=gaps)
+        self.assertIn("setup token was refused (401)", health.first_failure(self.c, NOW))
+
     def test_routine_429s_between_reads_stay_healthy(self):
         self.write_meter("avis", NOW - 300, gap_after=4)
         self.assertIsNone(health.first_failure(self.c, NOW))

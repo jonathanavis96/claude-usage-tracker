@@ -30,7 +30,11 @@ Checks, in order (the first failure is the one-line reason):
                by its length (at most 2 h). An account whose reads since its newest
                reading are all auth_expired is idle (its access token lapsed and only
                Claude Code refreshes it), not broken: it fails only when its refresh
-               token has expired, or after 24 h. Every failing log is reported, joined
+               token has expired, or after 24 h. A header-probe log (meter_log
+               --token-env) whose newest line is a reading in a lapsed five-hour window
+               or at a 100% seven-day meter is held, not stale: meter_log writes
+               nothing while it holds. Trailing `token_rejected` lines fail with that
+               reason. Every failing log is reported, joined
                with " | ", so each account is its own incident in the supervisor.
 
 Profiles pick which checks run. `masterrig` (default) is collection, run, publisher,
@@ -347,6 +351,7 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
     except OSError as e:
         return f"meters: cannot read {log.name}: {e.strerror}"
     newest = None
+    newest_row: dict = {}
     for raw in reversed(lines):
         try:
             row = json.loads(raw)
@@ -355,6 +360,7 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
         if isinstance(row, dict) and isinstance(row.get("five_hour"), dict):
             newest = _parse_ts(row.get("ts"))
             if newest is not None:
+                newest_row = row
                 if row.get("schema"):
                     return (f"meters: the usage API changed shape ({'; '.join(map(str, row['schema']))}) "
                             f"in {log.name}; readings may be wrong")
@@ -388,6 +394,11 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
                     f"{log.name}: use that account once to refresh it (limit {_age(IDLE_TOKEN_GRACE_S)})")
         # No readable refresh-token expiry: idle cannot be told from signed out, so the
         # plain age rule below applies.
+    if trailing and all(r.get("reason") == "token_rejected" for r in trailing):
+        return (f"meters: the setup token was refused (401) since {_age(now - newest) if newest else 'the start'} "
+                f"in {log.name}: that seat needs a new token")
+    if not trailing and newest is not None and _header_hold(newest_row, now):
+        return None   # header probe held (lapsed window or capped week): meter_log writes nothing then
     if newest is None:
         return f"meters: no usable reading near the end of {log.name}"
     if newest - now > CLOCK_SKEW_S:
@@ -404,6 +415,21 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
         return (f"meters: newest usable reading in {log.name} is {_age(now - newest)} old "
                 f"(limit {_age(limit)})")
     return None
+
+
+def _header_hold(row: dict, now: float) -> bool:
+    """A header-probe reading meter_log is deliberately not following up (see meter_log.header_hold)."""
+    if row.get("source") != "ratelimit_headers":
+        return False
+    sd = row.get("seven_day") or {}
+    sd_reset = _parse_ts(sd.get("resets_at"))
+    try:
+        if sd.get("utilization") is not None and float(sd["utilization"]) >= 100 and sd_reset and sd_reset > now:
+            return True
+    except (TypeError, ValueError):
+        pass
+    fh_reset = _parse_ts((row.get("five_hour") or {}).get("resets_at"))
+    return fh_reset is not None and fh_reset <= now
 
 
 check_meter = check_meters  # the name the red-team tests and older notes use
