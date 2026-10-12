@@ -33,8 +33,23 @@ carries `retry_after_s`; a later tick reads that back off the log itself and
 skips the network call entirely until it has elapsed, rather than retrying
 inside one tick or hammering the endpoint again next minute).
 
+A seat whose only credential is a `claude setup-token` token (Dave's since
+2026-10-12) is read with `--token-env NAME` instead: the usage endpoint refuses
+that token, so the meters come off the rate-limit headers of a 1-token call
+(tracker/header_usage.py), and `.credentials.json` is never opened. Such a
+probe costs a little usage and starts the five-hour window, so in this mode
+calls are at least HEADER_PROBE_SPACING_S apart, a 401 is logged as
+`token_rejected` (nothing refreshes a setup token, so there is nothing to
+re-read), and two holds skip the call without logging: `lapsed` (the last
+reading's five-hour window has reset and no `claude` session has run in the
+config dir since -- probing then would start a window the window warden is
+deliberately holding back) and `capped` (seven-day meter at 100% until its
+reset). Lines from this mode carry `source: "ratelimit_headers"`, the model,
+and the other header fields under `ratelimit`.
+
     python3 -m tracker.meter_log --config-dir ~/.claude-dave --account dave \\
-        --log ~/.paperclip/ops/claude-usage-meter-dave.log
+        --log ~/.paperclip/ops/claude-usage-meter-dave.log \\
+        --token-env GS_DAVE_CLAUDE_OAUTH_TOKEN
 
 Exit codes: 0 sampled, or skipped by MIN_READ_SPACING_S, 2 refused (the log belongs to another account, or the
 config dir is signed out), 4 the usage read failed.
@@ -53,7 +68,20 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .usage_api import RETRY_429_MAX_S, AuthExpired, Utilization, _default_fetch, read_usage
+from .header_usage import (
+    DEFAULT_ENV_FILE,
+    DEFAULT_MODEL,
+    TokenRejected,
+    load_token,
+    read_header_usage,
+)
+from .usage_api import (
+    RETRY_429_MAX_S,
+    AuthExpired,
+    Utilization,
+    _default_fetch,
+    read_usage,
+)
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
 #: A 429 is logged and left for the next tick. read_usage's own default retries
@@ -72,6 +100,9 @@ DEFAULT_429_BACKOFF_S = 300
 #: the last good read or 429 skips the call: the same readings, without the failures.
 #: Just under two of the timers' ~65 s ticks.
 MIN_READ_SPACING_S = 110
+#: Least time between two header probes (--token-env) for one account. Each one is a real
+#: inference call that spends a little of the seat, so it runs at most every five minutes.
+HEADER_PROBE_SPACING_S = 300
 #: Longest a logged Retry-After may stop sampling. The endpoint's own long answer is 3,600 s
 #: (failure inventory F9: 15 of them on gs, after a run of Retry-After 0), so a cap below an
 #: hour has the sampler call inside a block the server asked it to respect, and the endpoint
@@ -271,7 +302,8 @@ def _since_last_call_s(last: dict | None, now: datetime) -> float | None:
     good). Other failures (a DNS error) say nothing about the endpoint's limit, so they
     never delay the next tick.
     """
-    if not last or ("error" in last and last.get("reason") not in ("rate_limited", "auth_expired")):
+    if not last or ("error" in last and last.get("reason") not in ("rate_limited", "auth_expired",
+                                                                    "token_rejected")):
         return None
     try:
         since = datetime.fromisoformat(last["ts"])
@@ -282,8 +314,62 @@ def _since_last_call_s(last: dict | None, now: datetime) -> float | None:
         return None
 
 
+def _last_reading(log: Path, tail_bytes: int = 65536) -> dict | None:
+    """The most recent good reading (a line with no `error`) in the log's tail, or None."""
+    try:
+        with open(log, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - tail_bytes))
+            lines = fh.read().decode("utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return None
+    for line in reversed(lines):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and "error" not in d and isinstance(d.get("five_hour"), dict):
+            return d
+    return None
+
+
+def _parse_ts(s) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def header_hold(reading: dict | None, config_dir: Path, now: datetime) -> str | None:
+    """Why a header probe must not run now: "lapsed", "capped", or None to go ahead.
+
+    lapsed: the last reading's five-hour window has reset, and the config dir's
+    `sessions/` directory (a file is created there by every `claude` run, interactive or
+    `-p`, the window warden's anchor included) has not changed since. Nothing on this
+    host has started a window, and a probe would start one itself.
+    capped: the seven-day meter read 100% and its reset is still ahead.
+    """
+    if not reading:
+        return None
+    sd = reading.get("seven_day") or {}
+    sd_reset = _parse_ts(sd.get("resets_at"))
+    if sd.get("utilization") is not None and float(sd["utilization"]) >= 100 and sd_reset and sd_reset > now:
+        return "capped"
+    fh_reset = _parse_ts((reading.get("five_hour") or {}).get("resets_at"))
+    if fh_reset is None or fh_reset > now:
+        return None
+    try:
+        touched = datetime.fromtimestamp((Path(config_dir) / "sessions").stat().st_mtime, timezone.utc)
+    except OSError:
+        touched = None
+    return "lapsed" if touched is None or touched <= fh_reset else None
+
+
 def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict], dict] | None = None,
-           now: Callable[[], datetime] | None = None) -> int:
+           now: Callable[[], datetime] | None = None, *, token_env: str | None = None,
+           env_file: Path | None = DEFAULT_ENV_FILE, model: str = DEFAULT_MODEL,
+           post: Callable[[str, dict, bytes], dict] | None = None) -> int:
     """Read the meter once and append one line to `log`. Returns the exit code."""
     config_dir, log = Path(config_dir), Path(log)
     identity = account_identity(config_dir)
@@ -299,11 +385,13 @@ def sample(config_dir: Path, account: str, log: Path, fetch: Callable[[str, dict
         if not locked:
             print(f"{account}: skipping tick, another run holds {log}.lock", file=sys.stderr)
             return EXIT_READ_FAILED
-        return _sample_locked(config_dir, account, log, identity, fetch, now)
+        return _sample_locked(config_dir, account, log, identity, fetch, now, token_env, env_file, model, post)
 
 
 def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
-                   fetch: Callable[[str, dict], dict] | None, now: Callable[[], datetime] | None) -> int:
+                   fetch: Callable[[str, dict], dict] | None, now: Callable[[], datetime] | None,
+                   token_env: str | None = None, env_file: Path | None = DEFAULT_ENV_FILE,
+                   model: str = DEFAULT_MODEL, post: Callable[[str, dict, bytes], dict] | None = None) -> int:
     clock = now or (lambda: datetime.now(timezone.utc))
     now_ts = clock()
     last = _last_line(log)
@@ -322,11 +410,17 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         # log carries the backoff the next tick will check.
         print(f"{account}: skipping tick, {remaining:.0f}s left in 429 backoff", file=sys.stderr)
         return EXIT_READ_FAILED
+    spacing = HEADER_PROBE_SPACING_S if token_env else MIN_READ_SPACING_S
     since_last = _since_last_call_s(last, now_ts)
-    if since_last is not None and 0 <= since_last < MIN_READ_SPACING_S:
-        print(f"{account}: skipping tick, last call {since_last:.0f}s ago (spacing {MIN_READ_SPACING_S}s)",
+    if since_last is not None and 0 <= since_last < spacing:
+        print(f"{account}: skipping tick, last call {since_last:.0f}s ago (spacing {spacing}s)",
               file=sys.stderr)
         return EXIT_OK
+    if token_env:
+        hold = header_hold(_last_reading(log), config_dir, now_ts)
+        if hold:
+            print(f"{account}: skipping tick, header probe held ({hold})", file=sys.stderr)
+            return EXIT_OK
     seen: dict = {}
     base_fetch = fetch or NO_RETRY_FETCH
 
@@ -335,8 +429,14 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         seen["body"] = body
         return body
 
+    header_extras: dict | None = None
     try:
-        u = read_usage(config_dir, fetch=capturing_fetch, now=clock)
+        if token_env:
+            u, header_extras, problems = read_header_usage(load_token(token_env, env_file), model,
+                                                           post=post, now=clock)
+            seen["problems"] = problems
+        else:
+            u = read_usage(config_dir, fetch=capturing_fetch, now=clock)
         if u.five_hour is None:
             raise ValueError("no five_hour utilization in the usage response")
     except AuthExpired as e:
@@ -346,6 +446,13 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         _append(log, {"ts": _stamp(now_ts), "account": account, "identity": identity,
                       "error": f"{type(e).__name__}: {e}"[:200], "reason": "auth_expired"})
         print(f"{account}: usage read failed (token expired), logged as a gap", file=sys.stderr)
+        return EXIT_READ_FAILED
+    except TokenRejected as e:
+        # A setup token is refreshed by nothing: a 401 needs a new token in the env file.
+        # Logged with its own reason and spaced like a good reading.
+        _append(log, {"ts": _stamp(now_ts), "account": account, "identity": identity,
+                      "error": f"{type(e).__name__}: {e}"[:200], "reason": "token_rejected"})
+        print(f"{account}: header probe refused (401, setup token rejected), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED
     except urllib.error.HTTPError as e:
         if e.code == 429:
@@ -365,6 +472,11 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED
     line = sample_line(u, account, identity)
+    if header_extras is not None:
+        line.update({"source": "ratelimit_headers", "model": model, "ratelimit": header_extras})
+        if seen.get("problems"):
+            line["schema"] = seen["problems"]
+            print(f"{account}: warning: rate-limit headers changed: {'; '.join(seen['problems'])}", file=sys.stderr)
     body = seen.get("body")
     if isinstance(body, dict):
         problems = schema_problems(body)
@@ -392,8 +504,14 @@ def main(argv: list[str] | None = None, *, fetch: Callable[[str, dict], dict] | 
     ap.add_argument("--account", required=True,
                     help="label for the line, e.g. dave; the log is bound to the account's identity, not to this label")
     ap.add_argument("--log", type=Path, required=True)
+    ap.add_argument("--token-env", default=None,
+                    help="read this seat from rate-limit headers with the setup token in this variable "
+                         "(environment first, else --env-file); .credentials.json is not used")
+    ap.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
+    ap.add_argument("--model", default=DEFAULT_MODEL, help="model for the 1-token header probe")
     a = ap.parse_args(argv)
-    return sample(a.config_dir, a.account, a.log, fetch=fetch, now=now)
+    return sample(a.config_dir, a.account, a.log, fetch=fetch, now=now, token_env=a.token_env,
+                  env_file=a.env_file, model=a.model)
 
 
 if __name__ == "__main__":
