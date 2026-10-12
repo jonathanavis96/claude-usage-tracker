@@ -247,6 +247,25 @@
       "fetched": "2026-09-29"
     }
   },
+  "claude-haiku-5-5": {
+    "input": 0.1,
+    "output": 0.5,
+    "cache_read": 0.01,
+    "cache_write": 0.125,
+    "cache_write_1h": 0.2,
+    "meter_weight": 1.0,
+    "meter_weight_source": "assumed, not measured: added automatically from the pricing page by tracker/list_prices.py (issue #130)",
+    "class_weight": {
+      "input": 1.0,
+      "output": 1.0,
+      "cache_read": 0.0,
+      "cache_write": 1.0
+    },
+    "list_price_source": {
+      "url": "https://docs.anthropic.com/en/docs/about-claude/pricing",
+      "fetched": "2026-10-12"
+    }
+  },
   "_output_weight": {
     "value": 1.0,
     "previous": 1.8,
