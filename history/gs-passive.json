@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-13T06:00:06.268279+00:00",
+ "generated_at": "2026-10-13T06:30:04.714653+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 9666,
+    "reset_verified_samples": 9674,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 14087,
+    "samples": 14095,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-13T05:57:39+00:00"
+    "last": "2026-10-13T06:27:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -37,7 +37,7 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 3487,
-     "dropped": 4712,
+     "dropped": 4713,
      "subagent_files": 988,
      "dropped_to": {
       ".claude": 557,
@@ -50,7 +50,7 @@
       "auto_mail_default_login": 555,
       "harness_run": 465
      },
-     "unclaimed": 2613
+     "unclaimed": 2614
     }
    },
    "cloud_sessions": {
@@ -44415,9 +44415,9 @@
     "note": null,
     "reset_verified_samples": 9808,
     "since": null,
-    "samples": 11346,
+    "samples": 11358,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-13T05:58:44+00:00"
+    "last": "2026-10-13T06:28:13+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -44432,7 +44432,7 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1101,
-     "dropped": 3469,
+     "dropped": 3470,
      "subagent_files": 324,
      "dropped_to": {
       ".claude": 1,
@@ -44442,7 +44442,7 @@
      "attributed_by_record": {
       "airlock_tune_env": 352
      },
-     "unclaimed": 2335
+     "unclaimed": 2336
     }
    },
    "cloud_sessions": {
@@ -48542,7 +48542,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-13T06:01:28.239095+00:00",
+  "generated_at": "2026-10-13T06:31:25.720948+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
