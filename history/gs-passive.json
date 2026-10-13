@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-13T17:00:06.139348+00:00",
+ "generated_at": "2026-10-13T17:30:05.624705+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 9856,
+    "reset_verified_samples": 9867,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 14277,
+    "samples": 14288,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-13T16:57:49+00:00"
+    "last": "2026-10-13T17:29:44+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -27734,12 +27734,12 @@
     },
     {
      "window_ending": "2026-10-13T17:40:00.415108+00:00",
-     "windows": 3.86,
-     "five_hour_pct": 27.0,
+     "windows": 4.0,
+     "five_hour_pct": 28.0,
      "seven_day_pct": 7.0,
      "rounding_interval": [
-      2.9671,
-      5.2622
+      3.0837,
+      5.4463
      ],
      "pieces": 1,
      "reset_verified": true
@@ -27754,11 +27754,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10105,
+    "reset_verified_samples": 10111,
     "since": null,
-    "samples": 13157,
+    "samples": 13163,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-13T16:55:40+00:00"
+    "last": "2026-10-13T17:27:34+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -44956,11 +44956,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10060,
+    "reset_verified_samples": 10074,
     "since": null,
-    "samples": 11616,
+    "samples": 11630,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-13T17:01:04+00:00"
+    "last": "2026-10-13T17:30:49+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -49097,7 +49097,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-13T17:01:29.911494+00:00",
+  "generated_at": "2026-10-13T17:31:35.072671+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
