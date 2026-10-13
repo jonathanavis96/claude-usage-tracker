@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-13T14:00:06.530678+00:00",
+ "generated_at": "2026-10-13T14:30:05.356778+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 9806,
+    "reset_verified_samples": 9815,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 14227,
+    "samples": 14236,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-13T13:59:29+00:00"
+    "last": "2026-10-13T14:29:19+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,7 +33,7 @@
      ".claude-jono"
     ],
     "files": 3497,
-    "turns": 85865,
+    "turns": 85907,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 3497,
@@ -12784,6 +12784,36 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-10-13T13:49:09+00:00",
+     "end": "2026-10-13T14:12:14+00:00",
+     "seven_day": 9,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 358,
+       "output": 93327,
+       "cache_read": 26789628,
+       "cache_write": 737243,
+       "cache_write_1h": 50990
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 177,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "claude-opus-5-5": {
+       "input": 4,
+       "output": 17585,
+       "cache_read": 2187,
+       "cache_write": 32960,
+       "cache_write_1h": 32960
+      }
+     },
+     "headless_turns": 2,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -24904,6 +24934,54 @@
      },
      "headless_turns": 2,
      "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-13T12:58:09+00:00",
+     "end": "2026-10-13T14:03:49+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 8.7361,
+     "usd_per_pct": 0.8736,
+     "bounds": [
+      0.7942,
+      0.9707
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 676,
+       "output": 186012,
+       "cache_read": 39549766,
+       "cache_write": 901136,
+       "cache_write_1h": 169147
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 336,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "unaccounted",
+     "reference": 1.9559,
+     "capture": 0.4467,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-13T13:40:09.449000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {
+      "claude-opus-5-5": {
+       "input": 4,
+       "output": 17585,
+       "cache_read": 2187,
+       "cache_write": 32960,
+       "cache_write_1h": 32960
+      }
+     },
+     "headless_turns": 2,
+     "unclaimed_tokens": {}
     }
    ],
    "runs": [
@@ -25204,12 +25282,12 @@
     },
     {
      "start": "2026-10-12T23:12:34+00:00",
-     "end": "2026-10-13T12:58:09+00:00",
+     "end": "2026-10-13T14:03:49+00:00",
      "kind": "unaccounted",
      "direction": "low",
-     "stretches": 5,
-     "step": -0.8342,
-     "capture": 0.1658,
+     "stretches": 6,
+     "step": -0.832,
+     "capture": 0.168,
      "corroborated_by": [],
      "contradicted_by": []
     }
@@ -25679,44 +25757,44 @@
     },
     {
      "date": "2026-10-13",
-     "usd_per_pct": 0.3784,
-     "delta_pct": 30.0,
-     "stretches": 3,
+     "usd_per_pct": 0.5022,
+     "delta_pct": 40.0,
+     "stretches": 4,
      "rounding": 0.1,
      "bounds": [
-      0.344,
-      0.4204
+      0.4565,
+      0.558
      ],
-     "pieces": 3,
+     "pieces": 4,
      "reset_verified": true,
-     "capture_diagnosed": 3
+     "capture_diagnosed": 4
     }
    ],
    "split": {
     "input": 2.1e-05,
-    "output": 0.003907,
-    "cache_read": 0.973637,
-    "cache_write": 0.022435,
-    "cache_write_1h": 0.011965
+    "output": 0.003909,
+    "cache_read": 0.973635,
+    "cache_write": 0.022434,
+    "cache_write_1h": 0.011941
    },
-   "last_usable_at": "2026-10-13T11:35:13+00:00",
+   "last_usable_at": "2026-10-13T14:03:49+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 180,
-     "median": 1.8152,
-     "half_range": 1.4248,
-     "mad": 0.3314,
-     "cv": 0.3939
+     "n": 181,
+     "median": 1.7964,
+     "half_range": 1.4396,
+     "mad": 0.332,
+     "cv": 0.3958
     },
     "daily": {
      "n": 34,
      "median": 1.9396,
-     "half_range": 1.3111,
+     "half_range": 1.2792,
      "mad": 0.3312,
-     "cv": 0.4392
+     "cv": 0.4351
     }
    },
    "weekly_by_window": [
@@ -27535,11 +27613,11 @@
     {
      "window_ending": "2026-10-13T17:40:00.415108+00:00",
      "windows": 4.0,
-     "five_hour_pct": 12.0,
-     "seven_day_pct": 3.0,
+     "five_hour_pct": 16.0,
+     "seven_day_pct": 4.0,
      "rounding_interval": [
-      2.2819,
-      9.4936
+      2.5903,
+      7.2324
      ],
      "pieces": 1,
      "reset_verified": true
@@ -27554,11 +27632,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10073,
+    "reset_verified_samples": 10079,
     "since": null,
-    "samples": 13125,
+    "samples": 13131,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-13T13:57:20+00:00"
+    "last": "2026-10-13T14:29:19+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -44756,11 +44834,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 9983,
+    "reset_verified_samples": 9995,
     "since": null,
-    "samples": 11538,
+    "samples": 11550,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-13T13:58:24+00:00"
+    "last": "2026-10-13T14:30:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -48885,7 +48963,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-13T14:01:44.059122+00:00",
+  "generated_at": "2026-10-13T14:31:37.747638+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -97313,34 +97391,34 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 369,
+    "n": 392,
     "fast_session_requests": 0,
     "output_hist": {
      "231": 17,
-     "233": 16,
-     "232": 22,
-     "234": 11,
+     "233": 17,
+     "232": 25,
+     "234": 12,
      "239": 10,
      "247": 5,
      "246": 4,
-     "237": 22,
-     "227": 24,
+     "237": 23,
+     "227": 25,
      "228": 21,
-     "225": 15,
-     "235": 20,
-     "238": 7,
+     "225": 17,
+     "235": 23,
+     "238": 8,
      "243": 7,
      "242": 5,
      "230": 20,
-     "236": 22,
-     "229": 28,
-     "224": 12,
-     "240": 5,
+     "236": 24,
+     "229": 30,
+     "224": 13,
+     "240": 7,
      "221": 6,
-     "222": 7,
+     "222": 9,
      "218": 4,
      "226": 18,
-     "223": 10,
+     "223": 11,
      "219": 2,
      "241": 7,
      "248": 2,
@@ -97359,10 +97437,10 @@
      "101": 1,
      "45": 7,
      "136": 1,
-     "74": 6,
+     "74": 7,
      "111": 4,
      "-8": 1,
-     "23": 3,
+     "23": 4,
      "72": 2,
      "81": 3,
      "66": 9,
@@ -97373,35 +97451,35 @@
      "123": 1,
      "126": 1,
      "27": 4,
-     "51": 6,
+     "51": 8,
      "16": 3,
      "12": 3,
      "41": 5,
      "84": 2,
-     "56": 8,
+     "56": 10,
      "140": 1,
      "29": 1,
-     "65": 5,
+     "65": 6,
      "8": 3,
      "36": 5,
      "120": 2,
      "52": 6,
      "44": 4,
-     "35": 8,
+     "35": 9,
      "39": 6,
      "43": 7,
      "57": 7,
      "38": 1,
      "22": 1,
-     "77": 8,
+     "77": 9,
      "80": 6,
      "31": 3,
      "75": 5,
-     "69": 7,
+     "69": 9,
      "70": 4,
      "63": 3,
      "49": 4,
-     "47": 4,
+     "47": 6,
      "53": 4,
      "86": 4,
      "48": 5,
@@ -97410,21 +97488,21 @@
      "73": 5,
      "145": 1,
      "42": 5,
-     "104": 2,
+     "104": 3,
      "90": 1,
      "50": 1,
      "21": 1,
      "85": 4,
      "105": 1,
      "-3": 2,
-     "94": 1,
+     "94": 2,
      "3": 2,
      "26": 5,
      "46": 5,
      "28": 3,
-     "54": 6,
+     "54": 8,
      "20": 3,
-     "64": 6,
+     "64": 7,
      "34": 2,
      "61": 2,
      "32": 3,
@@ -97432,7 +97510,7 @@
      "19": 4,
      "130": 1,
      "98": 2,
-     "67": 1,
+     "67": 2,
      "87": 2,
      "102": 2,
      "83": 2,
@@ -97448,8 +97526,10 @@
      "113": 1,
      "76": 2,
      "147": 1,
+     "82": 3,
+     "71": 2,
+     "146": 1,
      "-4": 1,
-     "71": 1,
      "30": 2,
      "2": 1,
      "0": 1,
@@ -97463,7 +97543,6 @@
      "116": 2,
      "7": 2,
      "17": 2,
-     "82": 2,
      "112": 2,
      "127": 1,
      "89": 1,
@@ -97472,7 +97551,7 @@
      "107": 2,
      "121": 1,
      "114": 2,
-     "96": 1,
+     "96": 2,
      "88": 1
     },
     "fast_output_hist": {},
