@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-14T16:15:45.776100+00:00",
+ "generated_at": "2026-10-15T13:15:39.625093+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -23,18 +23,18 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 4285,
+    "reset_verified_samples": 4323,
     "since": null,
-    "samples": 17747,
+    "samples": 18029,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-10-14T18:14:37+02:00"
+    "last": "2026-10-15T15:12:30+02:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 5174,
-    "turns": 125469,
+    "files": 5195,
+    "turns": 126135,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -16560,6 +16560,68 @@
      },
      "unpriced_tokens": 0,
      "turns": 464,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-14T14:11:20+02:00",
+     "end": "2026-10-14T18:29:50+02:00",
+     "seven_day": 7,
+     "d7": 1,
+     "d5": 5,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 244,
+       "output": 86825,
+       "cache_read": 12657701,
+       "cache_write": 968675,
+       "cache_write_1h": 356422
+      },
+      "claude-sonnet-5-5": {
+       "input": 642,
+       "output": 315883,
+       "cache_read": 42999928,
+       "cache_write": 1248430
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 438,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-14T18:29:50+02:00",
+     "end": "2026-10-14T19:15:34+02:00",
+     "seven_day": 8,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-sonnet-5-5": {
+       "input": 78,
+       "output": 34747,
+       "cache_read": 5064971,
+       "cache_write": 177022
+      },
+      "claude-opus-5-5": {
+       "input": 400,
+       "output": 162366,
+       "cache_read": 31721786,
+       "cache_write": 1124976,
+       "cache_write_1h": 23476
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 236,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -36706,12 +36768,24 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-14T18:14:37+02:00",
+     "window_ending": "2026-10-14T21:07:06+02:00",
+     "windows": 4.5,
+     "five_hour_pct": 9.0,
+     "seven_day_pct": 2.0,
+     "rounding_interval": [
+      2.0807,
+      24.6149
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-15T02:07:15+02:00",
      "windows": null,
-     "five_hour_pct": 5.0,
+     "five_hour_pct": 3.0,
      "seven_day_pct": 0.0,
      "rounding_interval": [
-      2.1836,
+      0.9101,
       null
      ],
      "pieces": 1,
