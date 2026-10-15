@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-15T17:30:05.243861+00:00",
+ "generated_at": "2026-10-15T18:00:05.704363+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10685,
+    "reset_verified_samples": 10695,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15156,
+    "samples": 15169,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-15T17:28:19+00:00"
+    "last": "2026-10-15T17:58:14+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 552,
-    "turns": 20072,
+    "files": 553,
+    "turns": 20079,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 552,
+     "kept": 553,
      "dropped": 2241,
      "subagent_files": 130,
      "dropped_to": {
@@ -16997,11 +16997,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10636,
+    "reset_verified_samples": 10642,
     "since": null,
-    "samples": 13688,
+    "samples": 13694,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-15T17:25:09+00:00"
+    "last": "2026-10-15T17:57:14+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -29568,11 +29568,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11005,
+    "reset_verified_samples": 11018,
     "since": null,
-    "samples": 12769,
+    "samples": 12782,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-15T17:29:24+00:00"
+    "last": "2026-10-15T17:57:13+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -29587,11 +29587,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 262,
-     "dropped": 2531,
+     "dropped": 2532,
      "subagent_files": 78,
      "dropped_to": {
       ".claude": 2,
-      ".claude-javiswork": 552,
+      ".claude-javiswork": 553,
       ".claude-jono": 1
      },
      "attributed_by_record": {
@@ -32263,7 +32263,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-15T17:30:38.805799+00:00",
+  "generated_at": "2026-10-15T18:00:38.741555+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -82022,11 +82022,11 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 2325,
+    "n": 2331,
     "fast_session_requests": 0,
     "output_hist": {
      "233": 142,
-     "230": 165,
+     "230": 166,
      "236": 103,
      "243": 30,
      "237": 82,
@@ -82035,20 +82035,20 @@
      "235": 128,
      "232": 153,
      "231": 179,
-     "228": 150,
+     "228": 151,
      "242": 41,
      "227": 110,
      "241": 53,
      "245": 14,
      "249": 11,
      "246": 15,
-     "226": 114,
+     "226": 115,
      "234": 110,
-     "229": 155,
+     "229": 156,
      "222": 32,
      "240": 58,
      "238": 64,
-     "224": 57,
+     "224": 58,
      "225": 89,
      "221": 30,
      "218": 10,
@@ -82065,7 +82065,7 @@
      "197": 1,
      "217": 6,
      "205": 1,
-     "219": 20,
+     "219": 21,
      "182": 1,
      "155": 1,
      "216": 3,
@@ -82104,7 +82104,7 @@
      "146": 6,
      "49": 51,
      "56": 29,
-     "68": 26,
+     "68": 27,
      "92": 15,
      "19": 13,
      "0": 4,
@@ -82124,7 +82124,7 @@
      "27": 20,
      "45": 34,
      "43": 38,
-     "86": 9,
+     "86": 10,
      "57": 39,
      "33": 21,
      "62": 30,
@@ -82144,7 +82144,7 @@
      "32": 28,
      "66": 30,
      "96": 13,
-     "115": 5,
+     "115": 6,
      "74": 19,
      "25": 12,
      "99": 18,
@@ -82166,7 +82166,7 @@
      "112": 9,
      "106": 15,
      "1": 2,
-     "111": 10,
+     "111": 11,
      "77": 27,
      "78": 26,
      "133": 5,
@@ -82182,10 +82182,10 @@
      "121": 3,
      "132": 5,
      "127": 6,
-     "139": 3,
+     "139": 4,
      "88": 17,
      "108": 10,
-     "82": 16,
+     "82": 17,
      "-3": 1,
      "98": 14,
      "93": 14,
