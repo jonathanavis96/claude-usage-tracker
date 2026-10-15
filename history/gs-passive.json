@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-15T17:00:06.209468+00:00",
+ "generated_at": "2026-10-15T17:30:05.243861+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10676,
+    "reset_verified_samples": 10685,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15147,
+    "samples": 15156,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-15T16:58:49+00:00"
+    "last": "2026-10-15T17:28:19+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,15 +33,15 @@
      ".claude-jono"
     ],
     "files": 552,
-    "turns": 20060,
+    "turns": 20072,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 552,
-     "dropped": 2240,
+     "dropped": 2241,
      "subagent_files": 130,
      "dropped_to": {
       ".claude": 2,
-      ".claude-avis": 261,
+      ".claude-avis": 262,
       ".claude-jono": 1
      },
      "attributed_by_record": {
@@ -16997,11 +16997,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10631,
+    "reset_verified_samples": 10636,
     "since": null,
-    "samples": 13683,
+    "samples": 13688,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-15T16:58:50+00:00"
+    "last": "2026-10-15T17:25:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -29568,11 +29568,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10992,
+    "reset_verified_samples": 11005,
     "since": null,
-    "samples": 12756,
+    "samples": 12769,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-15T16:57:44+00:00"
+    "last": "2026-10-15T17:29:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -29582,11 +29582,11 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 261,
-    "turns": 3898,
+    "files": 262,
+    "turns": 3899,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 261,
+     "kept": 262,
      "dropped": 2531,
      "subagent_files": 78,
      "dropped_to": {
@@ -32263,7 +32263,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-15T17:00:42.932649+00:00",
+  "generated_at": "2026-10-15T17:30:38.805799+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
