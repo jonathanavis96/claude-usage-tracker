@@ -10,10 +10,20 @@ What runs, where, how it heals itself, and what each alert means.
 | masterrig | moonlighter `gate.py` (not this repo) | 30 min | samples the usage meter into `~/.moonlighter/usage_log.jsonl`, the join's meter input |
 | gs | cron `0,30 * * * *` → `tracker.supervise --profile gs` → `bin/daily.sh` | 30 min | merges history, runs the publish test gate, publishes the site JSON, commits "Daily publisher state" (`history/gs-passive.json`) |
 | gs | `claude-usage-meter-{avis,dave,jwork}.timer` (`deploy/systemd/`) | 1 min | one meter sample per account into `~/.paperclip/ops/claude-usage-meter-*.log`; exit 4 = logged gap, next tick retries; a 429 backs off by `retry_after_s` |
+| gs | `claude-login-expiry-check.timer` (`deploy/systemd/`) → `bin/claude-login-expiry-check --alert` | daily 07:00 UTC | mails "Claude seat login needs renewing" (at most once a day) when a seat is signed out or near its end: jwork and avis are OAuth logins (refresh-token end date, warned 3 days ahead, fix `/login`); dave is a 1-year `claude setup-token` token in `~/.config/greenscape/env` (end = the `created YYYY-MM-DD` comment above `GS_DAVE_CLAUDE_OAUTH_TOKEN` + 365 days, warned 30 days ahead, or a trailing `token_rejected` in its meter log; fix `bin/seat-token-start` then `bin/seat-token-capture`, which rewrites that comment) |
 
 Install or update the masterrig schedule with `deploy/install-schedule.sh` (`--dry-run` first). It is idempotent and replaces the old bare `bin/passive.sh` cron line.
 
 On gs, run `deploy/install-gs.sh --dry-run`, then `deploy/install-gs.sh`, from `~/claude-usage-tracker`. It replaces the bare `bin/daily.sh` line with the supervised one and leaves every other line alone. The meter timers are not changed: the supervised publisher run checks their logs every 30 minutes (health check `meters`).
+
+The seat-login units and scripts are installed by hand, once, from `~/claude-usage-tracker` on main; `install-gs.sh` reports drift in either:
+
+```sh
+cp deploy/systemd/claude-login-expiry-check.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload
+for f in claude-login-expiry-check seat-token-capture seat-token-start; do ln -sfn "$PWD/bin/$f" ~/bin/$f; done
+```
+
+org-shared classifies these three `~/bin` names `local-by-deploy-ownership`: this repo is their only writer.
 
 Both installers refuse (exit 3) on a checkout that is dirty, off main or predates the supervisor, when `crontab -l` fails for any reason other than "no crontab for <user>", or when the merged crontab would drop any line other than the tracker's own, print the exact crontab diff on `--dry-run`, back the crontab up to `~/.local/state/claude-usage-tracker/deploy-backups/` before changing it (`deploy/rollback.sh <dir>` restores it), and end with a post-deploy check. `scripts/deploy.sh` runs both from masterrig. The details are in `deploy/lib.sh`.
 
