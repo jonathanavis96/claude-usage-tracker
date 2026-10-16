@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-16T11:00:05.010523+00:00",
+ "generated_at": "2026-10-16T11:30:05.738102+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10959,
+    "reset_verified_samples": 10968,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15491,
+    "samples": 15500,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-16T10:57:59+00:00"
+    "last": "2026-10-16T11:29:59+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -37,11 +37,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 667,
-     "dropped": 2245,
+     "dropped": 2246,
      "subagent_files": 189,
      "dropped_to": {
       ".claude": 2,
-      ".claude-avis": 266,
+      ".claude-avis": 267,
       ".claude-jono": 1
      },
      "attributed_by_record": {
@@ -17560,11 +17560,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10789,
+    "reset_verified_samples": 10795,
     "since": null,
-    "samples": 13841,
+    "samples": 13847,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-16T10:55:55+00:00"
+    "last": "2026-10-16T11:27:50+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -30478,11 +30478,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11348,
+    "reset_verified_samples": 11359,
     "since": null,
-    "samples": 13199,
+    "samples": 13211,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-16T10:59:04+00:00"
+    "last": "2026-10-16T11:28:54+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -30492,11 +30492,11 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 266,
-    "turns": 3907,
+    "files": 267,
+    "turns": 3908,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 266,
+     "kept": 267,
      "dropped": 2646,
      "subagent_files": 78,
      "dropped_to": {
@@ -33173,7 +33173,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-16T11:00:39.277816+00:00",
+  "generated_at": "2026-10-16T11:30:41.706449+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
