@@ -1,42 +1,33 @@
 {
  "evidence_window_days": 30,
  "max20": {
-  "contributors": 1,
+  "contributors": 0,
   "evidence": {
-   "as_of": "2026-10-16T00:00:06+00:00",
-   "current_since": "2026-09-16T00:00:06+00:00",
-   "freshest_sample_at": "2026-09-16T00:11:31+00:00",
+   "as_of": "2026-10-16T00:30:05+00:00",
+   "current_since": "2026-09-16T00:30:05+00:00",
+   "freshest_sample_at": null,
    "ignored_invalid_time_samples": 0,
-   "ignored_old_samples": 1,
-   "reason": null,
-   "samples_without_capture": 1,
+   "ignored_old_samples": 2,
+   "reason": "no current samples",
+   "samples_without_capture": 0,
    "stale": true
   },
   "identity_basis": "unverified_source_ids",
   "missing_reasons": [
    "no current sample cleared the utilization floor with priced tokens"
   ],
-  "points": [
-   {
-    "c": 162990306,
-    "coarse": true,
-    "t": "2026-09-16T00:11:31Z",
-    "tokens_per_pct": null,
-    "tokens_per_pct_week": 28716453,
-    "usd_per_pct": 1.2843
-   }
-  ],
+  "points": [],
   "quality": "conditional_local_transcripts",
-  "samples": 1,
+  "samples": 0,
   "tokens_per_pct": {},
   "usd_per_pct": null,
   "weekly_windows": {
-   "contributors": 1,
+   "contributors": 0,
    "dropped": 0,
    "estimates": [],
    "measured": null,
    "quality": "conditional_paired_meter_deltas",
-   "reason": "1 contributor, none with a complete week yet; per-source estimates only, never pooled into a plan figure",
+   "reason": "no samples",
    "weeks": 0,
    "with_complete_week": 0
   }
@@ -44,8 +35,8 @@
  "max5": {
   "contributors": 0,
   "evidence": {
-   "as_of": "2026-10-16T00:00:06+00:00",
-   "current_since": "2026-09-16T00:00:06+00:00",
+   "as_of": "2026-10-16T00:30:05+00:00",
+   "current_since": "2026-09-16T00:30:05+00:00",
    "freshest_sample_at": null,
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 0,
@@ -77,8 +68,8 @@
  "pro": {
   "contributors": 0,
   "evidence": {
-   "as_of": "2026-10-16T00:00:06+00:00",
-   "current_since": "2026-09-16T00:00:06+00:00",
+   "as_of": "2026-10-16T00:30:05+00:00",
+   "current_since": "2026-09-16T00:30:05+00:00",
    "freshest_sample_at": null,
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 0,
@@ -106,5 +97,5 @@
    "with_complete_week": 0
   }
  },
- "updated_at": "2026-10-16T00:00:06+00:00"
+ "updated_at": "2026-10-16T00:30:05+00:00"
 }
