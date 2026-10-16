@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-16T01:30:05.595761+00:00",
+ "generated_at": "2026-10-16T02:00:06.193565+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10834,
+    "reset_verified_samples": 10848,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15308,
+    "samples": 15322,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-16T01:28:34+00:00"
+    "last": "2026-10-16T01:58:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 665,
-    "turns": 22937,
+    "files": 666,
+    "turns": 22938,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 665,
+     "kept": 666,
      "dropped": 2243,
      "subagent_files": 189,
      "dropped_to": {
@@ -45,7 +45,7 @@
       ".claude-jono": 1
      },
      "attributed_by_record": {
-      "airlock_tune_env": 238
+      "airlock_tune_env": 239
      },
      "unclaimed": 1976
     }
@@ -17560,11 +17560,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10727,
+    "reset_verified_samples": 10733,
     "since": null,
-    "samples": 13779,
+    "samples": 13785,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-16T01:25:20+00:00"
+    "last": "2026-10-16T01:57:20+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -30478,11 +30478,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11198,
+    "reset_verified_samples": 11212,
     "since": null,
-    "samples": 12962,
+    "samples": 12976,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-16T01:29:39+00:00"
+    "last": "2026-10-16T01:59:29+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -30497,15 +30497,15 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 264,
-     "dropped": 2644,
+     "dropped": 2645,
      "subagent_files": 78,
      "dropped_to": {
       ".claude": 2,
-      ".claude-javiswork": 665,
+      ".claude-javiswork": 666,
       ".claude-jono": 1
      },
      "attributed_by_record": {
-      "airlock_tune_env": 238
+      "airlock_tune_env": 239
      },
      "unclaimed": 1976
     }
@@ -33173,7 +33173,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-16T01:30:36.276117+00:00",
+  "generated_at": "2026-10-16T02:00:38.473515+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
