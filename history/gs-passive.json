@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-16T12:30:05.909139+00:00",
+ "generated_at": "2026-10-16T13:00:05.373708+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10985,
+    "reset_verified_samples": 10995,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15518,
+    "samples": 15528,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-16T12:29:24+00:00"
+    "last": "2026-10-16T12:59:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,7 +33,7 @@
      ".claude-jono"
     ],
     "files": 668,
-    "turns": 22975,
+    "turns": 23000,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 668,
@@ -17560,11 +17560,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10806,
+    "reset_verified_samples": 10812,
     "since": null,
-    "samples": 13858,
+    "samples": 13864,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-16T12:28:25+00:00"
+    "last": "2026-10-16T13:00:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -30478,11 +30478,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11383,
+    "reset_verified_samples": 11395,
     "since": null,
-    "samples": 13235,
+    "samples": 13247,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-16T12:28:24+00:00"
+    "last": "2026-10-16T13:00:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -33173,7 +33173,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-16T12:30:43.958672+00:00",
+  "generated_at": "2026-10-16T13:00:40.899711+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -84161,7 +84161,7 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 43,
+    "n": 55,
     "fast_session_requests": 0,
     "output_hist": {
      "236": 2,
@@ -84172,19 +84172,25 @@
      "233": 1,
      "239": 2,
      "227": 3,
-     "213": 2,
+     "213": 3,
      "198": 1,
-     "222": 1,
+     "222": 2,
      "214": 1,
      "199": 2,
-     "220": 1,
+     "220": 2,
      "210": 1,
-     "218": 1,
+     "218": 2,
      "197": 1,
      "201": 1,
+     "204": 1,
+     "219": 2,
+     "226": 4,
+     "208": 1,
+     "211": 1,
+     "221": 1,
+     "224": 1,
      "237": 1,
      "228": 2,
-     "226": 3,
      "238": 1,
      "225": 2,
      "229": 2,
@@ -84196,7 +84202,7 @@
      "67": 2,
      "87": 1,
      "65": 1,
-     "92": 1,
+     "92": 2,
      "76": 1,
      "89": 2,
      "62": 3,
@@ -84212,7 +84218,16 @@
      "102": 1,
      "95": 1,
      "98": 1,
-     "84": 1,
+     "83": 1,
+     "88": 2,
+     "77": 1,
+     "84": 2,
+     "78": 1,
+     "90": 1,
+     "61": 1,
+     "91": 1,
+     "94": 1,
+     "107": 1,
      "68": 1,
      "64": 2,
      "99": 1,
