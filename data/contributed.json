@@ -3,8 +3,8 @@
  "max20": {
   "contributors": 0,
   "evidence": {
-   "as_of": "2026-10-17T18:30:05+00:00",
-   "current_since": "2026-09-17T18:30:05+00:00",
+   "as_of": "2026-10-17T19:00:05+00:00",
+   "current_since": "2026-09-17T19:00:05+00:00",
    "freshest_sample_at": null,
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 2,
@@ -35,8 +35,8 @@
  "max5": {
   "contributors": 0,
   "evidence": {
-   "as_of": "2026-10-17T18:30:05+00:00",
-   "current_since": "2026-09-17T18:30:05+00:00",
+   "as_of": "2026-10-17T19:00:05+00:00",
+   "current_since": "2026-09-17T19:00:05+00:00",
    "freshest_sample_at": null,
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 0,
@@ -68,8 +68,8 @@
  "pro": {
   "contributors": 0,
   "evidence": {
-   "as_of": "2026-10-17T18:30:05+00:00",
-   "current_since": "2026-09-17T18:30:05+00:00",
+   "as_of": "2026-10-17T19:00:05+00:00",
+   "current_since": "2026-09-17T19:00:05+00:00",
    "freshest_sample_at": null,
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 0,
@@ -97,5 +97,5 @@
    "with_complete_week": 0
   }
  },
- "updated_at": "2026-10-17T18:30:05+00:00"
+ "updated_at": "2026-10-17T19:00:05+00:00"
 }
