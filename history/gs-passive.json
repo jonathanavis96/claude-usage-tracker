@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-17T07:00:06.057548+00:00",
+ "generated_at": "2026-10-17T07:30:06.886064+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11305,
+    "reset_verified_samples": 11314,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15854,
+    "samples": 15863,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-17T06:57:59+00:00"
+    "last": "2026-10-17T07:29:44+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -7627,6 +7627,20 @@
      "seven_day": 56,
      "d7": 1,
      "d5": 4,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-17T05:52:14+00:00",
+     "end": "2026-10-17T07:04:10+00:00",
+     "seven_day": 57,
+     "d7": 1,
+     "d5": 3,
      "tokens": {},
      "unpriced_tokens": 0,
      "turns": 0,
@@ -18155,13 +18169,13 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-17T06:57:59+00:00",
-     "windows": 4.25,
-     "five_hour_pct": 17.0,
-     "seven_day_pct": 4.0,
+     "window_ending": "2026-10-17T07:29:44+00:00",
+     "windows": 4.0,
+     "five_hour_pct": 20.0,
+     "seven_day_pct": 5.0,
      "rounding_interval": [
-      2.7698,
-      7.644
+      2.8048,
+      6.2898
      ],
      "pieces": 1,
      "reset_verified": false
@@ -18176,11 +18190,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 10969,
+    "reset_verified_samples": 10974,
     "since": null,
-    "samples": 14021,
+    "samples": 14026,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-17T07:00:09+00:00"
+    "last": "2026-10-17T07:26:30+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -31537,11 +31551,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11720,
+    "reset_verified_samples": 11732,
     "since": null,
-    "samples": 13683,
+    "samples": 13695,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-17T06:59:04+00:00"
+    "last": "2026-10-17T07:28:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -34244,7 +34258,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-17T07:00:47.735421+00:00",
+  "generated_at": "2026-10-17T07:30:49.143009+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
