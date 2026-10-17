@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-17T03:30:05.062034+00:00",
+ "generated_at": "2026-10-17T04:00:05.682349+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11244,
+    "reset_verified_samples": 11251,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15793,
+    "samples": 15800,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-17T03:28:39+00:00"
+    "last": "2026-10-17T03:58:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -7541,6 +7541,56 @@
       }
      },
      "headless_turns": 2,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-16T19:34:26+00:00",
+     "end": "2026-10-17T03:45:29+00:00",
+     "seven_day": 53,
+     "d7": 1,
+     "d5": 3,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 292,
+       "output": 65172,
+       "cache_read": 31390651,
+       "cache_write": 566418,
+       "cache_write_1h": 104952
+      },
+      "claude-sonnet-5-5": {
+       "input": 94,
+       "output": 16801,
+       "cache_read": 3661964,
+       "cache_write": 190135
+      },
+      "claude-haiku-5-5": {
+       "input": 2,
+       "output": 474,
+       "cache_read": 10977,
+       "cache_write": 36192,
+       "cache_write_1h": 36192
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 179,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "claude-opus-5-5": {
+       "input": 6,
+       "output": 12384,
+       "cache_read": 2722,
+       "cache_write": 40817,
+       "cache_write_1h": 40817
+      },
+      "claude-haiku-5-5": {
+       "input": 2,
+       "output": 474,
+       "cache_read": 10977,
+       "cache_write": 36192,
+       "cache_write_1h": 36192
+      }
+     },
+     "headless_turns": 4,
      "cloud_session": false
     }
    ],
@@ -17936,6 +17986,18 @@
      ],
      "pieces": 1,
      "reset_verified": true
+    },
+    {
+     "window_ending": "2026-10-17T03:58:09+00:00",
+     "windows": 3.0,
+     "five_hour_pct": 3.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      0.5561,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
     }
    ]
   },
@@ -31310,9 +31372,9 @@
     "note": null,
     "reset_verified_samples": 11711,
     "since": null,
-    "samples": 13599,
+    "samples": 13611,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-17T03:29:44+00:00"
+    "last": "2026-10-17T03:59:13+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -34015,7 +34077,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-17T03:30:40.742271+00:00",
+  "generated_at": "2026-10-17T04:00:46.166616+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
