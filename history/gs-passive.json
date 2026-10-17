@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-17T04:00:05.682349+00:00",
+ "generated_at": "2026-10-17T04:30:06.354307+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11251,
+    "reset_verified_samples": 11258,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15800,
+    "samples": 15807,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-17T03:58:09+00:00"
+    "last": "2026-10-17T04:28:04+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -7591,6 +7591,20 @@
       }
      },
      "headless_turns": 4,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-17T03:45:29+00:00",
+     "end": "2026-10-17T04:17:14+00:00",
+     "seven_day": 54,
+     "d7": 1,
+     "d5": 5,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
      "cloud_session": false
     }
    ],
@@ -15587,6 +15601,76 @@
      },
      "headless_turns": 4,
      "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-16T18:33:09+00:00",
+     "end": "2026-10-17T04:02:24+00:00",
+     "delta_pct": 10.0,
+     "windows": 3,
+     "usd": 16.1542,
+     "usd_per_pct": 1.6154,
+     "bounds": [
+      1.2426,
+      2.3077
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1018,
+       "output": 255065,
+       "cache_read": 100331860,
+       "cache_write": 1668854,
+       "cache_write_1h": 487791
+      },
+      "claude-sonnet-5-5": {
+       "input": 120,
+       "output": 28281,
+       "cache_read": 4061468,
+       "cache_write": 380246
+      },
+      "claude-haiku-5-5": {
+       "input": 2,
+       "output": 474,
+       "cache_read": 10977,
+       "cache_write": 36192,
+       "cache_write_1h": 36192
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 522,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 2.1651,
+     "capture": 0.7461,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-haiku-5-5": "2026-10-16T21:41:46.443000+00:00",
+      "claude-opus-5-5": "2026-10-16T18:33:12.999000+00:00",
+      "claude-sonnet-5-5": "2026-10-16T18:33:26.137000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {
+      "claude-opus-5-5": {
+       "input": 10,
+       "output": 23645,
+       "cache_read": 4909,
+       "cache_write": 65768,
+       "cache_write_1h": 65768
+      },
+      "claude-haiku-5-5": {
+       "input": 2,
+       "output": 474,
+       "cache_read": 10977,
+       "cache_write": 36192,
+       "cache_write_1h": 36192
+      }
+     },
+     "headless_turns": 6,
+     "unclaimed_tokens": {}
     }
    ],
    "runs": [
@@ -15977,33 +16061,47 @@
      "pieces": 4,
      "reset_verified": false,
      "capture_diagnosed": 0
+    },
+    {
+     "date": "2026-10-17",
+     "usd_per_pct": 1.6154,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.3,
+     "bounds": [
+      1.2426,
+      2.3077
+     ],
+     "pieces": 3,
+     "reset_verified": false,
+     "capture_diagnosed": 0
     }
    ],
    "split": {
     "input": 1.1e-05,
-    "output": 0.002769,
-    "cache_read": 0.978824,
-    "cache_write": 0.018396,
-    "cache_write_1h": 0.007138
+    "output": 0.002767,
+    "cache_read": 0.978803,
+    "cache_write": 0.018419,
+    "cache_write_1h": 0.007092
    },
-   "last_usable_at": "2026-10-16T18:33:09+00:00",
+   "last_usable_at": "2026-10-17T04:02:24+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 50,
-     "median": 1.6088,
-     "half_range": 1.099,
-     "mad": 0.9793,
-     "cv": 0.6817
+     "n": 51,
+     "median": 1.6154,
+     "half_range": 1.0945,
+     "mad": 0.9505,
+     "cv": 0.6747
     },
     "daily": {
-     "n": 17,
-     "median": 1.397,
-     "half_range": 0.9676,
-     "mad": 0.8975,
-     "cv": 0.5797
+     "n": 18,
+     "median": 1.5062,
+     "half_range": 0.8975,
+     "mad": 0.9194,
+     "cv": 0.5626
     }
    },
    "weekly_by_window": [
@@ -17988,13 +18086,13 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-17T03:58:09+00:00",
-     "windows": 3.0,
-     "five_hour_pct": 3.0,
-     "seven_day_pct": 1.0,
+     "window_ending": "2026-10-17T04:28:04+00:00",
+     "windows": 3.5,
+     "five_hour_pct": 7.0,
+     "seven_day_pct": 2.0,
      "rounding_interval": [
-      0.5561,
-      null
+      1.5206,
+      19.9576
      ],
      "pieces": 1,
      "reset_verified": false
@@ -31372,9 +31470,9 @@
     "note": null,
     "reset_verified_samples": 11711,
     "since": null,
-    "samples": 13611,
+    "samples": 13623,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-17T03:59:13+00:00"
+    "last": "2026-10-17T04:29:04+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -34077,7 +34175,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-17T04:00:46.166616+00:00",
+  "generated_at": "2026-10-17T04:30:45.051469+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
