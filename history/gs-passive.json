@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-17T05:00:05.777373+00:00",
+ "generated_at": "2026-10-17T05:30:05.287904+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11266,
+    "reset_verified_samples": 11275,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 15815,
+    "samples": 15824,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-17T04:57:29+00:00"
+    "last": "2026-10-17T05:29:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -7599,6 +7599,20 @@
      "seven_day": 54,
      "d7": 1,
      "d5": 5,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-17T04:17:14+00:00",
+     "end": "2026-10-17T05:06:09+00:00",
+     "seven_day": 55,
+     "d7": 1,
+     "d5": 4,
      "tokens": {},
      "unpriced_tokens": 0,
      "turns": 0,
@@ -18086,13 +18100,13 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-17T04:57:29+00:00",
-     "windows": 4.5,
-     "five_hour_pct": 9.0,
-     "seven_day_pct": 2.0,
+     "window_ending": "2026-10-17T05:29:09+00:00",
+     "windows": 4.0,
+     "five_hour_pct": 12.0,
+     "seven_day_pct": 3.0,
      "rounding_interval": [
-      2.0807,
-      24.6149
+      2.2819,
+      9.4936
      ],
      "pieces": 1,
      "reset_verified": false
@@ -31470,9 +31484,9 @@
     "note": null,
     "reset_verified_samples": 11711,
     "since": null,
-    "samples": 13635,
+    "samples": 13647,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-17T04:58:34+00:00"
+    "last": "2026-10-17T05:30:09+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -34175,7 +34189,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-17T05:00:43.516080+00:00",
+  "generated_at": "2026-10-17T05:30:45.399843+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
