@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-17T07:16:18.770197+00:00",
+ "generated_at": "2026-10-18T04:15:50.990369+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -325,18 +325,18 @@
    "interpolated": false
   },
   "2026-10-17": {
-   "tokens_per_pct": 13784463,
+   "tokens_per_pct": 10662950,
    "interpolated": false
   }
  },
  "session_tokens": {
-  "claude-sonnet-4-6": 234108,
-  "claude-opus-5": 5687701,
-  "claude-sonnet-5": 564573,
-  "claude-opus-5-5": 1284715,
-  "claude-opus-4-7": 154881,
-  "claude-fable-5-1": 4218660,
-  "claude-haiku-4-5": 191635,
+  "claude-sonnet-4-6": 233768,
+  "claude-sonnet-5": 484669,
+  "claude-opus-5": 8911862,
+  "claude-opus-5-5": 1284866,
+  "claude-opus-4-7": 152335,
+  "claude-fable-5-1": 4308171,
+  "claude-haiku-4-5": 217691,
   "claude-opus-4-8": 10052
  },
  "weekly_windows": {
@@ -599,18 +599,18 @@
    },
    {
     "week_ending": "2026-10-23",
-    "windows": 4.05,
-    "five_hour_pct": 85.0,
-    "seven_day_pct": 21.0,
+    "windows": 4.08,
+    "five_hour_pct": 98.0,
+    "seven_day_pct": 24.0,
     "rounding_interval": [
-     3.2661,
-     5.1797
+     3.2118,
+     5.4098
     ],
-    "pieces": 6,
+    "pieces": 10,
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": true,
-    "resets_at": "2026-10-23T03:59:59.975442+00:00"
+    "resets_at": "2026-10-23T04:00:00.355113+00:00"
    }
   ],
   "by_window": [
@@ -5428,6 +5428,30 @@
    },
    {
     "window_ending": "2026-10-17T08:30:00.386599+00:00",
+    "windows": 4.5,
+    "five_hour_pct": 9.0,
+    "seven_day_pct": 2.0,
+    "rounding_interval": [
+     2.0807,
+     24.6149
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-17T13:30:00.108682+00:00",
+    "windows": 4.0,
+    "five_hour_pct": 4.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     0.9451,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-17T18:29:59.794993+00:00",
     "windows": 4.0,
     "five_hour_pct": 8.0,
     "seven_day_pct": 2.0,
