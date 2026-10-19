@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-19T00:00:08.006047+00:00",
+ "generated_at": "2026-10-19T00:30:05.528674+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11998,
+    "reset_verified_samples": 12008,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 16608,
+    "samples": 16618,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-18T23:59:29+00:00"
+    "last": "2026-10-19T00:28:49+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -32,20 +32,20 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 923,
-    "turns": 28232,
+    "files": 934,
+    "turns": 28281,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 923,
+     "kept": 934,
      "dropped": 2359,
-     "subagent_files": 302,
+     "subagent_files": 307,
      "dropped_to": {
       ".claude": 2,
       ".claude-avis": 312,
       ".claude-jono": 1
      },
      "attributed_by_record": {
-      "airlock_tune_env": 271
+      "airlock_tune_env": 272
      },
      "unclaimed": 2044
     }
@@ -20265,18 +20265,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11386,
+    "reset_verified_samples": 11392,
     "since": null,
-    "samples": 14438,
+    "samples": 14444,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-18T23:55:13+00:00"
+    "last": "2026-10-19T00:26:40+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1037,
-    "turns": 45240,
+    "files": 1043,
+    "turns": 45288,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -32638,6 +32638,68 @@
       }
      },
      "headless_turns": 524
+    },
+    {
+     "start": "2026-10-18T19:49:54+00:00",
+     "end": "2026-10-19T00:10:54+00:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 12.3715,
+     "usd_per_pct": 1.2372,
+     "bounds": [
+      1.031,
+      1.5464
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 640,
+       "output": 279755,
+       "cache_read": 60134552,
+       "cache_write": 723986,
+       "cache_write_1h": 672939
+      },
+      "claude-sonnet-5-5": {
+       "input": 78,
+       "output": 29784,
+       "cache_read": 2433197,
+       "cache_write": 209276,
+       "cache_write_1h": 209276
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 359,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 1.5069,
+     "capture": 0.821,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-18T19:52:29.795000+00:00",
+      "claude-sonnet-5-5": "2026-10-18T21:25:21.162000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {
+      "claude-opus-5-5": {
+       "input": 624,
+       "output": 273909,
+       "cache_read": 59886630,
+       "cache_write": 672939,
+       "cache_write_1h": 672939
+      },
+      "claude-sonnet-5-5": {
+       "input": 78,
+       "output": 29784,
+       "cache_read": 2433197,
+       "cache_write": 209276,
+       "cache_write_1h": 209276
+      }
+     },
+     "headless_turns": 351
     }
    ],
    "runs": [
@@ -33041,33 +33103,47 @@
      "pieces": 6,
      "reset_verified": true,
      "capture_diagnosed": 0
+    },
+    {
+     "date": "2026-10-19",
+     "usd_per_pct": 1.2372,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.2,
+     "bounds": [
+      1.031,
+      1.5464
+     ],
+     "pieces": 2,
+     "reset_verified": true,
+     "capture_diagnosed": 0
     }
    ],
    "split": {
     "input": 1.4e-05,
-    "output": 0.004674,
-    "cache_read": 0.978602,
-    "cache_write": 0.01671,
-    "cache_write_1h": 0.015784
+    "output": 0.004676,
+    "cache_read": 0.978622,
+    "cache_write": 0.016688,
+    "cache_write_1h": 0.015763
    },
-   "last_usable_at": "2026-10-18T19:49:54+00:00",
+   "last_usable_at": "2026-10-19T00:10:54+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 80,
-     "median": 1.5391,
-     "half_range": 0.6519,
-     "mad": 0.2208,
-     "cv": 0.2246
+     "n": 81,
+     "median": 1.5364,
+     "half_range": 0.653,
+     "mad": 0.2324,
+     "cv": 0.2251
     },
     "daily": {
-     "n": 18,
-     "median": 1.5834,
-     "half_range": 0.4682,
-     "mad": 0.0793,
-     "cv": 0.1949
+     "n": 19,
+     "median": 1.535,
+     "half_range": 0.483,
+     "mad": 0.1006,
+     "cv": 0.2001
     }
    },
    "weekly_by_window": [
@@ -34045,11 +34121,11 @@
     },
     {
      "window_ending": "2026-10-19T02:30:00+00:00",
-     "windows": 3.0,
-     "five_hour_pct": 3.0,
+     "windows": 5.0,
+     "five_hour_pct": 5.0,
      "seven_day_pct": 1.0,
      "rounding_interval": [
-      0.5561,
+      1.3341,
       null
      ],
      "pieces": 1,
@@ -34065,11 +34141,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12574,
+    "reset_verified_samples": 12586,
     "since": null,
-    "samples": 14648,
+    "samples": 14660,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-18T23:59:29+00:00"
+    "last": "2026-10-19T00:28:49+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -34080,19 +34156,19 @@
      ".claude-jono"
     ],
     "files": 312,
-    "turns": 6092,
+    "turns": 6250,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 312,
-     "dropped": 2970,
+     "dropped": 2981,
      "subagent_files": 96,
      "dropped_to": {
       ".claude": 2,
-      ".claude-javiswork": 923,
+      ".claude-javiswork": 934,
       ".claude-jono": 1
      },
      "attributed_by_record": {
-      "airlock_tune_env": 271
+      "airlock_tune_env": 272
      },
      "unclaimed": 2044
     }
@@ -35437,6 +35513,28 @@
      },
      "unpriced_tokens": 0,
      "turns": 100,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-18T23:55:13+00:00",
+     "end": "2026-10-19T00:22:24+00:00",
+     "seven_day": 21,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 336,
+       "output": 64512,
+       "cache_read": 29326888,
+       "cache_write": 379545,
+       "cache_write_1h": 185255
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 148,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -37003,6 +37101,46 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-18T23:15:10+00:00",
+     "end": "2026-10-19T00:03:30+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 9.9147,
+     "usd_per_pct": 0.9915,
+     "bounds": [
+      0.9013,
+      1.1016
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 620,
+       "output": 148542,
+       "cache_read": 69788082,
+       "cache_write": 1248208,
+       "cache_write_1h": 233435
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 284,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 0.0264,
+     "capture": 37.6077,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-18T23:15:21.790000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     }
    ],
    "runs": [
@@ -37052,12 +37190,12 @@
     },
     {
      "start": "2026-10-01T11:18:14+00:00",
-     "end": "2026-10-18T23:15:10+00:00",
+     "end": "2026-10-19T00:03:30+00:00",
      "kind": "surplus",
      "direction": "high",
-     "stretches": 13,
-     "step": 55.9486,
-     "capture": 56.9486,
+     "stretches": 14,
+     "step": 54.6233,
+     "capture": 55.6233,
      "corroborated_by": [],
      "contradicted_by": [
       "jwork",
@@ -37149,33 +37287,47 @@
      "pieces": 37,
      "reset_verified": false,
      "capture_diagnosed": 7
+    },
+    {
+     "date": "2026-10-19",
+     "usd_per_pct": 0.9915,
+     "delta_pct": 10.0,
+     "stretches": 1,
+     "rounding": 0.1,
+     "bounds": [
+      0.9013,
+      1.1016
+     ],
+     "pieces": 1,
+     "reset_verified": true,
+     "capture_diagnosed": 1
     }
    ],
    "split": {
     "input": 1.2e-05,
-    "output": 0.003348,
-    "cache_read": 0.972572,
-    "cache_write": 0.024068,
-    "cache_write_1h": 0.012247
+    "output": 0.003266,
+    "cache_read": 0.973085,
+    "cache_write": 0.023638,
+    "cache_write_1h": 0.011657
    },
-   "last_usable_at": "2026-10-18T23:15:10+00:00",
+   "last_usable_at": "2026-10-19T00:03:30+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 18,
-     "median": 0.9518,
-     "half_range": 1.2015,
-     "mad": 1.0357,
-     "cv": 0.7264
+     "n": 19,
+     "median": 0.9915,
+     "half_range": 1.1534,
+     "mad": 0.8982,
+     "cv": 0.7082
     },
     "daily": {
-     "n": 6,
-     "median": 1.8254,
-     "half_range": 0.5874,
-     "mad": 0.329,
-     "cv": 0.5079
+     "n": 7,
+     "median": 1.7304,
+     "half_range": 0.6196,
+     "mad": 0.4984,
+     "cv": 0.511
     }
    },
    "weekly_by_window": [
@@ -37650,11 +37802,11 @@
     {
      "window_ending": "2026-10-19T02:40:00.484681+00:00",
      "windows": 4.0,
-     "five_hour_pct": 24.0,
-     "seven_day_pct": 6.0,
+     "five_hour_pct": 28.0,
+     "seven_day_pct": 7.0,
      "rounding_interval": [
-      2.9627,
-      5.7729
+      3.0837,
+      5.4463
      ],
      "pieces": 1,
      "reset_verified": true
@@ -37665,7 +37817,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-19T00:00:51.935914+00:00",
+  "generated_at": "2026-10-19T00:30:50.829541+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -91403,15 +91555,22 @@
     "model": "claude-opus-5-5",
     "account": "a3",
     "entrypoint": "sdk-cli",
-    "n": 2,
+    "n": 6,
     "fast_session_requests": 0,
     "output_hist": {
      "235": 1,
-     "241": 1
+     "241": 1,
+     "237": 1,
+     "233": 2,
+     "230": 1
     },
     "ttfb_hist": {
      "17": 1,
-     "62": 1
+     "62": 1,
+     "80": 1,
+     "19": 1,
+     "87": 1,
+     "104": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
@@ -91421,15 +91580,187 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 2,
+    "n": 81,
     "fast_session_requests": 0,
     "output_hist": {
-     "219": 1,
-     "223": 1
+     "219": 7,
+     "223": 3,
+     "229": 3,
+     "236": 1,
+     "213": 3,
+     "230": 5,
+     "233": 3,
+     "224": 3,
+     "216": 1,
+     "239": 1,
+     "228": 3,
+     "225": 5,
+     "235": 1,
+     "240": 1,
+     "207": 2,
+     "197": 1,
+     "221": 5,
+     "218": 4,
+     "214": 4,
+     "220": 2,
+     "215": 5,
+     "222": 2,
+     "232": 2,
+     "226": 2,
+     "211": 4,
+     "177": 1,
+     "212": 1,
+     "231": 1,
+     "237": 1,
+     "227": 2,
+     "210": 1,
+     "234": 1
     },
     "ttfb_hist": {
-     "77": 1,
-     "58": 1
+     "77": 2,
+     "58": 3,
+     "84": 2,
+     "46": 2,
+     "42": 2,
+     "75": 2,
+     "52": 3,
+     "34": 1,
+     "33": 1,
+     "85": 1,
+     "78": 3,
+     "37": 1,
+     "63": 1,
+     "83": 3,
+     "51": 1,
+     "59": 2,
+     "47": 1,
+     "24": 1,
+     "67": 2,
+     "89": 1,
+     "56": 1,
+     "65": 2,
+     "93": 2,
+     "44": 1,
+     "100": 1,
+     "108": 2,
+     "61": 3,
+     "82": 3,
+     "70": 3,
+     "104": 1,
+     "45": 1,
+     "80": 2,
+     "79": 1,
+     "50": 1,
+     "91": 2,
+     "74": 3,
+     "81": 1,
+     "99": 1,
+     "107": 1,
+     "146": 1,
+     "135": 1,
+     "73": 2,
+     "125": 1,
+     "86": 2,
+     "110": 2,
+     "88": 1,
+     "113": 1,
+     "101": 1,
+     "180": 1,
+     "97": 1
+    },
+    "fast_output_hist": {},
+    "fast_ttfb_hist": {}
+   },
+   {
+    "day": "2026-10-19",
+    "model": "claude-sonnet-5-5",
+    "account": "a2",
+    "entrypoint": "sdk-cli",
+    "n": 18,
+    "fast_session_requests": 0,
+    "output_hist": {
+     "240": 4,
+     "243": 3,
+     "236": 1,
+     "237": 1,
+     "234": 1,
+     "241": 2,
+     "238": 1,
+     "232": 1,
+     "245": 1,
+     "229": 1,
+     "239": 1,
+     "248": 1
+    },
+    "ttfb_hist": {
+     "135": 1,
+     "132": 1,
+     "89": 1,
+     "124": 1,
+     "113": 1,
+     "76": 1,
+     "148": 1,
+     "80": 1,
+     "110": 1,
+     "137": 1,
+     "81": 1,
+     "68": 1,
+     "43": 1,
+     "133": 1,
+     "103": 2,
+     "88": 1,
+     "59": 1
+    },
+    "fast_output_hist": {},
+    "fast_ttfb_hist": {}
+   },
+   {
+    "day": "2026-10-19",
+    "model": "claude-sonnet-5-5",
+    "account": "a3",
+    "entrypoint": "sdk-cli",
+    "n": 21,
+    "fast_session_requests": 0,
+    "output_hist": {
+     "249": 2,
+     "254": 1,
+     "244": 3,
+     "242": 1,
+     "263": 1,
+     "240": 2,
+     "250": 1,
+     "246": 1,
+     "235": 1,
+     "234": 1,
+     "252": 1,
+     "259": 1,
+     "265": 1,
+     "239": 1,
+     "245": 1,
+     "247": 1,
+     "248": 1
+    },
+    "ttfb_hist": {
+     "13": 1,
+     "24": 1,
+     "29": 1,
+     "75": 1,
+     "31": 2,
+     "86": 1,
+     "-4": 1,
+     "87": 1,
+     "72": 1,
+     "100": 1,
+     "81": 1,
+     "152": 1,
+     "52": 1,
+     "42": 1,
+     "23": 1,
+     "16": 1,
+     "40": 1,
+     "30": 1,
+     "116": 1,
+     "101": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
