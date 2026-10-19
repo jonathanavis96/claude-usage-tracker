@@ -1,11 +1,11 @@
 {
- "generated_at": "2026-10-19T01:15:57.370975+00:00",
+ "generated_at": "2026-10-19T22:16:13.803636+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
   "output": 0.0046,
-  "cache_read": 0.9677,
-  "cache_write": 0.0277
+  "cache_read": 0.9631,
+  "cache_write": 0.0323
  },
  "history": {
   "2026-07-30": {
@@ -331,16 +331,20 @@
   "2026-10-18": {
    "tokens_per_pct": 47476137,
    "interpolated": false
+  },
+  "2026-10-19": {
+   "tokens_per_pct": 46388174,
+   "interpolated": false
   }
  },
  "session_tokens": {
   "claude-sonnet-4-6": 233768,
-  "claude-sonnet-5": 453748,
-  "claude-opus-5": 8333914,
-  "claude-opus-5-5": 1349905,
-  "claude-opus-4-7": 146253,
+  "claude-sonnet-5": 452352,
+  "claude-opus-5": 7855898,
+  "claude-opus-5-5": 1458559,
+  "claude-opus-4-7": 146193,
   "claude-fable-5-1": 5451419,
-  "claude-haiku-4-5": 252948,
+  "claude-haiku-4-5": 158674,
   "claude-opus-4-8": 10052
  },
  "weekly_windows": {
@@ -603,18 +607,18 @@
    },
    {
     "week_ending": "2026-10-23",
-    "windows": 4.07,
-    "five_hour_pct": 110.0,
-    "seven_day_pct": 27.0,
+    "windows": 3.9,
+    "five_hour_pct": 117.0,
+    "seven_day_pct": 30.0,
     "rounding_interval": [
-     3.1671,
-     5.4857
+     3.0095,
+     5.2991
     ],
-    "pieces": 14,
+    "pieces": 18,
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": true,
-    "resets_at": "2026-10-23T03:59:59.870886+00:00"
+    "resets_at": "2026-10-23T03:59:59.606847+00:00"
    }
   ],
   "by_window": [
@@ -5497,6 +5501,42 @@
     "seven_day_pct": 0.0,
     "rounding_interval": [
      0.2734,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-19T11:30:00.110864+00:00",
+    "windows": 2.0,
+    "five_hour_pct": 2.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     0.1671,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-19T16:30:00.147460+00:00",
+    "windows": 1.0,
+    "five_hour_pct": 1.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     0.0,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-19T21:29:59.554391+00:00",
+    "windows": 4.0,
+    "five_hour_pct": 4.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     0.9451,
      null
     ],
     "pieces": 1,
