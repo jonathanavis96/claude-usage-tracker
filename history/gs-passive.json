@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-20T07:00:05.082523+00:00",
+ "generated_at": "2026-10-20T07:30:05.333522+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20267,18 +20267,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11720,
+    "reset_verified_samples": 11726,
     "since": null,
-    "samples": 14772,
+    "samples": 14778,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-20T06:56:00+00:00"
+    "last": "2026-10-20T07:26:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
     "files": 1375,
-    "turns": 52963,
+    "turns": 52968,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -36872,11 +36872,11 @@
     },
     {
      "window_ending": "2026-10-20T09:10:00+00:00",
-     "windows": 8.0,
-     "five_hour_pct": 8.0,
+     "windows": 9.0,
+     "five_hour_pct": 9.0,
      "seven_day_pct": 1.0,
      "rounding_interval": [
-      2.5012,
+      2.8902,
       null
      ],
      "pieces": 1,
@@ -36892,11 +36892,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13321,
+    "reset_verified_samples": 13332,
     "since": null,
-    "samples": 15399,
+    "samples": 15410,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-20T07:00:05+00:00"
+    "last": "2026-10-20T07:28:49+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -36907,7 +36907,7 @@
      ".claude-jono"
     ],
     "files": 392,
-    "turns": 13560,
+    "turns": 13566,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 392,
@@ -43059,7 +43059,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-20T07:00:53.401979+00:00",
+  "generated_at": "2026-10-20T07:30:56.445042+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -98092,7 +98092,7 @@
     "model": "claude-opus-5-5",
     "account": "a3",
     "entrypoint": "sdk-cli",
-    "n": 1171,
+    "n": 1173,
     "fast_session_requests": 0,
     "output_hist": {
      "233": 36,
@@ -98106,7 +98106,7 @@
      "230": 44,
      "239": 30,
      "228": 37,
-     "237": 36,
+     "237": 37,
      "232": 52,
      "227": 45,
      "229": 53,
@@ -98133,7 +98133,7 @@
      "221": 43,
      "219": 31,
      "217": 24,
-     "220": 31,
+     "220": 32,
      "218": 20,
      "196": 3,
      "203": 3,
@@ -98185,7 +98185,7 @@
      "35": 8,
      "37": 7,
      "56": 12,
-     "26": 4,
+     "26": 5,
      "43": 11,
      "40": 12,
      "28": 3,
@@ -98205,7 +98205,7 @@
      "86": 13,
      "119": 7,
      "118": 7,
-     "76": 16,
+     "76": 17,
      "27": 5,
      "22": 5,
      "90": 13,
