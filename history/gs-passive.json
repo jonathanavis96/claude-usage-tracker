@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-20T17:00:05.057843+00:00",
+ "generated_at": "2026-10-20T17:30:05.946214+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20267,11 +20267,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11834,
+    "reset_verified_samples": 11840,
     "since": null,
-    "samples": 14886,
+    "samples": 14892,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-20T16:56:05+00:00"
+    "last": "2026-10-20T17:27:14+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -27488,6 +27488,34 @@
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-20T16:35:06+00:00",
+     "end": "2026-10-20T17:22:06+00:00",
+     "seven_day": 53,
+     "d7": 1,
+     "d5": 7,
+     "tokens": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 1,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "headless_turns": 1,
      "cloud_session": false
     }
    ],
@@ -37653,12 +37681,12 @@
     },
     {
      "window_ending": "2026-10-20T19:10:00+00:00",
-     "windows": 9.0,
-     "five_hour_pct": 27.0,
-     "seven_day_pct": 3.0,
+     "windows": 7.75,
+     "five_hour_pct": 31.0,
+     "seven_day_pct": 4.0,
      "rounding_interval": [
-      5.5637,
-      19.9873
+      5.283,
+      13.4066
      ],
      "pieces": 1,
      "reset_verified": true
@@ -37673,11 +37701,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13561,
+    "reset_verified_samples": 13575,
     "since": null,
-    "samples": 15641,
+    "samples": 15655,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-20T17:00:06+00:00"
+    "last": "2026-10-20T17:29:19+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -37688,7 +37716,7 @@
      ".claude-jono"
     ],
     "files": 393,
-    "turns": 13887,
+    "turns": 13894,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 393,
@@ -43920,12 +43948,12 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-20T17:00:06+00:00",
+     "window_ending": "2026-10-20T17:29:19+00:00",
      "windows": null,
-     "five_hour_pct": 2.0,
+     "five_hour_pct": 3.0,
      "seven_day_pct": 0.0,
      "rounding_interval": [
-      0.2734,
+      0.9101,
       null
      ],
      "pieces": 1,
@@ -43937,7 +43965,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-20T17:00:53.424825+00:00",
+  "generated_at": "2026-10-20T17:30:50.027979+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -99290,7 +99318,7 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 227,
+    "n": 232,
     "fast_session_requests": 0,
     "output_hist": {
      "235": 9,
@@ -99304,13 +99332,13 @@
      "238": 7,
      "234": 14,
      "239": 5,
-     "231": 11,
+     "231": 12,
      "247": 1,
-     "229": 8,
+     "229": 9,
      "243": 2,
      "213": 1,
      "233": 14,
-     "226": 14,
+     "226": 16,
      "200": 1,
      "228": 14,
      "241": 8,
@@ -99329,7 +99357,7 @@
      "215": 5,
      "209": 1,
      "218": 7,
-     "220": 4,
+     "220": 5,
      "199": 1,
      "211": 1,
      "245": 3,
@@ -99361,7 +99389,7 @@
      "28": 1,
      "72": 4,
      "40": 2,
-     "59": 5,
+     "59": 6,
      "88": 5,
      "34": 4,
      "110": 1,
@@ -99372,7 +99400,7 @@
      "100": 3,
      "27": 2,
      "68": 7,
-     "51": 2,
+     "51": 3,
      "63": 2,
      "64": 6,
      "66": 4,
@@ -99392,7 +99420,7 @@
      "89": 3,
      "84": 2,
      "108": 4,
-     "33": 1,
+     "33": 2,
      "117": 1,
      "79": 4,
      "83": 3,
@@ -99436,7 +99464,9 @@
      "90": 1,
      "78": 2,
      "23": 1,
-     "18": 1
+     "18": 1,
+     "141": 1,
+     "171": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
