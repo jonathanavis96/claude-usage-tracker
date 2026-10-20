@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-20T16:00:05.130498+00:00",
+ "generated_at": "2026-10-20T16:30:05.289367+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20267,11 +20267,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11823,
+    "reset_verified_samples": 11829,
     "since": null,
-    "samples": 14875,
+    "samples": 14881,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-20T15:58:45+00:00"
+    "last": "2026-10-20T16:30:05+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -37610,12 +37610,12 @@
     },
     {
      "window_ending": "2026-10-20T19:10:00+00:00",
-     "windows": 9.0,
-     "five_hour_pct": 18.0,
+     "windows": 11.0,
+     "five_hour_pct": 22.0,
      "seven_day_pct": 2.0,
      "rounding_interval": [
-      4.6014,
-      45.5726
+      5.7216,
+      54.8871
      ],
      "pieces": 1,
      "reset_verified": true
@@ -37630,11 +37630,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13537,
+    "reset_verified_samples": 13549,
     "since": null,
-    "samples": 15617,
+    "samples": 15629,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-20T15:59:49+00:00"
+    "last": "2026-10-20T16:29:04+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -37645,7 +37645,7 @@
      ".claude-jono"
     ],
     "files": 393,
-    "turns": 13871,
+    "turns": 13874,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 393,
@@ -43877,7 +43877,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-20T15:59:49+00:00",
+     "window_ending": "2026-10-20T16:29:04+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
@@ -43894,7 +43894,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-20T16:00:52.670621+00:00",
+  "generated_at": "2026-10-20T16:30:52.593989+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
