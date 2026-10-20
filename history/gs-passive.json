@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-20T15:00:05.856976+00:00",
+ "generated_at": "2026-10-20T15:30:05.266308+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20267,11 +20267,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11811,
+    "reset_verified_samples": 11817,
     "since": null,
-    "samples": 14863,
+    "samples": 14869,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-20T14:56:06+00:00"
+    "last": "2026-10-20T15:27:40+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -37530,11 +37530,11 @@
     },
     {
      "window_ending": "2026-10-20T19:10:00+00:00",
-     "windows": 7.0,
-     "five_hour_pct": 7.0,
+     "windows": 12.0,
+     "five_hour_pct": 12.0,
      "seven_day_pct": 1.0,
      "rounding_interval": [
-      2.1122,
+      4.0573,
       null
      ],
      "pieces": 1,
@@ -37550,11 +37550,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13513,
+    "reset_verified_samples": 13525,
     "since": null,
-    "samples": 15593,
+    "samples": 15605,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-20T14:59:12+00:00"
+    "last": "2026-10-20T15:28:44+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -37565,7 +37565,7 @@
      ".claude-jono"
     ],
     "files": 393,
-    "turns": 13865,
+    "turns": 13868,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 393,
@@ -43797,7 +43797,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-20T14:59:12+00:00",
+     "window_ending": "2026-10-20T15:28:44+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -43814,7 +43814,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-20T15:00:51.092472+00:00",
+  "generated_at": "2026-10-20T15:30:52.292110+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
