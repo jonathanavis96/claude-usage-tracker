@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-21T05:00:05.173520+00:00",
+ "generated_at": "2026-10-21T05:30:05.054093+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 12194,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 16807,
+    "samples": 16819,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-21T05:00:04+00:00"
+    "last": "2026-10-21T05:29:19+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -20267,11 +20267,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11970,
+    "reset_verified_samples": 11972,
     "since": null,
-    "samples": 15022,
+    "samples": 15024,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-21T04:58:59+00:00"
+    "last": "2026-10-21T05:09:25+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -38663,12 +38663,12 @@
     },
     {
      "window_ending": "2026-10-21T05:10:00+00:00",
-     "windows": 6.0,
-     "five_hour_pct": 30.0,
+     "windows": 6.2,
+     "five_hour_pct": 31.0,
      "seven_day_pct": 5.0,
      "rounding_interval": [
-      4.3268,
-      9.2058
+      4.479,
+      9.4973
      ],
      "pieces": 1,
      "reset_verified": true
@@ -38683,11 +38683,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13850,
+    "reset_verified_samples": 13864,
     "since": null,
-    "samples": 15937,
+    "samples": 15951,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-21T05:00:04+00:00"
+    "last": "2026-10-21T05:29:19+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -45123,7 +45123,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-21T05:00:55.255688+00:00",
+  "generated_at": "2026-10-21T05:30:54.489439+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
