@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-21T04:00:06.123891+00:00",
+ "generated_at": "2026-10-21T04:30:05.264476+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12179,
+    "reset_verified_samples": 12188,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 16790,
+    "samples": 16799,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-21T03:39:06+00:00"
+    "last": "2026-10-21T04:28:59+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -20267,11 +20267,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 11958,
+    "reset_verified_samples": 11964,
     "since": null,
-    "samples": 15010,
+    "samples": 15016,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-21T03:55:34+00:00"
+    "last": "2026-10-21T04:27:54+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -38649,12 +38649,12 @@
     },
     {
      "window_ending": "2026-10-21T05:10:00+00:00",
-     "windows": 6.0,
-     "five_hour_pct": 24.0,
+     "windows": 6.5,
+     "five_hour_pct": 26.0,
      "seven_day_pct": 4.0,
      "rounding_interval": [
-      4.0264,
-      10.5253
+      4.3855,
+      11.3485
      ],
      "pieces": 1,
      "reset_verified": true
@@ -38669,11 +38669,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13829,
+    "reset_verified_samples": 13841,
     "since": null,
-    "samples": 15913,
+    "samples": 15925,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-21T03:57:44+00:00"
+    "last": "2026-10-21T04:28:59+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -45092,7 +45092,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-21T03:57:44+00:00",
+     "window_ending": "2026-10-21T04:28:59+00:00",
      "windows": 3.0,
      "five_hour_pct": 3.0,
      "seven_day_pct": 1.0,
@@ -45109,7 +45109,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-21T04:00:54.478938+00:00",
+  "generated_at": "2026-10-21T04:30:52.948236+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
