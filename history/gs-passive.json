@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-21T10:00:05.836159+00:00",
+ "generated_at": "2026-10-21T10:30:04.821273+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12261,
+    "reset_verified_samples": 12271,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 16906,
+    "samples": 16916,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-21T09:50:07+00:00"
+    "last": "2026-10-21T10:29:54+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -20267,18 +20267,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12012,
+    "reset_verified_samples": 12017,
     "since": null,
-    "samples": 15064,
+    "samples": 15069,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-21T09:58:30+00:00"
+    "last": "2026-10-21T10:26:40+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 1424,
-    "turns": 55608,
+    "files": 1425,
+    "turns": 55609,
     "withheld_patterns": [],
     "own_sessions": null
    },
@@ -38724,11 +38724,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13973,
+    "reset_verified_samples": 13984,
     "since": null,
-    "samples": 16062,
+    "samples": 16073,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-21T09:58:29+00:00"
+    "last": "2026-10-21T10:29:54+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -45164,7 +45164,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-21T10:00:52.079275+00:00",
+  "generated_at": "2026-10-21T10:30:50.852722+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -100878,15 +100878,17 @@
     "model": "claude-haiku-5-5",
     "account": "a3",
     "entrypoint": "sdk-cli",
-    "n": 2,
+    "n": 3,
     "fast_session_requests": 0,
     "output_hist": {
      "234": 1,
-     "238": 1
+     "238": 1,
+     "255": 1
     },
     "ttfb_hist": {
      "55": 1,
-     "63": 1
+     "63": 1,
+     "82": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
