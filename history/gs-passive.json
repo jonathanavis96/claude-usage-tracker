@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-21T17:00:05.360922+00:00",
+ "generated_at": "2026-10-21T17:30:05.237060+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12370,
+    "reset_verified_samples": 12382,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 17016,
+    "samples": 17028,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-21T16:58:06+00:00"
+    "last": "2026-10-21T17:29:14+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -20267,11 +20267,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12090,
+    "reset_verified_samples": 12096,
     "since": null,
-    "samples": 15142,
+    "samples": 15148,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-21T16:58:07+00:00"
+    "last": "2026-10-21T17:29:15+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -39010,10 +39010,10 @@
     {
      "window_ending": "2026-10-21T20:10:00+00:00",
      "windows": null,
-     "five_hour_pct": 3.0,
+     "five_hour_pct": 5.0,
      "seven_day_pct": 0.0,
      "rounding_interval": [
-      0.9101,
+      2.1836,
       null
      ],
      "pieces": 1,
@@ -39029,11 +39029,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 14143,
+    "reset_verified_samples": 14157,
     "since": null,
-    "samples": 16234,
+    "samples": 16248,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-21T17:00:06+00:00"
+    "last": "2026-10-21T17:29:14+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -45481,7 +45481,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-21T17:00:55.594075+00:00",
+  "generated_at": "2026-10-21T17:30:56.146091+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
