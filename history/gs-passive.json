@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-21T12:00:05.685605+00:00",
+ "generated_at": "2026-10-21T12:30:06.152755+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12285,
+    "reset_verified_samples": 12297,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 16930,
+    "samples": 16942,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-21T10:59:05+00:00"
+    "last": "2026-10-21T12:28:49+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -20267,11 +20267,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12034,
+    "reset_verified_samples": 12040,
     "since": null,
-    "samples": 15086,
+    "samples": 15092,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-21T11:56:21+00:00"
+    "last": "2026-10-21T12:27:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -37099,6 +37099,58 @@
      "cloud_session": false,
      "headless_tokens": {},
      "headless_turns": 0
+    },
+    {
+     "start": "2026-10-21T06:56:06+00:00",
+     "end": "2026-10-21T12:22:20+00:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 0.0,
+     "usd_per_pct": 0.0,
+     "bounds": [
+      0.0,
+      0.0
+     ],
+     "tokens": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 1,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "unaccounted",
+     "capture_status": "unaccounted",
+     "reference": 1.4434,
+     "capture": 0.0,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "<synthetic>": "2026-10-21T09:30:16.903000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "headless_turns": 1
     }
    ],
    "runs": [
@@ -37306,12 +37358,12 @@
     },
     {
      "start": "2026-10-20T20:07:10+00:00",
-     "end": "2026-10-21T06:56:06+00:00",
+     "end": "2026-10-21T12:22:20+00:00",
      "kind": "unaccounted",
      "direction": "low",
-     "stretches": 6,
-     "step": -0.8507,
-     "capture": 0.1493,
+     "stretches": 7,
+     "step": -0.8858,
+     "capture": 0.1142,
      "corroborated_by": [],
      "contradicted_by": []
     }
@@ -38758,11 +38810,11 @@
     },
     {
      "window_ending": "2026-10-21T15:10:00+00:00",
-     "windows": 4.0,
-     "five_hour_pct": 4.0,
+     "windows": 6.0,
+     "five_hour_pct": 6.0,
      "seven_day_pct": 1.0,
      "rounding_interval": [
-      0.9451,
+      1.7231,
       null
      ],
      "pieces": 1,
@@ -38778,11 +38830,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 14023,
+    "reset_verified_samples": 14035,
     "since": null,
-    "samples": 16112,
+    "samples": 16124,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-21T11:57:24+00:00"
+    "last": "2026-10-21T12:28:49+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -45211,6 +45263,18 @@
      ],
      "pieces": 1,
      "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-21T12:28:49+00:00",
+     "windows": null,
+     "five_hour_pct": 1.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.0,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
     }
    ]
   }
@@ -45218,7 +45282,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-21T12:00:51.691777+00:00",
+  "generated_at": "2026-10-21T12:30:56.199636+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
