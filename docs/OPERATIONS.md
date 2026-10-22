@@ -173,3 +173,39 @@ cd ~/claude-usage-tracker && python3 -m tracker.gs_passive --prices data/prices.
 ```
 
 A deliberate recount (a change to how transcripts are found or attributed) bumps `SOURCES_VERSION` in `tracker/gs_passive.py`, which skips the comparison for one run.
+
+## a1 meter on masterrig
+
+masterrig's own account (a1, `~/.claude`) is read by `tracker.meter_log`, the sampler gs runs for jwork, dave and avis, from a systemd user timer: `deploy/systemd-masterrig/claude-usage-meter-a1.{service,timer}`, one tick a minute, about 130 s between reads after the sampler's 110 s spacing. It writes `~/.paperclip/ops/claude-usage-meter-a1.log`, which `tracker.gs_passive --masterrig` and `tracker.passive` merge with moonlighter's and the ceiling's logs (`masterrig_account`). The units sit outside `deploy/systemd/`, which `deploy/install-gs.sh` compares with gs's installed units.
+
+Why: `tracker/join.py` pairs no two readings more than `MAX_PAIR_GAP` (15 min) apart, and moonlighter reads every 30 min. The only closer reader was Mission Control's `mis-usage-ceiling.service` (every 5 min, `~/.paperclip/ops/mis-usage-ceiling-systemd.log`). That service asks the Paperclip board API which account the seats are on before it reads the usage endpoint. From 2026-10-18 00:49Z the API answered 401, and later HTTP 0 when Paperclip was down. The ceiling logged `BLIND` and never read the meter again: its last reading is 2026-10-18 00:44:41Z. Paperclip was stopped at 2026-10-20 19:43Z and the ceiling at 19:57Z, and both units are disabled. Moonlighter, on the same login, read on throughout. a1's last stretch ends 2026-10-17 11:14Z. The new sampler asks nothing but the usage endpoint.
+
+Install, once, on masterrig (the sampler's code is already on main, so this can run before or after the join change merges):
+
+```bash
+cd ~/code/claude-usage-tracker
+mkdir -p ~/.config/systemd/user ~/.paperclip/ops
+install -m 644 deploy/systemd-masterrig/claude-usage-meter-a1.service deploy/systemd-masterrig/claude-usage-meter-a1.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now claude-usage-meter-a1.timer
+```
+
+Check, five minutes later:
+
+```bash
+systemctl --user list-timers claude-usage-meter-a1.timer --no-pager
+journalctl --user -u claude-usage-meter-a1.service -n 5 --no-pager   # "a1: five_hour=N% seven_day=M"
+cd ~/code/claude-usage-tracker && python3 -c "
+from itertools import pairwise; from pathlib import Path
+from tracker.samples import parse_meter_log
+s = parse_meter_log(Path.home().joinpath('.paperclip/ops/claude-usage-meter-a1.log').read_text().splitlines())
+print(len(s), 'readings; widest gap', max((b.ts - a.ts for a, b in pairwise(s)), default=None))"
+```
+
+Expect at least two readings and a widest gap of about two minutes. A refusal (exit 2) means `~/.claude` is signed out, or the log holds another account. `error` lines with `reason: rate_limited` are 429s, and the sampler waits out their Retry-After by itself.
+
+The joins pick the log up on the first `bin/passive.sh` run after the change reaches main, because a change to `tracker/` triggers a rejoin. Stretches form again from the first pair of readings.
+
+Do not re-enable `mis-usage-ceiling.service` for the tracker. It belongs to Mission Control, and the tracker no longer needs it.
+
+Known gap: the masterrig health profile does not watch this log. `collection` checks only moonlighter's log, with a 1 h limit, and `meters` runs only on gs. So a stopped a1 timer would go unreported, which is exactly how the ceiling's two-day blindness went unseen. Closing the gap is a `tracker/health.py` change: add `meters` to the masterrig profile with this log in `meter_logs`, and map `a1` to `~/.claude` so an idle-lapsed token is told from a dead feed.

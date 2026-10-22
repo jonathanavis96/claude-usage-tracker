@@ -84,6 +84,10 @@ from .usage_api import (
 )
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
+#: The log masterrig's own account (a1, `~/.claude`) is sampled into, under ~/.paperclip/ops
+#: beside gs's three. tracker/gs_passive.py masterrig_account and tracker/passive.py read it;
+#: docs/OPERATIONS.md "a1 meter on masterrig" installs the timer that writes it.
+MASTERRIG_METER_LOG = "claude-usage-meter-a1.log"
 #: A 429 is logged and left for the next tick. read_usage's own default retries
 #: for up to ~15 minutes, which would carry one oneshot through three of its
 #: own timer's ticks.
