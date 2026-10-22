@@ -81,3 +81,55 @@ A ping goes only on a healthy run, so a run that keeps failing also goes silent 
 - `tracker.passive` exits 2 without writing when `history/passive.json` exists but does not parse: an unreadable record is never treated as an absent one. Restore it with `git checkout -- history/passive.json`.
 - `tracker.meter_log` honours a logged Retry-After up to 2 h (the endpoint's measured long block is 3,600 s).
 - A supervised run that times out is killed with its whole process group.
+
+## Capture on every host (2026-10-23)
+
+Each metered account's work is counted wherever it ran, and gs's archived history is read in place.
+
+| Host | What | Where |
+|---|---|---|
+| masterrig | `bin/ship-extracts.sh`, called by `bin/passive.sh` every hour before its 20-hour gate | writes text-free extracts of every account used on masterrig except its own login (`tracker/extract.py`; jwork, dave and avis today) to `~/.cache/claude-usage-tracker/extracts/masterrig/`, then `rsync -az --mkpath` (never `--delete`) to gs `~/.paperclip/ops/remote-transcripts/masterrig/`, owner-only |
+| gs | `tracker.gs_passive` (inside `bin/daily.sh`, no new flags) | reads each account's live `projects/`, the cached archive of that same directory, and every `~/.paperclip/ops/remote-transcripts/<host>/<identity>/` matching the account, deduplicated by message id |
+| gs | archive cache | `~/archive/transcripts-*/<subtree>/*.tar.zst` streamed once into `~/.cache/claude-usage-tracker/transcript-archive/` (427 MB for the 2026-10-15 archive, 66 s to build, 1 s to check after); `<subtree>` `claude` is `~/.claude/projects`, `claude-dave` is `~/.claude-dave/projects` |
+
+An extract keeps per-turn timestamps, message and session ids, model, token counts, `entrypoint`, `isSidechain`, `remoteSourced` and the project directory names. No message text, tool input or output, or prompt leaves masterrig, and nothing goes to this repo. A config dir's account is its `oauthAccount` hash (tracker/meter_log.py `account_identity`), the home `~/.claude.json` for a bare `~/.claude`, or for a dir with only a `.oauth-token` (masterrig `~/.claude-dave`, used by `~/bin/dave-agent`) `tok-` plus 12 hex characters of the token's SHA-256. gs matches that fingerprint through the tracker's own meter unit (`--config-dir ~/.claude-dave --token-env GS_DAVE_CLAUDE_OAUTH_TOKEN`); masterrig's token fingerprint `tok-9db13cb44fd3` matches gs dave's `b64d8ea4794c`. A shipped identity that matches no gs account is listed under `remote_unjoined` in `history/gs-passive.json`, never dropped silently.
+
+A session that two accounts' config dirs both reach (masterrig `~/.claude-avis/projects/<bob-ross-skin>` links into `~/.claude/projects`) is split turn by turn: each turn goes to the account with the latest claim before it (session-env and file-history birth times, `sessions/<pid>.json` `startedAt`, `history.jsonl` timestamps). A session launched with `CLAUDE_CODE_OAUTH_TOKEN` injected from outside (Mission Control seats) cannot be told apart from its dir's own login and is counted as the dir's.
+
+### Deploy, once, after the merge
+
+masterrig (cron reaches gs through the `gs` ssh alias, `~/.ssh/greenscape`, with no agent; checked with `SSH_AUTH_SOCK= ssh -o BatchMode=yes gs true`):
+
+```
+ssh gs 'mkdir -p ~/.paperclip/ops/remote-transcripts && chmod 700 ~/.paperclip/ops/remote-transcripts'
+cd ~/code/claude-usage-tracker && git pull --rebase origin main && bin/ship-extracts.sh
+```
+
+The first shipment is every file back to each config dir's start (about 84 MB before rsync compression, 25 s); later ones send only what changed. No cron line changes: the existing `15 * * * *` supervised `bin/passive.sh` calls it.
+
+gs, from `~/claude-usage-tracker` after the next `bin/daily.sh` has pulled main, or by hand before it:
+
+```
+nice python3 -m tracker.extract --archive      # builds ~/.cache/claude-usage-tracker/transcript-archive once
+```
+
+Skipping this is safe: the first `bin/daily.sh` run builds the cache itself, 66 s longer than usual.
+
+Ship the masterrig extracts first, then let `bin/daily.sh` run: the first gs-passive record written by this code carries `sources_version: 2`, so the turn-count guard below compares nothing on that run and starts guarding from the next.
+
+Do not prune `~/.claude*/projects`, `~/archive/transcripts-*` or `~/.paperclip/ops/remote-transcripts` on gs: they are tracker inputs, and every stretch is rebuilt from them each run.
+
+### Transcript-loss guard
+
+`tracker.gs_passive` (full runs, gs and `--masterrig`) compares each account's transcript turn count with the record it is about to replace. Turns only grow, so a fall of 5% and at least 500 turns is lost transcripts, as on 2026-10-15 when a disk cleanup took jwork from 91,131 turns to 18,209 and the next run rewrote September with no tokens. It then:
+
+- prints one stderr line per account starting `INCIDENT transcript-loss gs_passive:`, naming the fall and every source (`live`, `archive:<dir>/<subtree>`, `remote:<host>`) whose turns fell;
+- does not write `--out`, and exits 3. `bin/daily.sh` already treats a failed gs_passive as a warning and publishes on the previous `history/gs-passive.json`, so the page keeps the last good history.
+
+It repeats every run until the transcripts are back (restore them, or put the archive under `~/archive/transcripts-*`, which is read in place), or until the loss is accepted on purpose:
+
+```
+cd ~/claude-usage-tracker && python3 -m tracker.gs_passive --prices data/prices.json --probes history/probes.jsonl --out history/gs-passive.json --accept-loss
+```
+
+A deliberate recount (a change to how transcripts are found or attributed) bumps `SOURCES_VERSION` in `tracker/gs_passive.py`, which skips the comparison for one run.
