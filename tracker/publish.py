@@ -392,8 +392,10 @@ def _percent_from_held_levels(events: list[ChangeEvent], regime_starts: list[dat
             out.append(e)
             continue
         ratio = median(after) / median(before) - 1
+        # Rounded as the page labels the step it draws (_page_round on the signed figure):
+        # round(abs(x)) rounds halves to even, and check 7 then withholds the page.
         out.append(replace(e, direction="increased" if ratio > 0 else "decreased",
-                           percent=round(abs(ratio) * 100)))
+                           percent=abs(_page_round(ratio * 100))))
     return out
 
 
@@ -1900,7 +1902,8 @@ def _paired_step(pooled_regimes: list[dict], by_window: list[dict], by_account: 
     regimes = [*pooled_regimes[:-2], before, after]
     if events:
         fall = note["ratio_fell_pct"]
-        e = replace(events[-1], percent=round(abs(fall)),
+        # `fall` is positive for a decrease; the page labels the signed step -fall.
+        e = replace(events[-1], percent=abs(_page_round(-fall)),
                     direction="decreased" if fall > 0 else "increased",
                     before_interval=tuple(before["rounding_interval"]),
                     after_interval=tuple(after["rounding_interval"]))

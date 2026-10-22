@@ -626,7 +626,29 @@ class HeadlineMatchesChartTest(unittest.TestCase):
         self.assertEqual(doc["last_change"]["percent"], 29)
         self.assertEqual(I.headline_matches_chart(doc), [])
         doc["last_change"]["percent"] = round(abs(-29.5))
-        self.assertEqual(len(I.headline_matches_chart(doc)), 2, "-30% beside a -29% chart and change_pct")
+        out = I.headline_matches_chart(doc)
+        # change_pct -29.5 is a 1-dp figure a -30% step can round to, so only the chart refuses it.
+        self.assertEqual(len(out), 1, out)
+        self.assertIn("chart labels the same change -29%", out[0])
+
+    def test_a_step_near_a_half_is_not_refused_over_its_1_dp_change_pct(self):
+        # The publisher writes percent=abs(_page_round(step)) (the chart's label) and
+        # change_pct=round(step, 1). A step within 0.05 of a half rounds the two apart:
+        # -29.52 is change_pct -29.5 beside -30%, +29.47 is 29.5 beside +29%. Comparing
+        # _page_round(change_pct) with the headline withheld both pages (review of 359b7c1).
+        for step, percent, direction in ((-29.52, 30, "decreased"), (29.47, 29, "increased")):
+            with self.subTest(step=step):
+                doc = _decrease_page()
+                weeks = _wt(doc)["per_week_regimes"]
+                weeks[2]["value"] = weeks[1]["value"] * (1 + step / 100)
+                drawn = I._marked(I.chart_steps(doc)["tokens_per_week"], doc["last_change"]["date"])
+                self.assertAlmostEqual(drawn["pct"], step, places=6)
+                doc["last_change"].update(direction=direction, percent=percent, change_pct=round(step, 1))
+                self.assertEqual(I.headline_matches_chart(doc), [])
+                # The 1-dp figure's own page rounding is the other whole percent: the
+                # reviewer's alternative (percent from change_pct) puts it beside the chart's.
+                doc["last_change"]["percent"] = abs(I._page_round(round(step, 1)))
+                self.assertIn("chart labels the same change", " ".join(I.headline_matches_chart(doc)))
 
 
 class WindowsPerWeekImpliedTest(unittest.TestCase):

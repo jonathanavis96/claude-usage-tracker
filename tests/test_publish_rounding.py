@@ -9,6 +9,7 @@ own rounding.
 from __future__ import annotations
 
 import unittest
+from datetime import date, datetime
 
 from tracker import invariants, publish
 
@@ -48,6 +49,35 @@ class PublisherRoundsLikeThePageTest(unittest.TestCase):
                 self.assertEqual(_signed(rec), invariants._page_round(signed))
                 # check 7's own comparison of change_pct with the headline then agrees
                 self.assertEqual(invariants._page_round(rec["change_pct"]), _signed(rec))
+
+    def test_a_windows_per_week_step_near_a_half_passes_check_7(self):
+        # _chart_figure writes percent from the unrounded step (the chart's label) and
+        # change_pct to 1 dp. At -29.52 those are 30 and -29.5, which check 7 refused as
+        # "The headline says -30% but last_change.change_pct is -29.5" (review of the branch).
+        cut = "2026-09-14T12:00:00+00:00"
+        at = datetime.fromisoformat(cut)
+        for step, label in ((-29.52, 30), (29.47, 29), (-29.5, 29)):
+            with self.subTest(step=step):
+                before = 5.0
+                after = before * (1 + step / 100)
+                rows = [{"from": None, "until": cut, "windows_per_week": before},
+                        {"from": cut, "until": None, "windows_per_week": after}]
+                ev = publish._RuleDatedEvent(date=at.date(), direction="decreased", percent=1,
+                                             onset_earliest=at.date(), onset_latest=at.date(), at=at)
+                e = publish._chart_figure([ev], {"window_tokens": {"cut_at": cut, "per_week_regimes": rows}})[0]
+                self.assertEqual((e.percent, e.change_pct), (label, round(step, 1)))
+                rec = {"percent": e.percent, "direction": e.direction}
+                self.assertEqual(_signed(rec), invariants._page_round((after / before - 1) * 100))
+                self.assertTrue(invariants._rounds_to(e.change_pct, _signed(rec)))
+
+    def test_a_held_level_step_is_the_page_label(self):
+        # 10 -> 11.25 is +12.5% exactly (page +13, round(abs) 12); 10 -> 6.25 is -37.5%
+        # (page -37, round(abs) 38).
+        ev = publish.ChangeEvent(date=date(2026, 9, 11), direction="decreased", percent=1)
+        for after, label, direction in ((11.25, 13, "increased"), (6.25, 37, "decreased")):
+            with self.subTest(after=after):
+                rec = publish._percent_from_held_levels([ev], [date(2026, 9, 11)], {0: [10.0], 1: [after]})[0]
+                self.assertEqual((rec.percent, rec.direction), (label, direction))
 
 
 if __name__ == "__main__":

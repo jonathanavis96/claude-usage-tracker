@@ -434,6 +434,19 @@ def _signed(change: dict) -> int | None:
     return -_page_round(pct) if change.get("direction") == "decreased" else _page_round(pct)
 
 
+def _rounds_to(change_pct: float, said: int) -> bool:
+    """`said` is the page's whole percent of some figure that rounds to `change_pct` at 1 dp.
+
+    `change_pct` is published to one decimal and the headline is the page's label of the
+    unrounded step (the one its chart draws), so the two are rounded separately: a step of
+    -29.52 is change_pct -29.5 beside a -30% chart and headline, and a step of +29.47 is
+    change_pct 29.5 beside +29%. Comparing `_page_round(change_pct)` with the headline
+    failed both and withheld the page; publishing the percent from the 1-dp figure instead
+    would put -29% beside the chart's -30%. A headline outside that 0.1-wide span (-30%
+    beside -31.8) still fails."""
+    return _page_round(change_pct - 0.05) <= said <= _page_round(change_pct + 0.05)
+
+
 def _label_text(pct: float) -> str:
     return f"{_page_round(pct):+d}%"
 
@@ -459,7 +472,7 @@ def headline_matches_chart(doc: dict) -> list[str]:
     # Signed against signed: `said` carries the direction. Until 2026-10-22 this compared
     # the signed page-rounded change_pct with abs(said), so every decrease failed whatever
     # its chart drew ("The headline says -45% but last_change.change_pct is -44.8").
-    if isinstance(c.get("change_pct"), (int, float)) and not tpw and _page_round(c["change_pct"]) != said:
+    if isinstance(c.get("change_pct"), (int, float)) and not tpw and not _rounds_to(c["change_pct"], said):
         out.append(f"The headline says {said:+d}% but last_change.change_pct is {c['change_pct']:g}.")
     step = _marked(steps[chart], c["date"])
     if step is None or _page_round(step["pct"]) == 0:
