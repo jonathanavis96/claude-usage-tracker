@@ -7,10 +7,7 @@ Checks, in order (the first failure is the one-line reason):
 
   collection   the newest meter sample (last line's `ts` in the usage log, default
                moonlighter's ~/.moonlighter/usage_log.jsonl, sampled every 30 min) is
-               younger than two intervals; and the minute feed beside it (the usage
-               ceiling's systemd log, --ceiling-log, when it exists) has read within an
-               hour: stretches pair readings at most 15 min apart, so without it Max
-               account 1 forms none.
+               younger than two intervals.
   run          the supervisor's last successful passive run (tracker/supervise.py state
                file, `last_ok`) is younger than two intervals of the hourly cron, and the
                last run was not a withheld publish (bin/daily.sh exit 9).
@@ -99,9 +96,6 @@ class Config:
     #: A meter log of one of those accounts is blind after meter_blind_s, whatever the reason.
     passive_record: Path | None = None
     meter_blind_s: int = 60 * 60
-    #: masterrig's minute meter feed (the usage ceiling's systemd log) beside moonlighter's
-    #: 30-minute samples; None: not checked.
-    ceiling_log: Path | None = None
     #: The page: the site checkout's JSON on gs (`page_json`), the live URL on masterrig
     #: (`page_url`); None: not checked.
     page_json: Path | None = None
@@ -127,8 +121,6 @@ SITE_JSON = Path("website") / "public" / "data" / "claude-usage.json"
 #: The page as readers get it; masterrig reads it, so a push or a Pages deploy that fails
 #: after gs is done is seen from outside gs too.
 LIVE_PAGE_URL = "https://alldonesites.com/data/claude-usage.json"
-#: masterrig's minute meter feed for Max account 1 (tracker/passive.py reads it).
-CEILING_LOG = HOME / ".paperclip" / "ops" / "mis-usage-ceiling-systemd.log"
 
 
 def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path = GS_OPS,
@@ -143,11 +135,15 @@ def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path
                   checks=("run", "page", "meters", "lock", "sizes", "advisory"))
 
 
-def masterrig_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = ()) -> Config:
-    """Health on masterrig as the supervisor runs it: every masterrig check, with the live
-    page and the minute meter feed, which a bare Config leaves out (tests build one)."""
-    return Config(state=state, lock_pidfile=pidfile, logs=logs, page_url=LIVE_PAGE_URL,
-                  ceiling_log=CEILING_LOG)
+def masterrig_config(**kw) -> Config:
+    """Health on masterrig as the supervisor and the CLI run it: every masterrig check, with
+    the live page, which a bare Config (as tests build one) leaves out. Keyword arguments are
+    Config's, so a caller can set any of them, page_url=None among them.
+
+    a1's own meter feed is not checked here: the ceiling log it came from stopped on
+    2026-10-18 and its successor, claude-usage-meter-a1.log, is the a1 slice's `meters`
+    check (fix/a1-meter-feed); a check on the dead log would fail forever."""
+    return Config(**{"page_url": LIVE_PAGE_URL, **kw})
 
 
 #: A stamp further in the future than this is clock skew, which would otherwise hide
@@ -188,40 +184,6 @@ def _age(seconds_ago: float) -> str:
 
 
 def check_collection(c: Config, now: float) -> str | None:
-    """moonlighter's 30-minute samples, and the minute feed beside them; each failing one
-    named, joined with " | " (each its own incident in the supervisor)."""
-    failures = [r for r in (_check_moonlighter(c, now), _check_ceiling(c, now)) if r]
-    return " | ".join(failures) if failures else None
-
-
-def _check_ceiling(c: Config, now: float) -> str | None:
-    """The minute feed (the usage ceiling's systemd log) has read within meter_blind_s.
-
-    A stretch pairs readings at most join.MAX_PAIR_GAP (15 min) apart, so moonlighter's
-    30-minute samples alone form none: without this feed Max account 1 is blind. It stopped
-    on 2026-10-18T00:44Z (the ceiling service went down on READ FAILURE) and health stayed ok.
-    A host with no such log has nothing to check."""
-    if c.ceiling_log is None or not c.ceiling_log.exists():
-        return None
-    from tracker.samples import parse_ceiling_log
-    try:
-        with open(c.ceiling_log, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            f.seek(max(0, f.tell() - 1_048_576))
-            lines = f.read().decode("utf-8", errors="replace").splitlines()
-    except OSError as e:
-        return f"collection: cannot read the ceiling feed {c.ceiling_log}: {e.strerror}"
-    samples = parse_ceiling_log(lines)
-    newest = max((s.ts.timestamp() for s in samples), default=None)
-    if newest is None:
-        return f"collection: no reading near the end of the ceiling feed {c.ceiling_log.name}"
-    if now - newest > c.meter_blind_s:
-        return (f"collection: the ceiling feed {c.ceiling_log.name} has not read for {_age(now - newest)} "
-                f"(limit {_age(c.meter_blind_s)}); moonlighter's 30-min samples alone form no stretches")
-    return None
-
-
-def _check_moonlighter(c: Config, now: float) -> str | None:
     try:
         rows = _tail_rows(c.usage_log, n=10_000)
     except OSError as e:
@@ -702,6 +664,18 @@ def first_failure(c: Config, now: float | None = None, skip: tuple[str, ...] = (
     return None
 
 
+def all_failures(c: Config, now: float | None = None, skip: tuple[str, ...] = ()) -> str | None:
+    """Every failing check's reason, joined with " | ", or None when all pass.
+
+    The supervisor reads this, not first_failure: tracker.supervise.health_kinds splits it
+    on " | " and keeps an incident per kind, so a later check is never hidden behind an
+    earlier one. With only the first failure, gs's `advisory` (last in its order) never
+    alerted while the page was withheld, and a blind meter appearing and clearing ahead of
+    it sent a false "advisory recovered" and then a "further problem" for the same step."""
+    bad = [reason for name, reason in run_checks(c, now) if reason and name not in skip]
+    return " | ".join(bad) if bad else None
+
+
 def build_parser() -> argparse.ArgumentParser:
     d = Config()
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -726,8 +700,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--meter-max-age", type=int, default=d.meter_max_age_s)
     p.add_argument("--page-url", default=LIVE_PAGE_URL,
                    help="the live JSON whose age `page` checks on masterrig ('' to leave it out)")
-    p.add_argument("--ceiling-log", type=Path, default=CEILING_LOG,
-                   help="masterrig's minute meter feed, checked by `collection` when it exists")
     return p
 
 
@@ -737,13 +709,13 @@ def config_from_args(a: argparse.Namespace) -> Config:
         return gs_config(state=GS_STATE if a.state == d.state else a.state,
                          pidfile=GS_LOCK.with_suffix(".pid") if a.pidfile == d.lock_pidfile else a.pidfile,
                          logs=tuple(a.log) or (GS_LOG,), repo=a.repo)
-    return Config(usage_log=a.usage_log, collection_interval_s=a.collection_interval, state=a.state,
-                  run_interval_s=a.run_interval, repo=a.repo, history_dir=a.repo / "history",
-                  publisher_max_age_s=a.publisher_max_age, credentials=a.credentials,
-                  token_grace_s=a.token_grace, lock_pidfile=a.pidfile, logs=tuple(a.log),
-                  max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes,
-                  meter_logs=tuple(a.meter_log), meter_max_age_s=a.meter_max_age,
-                  page_url=a.page_url or None, ceiling_log=a.ceiling_log)
+    return masterrig_config(usage_log=a.usage_log, collection_interval_s=a.collection_interval, state=a.state,
+                            run_interval_s=a.run_interval, repo=a.repo, history_dir=a.repo / "history",
+                            publisher_max_age_s=a.publisher_max_age, credentials=a.credentials,
+                            token_grace_s=a.token_grace, lock_pidfile=a.pidfile, logs=tuple(a.log),
+                            max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes,
+                            meter_logs=tuple(a.meter_log), meter_max_age_s=a.meter_max_age,
+                            page_url=a.page_url or None)
 
 
 def main(argv: list[str] | None = None) -> int:

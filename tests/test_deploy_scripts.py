@@ -480,6 +480,22 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIn("not emailed (unstated)", alerts[1])
         self.assertIsNone(self.state)
 
+    def test_a_weekly_detector_change_with_no_state_is_held_too(self) -> None:
+        # PINNED, and Jonathan's call (critic step 6): the weekly detector's events carry no
+        # `state` (the live 2026-09-13 windows_per_week event: state None, provisional False),
+        # and the 2026-09-14 weekly cut was emailed under the old rule (.notified-change on gs).
+        # Under state == "measured" such a change is never emailed; Jonathan alone hears of it.
+        # The dating and once-only tests above give their weekly fixtures state "measured" to
+        # reach the send; this one keeps the record as the detector writes it.
+        weekly = {"date": "2026-09-14", "direction": "decreased", "percent": 29, "scope": "weekly",
+                  "metric": "windows_per_week", "provisional": False}
+        _procs, requests, alerts = self._publishes((weekly, self.W1), (weekly, self.W2), (weekly, self.W3))
+        self.assertEqual(requests, ["", "", ""], "a state-less weekly change reached the subscriber endpoint")
+        self.assertIsNone(self.state)
+        told = [a for a in alerts if a]
+        self.assertEqual(len(told), 1, alerts)
+        self.assertIn("Observed change, not emailed (unstated): decreased 29% on 2026-09-14", told[0])
+
     def test_between_24_and_48_hours_an_unsettled_interval_waits(self) -> None:
         procs, requests, _alerts = self._timed(self.MEASURED, 30)
         self.assertEqual(requests, ["", ""])

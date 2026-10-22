@@ -172,14 +172,14 @@ class HealthTest(unittest.TestCase):
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((now + 3600) * 1000)}}))
         args = ["--usage-log", str(self.log), "--state", str(self.state), "--repo", str(self.repo),
                 "--credentials", str(self.creds), "--pidfile", str(self.c.lock_pidfile), "--skip", "publisher",
-                "--page-url", "", "--ceiling-log", str(self.tmp / "no-ceiling.log")]
+                "--page-url", ""]
         self.assertEqual(health.main(args), 0)
         self.log.unlink()
         self.assertEqual(health.main(args), 1)
 
-    def test_the_masterrig_cli_checks_the_live_page_and_the_ceiling_feed_by_default(self):
+    def test_the_masterrig_cli_checks_the_live_page_by_default(self):
         c = health.config_from_args(health.build_parser().parse_args([]))
-        self.assertEqual((c.page_url, c.ceiling_log), (health.LIVE_PAGE_URL, health.CEILING_LOG))
+        self.assertEqual(c.page_url, health.LIVE_PAGE_URL)
         c = health.config_from_args(health.build_parser().parse_args(["--page-url", ""]))
         self.assertIsNone(c.page_url)
 
@@ -191,33 +191,14 @@ class HealthTest(unittest.TestCase):
         self.state.write_text(json.dumps({"last_ok": NOW - 30, "last_fail": NOW - 60, "last_exit": 0}))
         self.assertIsNone(self.reasons()["run"])
 
-    # -- the minute meter feed beside moonlighter (masterrig, Max account 1) ---------------
-
-    def ceiling(self, *ago_s):
-        """A ceiling systemd log whose readings are `ago_s` seconds before NOW."""
-        log = self.tmp / "mis-usage-ceiling-systemd.log"
-        lines = [f"{datetime.fromtimestamp(NOW - a, timezone.utc).isoformat(timespec='seconds')} "
-                 f"5-hour 16% / 7-day 21% (warn 60% / hard 95% / week 95%)" for a in ago_s]
-        log.write_text("\n".join(lines + ["2026-10-02T01:59:00+00:00 READ FAILURE -- the ceiling is blind"]) + "\n")
-        self.c.ceiling_log = log
-        return log
-
-    def test_a_ceiling_feed_that_stopped_fails_collection(self):
-        # 2026-10-18T00:44Z: the ceiling stopped on READ FAILURE; moonlighter's 30-min samples
-        # carried on and health said ok for five days.
-        from tracker.samples import parse_ceiling_log
-        log = self.ceiling(3 * 3600, 2 * 3600)
-        self.assertEqual(len(parse_ceiling_log(log.read_text().splitlines())), 2,
-                         "precondition: the fixture is the format tracker/passive.py reads")
-        reason = self.reasons()["collection"]
-        self.assertIn("collection: the ceiling feed mis-usage-ceiling-systemd.log has not read for 2h00m", reason)
-        self.assertNotIn("newest meter sample", reason, "moonlighter is fresh")
-
-    def test_a_reading_ceiling_feed_and_no_ceiling_feed_pass(self):
-        self.ceiling(600, 120)
-        self.assertIsNone(self.reasons()["collection"])
-        self.c.ceiling_log = self.tmp / "absent.log"
-        self.assertIsNone(self.reasons()["collection"])
+    def test_masterrig_reads_no_ceiling_feed(self):
+        # The ceiling log stopped on 2026-10-18 (mis-usage-ceiling.service: not-found) and
+        # a1's meter log replaces it (fix/a1-meter-feed's `meters` check). A collection
+        # check on the dead log failed forever and, first in the order, hid every other
+        # masterrig check (review of 359b7c1).
+        self.assertFalse(hasattr(health, "CEILING_LOG"))
+        self.assertNotIn("--ceiling-log", health.build_parser().format_help())
+        self.assertIsNone(health.check_collection(self.c, NOW))
 
     # -- the page readers get (masterrig: the live URL) ----------------------------------
 
@@ -386,6 +367,26 @@ class GsProfileTest(unittest.TestCase):
                       health.first_failure(self.c, NOW))
         advisory.record(state, "tools.model_rates", 0, NOW)
         self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_all_failures_names_the_advisory_step_behind_a_withheld_run(self):
+        # The supervisor read first_failure: while `run` failed (the page withheld), the
+        # refit crashing for days behind it never reached an alert.
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.state.write_text(json.dumps({"last_ok": NOW - 5 * 3600, "last_fail": NOW - 60, "last_exit": 9}))
+        self.publish(NOW - 5 * 3600)
+        first = health.first_failure(self.c, NOW)
+        every = health.all_failures(self.c, NOW, skip=("lock",))
+        self.assertNotIn("advisory", first)
+        parts = every.split(" | ")
+        self.assertEqual([p.split(":")[0] for p in parts], ["run", "page", "advisory"])
+        self.assertTrue(parts[2].startswith("advisory: tools.model_rates has failed on every run"))
+        advisory.record(state, "tools.model_rates", 0, NOW)
+        self.state.write_text(json.dumps({"last_ok": NOW - 60}))
+        self.publish(NOW - 60)
+        self.assertIsNone(health.all_failures(self.c, NOW))
 
     def test_an_advisory_step_inside_its_grace_or_no_longer_run_passes(self):
         from tracker import advisory

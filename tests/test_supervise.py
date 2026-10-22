@@ -35,7 +35,7 @@ class SuperviseTest(unittest.TestCase):
         self.health_reason: str | None = None
         self.t = 1_000_000.0
         self.sleeps: list[float] = []
-        patcher = mock.patch.object(health, "first_failure", lambda *a, **k: self.health_reason)
+        patcher = mock.patch.object(health, "all_failures", lambda *a, **k: self.health_reason)
         patcher.start()
         self.addCleanup(patcher.stop)
         # Belt and braces: a test must never reach the real WhatsApp path.
@@ -155,7 +155,85 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(st["incident_kinds"], ["runs"])
         self.assertEqual(supervise.health_kinds(run), {"runs"})
 
-    def test_page_advisory_and_ceiling_reasons_are_their_own_kinds(self):
+    # The review of 359b7c1: the supervisor read only health's first failure, so `advisory`
+    # (last in gs's order) never alerted while `run` failed, and a blind dave meter ahead of
+    # it sent "advisory/tools.model_rates recovered" for a step still crashing.
+    ALL_FAILURES = staticmethod(health.all_failures)   # the real one: setUp patches it
+    ADVISORY = ("advisory: tools.model_rates has failed on every run for 4h00m (limit 3h00m, last exit 1); "
+                "the publish keeps using its previous output")
+    DAVE = ("meters: dave is blind, no reading in claude-usage-meter-dave.log for 1h10m (limit 1h00m; "
+            "header probe held, no session on this host since its window lapsed): the publisher uses "
+            "this account, so what it spends meanwhile is not measured")
+
+    def test_a_blind_meter_beside_a_crashing_step_never_reads_as_the_step_recovering(self):
+        sent: list[str] = []
+        st = {"consecutive_failures": 0}
+        t = 0.0
+        seq = [self.ADVISORY] * 4 + [f"{self.DAVE} | {self.ADVISORY}"] * 6 + [self.ADVISORY] * 4
+        for reason in seq:
+            supervise.decide_alert(st, t, reason, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+            t += 1800
+        self.assertEqual(len(sent), 3, sent)
+        self.assertIn("needs attention: advisory: tools.model_rates", sent[0])
+        self.assertIn("further problem: meters: dave is blind", sent[1])
+        self.assertNotIn("tools.model_rates", sent[1], "the further problem names only what is new")
+        self.assertIn("meters/dave recovered; still failing: advisory: tools.model_rates", sent[2])
+        self.assertFalse(any("advisory/tools.model_rates recovered" in m for m in sent), sent)
+        self.assertEqual(st["incident_kinds"], ["advisory/tools.model_rates"])
+
+    def test_a_brief_fault_beside_a_lasting_one_is_neither_a_problem_nor_a_recovery(self):
+        # Each kind keeps its own clock: a 30-min dave gap inside an hours-old advisory
+        # incident is not stale yet, so it is not a further problem and not a recovery.
+        sent: list[str] = []
+        st = {"consecutive_failures": 0}
+        for t, reason in ((0, self.ADVISORY), (3600, self.ADVISORY), (5400, f"{self.DAVE} | {self.ADVISORY}"),
+                          (7200, self.ADVISORY), (9000, self.ADVISORY)):
+            supervise.decide_alert(st, t, reason, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, sent)
+        self.assertNotIn("meters/dave", st["kinds_since"])
+
+    def test_a_stale_page_while_the_runs_fail_is_the_same_incident(self):
+        # A withheld publish fails the runs (exit 9) and, two hours on, the page's age: one
+        # fault. The page going stale with the runs succeeding is its own (a failed deploy).
+        sent: list[str] = []
+        page = "page: the published JSON in the site checkout (claude-usage.json) was generated 3h00m ago"
+        st = {"consecutive_failures": 1, "last_reason": "withheld", "last_exit": 9}
+        for t in range(0, 6 * 3600, 1800):
+            st["consecutive_failures"] += 1
+            supervise.decide_alert(st, t, page if t >= 3600 else None, 2, 3600.0,
+                                   lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, sent)
+        self.assertEqual(supervise.health_kinds(page), {"page/age"})
+        st2 = {"consecutive_failures": 0}
+        for t in (0, 3600):
+            supervise.decide_alert(st2, t, page, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertIn("needs attention: page:", sent[-1])
+
+    def test_a_state_from_before_per_kind_clocks_keeps_its_clock(self):
+        sent: list[str] = []
+        st = {"consecutive_failures": 0, "unhealthy_since": 0}
+        supervise.decide_alert(st, 3600, self.ADVISORY, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, "the deploy must not restart an hour-old fault's clock")
+        self.assertNotIn("unhealthy_since", st)
+        self.assertEqual(st["kinds_since"], {"advisory/tools.model_rates": 0})
+
+    def test_the_supervisor_alerts_on_every_failing_check_not_the_first(self):
+        # A withheld run fails `run`, and the refit has crashed for hours: both are kinds.
+        reasons = [("run", "run: bin/daily.sh withheld the public JSON (exit 9): the page is not updating"),
+                   ("page", None), ("advisory", self.ADVISORY)]
+        with mock.patch.object(health, "all_failures", self.ALL_FAILURES), \
+                mock.patch.object(health, "run_checks", lambda *a, **k: reasons):
+            for _ in range(3):
+                self.run_cmd(9, retries=0, fail_threshold=2)
+                self.t += 1800
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["advisory/tools.model_rates", "runs"])
+        self.assertIn("advisory: tools.model_rates", st["last_health"])
+        self.assertIn("run: bin/daily.sh withheld", st["last_health"])
+        self.assertEqual(len(self.send.sent), 2, self.send.sent)
+        self.assertIn("further problem: advisory: tools.model_rates", self.send.sent[1])
+
+    def test_page_and_advisory_reasons_are_their_own_kinds(self):
         self.assertEqual(supervise.health_kinds("page: cannot fetch https://x for 2h10m (grace 2h00m): URLError"),
                          {"page/fetch"})
         self.assertEqual(supervise.health_kinds("page: https://x was generated 3h00m ago (limit 2h00m)"),
@@ -163,9 +241,6 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(supervise.health_kinds(
             "advisory: tools.model_rates has failed on every run for 4h00m | advisory: tracker.gs_passive has failed"),
             {"advisory/tools.model_rates", "advisory/tracker.gs_passive"})
-        self.assertEqual(supervise.health_kinds(
-            "collection: newest meter sample is 2h00m old | collection: the ceiling feed x.log has not read"),
-            {"collection", "collection/ceiling"})
 
     def test_one_account_recovering_under_an_open_meters_incident_is_reported(self):
         sent, ups = [], []
@@ -346,9 +421,9 @@ class ProfileArgsTest(unittest.TestCase):
     def test_masterrig_defaults_unchanged(self):
         kw = self.captured("--kuma-url-file", "/x/url")
         self.assertEqual((kw["retries"], kw["fail_threshold"], kw["label"]), (2, 3, "masterrig"))
-        # The live page and the minute meter feed: a bare Config (as tests build) leaves both out.
+        # The live page: a bare Config (as tests build) leaves it out.
         cfg = kw["health_cfg"]
-        self.assertEqual((cfg.page_url, cfg.ceiling_log), (health.LIVE_PAGE_URL, health.CEILING_LOG))
+        self.assertEqual(cfg.page_url, health.LIVE_PAGE_URL)
         self.assertIsNone(cfg.checks)
         self.assertEqual(cfg.state, supervise.ROOT / ".supervise-state.json")
         self.assertEqual(cfg.lock_pidfile, supervise.ROOT / ".supervise.pid")

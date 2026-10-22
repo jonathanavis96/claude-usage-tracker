@@ -42,7 +42,7 @@ class DeadmanTest(unittest.TestCase):
         self.url_file = self.tmp / "kuma-push-url"
         self.url_file.write_text(f"http://127.0.0.1:{self.server.server_port}/api/push/TOKEN?status=up&msg=OK\n")
         self.health_reason = None
-        p = mock.patch.object(health, "first_failure", lambda *a, **k: self.health_reason)
+        p = mock.patch.object(health, "all_failures", lambda *a, **k: self.health_reason)
         p.start()
         self.addCleanup(p.stop)
         g = mock.patch.object(supervise, "whatsapp_sender", side_effect=AssertionError("real send"))
