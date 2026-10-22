@@ -11,6 +11,7 @@ from tracker.turns import (
     normalize_model,
     session_tokens_by_model,
     transcript_paths,
+    transcript_session_id,
 )
 
 
@@ -94,6 +95,42 @@ class TurnTests(unittest.TestCase):
             since = datetime(2026, 1, 1, tzinfo=timezone.utc)
             self.assertEqual(transcript_paths(Path(d), since), [new])
             self.assertEqual(set(transcript_paths(Path(d), None)), {old, new})
+
+
+    def test_paths_follow_a_symlinked_project_once_and_never_loop(self):
+        # masterrig: ~/.claude-avis/projects/<bob-ross-skin> links into ~/.claude/projects.
+        # Path.rglob does not follow it and saw 13M of avis's 2,499M tokens.
+        with tempfile.TemporaryDirectory() as d:
+            elsewhere = Path(d, "elsewhere", "-skin")
+            elsewhere.mkdir(parents=True)
+            (elsewhere / "s.jsonl").write_text("")
+            (elsewhere / "back").symlink_to(elsewhere)  # a loop
+            root = Path(d, "projects")
+            root.mkdir()
+            (root / "-skin").symlink_to(elsewhere)
+            self.assertEqual(transcript_paths(root, None), [root / "-skin" / "s.jsonl"])
+
+    def test_keep_drops_turns_after_they_are_counted_as_seen(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d, "a.jsonl"), Path(d, "b.jsonl")
+            a.write_text("\n".join([rec("m1"), rec("m2")]) + "\n")
+            b.write_text(rec("m2") + "\n")
+            seen: set[str] = set()
+            kept = list(iter_turns([a], keep=lambda p, t: t.id == "m1", seen=seen))
+            self.assertEqual([t.id for t in kept], ["m1"])
+            self.assertEqual(list(iter_turns([b], seen=seen)), [])
+
+
+class SessionIdTests(unittest.TestCase):
+    def test_a_sub_agent_at_any_depth_belongs_to_the_session_above_its_subagents_dir(self):
+        # Claude Code's workflow sub-agents sit at <sid>/subagents/workflows/wf_<id>/agent-<id>.jsonl,
+        # and every line carries the ancestor's sessionId; the old parent-only test returned
+        # `agent-<id>` and sent 237 jwork and 34 avis files on gs to the unclaimed pool.
+        p = Path("/p/-proj")
+        self.assertEqual(transcript_session_id(p / "abc.jsonl"), "abc")
+        self.assertEqual(transcript_session_id(p / "abc" / "subagents" / "agent-1.jsonl"), "abc")
+        self.assertEqual(transcript_session_id(p / "abc" / "subagents" / "workflows" / "wf_9" / "agent-2.jsonl"),
+                         "abc")
 
 
 class NormalizeModelTests(unittest.TestCase):

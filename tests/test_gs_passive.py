@@ -1,13 +1,17 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from itertools import pairwise
 from pathlib import Path
+from unittest import mock
 
 from tracker.gs_passive import (
     JWORK_CEILING_SINCE,
     Account,
+    _split_sources,
+    account_turns,
     gs_accounts,
     load_samples,
     main,
@@ -728,3 +732,189 @@ class UnreadableOutTest(unittest.TestCase):
         code, before, after = self._run("[1, 2]\n")
         self.assertNotEqual(code, 0)
         self.assertEqual(after, before)
+
+
+def _signed_in(config_dir: Path, uuid: str) -> None:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": uuid}}))
+
+
+class AccountIdentityTests(unittest.TestCase):
+    """Claims keyed by account, not config dir (2026-10-23 capture fix)."""
+
+    def test_a_second_dir_signed_into_the_same_account_is_this_account_not_another_login(self):
+        # gs: ~/.claude-jono and ~/.claude-javiswork both carry jwork's identity 5bb57a97fb8b,
+        # and jono's sessions were dropped as another login's (`dropped_to {'.claude-jono': 7}`).
+        with tempfile.TemporaryDirectory() as d:
+            home = jwork_home(Path(d))
+            shared = home / ".claude" / "projects" / "-proj"
+            (shared / "jono-session.jsonl").write_text(turn_line(T0, "jn") + "\n")
+            (shared / "s.jsonl").rename(shared / "javis-session.jsonl")
+            for name in (".claude-javiswork", ".claude-jono"):
+                _signed_in(home / name, "uuid-jwork")
+            (home / ".claude-javiswork" / "session-env" / "javis-session").mkdir(parents=True)
+            (home / ".claude-jono" / "session-env" / "jono-session").mkdir(parents=True)
+            files, meta = transcript_files(gs_accounts(home)["jwork"], None, home=home)
+            self.assertEqual(sorted(p.stem for p in files), ["javis-session", "jono-session"])
+            self.assertEqual(meta["dropped_to"], {})
+            self.assertEqual(meta["same_account"], [".claude-jono"])
+
+    def test_a_nested_workflow_sub_agent_belongs_to_its_parent_session(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = jwork_home(Path(d))
+            nested = home / ".claude" / "projects" / "-proj" / "s" / "subagents" / "workflows" / "wf_a" / "agent-b.jsonl"
+            nested.parent.mkdir(parents=True)
+            nested.write_text(turn_line(T0, "nested") + "\n")
+            (home / ".claude-javiswork" / "session-env" / "s").mkdir(parents=True)
+            files, meta = transcript_files(gs_accounts(home)["jwork"], None, home=home)
+            self.assertIn(home / ".claude-javiswork" / "projects" / nested.relative_to(home / ".claude" / "projects"),
+                          files)
+            self.assertEqual((meta["unclaimed"], meta["subagent_files"]), (0, 1))
+
+
+class SharedSubtreeTests(unittest.TestCase):
+    """masterrig: ~/.claude-avis/projects/<bob-ross-skin> links into ~/.claude/projects, and a1's
+    own join counted avis's work there (tokens_per_pct 10.7M on 17 Oct, 47.5M on 18 Oct)."""
+
+    def test_a_project_another_login_links_in_is_split_between_them_by_claim_time(self):
+        from tracker import extract
+        real = extract._births
+        extract._births = lambda paths: {p: p.stat().st_mtime for p in paths}
+        self.addCleanup(setattr, extract, "_births", real)
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            _signed_in(home / ".claude", "uuid-a1")
+            _signed_in(home / ".claude-avis", "uuid-avis")
+            skin = home / ".claude" / "projects" / "-skin"
+            skin.mkdir(parents=True)
+            (home / ".claude-avis" / "projects").mkdir()
+            (home / ".claude-avis" / "projects" / "-skin").symlink_to(skin)
+            own = home / ".claude" / "projects" / "-own"
+            own.mkdir()
+            (own / "mine.jsonl").write_text(turn_line(T0, "own") + "\n")
+            (skin / "avis-only.jsonl").write_text(turn_line(T0, "av") + "\n")
+            (skin / "both.jsonl").write_text("\n".join(turn_line(T0 + timedelta(hours=h), f"b{h}")
+                                                       for h in range(4)) + "\n")
+            (skin / "nobody.jsonl").write_text(turn_line(T0, "nb") + "\n")
+            for cfg, sid, at in ((".claude-avis", "avis-only", T0), (".claude-avis", "both", T0),
+                                 (".claude", "both", T0 + timedelta(hours=1, minutes=30))):
+                p = home / cfg / "session-env" / sid
+                p.mkdir(parents=True)
+                os.utime(p, (at.timestamp(),) * 2)
+            account = Account("masterrig", home / ".claude", home / "m.log", "moonlighter")
+            split = _split_sources(account, None, home=home)
+            self.assertEqual(sorted(p.stem for p in split.kept), ["both", "mine"])
+            self.assertEqual(split.meta["dropped_to"], {".claude-avis": 1})
+            self.assertEqual((split.meta["unclaimed"], split.meta["contested"]), (1, 1))
+            turns, per_source = account_turns(split)
+            # b0 and b1 are avis's (its claim at T0), b2 and b3 a1's (its claim at +1h30).
+            self.assertEqual(sorted(t.id for t in turns), ["b2", "b3", "own"])
+            self.assertEqual(per_source, [{"source": "live", "root": str(home / ".claude" / "projects"),
+                                           "files": 2, "turns": 3}])
+
+    def test_a_tree_nobody_links_into_is_read_whole_as_before(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            (home / ".claude" / "projects" / "-p").mkdir(parents=True)
+            (home / ".claude" / "projects" / "-p" / "a.jsonl").write_text(turn_line(T0, "a") + "\n")
+            (home / ".claude-avis" / "projects" / "-q").mkdir(parents=True)
+            split = _split_sources(Account("m", home / ".claude", home / "m.log", "moonlighter"), None, home=home)
+            self.assertEqual(([p.stem for p in split.kept], split.meta), (["a"], None))
+
+
+class OtherSourcesTests(unittest.TestCase):
+    """Every host's work and the archived history, joined by identity (2026-10-23)."""
+
+    def _dave(self, d: Path) -> Path:
+        home = dave_home(d)
+        _signed_in(home / ".claude-dave", "uuid-dave")
+        return home
+
+    def test_shipped_extracts_join_by_setup_token_and_count_each_message_once(self):
+        from tracker.extract import token_fingerprint
+        with tempfile.TemporaryDirectory() as d:
+            home = self._dave(Path(d))
+            remote = home / ".paperclip" / "ops" / "remote-transcripts" / "rig"
+            # One more dollar of stretch 0's work was done on masterrig; m0 is in both places.
+            ship = remote / token_fingerprint("fake-setup-token-dave") / "-q" / "r.jsonl"
+            ship.parent.mkdir(parents=True)
+            ship.write_text("\n".join([turn_line(T0 + timedelta(minutes=1), "m0"),
+                                       turn_line(T0 + timedelta(minutes=2), "rig1")]) + "\n")
+            (remote / "tok-000000000000" / "-z").mkdir(parents=True)
+            units = home / ".config" / "systemd" / "user"
+            units.mkdir(parents=True)
+            (units / "claude-usage-meter-dave.service").write_text(
+                "ExecStart=/usr/bin/python3 -m tracker.meter_log --config-dir %h/.claude-dave --token-env GS_T_DAVE\n")
+            env = home / ".config" / "greenscape" / "env"
+            env.parent.mkdir(parents=True)
+            env.write_text("GS_T_DAVE=fake-setup-token-dave\n")
+            r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1), home=home)
+        dave = r["accounts"]["dave"]
+        self.assertEqual([(s["source"], s["files"], s["turns"]) for s in dave["transcripts"]["sources"]],
+                         [("live", 2, 40), ("remote:rig", 1, 1)])
+        self.assertAlmostEqual(dave["stretches"][0]["usd_per_pct"], 0.6)  # $6 for 10%
+        self.assertEqual(r["remote_unjoined"], [{"host": "rig", "identity": "tok-000000000000", "files": 0}])
+        self.assertEqual(r["sources_version"], 2)
+
+    def test_the_archive_of_an_accounts_directory_is_read_in_place(self):
+        import io
+        import tarfile
+        with tempfile.TemporaryDirectory() as d:
+            home = self._dave(Path(d))
+            held = home / ".claude-dave" / "projects" / "-proj-b" / "s2.jsonl"
+            data = "\n".join(turn_line(T0 + timedelta(minutes=5 * i + 1), f"old{i}") for i in range(5)).encode()
+            held.write_text("")  # its turns now live only in the archive
+            adir = home / "archive" / "transcripts-20261015" / "claude-dave"
+            adir.mkdir(parents=True)
+            with tarfile.open(adir / "-proj-b.tar.gz", "w:gz") as tf:
+                info = tarfile.TarInfo("-proj-b/s2.jsonl")
+                info.size, info.mtime = len(data), int(T0.timestamp())
+                tf.addfile(info, io.BytesIO(data))
+            r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1), home=home)
+        sources = r["accounts"]["dave"]["transcripts"]["sources"]
+        self.assertEqual([(s["source"], s["turns"]) for s in sources],
+                         [("live", 40), ("archive:transcripts-20261015/claude-dave", 5)])
+
+
+class TranscriptLossTests(unittest.TestCase):
+    """2026-10-15: a gs disk cleanup deleted every transcript older than 14 days, and the next run
+    rewrote all of September with no tokens, silently (jwork 91,131 -> 18,209 turns)."""
+
+    def test_lost_transcripts_stop_the_rewrite_and_print_the_incident_until_accepted(self):
+        import contextlib
+        import io
+
+        from tracker import gs_passive
+        from tracker.gs_passive import LOSS_EXIT, LOSS_MARKER
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            home = dave_home(d, stretches=150)
+            # A full run is what the guard compares; this home has dave alone.
+            accounts = {"dave": gs_accounts(home)["dave"]}
+            with mock.patch.object(gs_passive, "gs_accounts", return_value=accounts):
+                prices, out = d / "prices.json", d / "gs-passive.json"
+                prices.write_text(json.dumps(PRICES))
+                args = ["--home", str(home), "--prices", str(prices), "--probes", str(d / "none.jsonl"),
+                        "--out", str(out)]
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(main(args), 0)
+                before = out.read_bytes()
+                (home / ".claude-dave" / "projects" / "-proj-a" / "s1.jsonl").write_text("")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(main(args), LOSS_EXIT)
+                self.assertEqual(out.read_bytes(), before)
+                self.assertIn(f"{LOSS_MARKER} gs_passive: dave transcript turns fell 750 -> 0 (100%)", err.getvalue())
+                self.assertIn("live 2->2 files, 750->0 turns", err.getvalue())
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(main(args + ["--accept-loss"]), 0)
+                self.assertNotEqual(out.read_bytes(), before)
+
+    def test_a_record_counted_another_way_is_not_compared(self):
+        from tracker.gs_passive import transcript_loss
+        prev = {"accounts": {"jwork": {"transcripts": {"turns": 91131}}}}
+        cur = {"sources_version": 2, "accounts": {"jwork": {"transcripts": {"turns": 18209}}}}
+        self.assertEqual(transcript_loss(prev, cur), [])
+        self.assertEqual(len(transcript_loss({**prev, "sources_version": 2}, cur)), 1)
+        small = {"sources_version": 2, "accounts": {"jwork": {"transcripts": {"turns": 90800}}}}
+        self.assertEqual(transcript_loss({**prev, "sources_version": 2}, small), [])
