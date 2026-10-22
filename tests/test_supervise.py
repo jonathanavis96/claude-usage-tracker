@@ -126,6 +126,47 @@ class SuperviseTest(unittest.TestCase):
                 self.run_cmd(0)
                 self.assertIn("recovered", self.send.sent[-1])
 
+    def test_a_withheld_publish_exit_9_is_a_failed_run_never_retried(self):
+        # bin/daily.sh exits 9 when a blocking invariant withheld the public JSON. Neither
+        # profile retries it (masterrig's default is 2 retries), and it counts as a failure:
+        # on gs's threshold of 2 the incident opens on the second run, an hour in.
+        self.assertEqual(self.run_cmd(9, retries=2, backoff=5, fail_threshold=2), 9)
+        self.assertEqual(self.sleeps, [], "a withheld publish withholds again on the same inputs")
+        st = self.st()
+        self.assertEqual((st["last_exit"], st["consecutive_failures"]), (9, 1))
+        self.assertIn("withheld", st["last_reason"])
+        self.assertEqual(self.send.sent, [])
+        self.t += 1800
+        self.run_cmd(9, retries=0, fail_threshold=2)
+        self.assertEqual(len(self.send.sent), 1)
+        self.assertIn("2 runs in a row failed (the public JSON was withheld", self.send.sent[0])
+        self.assertNotIn("last_ok", self.st(), "a withheld run is never a success")
+
+    def test_the_run_check_and_the_failed_runs_are_one_incident(self):
+        # A withheld run fails both the runs and the `run` health check. As two kinds, the
+        # health line arrived an hour later as a "further problem" about the same runs.
+        sent = []
+        run = "run: bin/daily.sh withheld the public JSON (exit 9), last successful run 30m ago: ..."
+        st = {"consecutive_failures": 1, "last_reason": "withheld"}
+        for t in (0, 1800, 3600, 5400, 7200):
+            st["consecutive_failures"] += 1
+            supervise.decide_alert(st, t, run, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, sent)
+        self.assertEqual(st["incident_kinds"], ["runs"])
+        self.assertEqual(supervise.health_kinds(run), {"runs"})
+
+    def test_page_advisory_and_ceiling_reasons_are_their_own_kinds(self):
+        self.assertEqual(supervise.health_kinds("page: cannot fetch https://x for 2h10m (grace 2h00m): URLError"),
+                         {"page/fetch"})
+        self.assertEqual(supervise.health_kinds("page: https://x was generated 3h00m ago (limit 2h00m)"),
+                         {"page/age"})
+        self.assertEqual(supervise.health_kinds(
+            "advisory: tools.model_rates has failed on every run for 4h00m | advisory: tracker.gs_passive has failed"),
+            {"advisory/tools.model_rates", "advisory/tracker.gs_passive"})
+        self.assertEqual(supervise.health_kinds(
+            "collection: newest meter sample is 2h00m old | collection: the ceiling feed x.log has not read"),
+            {"collection", "collection/ceiling"})
+
     def test_one_account_recovering_under_an_open_meters_incident_is_reported(self):
         sent, ups = [], []
         dave = "meters: newest usable reading in claude-usage-meter-dave.log is 1h old (limit 15m)"
@@ -297,13 +338,20 @@ class ProfileArgsTest(unittest.TestCase):
         kw = self.captured("--profile", "gs")
         self.assertEqual((kw["lock"], kw["state_path"], kw["log"]), (health.GS_LOCK, health.GS_STATE, health.GS_LOG))
         self.assertEqual((kw["retries"], kw["fail_threshold"], kw["label"]), (0, 2, "gs"))
-        self.assertEqual(kw["health_cfg"].checks, ("run", "meters", "lock", "sizes"))
+        self.assertEqual(kw["health_cfg"].checks, ("run", "page", "meters", "lock", "sizes", "advisory"))
+        self.assertEqual(kw["health_cfg"].page_json, health.GS_SITE / health.SITE_JSON)
+        self.assertEqual(kw["health_cfg"].advisory_state, health.GS_ADVISORY)
         self.assertEqual(kw["kuma_file"], supervise.kuma_url_file())
 
     def test_masterrig_defaults_unchanged(self):
         kw = self.captured("--kuma-url-file", "/x/url")
         self.assertEqual((kw["retries"], kw["fail_threshold"], kw["label"]), (2, 3, "masterrig"))
-        self.assertIsNone(kw["health_cfg"])
+        # The live page and the minute meter feed: a bare Config (as tests build) leaves both out.
+        cfg = kw["health_cfg"]
+        self.assertEqual((cfg.page_url, cfg.ceiling_log), (health.LIVE_PAGE_URL, health.CEILING_LOG))
+        self.assertIsNone(cfg.checks)
+        self.assertEqual(cfg.state, supervise.ROOT / ".supervise-state.json")
+        self.assertEqual(cfg.lock_pidfile, supervise.ROOT / ".supervise.pid")
         self.assertEqual(kw["lock"], supervise.ROOT / ".supervise.lock")
         self.assertEqual(kw["kuma_file"], Path("/x/url"))
 

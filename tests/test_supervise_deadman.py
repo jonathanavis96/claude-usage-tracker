@@ -89,6 +89,19 @@ class DeadmanTest(unittest.TestCase):
         self.run_cmd(0, self.url_file)
         self.assertEqual(_Handler.hits[2], "/api/push/TOKEN?status=up&msg=OK", "healthy runs ping up again")
 
+    def test_a_withheld_publish_never_pings_up_and_pushes_down_at_the_threshold(self):
+        # 2026-10-13..22: 450 withheld runs exited 0 and each pinged Kuma "up".
+        state = self.tmp / "state.json"
+        for _ in range(2):
+            supervise.supervise([PY, "-c", "raise SystemExit(9)"], lock=self.tmp / "s.lock", state_path=state,
+                                log=None, send=lambda t: self.sent.append(t) or True, retries=0,
+                                fail_threshold=2, health_cfg=health.Config(), sleep=lambda s: None,
+                                kuma_file=self.url_file)
+        self.assertEqual(len(_Handler.hits), 1, _Handler.hits)
+        self.assertIn("status=down", _Handler.hits[0])
+        self.assertIn("withheld", _Handler.hits[0])
+        self.assertEqual(json.loads(state.read_text())["last_exit"], 9)
+
     def test_kuma_down_unreachable_falls_back_to_sender(self):
         _Handler.status = 500
         for _ in range(3):

@@ -81,3 +81,38 @@ A ping goes only on a healthy run, so a run that keeps failing also goes silent 
 - `tracker.passive` exits 2 without writing when `history/passive.json` exists but does not parse: an unreadable record is never treated as an absent one. Restore it with `git checkout -- history/passive.json`.
 - `tracker.meter_log` honours a logged Retry-After up to 2 h (the endpoint's measured long block is 3,600 s).
 - A supervised run that times out is killed with its whole process group.
+
+## Loud failures (2026-10-22)
+
+From 2026-10-13T11:00Z the page stayed on its 13 October JSON for nine days. Blocking invariants withheld it on every run, `bin/daily.sh` exited 0, health said ok and Kuma kept getting "up". Each way the page can go stale now fails something.
+
+**Exit 9: withheld publish.** When `tracker.invariants` exits 2, `bin/daily.sh` puts the last published JSON back and finishes the run: it still commits the tracker state and runs notify. It then exits 9. `tracker.supervise` counts that as a failed run and never retries it, on either profile. The `run` health check fails at once with "bin/daily.sh withheld the public JSON (exit 9)". On gs the incident opens on the second withheld run in a row, about an hour in, and Kuma is pushed "down". The `run` check and the failed runs count as one incident, not two.
+
+**Invariant alerts** (`publish_gate.track_incident`):
+
+- One alert goes out when an incident opens.
+- Another, "the public JSON is WITHHELD … withheld since <UTC>", goes out when an already-open incident starts blocking.
+- That alert repeats every 24 h while the page stays withheld.
+- Nothing is sent when the set of failing checks changes; it changed 19 times between 4 and 22 October.
+- A withhold that clears and comes back within 24 h of the last message waits for the reminder.
+- The daily log shows what was actually sent, on its `invariants alert:` line. The old "(alerted)" claim is gone.
+
+**New and changed health checks:**
+
+| Line starts with | Host | Meaning |
+|---|---|---|
+| `page:` | gs | the site checkout's `claude-usage.json` has a `generated_at` older than 2 h, or cannot be read |
+| `page:` | masterrig | the live `https://alldonesites.com/data/claude-usage.json` is older than 2 h. "cannot fetch … for Nh" is a separate incident, raised only after 2 h of failed fetches in a row. The time of the first failure is kept in `~/.cache/claude-usage-tracker/page-fetch.json`. |
+| `advisory:` | gs | one of `tracker.list_prices`, `tracker.contributed`, `tracker.gs_passive` or `tools.model_rates` has failed on every run for 3 h. Each step is its own incident. Outcomes are recorded in `~/.paperclip/ops/claude-usage-advisory.json` (`tracker/advisory.py`). |
+| `meters: <account> is blind` | gs | an account that appears in `history/gs-passive.json` has had no meter reading for 1 h. This applies even when the cause is an idle token lapse, a held header probe or an honoured Retry-After, because use from another host goes unmeasured during the gap. |
+| `collection: the ceiling feed …` | masterrig | the minute feed `~/.paperclip/ops/mis-usage-ceiling-systemd.log` has not read for 1 h. Moonlighter's 30-minute samples alone form no stretches, which pair readings at most 15 min apart. This check is skipped when that log does not exist. |
+
+The supervisor alerts on a health failure only after it has lasted `--stale-after` (1 h), so a meter has to go 2 h without a reading before anyone hears about it. On the gs logs from 1 to 22 October there were nine such gaps, about one every 2.4 days. Three already failed under the old checks: the 2 October outage on avis and dave, and jwork's 41.7 h on 19-20 October. The other six are new alerts, all dave's overnight probe hold (3.7-5.4 h). Gaps of 1.1-1.3 h, usually a Retry-After, end before the alert would fire.
+
+**Subscriber email:** a change is emailed only when its `state` is "measured". A change with any other state (measuring, provisional, or none, as on a detector event) is not POSTed and not recorded in `.notified-change`. Jonathan gets one "Observed change, not emailed (<state>)" alert per change and state, keyed by a `<date> held:<state>` line in `.notify-attempts`. The change is emailed if it later reads "measured".
+
+**Deploy (director, after merge).** No crontab, systemd or key changes. Both crons already run `tracker.supervise` from the live checkouts, so the code takes effect once each checkout pulls main.
+
+1. gs: the next `bin/daily.sh` run pulls main itself. Then check: `ssh gs 'cd ~/claude-usage-tracker && python3 -m tracker.health --profile gs --all; tail -5 ~/.paperclip/ops/claude-usage-daily.log; cat ~/.paperclip/ops/claude-usage-daily-state.json'`. While the page is withheld, expect `last_exit: 9`, a `run:` line about exit 9, `page:` failing on the 13 October JSON, and on the next run an `invariants alert: withheld alert sent` line, because the open incident has no `withheld_alerted_at` yet.
+2. masterrig: `bin/passive.sh` pulls main when its 20-hour stamp or new `tracker/` code on main says to run. Check with `cd ~/code/claude-usage-tracker && python3 -m tracker.health --all`. Expect `collection: the ceiling feed … has not read` (the feed stopped 2026-10-18T00:44Z) and `page: https://alldonesites.com/… was generated …` until gs publishes again.
+3. Expect alerts within about an hour of each host running the new code: gs Kuma down, the gs invariants "WITHHELD" email, and the masterrig ceiling-feed and page incidents. Those alerts are the intended result. They clear when the page publishes and the a1 minute feed reads again.

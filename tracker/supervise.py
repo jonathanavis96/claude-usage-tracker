@@ -46,6 +46,8 @@ An alert that fails to send leaves the incident unopened, so the next run tries 
 
 Exit 3 from bin/passive.sh means the checkout is off main: a retry cannot fix that, so it
 is not retried, counts as a failed run, and opens an incident on the first occurrence.
+Exit 9 from bin/daily.sh means a blocking invariant withheld the public JSON: not retried,
+a failed run, an incident after --fail-threshold runs in a row (an hour on gs).
 
 Exit status is the command's last exit status (0 when skipped).
 """
@@ -81,8 +83,17 @@ EXIT_OP_IN_PROGRESS = 8
 #: so a dirty tree can be brief: it is named in the alert but waits for --fail-threshold.
 EXIT_DIRTY = 4
 EXIT_NEEDS_HAND = (EXIT_OFF_MAIN, EXIT_PULL_CONFLICT, EXIT_OP_IN_PROGRESS)
+#: bin/daily.sh: a blocking invariant withheld the public JSON, so the page kept the last one.
+#: Until 2026-10-22 that run exited 0: 450 runs from 2026-10-13T11:00Z withheld the page while
+#: this recorded health ok and pinged Kuma "up". It is a failed run (an incident after
+#: --fail-threshold, Kuma down), never retried: the same inputs withhold again, and daily.sh
+#: runs again in 30 minutes anyway.
+EXIT_WITHHELD = 9
+NO_RETRY = (*EXIT_NEEDS_HAND, EXIT_WITHHELD)
 #: The alert's reason for a wrapper's own exit codes; any other code reads "exit N after M attempts".
 EXIT_REASONS = {
+    EXIT_WITHHELD: ("the public JSON was withheld by a blocking invariant (exit 9): the page keeps its last "
+                    "published JSON; the invariants alert names the checks"),
     EXIT_OFF_MAIN: "checkout is off main (exit 3), run `git checkout main`",
     EXIT_DIRTY: "tracker/ has uncommitted changes in the cron checkout (exit 4): commit or stash them",
     EXIT_PULL_CONFLICT: ("git pull hit a conflict with origin/main (exit 7); the rebase was aborted and the "
@@ -277,7 +288,7 @@ def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: floa
                     out.close()
                 except OSError:
                     pass
-        if code == 0 or code in EXIT_NEEDS_HAND or attempt == retries:
+        if code == 0 or code in NO_RETRY or attempt == retries:
             return code
         sleep(backoff * (2 ** attempt))
     return code
@@ -289,7 +300,11 @@ def health_kinds(reason: str | None) -> set[str]:
     One check can cover several things that fail on their own: `meters` covers one log
     per account (its reasons are joined with " | "), `publisher` both the tracker commit
     and the site push. Keying by check name alone let one account's open incident hide
-    another account's fault and withhold the first one's recovery."""
+    another account's fault and withhold the first one's recovery.
+
+    The `run` check failing is the runs failing, so it is the kind "runs", not a second
+    one: a withheld publish (exit 9) fails both, and as two kinds it sent a "further
+    problem" an hour after the incident opened, about the same runs."""
     kinds: set[str] = set()
     for part in (reason or "").split(" | "):
         part = part.strip()
@@ -297,10 +312,19 @@ def health_kinds(reason: str | None) -> set[str]:
             continue
         name = part.split(":")[0]
         m = re.search(r"claude-usage-meter-([\w.-]+?)\.log", part)
+        step = re.match(r"advisory: (\S+)", part)
         if m:
             kinds.add(f"{name}/{m.group(1)}")
         elif name == "publisher":
             kinds.add("publisher/site-push" if "site push" in part else "publisher/commit")
+        elif name == "run":
+            kinds.add("runs")
+        elif name == "page":
+            kinds.add("page/fetch" if "cannot fetch" in part else "page/age")
+        elif step:
+            kinds.add(f"advisory/{step.group(1)}")
+        elif name == "collection":
+            kinds.add("collection/ceiling" if "ceiling" in part else "collection")
         else:
             kinds.add(name)
     return kinds
@@ -474,7 +498,8 @@ def main(argv: list[str] | None = None) -> int:
     lock = a.lock or (health.GS_LOCK if gs else ROOT / ".supervise.lock")
     state = a.state or (health.GS_STATE if gs else ROOT / ".supervise-state.json")
     log = a.log or (health.GS_LOG if gs else None)
-    cfg = health.gs_config(state=state, pidfile=lock.with_suffix(".pid"), logs=(log,) if log else ()) if gs else None
+    cfg = (health.gs_config(state=state, pidfile=lock.with_suffix(".pid"), logs=(log,) if log else ()) if gs
+           else health.masterrig_config(state=state, pidfile=lock.with_suffix(".pid"), logs=(log,) if log else ()))
     return supervise(cmd, lock=lock, state_path=state, log=log,
                      retries=a.retries if a.retries is not None else (0 if gs else 2), backoff=a.backoff,
                      max_log_bytes=a.max_log_bytes, keep=a.keep,

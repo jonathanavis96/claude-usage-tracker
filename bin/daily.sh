@@ -19,6 +19,9 @@
 # unchanged, no commit is made in the site repo.
 #
 # Exit 6 is this wrapper's own: the tracker lock was still held after 10 minutes.
+# Exit 9: a blocking invariant withheld the public JSON, so the page kept the last one
+# (tracker.supervise counts it a failed run). Until 2026-10-22 that run exited 0, and the
+# page sat at 2026-10-13T10:31Z for nine days while every run read as a success.
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$(dirname "$0")/.." || exit 1
@@ -89,6 +92,17 @@ else
     || { echo "error: could not clone site repo" >&2; exit 1; }
 fi
 
+# The advisory steps below never stop the publish: a failure is one warning line and the
+# publish carries on with the step's previous output. Every outcome is also recorded
+# (tracker/advisory.py), so a step that fails on every run becomes its own incident after a
+# grace period (tracker.health check `advisory`) rather than a warning line forever: from
+# 2026-10-13T19:30Z the model_rates refit crashed on every run, 48 a day, and nothing alerted.
+# advisory STEP EXIT WHAT-THE-PUBLISH-USES-INSTEAD
+advisory() {
+  [ "$2" -eq 0 ] || echo "warning: $1 failed with exit $2, $3" >&2
+  python3 -m tracker.advisory --step "$1" --exit "$2" || true
+}
+
 # List prices for new models (tracker/list_prices.py, issue #130): a model the
 # stretch histories carry with no row in data/prices.json gets the row the pricing
 # page lists, so its stretches stop being dropped as unpriced. Runs before every
@@ -98,8 +112,8 @@ fi
 # warning line and no change.
 python3 -m tracker.list_prices \
   --prices data/prices.json \
-  --stretches history/gs-passive.json history/masterrig-passive.json \
-  || echo "warning: tracker.list_prices failed with exit $?, publishing with the current price table" >&2
+  --stretches history/gs-passive.json history/masterrig-passive.json
+advisory tracker.list_prices $? "publishing with the current price table"
 
 # Contributed meter samples (tracker/contributed.py): pull every stored sample
 # from the site's export endpoint (bearer secret from the notify env file, never
@@ -111,8 +125,8 @@ python3 -m tracker.contributed \
   --env-file "$HOME/.claude-usage-notify.env" \
   --history history/contributed.jsonl \
   --prices data/prices.json \
-  --out data/contributed.json \
-  || echo "warning: tracker.contributed failed with exit $?, publishing with the previous contributed block" >&2
+  --out data/contributed.json
+advisory tracker.contributed $? "publishing with the previous contributed block"
 
 # This host's own per-account passive join (issue #39): dave's and jwork's own
 # transcripts (sub-agents included) against their own meters. The capture check
@@ -123,8 +137,8 @@ python3 -m tracker.contributed \
 python3 -m tracker.gs_passive \
   --prices data/prices.json \
   --probes history/probes.jsonl \
-  --out history/gs-passive.json \
-  || echo "warning: tracker.gs_passive failed with exit $?, publishing with the previous gs-passive.json" >&2
+  --out history/gs-passive.json
+advisory tracker.gs_passive $? "publishing with the previous gs-passive.json"
 
 # The per-model credit rates (tools/model_rates.py), refitted once a day from
 # the passive histories so a new account, a new model family or a provisional rate
@@ -145,8 +159,8 @@ rates_due() {
 }
 if rates_due; then
   PYTHONPATH=. nice python3 -m tools.model_rates history/masterrig-passive.json \
-    --json history/model-rates.json > /dev/null \
-    || echo "warning: tools.model_rates failed with exit $?, publishing with the previous model-rates.json" >&2
+    --json history/model-rates.json > /dev/null
+  advisory tools.model_rates $? "publishing with the previous model-rates.json"
 fi
 
 python3 -m tracker.publish \
@@ -176,22 +190,27 @@ fi
 # the numbers keep flowing and the gate sends one WhatsApp alert per incident (and one
 # when it passes again) through tracker.supervise's sender.
 nice python3 -m tracker.publish_gate \
-  || echo "warning: publish test gate failed (alerted), publishing anyway" >&2
+  || echo "warning: publish test gate failed (its alert line is above), publishing anyway" >&2
 # Invariants over the JSON just built (tracker/invariants.py): the headline inside its
 # accounts, no step a change that failed ADR 0001 rules 8 and 9 scales, direct figures
 # published as measured, account units, steps that agree with the meters. On 2026-10-04 a
 # window chained through two unproven steps reached the page unnoticed. Same semantics as
-# the gate: one alert when a check starts failing, one on recovery. Checks 1-6 never block
+# the gate: one alert when a check starts failing, one on recovery, plus one when the page
+# starts being withheld and a reminder every 24 h while it is; its "invariants alert:" line
+# says what it sent. Checks 1-6 never block
 # (exit 1). Checks 7-9 (exit 2: the headline, the charts and the published changes give one
 # change different percents, or a windows-per-week step the weekly and window steps do not
-# imply) fail the publish: the last published JSON is put back and the site gets no commit.
+# imply) fail the publish: the last published JSON is put back, the site gets no commit,
+# and the run finishes (state commit, notify) and exits 9.
 python3 -m tracker.invariants --json "$SITE/website/public/data/claude-usage.json"
 inv_rc=$?
+withheld=0
 if [ "$inv_rc" -eq 2 ]; then
-  echo "error: public JSON invariants contradict the page (alerted), keeping the last published JSON" >&2
+  echo "error: public JSON invariants contradict the page, keeping the last published JSON" >&2
   git -C "$SITE" checkout -q -- website/public/data/claude-usage.json
+  withheld=1
 elif [ "$inv_rc" -ne 0 ]; then
-  echo "warning: public JSON invariants failed (alerted), publishing anyway" >&2
+  echo "warning: public JSON invariants failed, publishing anyway" >&2
 fi
 
 # Only these files are added and committed (`--only`): anything else staged in this
@@ -403,6 +422,48 @@ PYEOF
 )"
   [ -n "$body" ] || return 0
 
+  local date
+  date="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["date"])')"
+  local summary
+  summary="$(BODY="$body" python3 - <<'PYEOF'
+import json, os
+c = json.loads(os.environ["BODY"])
+model = f" ({c['model']})" if c.get("model") else ""
+figure = ""
+if c.get("change_pct") is not None:
+    figure = f", {c['change_pct']:+g}%"
+    if c.get("interval_pct"):
+        figure += f" [{c['interval_pct'][0]:+g}, {c['interval_pct'][1]:+g}]"
+    figure += f" {c.get('metric') or ''}".rstrip()
+if c.get("weekly_limit_change_pct") is not None:
+    figure += f", weekly limit {c['weekly_limit_change_pct']:+g}%"
+    if c.get("weekly_limit_change_interval_pct"):
+        lo, hi = c["weekly_limit_change_interval_pct"]
+        figure += f" [{lo:+g}, {hi:+g}]"
+state = f", {c['state']}" if c.get("state") else ""
+print(f"{c['direction']} {c['percent']}% on {c['date']}{model}{figure}{state}")
+PYEOF
+)"
+
+  # Subscribers are emailed only a change whose `state` is "measured". `provisional: false`
+  # is not enough: the 2026-10-17 opus-4-6 "-43%" record carries it while its state is
+  # "provisional", and the email would have gone out once its interval excluded no change,
+  # though its figures point to a counting error on the accounts used on masterrig. A
+  # record with no state (a detector event) is held too. Jonathan still hears about a held
+  # change, once per change and state (a line in .notify-attempts), and it is emailed if it
+  # later reads "measured".
+  local change_state
+  change_state="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state") or "unstated")')"
+  if [ "$change_state" != "measured" ]; then
+    echo "notify: change on $date is $change_state, not measured: subscribers are not emailed" >&2
+    if ! { [ -f "$attempts" ] && grep -qxF "$date held:$change_state" "$attempts"; }; then
+      printf '%s held:%s\n' "$date" "$change_state" >> "$attempts"
+      alert_jonathan "Observed change, not emailed ($change_state): $summary" \
+        "$(printf 'The publisher found a new last_change in %s:\n\n%s\n\nIts state is %s, not measured, so subscribers were not emailed. They will be if it reads measured.\n' "$json" "$body" "$change_state")"
+    fi
+    return 0
+  fi
+
   if [ ! -r "$env_file" ]; then
     echo "notify: $env_file missing or unreadable, skipping" >&2
     return 0
@@ -413,9 +474,6 @@ PYEOF
   # variable, cannot be picked up as the value.
   secret="$(sed -n 's/^NOTIFY_SEND_SECRET=//p' "$env_file" | head -1 | tr -d '\r\n')"
   [ -n "$secret" ] || { echo "notify: no NOTIFY_SEND_SECRET in $env_file, skipping" >&2; return 0; }
-
-  local date
-  date="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["date"])')"
 
   # A failed send is tried, and alerted, at most once per UTC day for a given
   # change date: one "DATE UTC_DAY" line per attempt, written after the POST
@@ -454,30 +512,17 @@ PYEOF
   # day and alerts again, once, which is the reminder wanted; later publishes
   # that day stop at the attempt check above. A successful one is recorded above
   # and never repeats.
-  local summary
-  summary="$(BODY="$body" python3 - <<'PYEOF'
-import json, os
-c = json.loads(os.environ["BODY"])
-model = f" ({c['model']})" if c.get("model") else ""
-figure = ""
-if c.get("change_pct") is not None:
-    figure = f", {c['change_pct']:+g}%"
-    if c.get("interval_pct"):
-        figure += f" [{c['interval_pct'][0]:+g}, {c['interval_pct'][1]:+g}]"
-    figure += f" {c.get('metric') or ''}".rstrip()
-if c.get("weekly_limit_change_pct") is not None:
-    figure += f", weekly limit {c['weekly_limit_change_pct']:+g}%"
-    if c.get("weekly_limit_change_interval_pct"):
-        lo, hi = c["weekly_limit_change_interval_pct"]
-        figure += f" [{lo:+g}, {hi:+g}]"
-state = f", {c['state']}" if c.get("state") else ""
-print(f"{c['direction']} {c['percent']}% on {c['date']}{model}{figure}{state}")
-PYEOF
-)"
   alert_jonathan "Observed change: $summary" \
     "$(printf 'The publisher found a new last_change in %s:\n\n%s\n\nSubscriber send via /api/notify/send: HTTP %s\n' "$json" "$body" "$status")"
 }
 
 notify_change
 
+# A withheld publish is a failed run, after everything above has had its turn: the state
+# commit still lands, and notify_change read the last published JSON, which it has already
+# seen. A failed site push keeps its own exit.
+if [ "$withheld" -eq 1 ] && [ "$publish_rc" -eq 0 ]; then
+  echo "error: run withheld the public JSON (exit 9): the page still shows the last published JSON" >&2
+  exit 9
+fi
 exit "$publish_rc"
