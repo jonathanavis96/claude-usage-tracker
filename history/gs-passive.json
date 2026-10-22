@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-22T02:30:05.657085+00:00",
+ "generated_at": "2026-10-22T03:00:05.009387+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12534,
+    "reset_verified_samples": 12537,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 17183,
+    "samples": 17194,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-22T02:29:39+00:00"
+    "last": "2026-10-22T02:59:05+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -39280,11 +39280,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 14380,
+    "reset_verified_samples": 14394,
     "since": null,
-    "samples": 16471,
+    "samples": 16485,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-22T02:29:39+00:00"
+    "last": "2026-10-22T02:59:05+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -42234,6 +42234,28 @@
       }
      },
      "headless_turns": 2,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-21T19:34:39+00:00",
+     "end": "2026-10-22T02:59:05+00:00",
+     "seven_day": 75,
+     "d7": 1,
+     "d5": 5,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 6,
+       "output": 688,
+       "cache_read": 236546,
+       "cache_write": 79776,
+       "cache_write_1h": 79776
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 3,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
      "cloud_session": false
     }
    ],
@@ -45874,11 +45896,11 @@
     },
     {
      "window_ending": "2026-10-22T05:40:00.145853+00:00",
-     "windows": null,
-     "five_hour_pct": 2.0,
-     "seven_day_pct": 0.0,
+     "windows": 3.0,
+     "five_hour_pct": 3.0,
+     "seven_day_pct": 1.0,
      "rounding_interval": [
-      0.2734,
+      0.5561,
       null
      ],
      "pieces": 1,
@@ -45890,7 +45912,7 @@
  "changes": [],
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-22T02:30:48.824459+00:00",
+  "generated_at": "2026-10-22T03:00:46.202611+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
