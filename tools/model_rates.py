@@ -56,8 +56,10 @@ which the rates fitted in the publisher's own unit do not show
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
+import re
 import statistics as st
 import sys
 import traceback
@@ -1674,6 +1676,15 @@ def stretches_in_five_hour_unit(gs_passive: dict | None, masterrig_passive: dict
 HELD_EXIT = 3
 
 
+#: The exit status of a hold already reported: the same hold as the last run's, so bin/daily.sh
+#: need not raise it again. bin/daily.sh's `rates_due` reads only the file in force, whose
+#: `generated_at` a hold leaves on the day of the last written fit, so a held refit is due
+#: again on every 30-minute tick (review of fix/model-rates-refit, 2026-10-23). Without this
+#: each tick would refit for 82 s on gs and exit HELD_EXIT, a fresh alert for one unchanged
+#: hold. HELD_EXIT is kept for a hold that is new, or whose moves name different rates.
+STILL_HELD_EXIT = 4
+
+
 def candidate_path(path: Path) -> Path:
     """Where a held refit is written: `model-rates.candidate.json` beside the file in force."""
     return path.with_name(f"{path.stem}.candidate{path.suffix}")
@@ -1688,6 +1699,41 @@ def _outside(value: float | None, iv: list[float] | None, rel: float = 1e-9) -> 
     lo, hi = iv
     slack = rel * max(abs(lo), abs(hi))
     return value < lo - slack or value > hi + slack
+
+
+def _sha256(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def hold_fingerprint(masterrig: Path, in_force: Path, command: str) -> dict:
+    """What a held refit was fitted from, as far as bin/daily.sh's `rates_due` reads it: the
+    local day (a written fit is redone once a day for the files it reads beside masterrig's),
+    the fit's code, masterrig's stretch record and the rates in force it was compared with,
+    plus the command. A candidate whose fingerprint matches the run about to start would be
+    refitted from the same inputs `rates_due` watches, so the run reports it and stops."""
+    code = (Path(__file__), Path(C.__file__), Path(five_hour_weight.__file__))
+    return {"date": datetime.now().astimezone().date().isoformat(),
+            "code": {p.name: _sha256(p) for p in code},
+            "masterrig": _sha256(masterrig), "in_force": _sha256(in_force), "command": command}
+
+
+def move_signature(moves: list[str]) -> list[str]:
+    """The moves with their figures blanked: which rates moved and how, not by how much, so a
+    hold the next day's data shift by a few thousandths is the hold already reported. Family
+    names carry digits too (Opus 5.5) and blank the same way on both sides."""
+    return sorted(re.sub(r"\d+(\.\d+)?", "#", m) for m in moves)
+
+
+def previous_hold(candidate: Path) -> dict | None:
+    """The `_meta.held` block of the candidate on disk, or None when there is none to read."""
+    try:
+        held = json.loads(candidate.read_text(encoding="utf-8"))["_meta"]["held"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return held if isinstance(held, dict) else None
 
 
 def rate_moves(old: dict, new: dict) -> list[str]:
@@ -1770,6 +1816,21 @@ def main(argv: list[str] | None = None) -> int:
                     help="write --json even where the refit moves a rate outside its interval (rate_moves); "
                          "the moves accepted are recorded in _meta.accepted_moves")
     a = ap.parse_args(argv)
+    command = (f"python3 -m tools.model_rates {a.masterrig} --json {a.json}"
+               + ("" if a.variant == "joint" else f" --variant {a.variant}")
+               + ("" if a.exclusions == "harness-runs" else f" --exclusions {a.exclusions}")
+               + ("" if a.seed == SEED else f" --seed {a.seed}")
+               + ("" if a.resamples == RESAMPLES else f" --resamples {a.resamples}"))
+    if a.json:
+        fingerprint = hold_fingerprint(a.masterrig, a.json, command)
+        last = previous_hold(candidate_path(a.json))
+        if not a.accept_moves and last and last.get("fingerprint") == fingerprint:
+            # Held already today from these same inputs: a refit would only hold it again.
+            print(f"refit still held (exit {STILL_HELD_EXIT}): {candidate_path(a.json)} was fitted "
+                  f"today from the same code, {a.masterrig} and {a.json}, so it is not refitted, "
+                  f"and {a.json} is unchanged. It moves:\n  - " + "\n  - ".join(last.get("moves") or [])
+                  + "\nRead the moves, then rerun with --accept-moves to adopt it.", file=sys.stderr)
+            return STILL_HELD_EXIT
     gs_raw = json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8"))
     mr_raw = json.loads(a.masterrig.read_text(encoding="utf-8"))
     unit = five_hour_unit(gs_raw, mr_raw)
@@ -1793,13 +1854,8 @@ def main(argv: list[str] | None = None) -> int:
     mr = measured_rates(s1, s3, pooled, a.variant)
     mr["five_hour_unit"] = unit
     s5 = diagnostic("5", section5, win, mr)
-    held = []
+    held, repeat = [], False
     if a.json:
-        command = (f"python3 -m tools.model_rates {a.masterrig} --json {a.json}"
-                   + ("" if a.variant == "joint" else f" --variant {a.variant}")
-                   + ("" if a.exclusions == "harness-runs" else f" --exclusions {a.exclusions}")
-                   + ("" if a.seed == SEED else f" --seed {a.seed}")
-                   + ("" if a.resamples == RESAMPLES else f" --resamples {a.resamples}"))
         # The guard (`rate_moves`): against the rates in force at --json, before anything is
         # written over them. No file there, or no measured_rates block in it, is a first fit.
         moves = rate_moves(C.load_model_rates(a.json), mr)
@@ -1809,8 +1865,16 @@ def main(argv: list[str] | None = None) -> int:
             meta_extra["accepted_moves"] = moves
         elif moves:
             held, target = moves, candidate
+            # The same rates moving against the same rates in force is the hold already
+            # reported (STILL_HELD_EXIT); the candidate is still rewritten with today's figures.
+            last = previous_hold(candidate) or {}
+            repeat = ((last.get("fingerprint") or {}).get("in_force") == fingerprint["in_force"]
+                      and last.get("signature") == move_signature(moves))
             meta_extra["held"] = {
                 "moves": moves, "in_force": str(a.json),
+                "signature": move_signature(moves), "fingerprint": fingerprint,
+                "first_held_at": (last.get("first_held_at") if repeat else None)
+                or datetime.now().astimezone().isoformat(timespec="seconds"),
                 "what": ("this refit moved published rates beyond their intervals and was not "
                          "written over the rates in force; read the moves, then rerun with "
                          "--accept-moves to adopt it"),
@@ -1852,6 +1916,13 @@ def main(argv: list[str] | None = None) -> int:
             candidate.unlink()
     # The report prints after the file is written, so nothing in it can stop the rates landing.
     show(excl, win, s1, s2, s3, s4, s5, mr, lists, a.exclusions)
+    if held and repeat:
+        print(f"\nHELD -> {candidate_path(a.json)}; the rates in force at {a.json} are unchanged")
+        print(f"refit still held (exit {STILL_HELD_EXIT}): the same rates move as in the hold first "
+              f"reported at {meta_extra['held']['first_held_at']}; {candidate_path(a.json)} is "
+              f"refreshed and {a.json} is unchanged:\n  - " + "\n  - ".join(held)
+              + "\nRead the moves, then rerun with --accept-moves to adopt it.", file=sys.stderr)
+        return STILL_HELD_EXIT
     if held:
         print(f"\nHELD -> {candidate_path(a.json)}; the rates in force at {a.json} are unchanged")
         print(f"refit held (exit {HELD_EXIT}): the new fit is at {candidate_path(a.json)} and "
