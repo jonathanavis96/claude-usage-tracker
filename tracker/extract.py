@@ -592,6 +592,10 @@ def _cache_one(archive: Path, staging: Path) -> tuple[int, int]:
     finally:
         tf.close()
         if proc is not None:
+            # tarfile stops at the end-of-archive block; the zero padding after it is still in the
+            # pipe, and closing on it kills zstd with SIGPIPE (12 of 2,412 archives on gs did).
+            while proc.stdout.read(1 << 20):
+                pass
             proc.stdout.close()
             if proc.wait() != 0:
                 raise OSError(f"zstd exited {proc.returncode} on {archive}")
