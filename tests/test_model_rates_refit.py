@@ -19,9 +19,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import tools.model_rates as M
-from tools.model_rates import (HELD_EXIT, MIN_N, MIN_NONZERO, SHELLAC, account_pairs,
-                               candidate_path, compare, prepare, priceable, rate_moves,
-                               ratio_bootstrap, section4, section5, tables)
+from tools.model_rates import (HELD_EXIT, MIN_N, MIN_NONZERO, SHELLAC, STILL_HELD_EXIT,
+                               account_pairs, candidate_path, compare, move_signature, prepare,
+                               priceable, rate_moves, ratio_bootstrap, section4, section5, tables)
 
 POST = "2026-09-16T00:00:00+00:00"
 IDS = {"opus": "claude-opus-5", "sonnet": "claude-sonnet-5", "fable": "claude-fable-5-1",
@@ -386,6 +386,81 @@ class HeldRefitEndToEndTests(unittest.TestCase):
         rc, _ = self._main()
         self.assertEqual(rc, 0)
         self.assertNotIn("held", json.loads(self.out.read_text())["_meta"])
+
+    def _hold(self) -> tuple[dict, str]:
+        """A first fit, then rates in force this history cannot reproduce, then the held refit."""
+        self.assertEqual(self._main()[0], 0)
+        first = json.loads(self.out.read_text())
+        sonnet = first["measured_rates"]["per_family"]["sonnet"]
+        sonnet["times_opus_interval"], sonnet["times_opus"] = [0.30, 0.40], 0.35
+        in_force = json.dumps(first)
+        self.out.write_text(in_force)
+        self.assertEqual(self._main()[0], HELD_EXIT)
+        return first, in_force
+
+    def _age_candidate(self) -> None:
+        """Move the candidate's fingerprint to yesterday, as the next day's first tick finds it."""
+        cand = candidate_path(self.out)
+        held = json.loads(cand.read_text())
+        held["_meta"]["held"]["fingerprint"]["date"] = "2000-01-01"
+        cand.write_text(json.dumps(held))
+
+    def test_a_hold_already_reported_is_not_refitted_on_the_next_tick(self):
+        # Review of fix/model-rates-refit: a hold leaves the file in force on the day of its last
+        # written fit, so bin/daily.sh's rates_due runs the refit again on every 30-minute tick.
+        # The same inputs exit STILL_HELD_EXIT at once, with no refit: here a refit would raise,
+        # since the history it reads is gone.
+        _, in_force = self._hold()
+        cand = candidate_path(self.out)
+        before = cand.read_text()
+        (self.root / "history" / "gs-passive.json").unlink()
+        rc, err = self._main()
+        self.assertEqual(rc, STILL_HELD_EXIT)
+        self.assertIn(f"refit still held (exit {STILL_HELD_EXIT})", err)
+        self.assertIn("Sonnet moves from 0.350x Opus", err)
+        self.assertEqual(cand.read_text(), before)
+        self.assertEqual(self.out.read_text(), in_force)
+        # --accept-moves is never skipped: it refits and writes (and here, with no history, fails).
+        with self.assertRaises(FileNotFoundError):
+            self._main("--accept-moves")
+
+    def test_the_same_moves_on_a_later_refit_are_still_held_not_a_new_hold(self):
+        _, in_force = self._hold()
+        first_held = json.loads(candidate_path(self.out).read_text())["_meta"]["held"]["first_held_at"]
+        for change in (self._age_candidate,
+                       lambda: (self.root / "masterrig.json").write_text(json.dumps({"accounts": {}}) + "\n")):
+            change()
+            rc, err = self._main()
+            self.assertEqual(rc, STILL_HELD_EXIT)
+            self.assertIn("the same rates move as in the hold first reported", err)
+            held = json.loads(candidate_path(self.out).read_text())["_meta"]["held"]
+            self.assertEqual(held["first_held_at"], first_held)
+            self.assertEqual(held["fingerprint"]["date"], datetime.now().astimezone().date().isoformat())
+            self.assertEqual(self.out.read_text(), in_force)
+
+    def test_a_hold_that_moves_another_rate_is_raised_again(self):
+        first, _ = self._hold()
+        # The rates in force change, and now Fable moves too: a different hold, raised as new.
+        fable = first["measured_rates"]["per_family"]["fable"]
+        fable["times_opus_interval"], fable["times_opus"] = [3.0, 3.5], 3.2
+        self.out.write_text(json.dumps(first))
+        rc, err = self._main()
+        self.assertEqual(rc, HELD_EXIT)
+        self.assertIn(f"refit held (exit {HELD_EXIT})", err)
+        held = json.loads(candidate_path(self.out).read_text())["_meta"]["held"]
+        self.assertEqual(len(held["moves"]), 2)
+
+
+class MoveSignatureTests(unittest.TestCase):
+    def test_figures_are_blanked_and_the_rates_named_are_kept(self):
+        a = ["Opus 5.5 drops from measured to provisional (0.780x Opus -> 0.367x provisional)",
+             "Fable moves from 2.966x Opus [2.762, 3.206] to 2.098x, outside its interval"]
+        b = ["Fable moves from 2.966x Opus [2.762, 3.206] to 2.101x, outside its interval",
+             "Opus 5.5 drops from measured to provisional (0.780x Opus -> 0.358x provisional)"]
+        self.assertEqual(move_signature(a), move_signature(b))
+        self.assertNotEqual(move_signature(a), move_signature(a[:1]))
+        self.assertNotEqual(move_signature(["Sonnet 5.5 no longer has a published rate (was 0.497x Opus)"]),
+                            move_signature(["Sonnet no longer has a published rate (was 0.497x Opus)"]))
 
 
 if __name__ == "__main__":
