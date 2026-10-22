@@ -180,7 +180,7 @@ masterrig's own account (a1, `~/.claude`) is read by `tracker.meter_log`, the sa
 
 Why: `tracker/join.py` pairs no two readings more than `MAX_PAIR_GAP` (15 min) apart, and moonlighter reads every 30 min. The only closer reader was Mission Control's `mis-usage-ceiling.service` (every 5 min, `~/.paperclip/ops/mis-usage-ceiling-systemd.log`). That service asks the Paperclip board API which account the seats are on before it reads the usage endpoint. From 2026-10-18 00:49Z the API answered 401, and later HTTP 0 when Paperclip was down. The ceiling logged `BLIND` and never read the meter again: its last reading is 2026-10-18 00:44:41Z. Paperclip was stopped at 2026-10-20 19:43Z and the ceiling at 19:57Z, and both units are disabled. Moonlighter, on the same login, read on throughout. a1's last stretch ends 2026-10-17 11:14Z. The new sampler asks nothing but the usage endpoint.
 
-Install, once, on masterrig (the sampler's code is already on main, so this can run before or after the join change merges):
+Install, once, on masterrig, **before this branch merges**. The sampler's code is already on main, so the timer runs as is. After the merge the masterrig health check watches this log (below), so merging first would fail `meters` until the timer is in, and the supervisor would alert after an hour:
 
 ```bash
 cd ~/code/claude-usage-tracker
@@ -208,4 +208,6 @@ The joins pick the log up on the first `bin/passive.sh` run after the change rea
 
 Do not re-enable `mis-usage-ceiling.service` for the tracker. It belongs to Mission Control, and the tracker no longer needs it.
 
-Known gap: the masterrig health profile does not watch this log. `collection` checks only moonlighter's log, with a 1 h limit, and `meters` runs only on gs. So a stopped a1 timer would go unreported, which is exactly how the ceiling's two-day blindness went unseen. Closing the gap is a `tracker/health.py` change: add `meters` to the masterrig profile with this log in `meter_logs`, and map `a1` to `~/.claude` so an idle-lapsed token is told from a dead feed.
+Health: the masterrig profile (`tracker.health`, run by the hourly supervisor) checks this log with `meters`, as gs checks its three: no usable reading in 15 min fails, so a stopped timer, a refusal loop or a run of 429s alerts. An idle a1 whose access token lapsed is told from a dead feed by `~/.claude/.credentials.json`'s refresh-token expiry. Check by hand with `python3 -m tracker.health --all`.
+
+Identity: the unit passes `--config-dir %h/.claude`, the default dir. Without `CLAUDE_CONFIG_DIR`, Claude Code keeps its live config in `~/.claude.json`, beside the dir, so the sampler labels a1's lines from that file. `~/.claude/.claude.json` is a stale leftover (on 2026-10-23 last written 2026-10-19, 32 keys against 95). Both named the same account that day, so the label did not change, and a re-login to another account now refuses (exit 2) instead of mixing two meters in one log.
