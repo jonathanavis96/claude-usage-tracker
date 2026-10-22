@@ -95,6 +95,7 @@ from . import speed
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .cloud_sessions import CloudSpan, cloud_spans, overlaps
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
+from .meter_log import MASTERRIG_METER_LOG
 from .rows import usable_rows
 from .samples import Sample, infer_resets, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
@@ -191,19 +192,31 @@ MASTERRIG_METER_NOTE = (
 
 
 def masterrig_account(home: Path | None = None) -> Account:
-    """Jonathan's own account on masterrig: two logs of one meter, and ~/.claude's transcripts.
+    """Jonathan's own account on masterrig: three logs of one meter, and ~/.claude's transcripts.
 
-    The pair is what tracker/passive.py has always merged by hand -- moonlighter's
+    The first pair is what tracker/passive.py has always merged by hand -- moonlighter's
     usage_log.jsonl (reset-bearing) and the ceiling's systemd log (not) -- and it is
     the tracker's longest meter record, back to 2026-06-13. Unlike the gs accounts
     this one is not a clean instrument; see MASTERRIG_METER_NOTE.
+
+    The third is tracker.meter_log's own log for this account (MASTERRIG_METER_LOG), the
+    sampler gs runs for jwork, dave and avis. The ceiling was the only reading closer
+    together than moonlighter's 30 minutes, and MAX_PAIR_GAP (tracker/join.py) is 15: it
+    stopped reading at 2026-10-18 00:44Z, when the Paperclip board API it asks which
+    account the seats are on began answering 401 (later HTTP 0; the unit was stopped with
+    Paperclip on 2026-10-20 and is disabled), so this account formed no stretch after
+    2026-10-17 11:14Z. The ceiling never called the usage endpoint once that lookup
+    failed; moonlighter, on the same login, read on throughout. The sampler asks nothing
+    but the endpoint, labels every line with the account it read, and records reset times.
+    A log not yet written reads as no samples, so the join is unchanged until it exists.
     """
     home = Path(home) if home is not None else Path.home()
-    ceiling = home / ".paperclip" / "ops" / "mis-usage-ceiling-systemd.log"
+    ops = home / ".paperclip" / "ops"
     # One login on masterrig, so every `claude --cloud` it logs is this account's.
     return Account("masterrig", home / ".claude", home / ".moonlighter" / "usage_log.jsonl", "moonlighter",
-                   extra_meter_logs=(MeterLog(ceiling, "ceiling"),), meter_note=MASTERRIG_METER_NOTE,
-                   cloud_dir=home / "private" / "cloud")
+                   extra_meter_logs=(MeterLog(ops / "mis-usage-ceiling-systemd.log", "ceiling"),
+                                     MeterLog(ops / MASTERRIG_METER_LOG, "meter")),
+                   meter_note=MASTERRIG_METER_NOTE, cloud_dir=home / "private" / "cloud")
 
 
 def _read(path: Path, fmt: str, since: datetime | None) -> list[Sample]:

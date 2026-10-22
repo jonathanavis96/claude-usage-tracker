@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample a1's Claude usage meter every minute (masterrig)
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=claude-usage-meter-a1.service
+
+[Install]
+WantedBy=timers.target

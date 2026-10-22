@@ -1,0 +1,16 @@
+[Unit]
+Description=Sample a1's Claude usage meter into its own log (claude-usage-tracker passive join, masterrig)
+# masterrig's own account (~/.claude). The same sampler gs runs for jwork, dave and avis
+# (deploy/systemd/), here so a1 has readings closer together than MAX_PAIR_GAP (15 min):
+# moonlighter reads every 30 min, and mis-usage-ceiling, the 5-minute reader, went blind
+# on 2026-10-18 (tracker/gs_passive.py masterrig_account). The sampler refuses (exit 2)
+# to append to a log that holds another account. Kept out of deploy/systemd/, which
+# deploy/install-gs.sh compares against gs's installed units.
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/claude-usage-tracker
+ExecStart=/usr/bin/python3 -m tracker.meter_log --config-dir %h/.claude --account a1 --log %h/.paperclip/ops/claude-usage-meter-a1.log
+# Exit 4 means the usage read failed and was logged as a gap; the next tick tries again.
+SuccessExitStatus=0 4
+Nice=10

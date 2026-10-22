@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from tracker.meter_log import NO_RETRY_FETCH, account_identity, main, sample
+from tracker.meter_log import MASTERRIG_METER_LOG, NO_RETRY_FETCH, account_identity, main, sample
 from tracker.samples import parse_meter_log, parse_moonlighter
 from tracker.weekly import parse_row
 
 ROOT = Path(__file__).resolve().parent.parent
 UNITS = ROOT / "deploy" / "systemd"
+MASTERRIG_UNITS = ROOT / "deploy" / "systemd-masterrig"
 NOW = datetime(2026, 9, 15, 21, 0, 3, tzinfo=timezone.utc)
 BODY = {"five_hour": {"utilization": 12.0, "resets_at": "2026-09-15T23:00:00.4+00:00"},
         "seven_day": {"utilization": 30.0, "resets_at": "2026-09-17T23:00:00.9+00:00"}}
@@ -262,6 +263,28 @@ class UnitFileTests(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=1min", timer)
         self.assertIn("Unit=claude-usage-meter-jwork.service", timer)
         self.assertIn("WantedBy=timers.target", timer)
+
+    def test_a1_sampler_reads_masterrigs_own_account_into_the_log_the_joins_read(self):
+        # masterrig's checkout is ~/code/claude-usage-tracker, not gs's ~/claude-usage-tracker.
+        service = (MASTERRIG_UNITS / "claude-usage-meter-a1.service").read_text()
+        self.assertIn("-m tracker.meter_log", service)
+        self.assertIn("--config-dir %h/.claude ", service)
+        self.assertIn("--account a1", service)
+        self.assertIn(f"--log %h/.paperclip/ops/{MASTERRIG_METER_LOG}", service)
+        self.assertNotIn("--token-env", service)  # a /login seat: the usage endpoint reads it
+        self.assertIn("SuccessExitStatus=0 4", service)
+        self.assertIn("WorkingDirectory=%h/code/claude-usage-tracker", service)
+
+    def test_a1_timer_samples_every_minute(self):
+        timer = (MASTERRIG_UNITS / "claude-usage-meter-a1.timer").read_text()
+        self.assertIn("OnUnitActiveSec=1min", timer)
+        self.assertIn("Unit=claude-usage-meter-a1.service", timer)
+        self.assertIn("WantedBy=timers.target", timer)
+
+    def test_the_a1_units_stay_out_of_the_gs_unit_set(self):
+        # deploy/install-gs.sh compares every deploy/systemd/claude-usage-meter-* with gs's
+        # installed units; an a1 unit there would read as drift on every gs install.
+        self.assertEqual(sorted(p.name for p in UNITS.glob("claude-usage-meter-a1*")), [])
 
 
 HEADERS = {"anthropic-ratelimit-unified-5h-utilization": "0.05",
