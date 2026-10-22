@@ -6,12 +6,14 @@ import email.message
 import email.utils
 import fcntl
 import json
+import os
 import tempfile
 import threading
 import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from tracker import usage_cache as uc
 from tracker.meter_log import MAX_BACKOFF_S, MIN_READ_SPACING_S
@@ -356,6 +358,25 @@ class ReviewFindingTests(Base):
         self.assertIsNone(c.buckets)
         self.assertIsNone(c.fetched_at)
         self.assertTrue(c.stale)
+
+    def test_the_default_config_dir_follows_the_home_level_login_not_the_in_dir_leftover(self):
+        # ~/.claude without CLAUDE_CONFIG_DIR: Claude Code keeps ~/.claude.json live and
+        # ~/.claude/.claude.json goes stale (masterrig, 2026-10-23). A re-login must drop the kept reading.
+        home = Path(self._tmp.name) / "home"
+        cfg = home / ".claude"
+        cfg.mkdir(parents=True)
+        (cfg / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok-secret"}}))
+        (cfg / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "uuid-1"}}))
+        (home / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "uuid-1"}}))
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            self.assertEqual(uc.poll_once("a1", cfg, fetch=StubFetch(BODY), now=self.clock, cache_dir=self.cache),
+                             "fetched")
+            (home / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "uuid-2"}}))
+            self.clock.advance(MIN_READ_SPACING_S)
+            self.assertEqual(uc.poll_once("a1", cfg, fetch=StubFetch(http_error(401)), now=self.clock,
+                                          cache_dir=self.cache), "auth_expired")
+        c = uc.read_cached("a1", self.cache, now=self.clock)
+        self.assertIsNone(c.buckets, "uuid-1's reading must not be served under uuid-2")
 
     def test_host_gate_is_not_shortened_by_a_concurrent_refusal(self):
         # avis (Retry-After 110) and dave (Retry-After 1200) are refused together. If
