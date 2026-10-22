@@ -37,9 +37,14 @@ Checks, in order (the first failure is the one-line reason):
                reason. Every failing log is reported, joined
                with " | ", so each account is its own incident in the supervisor.
 
-Profiles pick which checks run. `masterrig` (default) is collection, run, publisher,
-token, lock, sizes. `gs` is run (the supervised bin/daily.sh, every 30 min), meters,
-lock and sizes: gs has no moonlighter log, and its publisher is the job itself.
+Profiles pick which checks run. `masterrig` (default, masterrig_config) is collection,
+run, publisher, token, lock, sizes and meters, the last on a1's own meter log
+(deploy/systemd-masterrig/claude-usage-meter-a1.timer): moonlighter's 30-minute log is
+too sparse for the passive join (MAX_PAIR_GAP is 15 min), so a1 forms stretches only
+while that timer reads, and the 5-minute reader before it went blind for two days
+(2026-10-18) while every check here said ok. `gs` is run (the supervised bin/daily.sh,
+every 30 min), meters, lock and sizes: gs has no moonlighter log, and its publisher is
+the job itself. A bare Config() keeps every check but meters, with no meter logs.
 
 Each check reads its file fresh on every call; nothing is cached between runs.
 Timestamps are parsed, never compared as strings.
@@ -56,6 +61,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+
+from .meter_log import MASTERRIG_METER_LOG
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(os.environ.get("HOME", str(Path.home())))
@@ -98,6 +105,26 @@ def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path
                   history_dir=repo / "history",
                   meter_logs=tuple(ops / f"claude-usage-meter-{a}.log" for a in GS_METER_ACCOUNTS),
                   checks=("run", "meters", "lock", "sizes"))
+
+
+#: masterrig's own account and its config dir under HOME: the default ~/.claude, which
+#: deploy/systemd-masterrig/claude-usage-meter-a1.service samples into MASTERRIG_METER_LOG.
+MASTERRIG_METER_CONFIG_DIRS = {"a1": ".claude"}
+MASTERRIG_CHECKS = ("collection", "run", "publisher", "token", "lock", "sizes", "meters")
+
+
+def masterrig_config(*, ops: Path = GS_OPS, home: Path = HOME, meter_logs: tuple[Path, ...] = (),
+                     checks: tuple[str, ...] = MASTERRIG_CHECKS, **kw) -> Config:
+    """Health on masterrig: every check, `meters` on a1's own log (or the given ones).
+
+    The a1 log is the only reading of that account close enough together to pair, and
+    the same failures that stop a gs timer stop it -- a stopped timer, a refusal (exit 2:
+    signed out, or the log names another account), a run of 429s -- so it gets the same
+    check, 15 min by default against its ~130 s reads. A lapsed token on an idle a1 is
+    told from a dead feed by ~/.claude's refresh-token expiry, as on gs."""
+    return Config(meter_logs=meter_logs or (ops / MASTERRIG_METER_LOG,),
+                  meter_config_dirs={a: home / d for a, d in MASTERRIG_METER_CONFIG_DIRS.items()},
+                  checks=checks, **kw)
 
 
 #: A stamp further in the future than this is clock skew, which would otherwise hide
@@ -488,7 +515,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-log-bytes", type=int, default=d.max_log_bytes)
     p.add_argument("--max-history-bytes", type=int, default=d.max_history_bytes)
     p.add_argument("--meter-log", type=Path, action="append", default=[],
-                   help="a per-account meter log (tracker.meter_log) to check for freshness (repeatable)")
+                   help="a per-account meter log (tracker.meter_log) to check for freshness (repeatable); "
+                        "masterrig default: ~/.paperclip/ops/" + MASTERRIG_METER_LOG)
     p.add_argument("--meter-max-age", type=int, default=d.meter_max_age_s)
     return p
 
@@ -499,12 +527,12 @@ def config_from_args(a: argparse.Namespace) -> Config:
         return gs_config(state=GS_STATE if a.state == d.state else a.state,
                          pidfile=GS_LOCK.with_suffix(".pid") if a.pidfile == d.lock_pidfile else a.pidfile,
                          logs=tuple(a.log) or (GS_LOG,), repo=a.repo)
-    return Config(usage_log=a.usage_log, collection_interval_s=a.collection_interval, state=a.state,
-                  run_interval_s=a.run_interval, repo=a.repo, history_dir=a.repo / "history",
-                  publisher_max_age_s=a.publisher_max_age, credentials=a.credentials,
-                  token_grace_s=a.token_grace, lock_pidfile=a.pidfile, logs=tuple(a.log),
-                  max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes,
-                  meter_logs=tuple(a.meter_log), meter_max_age_s=a.meter_max_age)
+    return masterrig_config(usage_log=a.usage_log, collection_interval_s=a.collection_interval, state=a.state,
+                            run_interval_s=a.run_interval, repo=a.repo, history_dir=a.repo / "history",
+                            publisher_max_age_s=a.publisher_max_age, credentials=a.credentials,
+                            token_grace_s=a.token_grace, lock_pidfile=a.pidfile, logs=tuple(a.log),
+                            max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes,
+                            meter_logs=tuple(a.meter_log), meter_max_age_s=a.meter_max_age)
 
 
 def main(argv: list[str] | None = None) -> int:

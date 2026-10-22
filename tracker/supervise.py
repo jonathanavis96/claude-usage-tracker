@@ -427,8 +427,8 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
                 state["last_fail"] = t
                 state["last_reason"] = EXIT_REASONS.get(code, f"exit {code} after {retries + 1} attempts")
                 state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-            cfg = health_cfg or health.Config(state=state_path, lock_pidfile=pidfile,
-                                              logs=(log,) if log else ())
+            cfg = health_cfg or health.masterrig_config(state=state_path, lock_pidfile=pidfile,
+                                                        logs=(log,) if log else ())
             if not write_state(state_path, state):  # the run check reads it
                 # Nothing persists, so the in-a-row count cannot grow: alert on this run.
                 state["consecutive_failures"] = max(fail_threshold, state.get("consecutive_failures", 0))
