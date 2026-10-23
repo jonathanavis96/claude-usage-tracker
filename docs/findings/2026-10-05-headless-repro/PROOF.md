@@ -1,7 +1,7 @@
 # Headless `claude -p` runs and the five-hour limit
 
 **Summary.** For each 1% of the seven-day (weekly) meter, headless `claude -p` work moved the five-hour meter **1.53x** as far as interactive Claude Code work (95% CI 1.41 to 1.67), across 306 meter steps on three Max 20x accounts from 14 Sep to 4 Oct 2026.
-Per credit of work, headless moved the five-hour meter 1.63x [1.36, 1.95] as far and the seven-day meter 1.05x [0.93, 1.18] as far.
+At the tracker's token valuation (302 clean steps, [section 6](#6-which-meter-carries-it)), headless moved the five-hour meter 1.63x [1.36, 1.95] as far per credit and the seven-day meter 1.05x [0.93, 1.18] as far. Under other valuations these run about 1.3 to 2.1 and 0.83 to 1.37. At the weights the meters prefer, the seven-day figure is 1.14 to 1.21; the 1.53 ratio barely moves.
 Every explanation tested (cache TTL, per-run overhead, timing, concurrency, model mix, effort, sub-agents, window resets) leaves the factor between 1.39 and 1.59.
 
 This page holds the full evidence. The data, scripts and commands are described in [REPRODUCE.md](REPRODUCE.md) in this folder.
@@ -33,7 +33,7 @@ This page holds the full evidence. The data, scripts and commands are described 
 | meters | five-hour and seven-day utilization as each account's usage API reports it, in whole percentages, read a median of 130 seconds apart |
 | cap | no five-hour window the tracker recorded between 14 Sep and 11 Oct reached 100% on these three accounts. Their peaks were 55%, 71% and 95% |
 
-**Plan check.** The repo records all four accounts as Max 20x. Over 14 Sep to 11 Oct, across all steps, the meters read 4.41 (Max account 2), 4.57 (Max account 4) and 4.73 (Max account 1) five-hour points per seven-day point. That shows the accounts are consistent with one another. Billing data was not checked.
+**Plan check.** The repo records all four accounts as Max 20x. Over 14 Sep to 11 Oct, across all steps, the meters read 4.41 (Max account 2), 4.57 (Max account 4) and 4.73 (Max account 1) five-hour points per seven-day point. Max account 3 is left out because its headless work raises its ratio. A Max 5x account would read about 1.67 times as many (the repo's credits-table ratio). That shows the accounts are consistent with one plan and with one another. Billing data was not checked.
 
 **Headless runs drew on the subscription.** Anthropic's [support article](https://support.claude.com/en/articles/15036540) says: "Update June 15, 2026: We've paused the previously-announced changes to Claude Agent SDK usage. For now, nothing has changed: Claude Agent SDK, `claude -p`, and third-party app usage still draw from your subscription limits." The headless-heavy steps moved both meters, which fits that. On 7 Oct, Max plans gained monthly API credits that cover `claude -p`. The main window ends before that change; the check to 11 Oct spans it.
 
@@ -43,12 +43,12 @@ This page holds the full evidence. The data, scripts and commands are described 
 - **Five-hour points:** the five-hour meter's one-point rises inside the step, including the points of a new five-hour window.
 - **Work:** every assistant message with token usage in the account's Claude Code transcripts. A message belongs to the step its timestamp falls in.
 - **Headless:** a main-session transcript whose first lines record `entrypoint: sdk-cli`, which is a `claude -p` run. Sub-agent transcripts never count as headless, even when a headless run spawns them.
-- **Interactive:** everything that is not headless: interactive main sessions plus all sub-agents. In steps under 0.2 headless, 63% of the credits are sub-agent work and 35% interactive main sessions. Headless-heavy steps are 1% sub-agent. [Section 4e](#4e-request-counts-sub-agents-and-window-resets) separates the two.
+- **Interactive:** everything that is not headless: interactive main sessions plus all sub-agents. In steps under 0.2 headless, on average 63% of each step's credits are sub-agent work and 35% interactive main sessions. In headless-heavy steps the average is 1% sub-agent. [Section 4e](#4e-request-counts-sub-agents-and-window-resets) separates the two.
 - **Headless share:** the step's headless credits over all its credits. Credits are tokens valued at list-price ratios between models, with output at 5x input and cache writes of both TTLs at 1x input. The headline run counts cache reads at 0.00398 of an Opus input credit; the covariate run leaves them out. Both give 1.53 [1.41, 1.67].
 - **Model:** a quasi-Poisson regression (log link) of five-hour points per step, with terms for period, account and headless share. The headless factor is exp(coefficient), going from share 0 to share 1. The 95% interval is exp(b ± 1.96·se), with se scaled by the Pearson dispersion.
-- **Periods:** each period gets its own baseline. Boundaries are 14 Sep 12:00Z (Anthropic's announced weekly limit change, which the tracker never certified), 22 Sep 19:41Z (the first Opus 5.5 turn; the tracker measured both limits rising around then) and 29 Sep 18:25Z (the first Sonnet 5.5 use). The tracker treats each new model family's first use as a possible change point. Dropping the period terms gives 1.53 [1.42, 1.65] ([section 5](#5-robustness)).
+- **Periods:** each period gets its own baseline. Boundaries are 14 Sep 12:00Z (Anthropic's announced weekly limit change, which the tracker never certified), 22 Sep 19:41Z (the first Opus 5.5 turn; the section 6 fits show both limits rising then, x1.16 credits per seven-day point and x1.20 per five-hour point) and 29 Sep 18:25Z (the first Sonnet 5.5 use). The tracker treats each new model family's first use as a possible change point. Dropping the period terms gives 1.53 [1.42, 1.65] ([section 5](#5-robustness)).
 
-The result compares one meter reading with the other. Token pricing enters only through the headless share, and the factor stays between 1.49 and 1.54 under every token valuation tried. If headless runs spent tokens the transcripts never record (system prompt, tool definitions, retries), both meters would see that spend, so hidden tokens could only produce the factor if the two meters weighed them differently.
+The result compares one meter reading with the other. Token pricing enters only through the headless share, and the factor stays between 1.52 and 1.54 under every token valuation tried (1.49 to 1.52 in the check to 11 Oct). If headless runs spent tokens the transcripts never record (system prompt, tool definitions, retries), both meters would see that spend, so hidden tokens could only produce the factor if the two meters weighed them differently.
 
 ## 2. Main result
 
@@ -58,7 +58,7 @@ The result compares one meter reading with the other. Token pricing enters only 
 
 *Figure 1. Five-hour points per seven-day point against headless share; the fitted curve (period and account terms) rises from 4.4 to 6.8.*
 
-Plain means, no model (95% bootstrap within each bin):
+Plain means, no model (95% bootstrap within each bin). The share here leaves cache reads out, as the covariate run does; on that share 57 steps are over 0.8 headless.
 
 | headless share | steps | five-hour points per seven-day point |
 |---|---:|---|
@@ -98,23 +98,23 @@ The 5 Oct analysis read transcripts on the machine that runs Max accounts 2 to 4
 | Max account 4 | 1.53 [0.92, 2.51] | 41 | 0.223 |
 | **pooled** | **1.486 [1.381, 1.599]** | 659 | |
 
-Max account 1's interval is wide because only 3.5% of its work was headless (mean share 0.035), so little of its data separates headless from interactive work.
+Max account 1's interval is wide because its mean headless share is 0.035, so little of its data separates headless from interactive work.
 
 ## 4. Ruled out
 
-Each of these could produce a false headless effect. Each was added to the model, and each leaves the factor at about 1.5.
+Each of these could produce a false headless effect. Each was tested by adding a term to the model, repricing the work or shifting timestamps, and each leaves the factor at about 1.5.
 
 ### 4a. Prompt-cache TTL
 
-Headless and interactive main sessions both write one-hour cache only. Sub-agents write five-minute cache only. Share of credits going to one-hour writes, headless against interactive:
+Headless and interactive main sessions both write one-hour cache only. Sub-agents write five-minute cache only. Share of credits going to one-hour writes, headless against interactive main sessions:
 
-| account | headless | interactive |
+| account | headless | interactive main sessions |
 |---|---:|---:|
 | Max account 2 | 0.531 | 0.379 |
 | Max account 3 | 0.381 | 0.384 |
 | Max account 4 | 0.613 | 0.424 |
 
-Max account 3 shows the effect (1.49x) with near-identical write shares. Repricing the writes barely moves the factor:
+Max account 3 shows the effect (1.49x) with near-identical write shares. Sub-agents, 63% of the interactive baseline, write five-minute cache only. Against interactive main sessions alone, whose writes match headless, the factor is 1.46 [1.30, 1.65] ([section 4e](#4e-request-counts-sub-agents-and-window-resets)). Repricing the writes barely moves the factor:
 
 | write pricing | headless factor [95%] |
 |---|---|
@@ -173,9 +173,9 @@ Each variable was added beside headless share, then all of them together. Contin
 
 - **Concurrency.** Headless sessions do run a little more in parallel. The median step's concurrency is 3.5 against 2.6, and its peak 5 against 4.
 - **Effort** reads 1.07x on its own and 1.01 beside headless.
-- **Other step features.** Turns, sessions per million credits and step length leave headless at 1.56, 1.51 and 1.54.
+- **Other step features.** Step length leaves headless at 1.54. Turns and sessions are in [section 4e](#4e-request-counts-sub-agents-and-window-resets).
 - **Token-class mix.** On the 302 clean steps from [section 6](#6-which-meter-carries-it), shares of output, cache reads and cache writes leave headless at 1.52. Every class coefficient's interval includes 1.
-- **Peak hours.** In Sep and Oct, weekday 12–18 UTC is exactly 5–11am PT, the window Anthropic announced as peak hours. As [quoted here](https://claudeunleashed.substack.com/p/avoid-claudes-peak-times-to-save): "During weekdays between 5am–11am PT, you'll move through your 5-hour session limits faster … Your weekly limits remain unchanged." That would show up in this data as a five-hour-only effect, and the data shows one. The share reads 1.19 [1.11, 1.27] on its own, 1.11 beside headless, and 1.09 [1.01, 1.18] with everything in. Resampled by whole days, beside headless, it reads 1.11 [1.01, 1.21]. In the window to 11 Oct it reads 1.18 [1.09, 1.27] (day-resampled). Headless stays between 1.42 and 1.52 beside it in every one of these fits.
+- **Peak hours.** In Sep and Oct, weekday 12–18 UTC is exactly 5–11am PT, the peak-hours window as a third-party blog quotes Anthropic. As [quoted there](https://claudeunleashed.substack.com/p/avoid-claudes-peak-times-to-save): "During weekdays between 5am–11am PT, you'll move through your 5-hour session limits faster … Your weekly limits remain unchanged." That would show up in this data as a five-hour-only effect, and the data shows one. The share reads 1.19 [1.11, 1.27] on its own, 1.11 beside headless, and 1.09 [1.01, 1.18] with everything in. Resampled by whole days, beside headless, it reads 1.11 [1.01, 1.21]. In the window to 11 Oct it reads 1.18 [1.09, 1.27] (day-resampled). Headless stays between 1.42 and 1.52 beside it in every one of these fits.
 
 ### 4e. Request counts, sub-agents and window resets
 
@@ -191,7 +191,7 @@ Refitted from the per-step table, 306 steps; continuous variables per standard d
 
 - **Requests and sessions.** Headless-heavy and interactive steps look alike (medians): 317 against 304 turns per million credits, 3.16k against 3.29k credits per turn, and 8.7 against 10.0 sessions per million credits.
 - **Sub-agents.** Plain means of five-hour points per seven-day point: steps that are mostly interactive main session (38 steps) read 4.63, mostly sub-agent (91 steps) 4.24, and mostly headless (58 steps) 7.09.
-- **Whole-percent rounding and window resets.** Five-hour window resets are equally common in both kinds of step: 0.21 per headless-heavy step against 0.205 per interactive step. On the 245 steps with no reset, headless reads 1.53 [1.38, 1.69].
+- **Whole-percent rounding and window resets.** Five-hour window resets are equally common in both kinds of step: 0.21 per mostly-headless step against 0.205 per interactive step (57 steps over 0.8 and 224 under 0.2, on the share without cache reads). On the 245 steps with no reset, headless reads 1.53 [1.38, 1.69].
 - The rebuild of the ten-variable fit from the per-step table gives 1.53 [1.35, 1.73], against the tool's 1.52 [1.34, 1.72].
 
 ## 5. Robustness
@@ -260,7 +260,7 @@ Per credit, headless moved the seven-day meter 1.11x as far and the five-hour me
 
 **A correction to the 5 Oct docs.** The five-hour findings doc used a crude bucket comparison, with no period or account terms, that made headless look cheaper per credit on the seven-day meter. That was a mix effect. Both limits rose around 22 Sep; 38 of the 58 headless-heavy steps fall after that date, and 156 of the 224 interactive steps fall before it. The limit increase was being read as a headless discount. Within 14 to 22 Sep alone, the seven-day factor is 0.99. The figures in the table above replace that comparison.
 
-**How much the split depends on token prices.** The ratio barely does: 1.49 to 1.54 under every valuation tried. (a) and (b) do, and they move together:
+**How much the split depends on token prices.** The ratio barely does: 1.52 to 1.54 under every valuation tried (1.49 to 1.52 in the check to 11 Oct). (a) and (b) do, and they move together:
 
 | token weights | (a) five-hour | (b) seven-day |
 |---|---:|---:|
@@ -275,7 +275,7 @@ The meters' own data reject the weights that push (b) below 1 (cache reads at 0,
 
 **Confidence.**
 
-- **High that headless costs more on the five-hour meter.** Among fits that can identify it, its factor is about 1.3 to 2.2 under every method, apart from weightings the data reject. Fits that cannot identify it: leaving out Max account 3, single-model steps with account terms, and the selection to 11 Oct that keeps unclean steps (1.43 [0.86, 2.39]).
+- **High that headless costs more on the five-hour meter.** Among fits that can identify it, its factor is about 1.3 to 2.2 under every method, apart from weightings the data reject. Fits that cannot identify it: leaving out Max account 3, and single-model steps with account terms. One further exception is the selection to 11 Oct that keeps unclean steps: 1.43 [0.86, 2.39]. It keeps the two 7 Oct steps where the meter moved on about 7k credits, which push the dispersion to 10.7, so clean steps are the primary selection.
 - **Moderate that the seven-day meter is neutral or close to it.** Estimates run from about 0.7 to 1.25, depending on the method. At the weights the meters prefer it is 1.14 to 1.21, and that joint 95% region, [1.03, 1.41], excludes 1.
 - **Not separable.** If headless runs spent tokens the transcripts never record, the result would look the same as "slightly dearer on both meters". The ratio itself is not affected.
 - **A valuation-free version was inconclusive.** Using single-model steps only leaves 42 steps, and the headless and interactive ones sit on different accounts.
@@ -309,9 +309,11 @@ python3 -m tools.headless_hypotheses covariates    # the covariate table
 
 The commit matters: the cache-read weight comes from that commit's rates file. At `c87d4c7` the headline reads 1.53 [1.40, 1.67].
 
-On 23 Oct 2026 the 5 Oct analysis was re-run. These figures from Part 1 of the two findings docs reproduced to the printed digit: the headline, the per-account figures, the TTL, per-run, timing and covariate figures, and the four-account table. It was the same author running the same code, so this is a re-run, not an independent replication. Section 4e, the day-block bootstrap, leave-one-out, the extra fits and the window to 11 Oct in section 5, and all of section 6 are new analysis.
+On 23 Oct 2026 the 5 Oct analysis was re-run. These figures from Part 1 of the two findings docs reproduced to the printed digit: the headline, the per-account figures, the TTL, per-run, timing and covariate figures, and the four-account table. It was the same author running the same code, so this is a re-run, not an independent replication. Everything else on this page is new analysis from 23 Oct.
+
+Section 4e, section 6, the token-class mix and peak-hours day-block figures in 4d, and the per-run term in 4b have no published script yet.
 
 ## 9. Findings docs
 
-- [2026-10-05-headless-five-hour.md](../2026-10-05-headless-five-hour.md): the original five-hour analysis.
+- [2026-10-05-headless-five-hour.md](../2026-10-05-headless-five-hour.md): the original five-hour analysis. Its seven-day comparison, and the missing-spend argument built on it, are replaced by [section 6](#6-which-meter-carries-it) here.
 - [2026-10-05-headless-weight.md](../2026-10-05-headless-weight.md): the headless weight. It opens with a "Superseded figures" banner. That covers its Part 2 change readings; Part 1 and its per-account table still stand.
