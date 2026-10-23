@@ -4,6 +4,7 @@ Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 to 13 add
 rule 15 added 2026-10-06; rule 17 added 2026-10-06; rule 22 added 2026-10-23, superseding
 rules 1, 2, 13, 15, 17, 20 and 21, rule 9 as a rule for changes, rule 11's certification and
 rule 16's check 11; rule 22 amended 2026-10-23 (the hero and the provisional chart markers)
+and again 2026-10-23 (provisional changes open provisional levels)
 
 ## Context
 
@@ -618,7 +619,8 @@ These are the acceptance rules. Each names where it lives.
       amendment below); every published change is drawn on its line and every event is a
       measured change (`every_change_drawn`);
       one figure per change on every chart that draws its line (`one_figure_per_change`); no
-      chart steps where no change was measured (`regimes_open_at_measured_changes`); accounts
+      chart steps where no change was measured (`regimes_open_at_measured_changes`, since the
+      second amendment below `regimes_open_at_stated_changes`); accounts
       are named only by label (`accounts_named_by_label`). Checks 9
       (`measured_changes_still_found`) and 10 (`detector_ran`) alert without blocking. The
       checks on the old candidates and routes are removed: `no_unproven_step`,
@@ -735,13 +737,72 @@ These are the acceptance rules. Each names where it lives.
         and the weekly size is the larger). 14 September is never the hero: neither its
         five-hour (+8.8% [-14.2, +37.9]) nor its seven-day (-4.2% [-15.6, +8.7]) interval
         excludes no change. All eleven invariants pass in all three.
+    - **Amended again 2026-10-23: the charts update provisionally too (Jonathan's decision of
+      2026-10-23).** This replaces "a provisional change moves no level" above, and "only
+      measured changes reach the window and week regimes" in "What the page states".
+      - A provisional change opens a level on every chart it is drawn on
+        (`four_accounts.drawn`: the line that found it, a line that moved, the line of the
+        limit the hero names for it), exactly where and by exactly what it will once measured:
+        the chart splits at its instant, the level after it is the readings since, and every
+        level before it is restated through its size (`chart_step`, `four_accounts.levels`,
+        `regime_changes`, and through them `credits.chain_regimes`,
+        `credits.chain_certified_weeks`, `publish._segment_regimes`, `publish._chained_levels`).
+        A line it is not drawn on opens a segment that carries the level, as a measured change
+        does there.
+      - That level is flagged provisional wherever it is shown (`four_accounts.provisional_on`,
+        `publish.flag_provisional_levels`): `provisional` on each row of `four_accounts.levels`,
+        `credits.window_tokens.regimes`, `credits.window_credits.regimes`, the window's
+        `account_regimes`, `per_week_regimes` (and `windows_per_week_provisional` there for
+        windows per week), `weekly_windows.max20.regimes` and each account's, and the dollar
+        `history`; and on every current figure read off a newest row: `window_tokens`,
+        `window_credits`, `window_tokens.per_week` (both flags), `weekly_windows.max20` and
+        `rates[model]`. The page draws it dashed and lighter, labelled with its figure and the
+        word provisional (the dashed marker of `change_markers`, unchanged).
+      - The headline figures follow the chart's current level, provisional included: the
+        hero's tokens per 5-hour window, the plan table and every figure read off the newest
+        regime are the provisional level's, tagged provisional, as the hero's sentence is. Not
+        doing so would state a level the chart beside it no longer draws.
+      - Measured, the same split is the solid step, with nothing touched; withdrawn, the find
+        is gone from the run and the single level returns. Both follow from the detector's
+        state alone, no date is read. A candidate still moves nothing. The only way into a
+        provisional level is a find that turns from candidate to provisional, and a run on the
+        same readings finds the same changes (the search is seeded by line, instant and account
+        alone), so the level does not come and go between runs on unchanged data.
+      - `last_change`, `events` and the email are unchanged: they read measured changes only,
+        so a provisional change sends nothing and the run it is measured sends it once.
+      - Invariants. Check 5 now requires every provisional or measured change to open a
+        segment on its line and step there by its size, a candidate to open none. Check 6
+        holds every chart's step to the detector's size for provisional changes too. Check 7
+        is `regimes_open_at_stated_changes`: every regime boundary is a provisional or
+        measured change, and each opens one. New check 13, `provisional_levels_flagged`
+        (blocking): every row says `provisional` exactly where it opens at a provisional
+        change its chart draws, and every current figure says what its newest row says.
+      - Figures before and after, the same committed inputs and state (history/four-accounts.json
+        of 2026-10-23, 9 October 16:00Z provisional), published at 2026-10-23T18:00Z with main
+        at ae32635 and with this change. `last_change` unchanged: 23 September, weekly limit
+        +20.5%, measured; hero unchanged: the 5-hour limit +15.3%, provisional. The headline
+        window (Opus 5.5, `window_tokens.per_family`): 1,127,574,300 before, 1,239,512,960
+        after, provisional (the level since 9 October; the level from 23 September to 9
+        October is 1,075,032,923, +15.3% to it). Anchor window 866,755,253 -> 999,368,807;
+        window credits 35,723,092 -> 41,188,726; windows per week (per-week regimes) 4.6179 ->
+        4.0105; tokens per week 4,002,587,350 -> 4,007,988,791 (the week does not move at 9
+        October). Per-model `tokens_per_window` (legacy dollar route) move by the same 5-hour
+        step on its own series, e.g. Opus 5.5 1,077,209,424 -> 1,118,572,034, Sonnet 5.5
+        2,154,418,847 -> 2,237,144,069; every rate's status stays `conditional`.
+      - On the records of 2026-10-23 replayed from no state (the replay places the change at
+        8 October 21:00Z): run of 23 October, 8 October provisional (held 5), the 5-hour,
+        windows-per-week and pooled windows-per-week charts split there with the after-part
+        flagged provisional (5-hour +14.9%, windows per week -10.3%), the week carried; run
+        forward to 27 October, it is measured and the same split is solid, unflagged; with the
+        records cut at 9 October 12:00Z, the run of 24 October withdraws it and the single
+        level returns. All thirteen invariants pass in all three.
     Source: `tracker/four_accounts.py`, `tracker/four_accounts_page.py` (what the publisher
     and the invariants read of a run, stdlib only, so numpy stays out of the publisher;
-    `headline`, `stated_quantity`, `change_markers`, `chart_step`),
-    `tracker/publish.py` (`load_four_accounts`,
+    `headline`, `stated_quantity`, `change_markers`, `chart_step`, `provisional_on`,
+    `stated_changes`), `tracker/publish.py` (`load_four_accounts`, `flag_provisional_levels`,
     `_segment_regimes`, `_chained_levels`), `tracker/credits.py` (`regime_index`,
     `chain_regimes`, `chain_certified_weeks`, `REGIME_METHOD`, `regime_figures`),
-    `tracker/invariants.py` (checks 4-11), `bin/daily.sh` (the daily run and the state commit),
+    `tracker/invariants.py` (checks 4-13), `bin/daily.sh` (the daily run and the state commit),
     `tests/test_four_accounts.py` (the rule, the hold, the null on shifted accounts, and
     recovery on the readings frozen on 2026-10-23 in `tests/fixtures/four_accounts`).
 

@@ -24,16 +24,17 @@ other figure on the page to it.
    provisional-or-measured change newer than it has no such size and is listed in
    `passed_over`, and there is no headline when no change has one (Jonathan's decision, 2026-10-23; until then
    this check held `last_change`, the newest measured change, to the hero).
-5. `every_change_drawn`: every measured change is drawn on the line that found it: the step
-   line (`four_accounts.levels`) opens a segment at its instant and steps there by its size.
-   A change not yet measured opens no segment on any step line; a provisional one is a dashed
-   marker (`four_accounts.change_markers`, which lists every chart quantity) on the line that
-   found it, unless it has no size there to mark; a candidate marks nothing, and every marker
-   is one of the detector's provisional or measured changes, styled by its state. Every
-   published event is one of the detector's measured changes.
+5. `every_change_drawn`: every provisional or measured change is drawn on the line that found
+   it: the step line (`four_accounts.levels`) opens a segment at its instant and steps there by
+   its size (Jonathan's decision, 2026-10-23: the charts update provisionally too). A measured
+   one is a step marker and a provisional one a dashed marker (`four_accounts.change_markers`,
+   which lists every chart quantity) on the line that found it, unless it has no size there to
+   mark. A candidate opens no segment on any step line and marks nothing, and every marker is
+   one of the detector's provisional or measured changes, styled by its state. Every published
+   event is one of the detector's measured changes.
 6. `one_figure_per_change`: every figure the page states for one change on one line is the
-   same whole percent: for a measured change, the event and `last_change`, the step line, and
-   each chart that draws the line (the window chart for the five-hour line, the tokens-per-week
+   same whole percent: for a measured change, the event and `last_change`; for a provisional or
+   measured one, the step line, and each chart that draws the line (the window chart for the five-hour line, the tokens-per-week
    chart for the seven-day line, the windows-per-week chart and `weekly_windows` for the ratio,
    the dollar history for the five-hour line); for a provisional or measured one, its chart
    markers (with its date, days held and interval) and the hero, whose limit a chart marks.
@@ -41,9 +42,10 @@ other figure on the page to it.
    (`four_accounts.drawn`) steps 0 there everywhere and carries no marker. A drawn step is
    read the way the size is published, to one decimal and then to whole percent, and a step
    within DRAWN_TOLERANCE_PP of the size is the size (`_same_figure`).
-7. `regimes_open_at_measured_changes`: every regime boundary on the page is a measured
-   change, and every measured change opens one: no chart steps anywhere the detector did not
-   measure a change.
+7. `regimes_open_at_stated_changes`: every regime boundary on the page is a provisional or
+   measured change, and every one of those opens one: no chart steps anywhere the detector
+   has no provisional or measured change, and never at a candidate (until 2026-10-23,
+   `regimes_open_at_measured_changes`: only measured changes opened regimes).
 8. `accounts_named_by_label`: the detector's block and the change records name accounts only
    by their page labels ("Max account N"): never a login name and never a bare `aN` key.
 9. `measured_changes_still_found`: every measured change was found again by today's run
@@ -58,12 +60,19 @@ other figure on the page to it.
    limit, its words, direction, size, interval and whole percent; and there is none when that
    change has no limit to state (then the email keeps its older wording). Jonathan's decision,
    2026-10-23: the email says what the hero said.
+13. `provisional_levels_flagged`: a provisional level is flagged provisional wherever it is
+   shown, and no other level is: every row of every series (`four_accounts.levels`, the
+   window and its credits, the per-week rows' week and windows per week, the pooled windows
+   per week, the dollar history) says `provisional` exactly where it opens at a provisional
+   change its chart draws (`four_accounts.drawn`), and every current figure read off a newest
+   row (the window and its credits, the week, windows per week, `rates`) says the same as that
+   row. Jonathan's decision, 2026-10-23.
 
-Checks 4-8 and 11 read the page's own figures the way it draws them (`chart_steps`); on 2026-10-05
+Checks 4-8, 11 and 13 read the page's own figures the way it draws them (`chart_steps`); on 2026-10-05
 the page said "+30%" in its headline and "+32%" on two charts for 22 September.
 
 A failure of checks 1-3, 9 or 10 does NOT block the publish (exit 1). A failure of checks 4-8,
-11 or 12 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
+11, 12 or 13 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change, and exits 9, a
 failed run. bin/daily.sh runs this after the publish, beside tracker.publish_gate, with the
 same incident semantics (`publish_gate.track_incident`): one alert when a check starts
@@ -215,6 +224,11 @@ def _fa(doc: dict) -> dict:
 
 def _measured(doc: dict) -> list[dict]:
     return [c for c in _fa(doc).get("changes") or [] if c.get("state") == "measured"]
+
+
+def _stated_changes(doc: dict) -> list[dict]:
+    """The detector's provisional and measured changes: the ones that open levels."""
+    return [c for c in _fa(doc).get("changes") or [] if c.get("state") in detector.STATED_STATES]
 
 
 def _page_round(x: float) -> int:
@@ -434,8 +448,9 @@ def _opens_segment(segments: list[dict], at: str) -> bool:
 
 
 def every_change_drawn(doc: dict) -> list[str]:
-    """Check 5: every measured change steps on its line, a provisional one is a dashed marker
-    and steps nowhere, a candidate shows nowhere, and every event is a measured change."""
+    """Check 5: every provisional or measured change steps on its line, marked by its state
+    (a step marker, a dashed one), a candidate shows nowhere, and every event is a measured
+    change."""
     fa = _fa(doc)
     levels = fa.get("levels") or {}
     out = []
@@ -443,23 +458,21 @@ def every_change_drawn(doc: dict) -> list[str]:
     for c in changes:
         markers = _markers_at(doc, c["at"])
         own = markers.get(detector.LINE_METRIC[c["found_on"]]) or []
-        if c.get("state") != "measured":
+        if c.get("state") not in detector.STATED_STATES:
             for line in detector.LINES:
                 if _opens_segment(levels.get(line) or [], c["at"]):
-                    out.append(f"The {c['state']} change at {c['at']} opens a segment on the "
-                               f"{line} step line; only a measured change moves a level.")
-            # A change with no size on its line has no figure to mark (2026-10-07: the 22 Sep
-            # change, provisional with no sizes beside a candidate inside its gap).
-            if c.get("state") == "provisional" and c.get("change_pct") is not None \
-                    and not any(m.get("style") == "dashed" for m in own):
-                out.append(f"The provisional change at {c['at']} ({c['found_on']}) has no dashed "
-                           f"marker on its line's charts.")
-            if c.get("state") not in detector.STATED_STATES and any(markers.values()):
+                    out.append(f"The {c.get('state')} change at {c['at']} opens a segment on the "
+                               f"{line} step line; only a provisional or measured change moves a "
+                               f"level.")
+            if any(markers.values()):
                 out.append(f"The {c.get('state')} change at {c['at']} is marked on a chart.")
             continue
-        if c.get("change_pct") is not None and not any(m.get("style") == "step" for m in own):
-            out.append(f"The measured change at {c['at']} ({c['found_on']}) has no step marker on "
-                       f"its line's charts.")
+        # A change with no size on its line has no figure to mark (2026-10-07: the 22 Sep
+        # change, provisional with no sizes beside a candidate inside its gap).
+        style = "step" if c["state"] == "measured" else "dashed"
+        if c.get("change_pct") is not None and not any(m.get("style") == style for m in own):
+            out.append(f"The {c['state']} change at {c['at']} ({c['found_on']}) has no {style} "
+                       f"marker on its line's charts.")
         step = _level_step(levels.get(c["found_on"]) or [], c["at"])
         if step is None:
             out.append(f"The {c['state']} change at {c['at']} ({c['found_on']}) opens no segment "
@@ -492,7 +505,7 @@ def every_change_drawn(doc: dict) -> list[str]:
 
 
 def one_figure_per_change(doc: dict) -> list[str]:
-    """Check 6: one measured change, one line, one whole percent everywhere the page states it."""
+    """Check 6: one change, one line, one whole percent everywhere the page states it."""
     fa = _fa(doc)
     levels = fa.get("levels") or {}
     records = [("an event", e) for e in doc.get("events") or [] if e.get("kind") == "change"]
@@ -533,7 +546,7 @@ def one_figure_per_change(doc: dict) -> list[str]:
                            f"{h.get('quantity')} at {at}, but the detector's {line} size is {size}.")
             if not _markers_at(doc, at).get(h.get("quantity")):
                 out.append(f"The hero names the {h.get('quantity')} at {at}, which no chart marks.")
-    for c in _measured(doc):
+    for c in _stated_changes(doc):
         at = c["at"]
         for line in detector.LINES:
             size = _expected(c, line)
@@ -559,6 +572,8 @@ def one_figure_per_change(doc: dict) -> list[str]:
                 if not _same_figure(step, size):
                     out.append(f"On {day} the dollar history steps {step:+.1f}% but the detector's "
                                f"five_hour figure there is {want:+d}%.")
+    for c in _measured(doc):
+        at = c["at"]
         for where, rec in records:
             if not _same_instant(rec.get("at"), at):
                 continue
@@ -576,9 +591,10 @@ def one_figure_per_change(doc: dict) -> list[str]:
     return out
 
 
-def regimes_open_at_measured_changes(doc: dict) -> list[str]:
-    """Check 7: every regime boundary is a measured change, and every measured change is one."""
-    instants = {datetime.fromisoformat(c["at"]) for c in _measured(doc)}
+def regimes_open_at_stated_changes(doc: dict) -> list[str]:
+    """Check 7: every regime boundary is a provisional or measured change, and every one of
+    those opens one."""
+    instants = {datetime.fromisoformat(c["at"]) for c in _stated_changes(doc)}
     wt = _wt(doc)
     credits = doc.get("credits") or {}
     max20 = (doc.get("weekly_windows") or {}).get("max20") or {}
@@ -596,12 +612,12 @@ def regimes_open_at_measured_changes(doc: dict) -> list[str]:
     out = []
     for where, frm in rows:
         if not frm or datetime.fromisoformat(frm) not in instants:
-            out.append(f"{where} opens a row at {frm}, which is not a measured change of the "
-                       f"four-account detector.")
+            out.append(f"{where} opens a row at {frm}, which is not a provisional or measured "
+                       f"change of the four-account detector.")
     opened = {datetime.fromisoformat(r["from"]) for r in (wt.get("regimes") or [])[1:] if r.get("from")}
     if wt.get("regimes"):
         for at in sorted(instants - opened):
-            out.append(f"The measured change at {at.isoformat()} opens no regime on the window chart.")
+            out.append(f"The change at {at.isoformat()} opens no regime on the window chart.")
     return out
 
 
@@ -662,6 +678,84 @@ def detector_ran(doc: dict) -> list[str]:
     return []
 
 
+#: Each series' rows, the line its chart draws, and the key a row opens at.
+def _series(doc: dict) -> list[tuple[str, list[dict], str, str, str]]:
+    """(where, rows, line, opening key, flag key) for every regime series on the page."""
+    wt = _wt(doc)
+    credits = doc.get("credits") or {}
+    max20 = (doc.get("weekly_windows") or {}).get("max20") or {}
+    out = [("window_tokens.regimes", wt.get("regimes") or [], "five_hour", "from", "provisional"),
+           ("window_credits.regimes", (credits.get("window_credits") or {}).get("regimes") or [],
+            "five_hour", "from", "provisional"),
+           ("per_week_regimes (week)", wt.get("per_week_regimes") or [], "seven_day", "from",
+            "provisional"),
+           ("per_week_regimes (windows per week)", wt.get("per_week_regimes") or [], "ratio",
+            "from", "windows_per_week_provisional"),
+           ("weekly_windows.max20.regimes", max20.get("regimes") or [], "ratio", "opened_by",
+            "provisional")]
+    for label, rows in sorted((wt.get("account_regimes") or {}).items()):
+        out.append((f"account_regimes for {label}", rows, "five_hour", "from", "provisional"))
+    for line, segs in sorted((_fa(doc).get("levels") or {}).items()):
+        out.append((f"four_accounts.levels.{line}", segs, line, "from", "provisional"))
+    return out
+
+
+def _provisional_at(changes: list[dict], at: str | None, line: str) -> bool:
+    """Whether a row opening at `at` is a provisional level on `line`'s chart."""
+    if not at:
+        return False
+    c = next((c for c in changes if _same_instant(c["at"], at)), None)
+    return bool(c) and c.get("state") == "provisional" and detector.provisional_on(c, line)
+
+
+def provisional_levels_flagged(doc: dict) -> list[str]:
+    """Check 13: a provisional level is flagged provisional wherever it is shown, and only
+    there; every current figure says the same as the newest row it is read off."""
+    changes = _fa(doc).get("changes") or []
+    out = []
+    for where, rows, line, frm, key in _series(doc):
+        for r in rows:
+            want = _provisional_at(changes, r.get(frm), line)
+            if bool(r.get(key)) is not want:
+                out.append(f"{where}: the row from {r.get(frm) or 'the start'} says {key} "
+                           f"{r.get(key)!r}, but it {'is' if want else 'is not'} a provisional "
+                           f"level on the {line} line.")
+    wt = _wt(doc)
+    credits = doc.get("credits") or {}
+    max20 = (doc.get("weekly_windows") or {}).get("max20") or {}
+    weeks = wt.get("per_week_regimes") or []
+    currents = [("window_tokens", wt, wt.get("regimes")),
+                ("window_credits", credits.get("window_credits") or {},
+                 (credits.get("window_credits") or {}).get("regimes")),
+                ("weekly_windows.max20", max20, max20.get("regimes"))]
+    for where, block, rows in currents:
+        if block and rows and bool(block.get("provisional")) is not bool(rows[-1].get("provisional")):
+            out.append(f"{where} says provisional {block.get('provisional')!r} but its newest "
+                       f"regime says {rows[-1].get('provisional')!r}.")
+    per_week = wt.get("per_week") if isinstance(wt.get("per_week"), dict) else None
+    if per_week is not None and weeks:
+        for key in ("provisional", "windows_per_week_provisional"):
+            if bool(per_week.get(key)) is not bool(weeks[-1].get(key)):
+                out.append(f"window_tokens.per_week says {key} {per_week.get(key)!r} but the "
+                           f"newest per-week regime says {weeks[-1].get(key)!r}.")
+    for model, rows in (doc.get("history") or {}).items():
+        stated = sorted(_stated_changes(doc), key=lambda c: c["at"])
+        for row in rows:
+            opened = [c for c in stated if c["at"][:10] <= row.get("date", "")]
+            want = bool(opened) and opened[-1].get("state") == "provisional" \
+                and detector.provisional_on(opened[-1], "five_hour")
+            if bool(row.get("provisional")) is not want:
+                out.append(f"history[{model}] on {row.get('date')} says provisional "
+                           f"{row.get('provisional')!r}, but its regime "
+                           f"{'is' if want else 'is not'} a provisional level.")
+                break
+        rate = (doc.get("rates") or {}).get(model) or {}
+        if rows and bool(rate.get("provisional")) is not bool(rows[-1].get("provisional")):
+            out.append(f"rates[{model}] says provisional {rate.get('provisional')!r} but its "
+                       f"newest history row says {rows[-1].get('provisional')!r}.")
+    return out
+
+
 CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_inside_accounts", headline_inside_accounts),
     ("direct_means_direct", direct_means_direct),
@@ -669,20 +763,21 @@ CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_is_newest_stated_change", headline_is_newest_stated_change),
     ("every_change_drawn", every_change_drawn),
     ("one_figure_per_change", one_figure_per_change),
-    ("regimes_open_at_measured_changes", regimes_open_at_measured_changes),
+    ("regimes_open_at_stated_changes", regimes_open_at_stated_changes),
     ("accounts_named_by_label", accounts_named_by_label),
     ("measured_changes_still_found", measured_changes_still_found),
     ("detector_ran", detector_ran),
     ("last_change_is_newest_measured", last_change_is_newest_measured),
     ("email_leads_with_hero_rule", email_leads_with_hero_rule),
+    ("provisional_levels_flagged", provisional_levels_flagged),
 ]
 #: The checks whose failure stops the page being published (exit 2): figures that contradict
 #: each other on the page itself, a step the detector did not measure, or an account named by
 #: anything but its label. The rest alert and publish anyway (exit 1).
 BLOCKING = frozenset({"headline_is_newest_stated_change", "every_change_drawn",
-                      "one_figure_per_change", "regimes_open_at_measured_changes",
+                      "one_figure_per_change", "regimes_open_at_stated_changes",
                       "accounts_named_by_label", "last_change_is_newest_measured",
-                      "email_leads_with_hero_rule"})
+                      "email_leads_with_hero_rule", "provisional_levels_flagged"})
 
 
 def run_checks(doc: dict) -> dict[str, list[str]]:

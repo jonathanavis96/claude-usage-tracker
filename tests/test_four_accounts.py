@@ -353,8 +353,12 @@ class PublishTest(unittest.TestCase):
 
     def test_regime_changes_carry_what_each_chart_draws(self):
         rc = F.regime_changes(block_with([SEP14, SEP23, OCT09]))
-        self.assertEqual([c["at"].isoformat() for c in rc], [SEP14["at"], SEP23["at"]])
-        first, second = rc
+        # 9 October, provisional, opens a regime too (2026-10-23): the charts update
+        # provisionally.
+        self.assertEqual([c["at"].isoformat() for c in rc], [SEP14["at"], SEP23["at"], OCT09["at"]])
+        first, second, third = rc
+        self.assertEqual((third["state"], third["window_scaled"], third["weekly"]["drawn"],
+                          third["windows_per_week"]["drawn"]), ("provisional", True, False, True))
         self.assertFalse(first["window_scaled"])
         self.assertEqual(first["ratio"], 1.0)
         self.assertTrue(first["windows_per_week"]["drawn"])
@@ -448,11 +452,20 @@ class PublishTest(unittest.TestCase):
         marks = F.change_markers(block_with([SEP23, bare]))
         self.assertFalse(any(m["at"] == OCT09["at"] for rows in marks.values() for m in rows))
 
-    def test_a_provisional_change_moves_no_level_and_is_a_dashed_marker(self):
+    def test_a_provisional_change_opens_a_provisional_level_with_a_dashed_marker(self):
+        # Jonathan's decision, 2026-10-23: the charts update provisionally too. The 9 October
+        # change, provisional, splits the ratio at its instant: the level after it is
+        # provisional, the one before it restated through its size.
         ratio = F.levels([SEP14, SEP23, OCT09], "ratio")
-        self.assertEqual([s["from"] for s in ratio], [None, SEP14["at"], SEP23["at"]])
-        self.assertEqual(F.chart_step(OCT09, "ratio"), 0.0)
-        self.assertNotEqual(F.drawn_step(OCT09, "ratio"), 0.0)
+        self.assertEqual([(s["from"], s["opened_by"], s["provisional"]) for s in ratio],
+                         [(None, None, False), (SEP14["at"], "measured", False),
+                          (SEP23["at"], "measured", False), (OCT09["at"], "provisional", True)])
+        self.assertEqual(round(ratio[-2]["index"], 3), round(1 / 0.911, 3))
+        self.assertEqual(F.chart_step(OCT09, "ratio"), F.drawn_step(OCT09, "ratio"))
+        # A line the change is not drawn on opens a segment that carries the level, unflagged.
+        seven = F.levels([SEP14, SEP23, OCT09], "seven_day")
+        self.assertEqual((seven[-1]["index"], seven[-2]["index"], seven[-1]["provisional"]),
+                         (1.0, 1.0, False))
         marks = F.change_markers(block_with([SEP14, SEP23, OCT09, dict(OCT09, at="2026-10-20T00:00:00+00:00",
                                                                         state="candidate")]))
         self.assertEqual({q: [(m["date"], m["style"], m["change_pct"], m["state"]) for m in rows]
@@ -462,9 +475,29 @@ class PublishTest(unittest.TestCase):
                           "weekly_limit": [("2026-09-23", "step", 18.3, "measured")],
                           "five_hour_limit": [("2026-09-23", "step", 31.4, "measured"),
                                               ("2026-10-09", "dashed", 9.9, "provisional")]})
-        measured = F.levels([SEP14, SEP23, dict(OCT09, state="measured")], "ratio")
-        self.assertEqual([s["from"] for s in measured], [None, SEP14["at"], SEP23["at"], OCT09["at"]])
-        self.assertEqual(round(measured[-2]["index"], 3), round(1 / 0.911, 3))
+
+    def test_the_split_follows_the_state_alone(self):
+        # Candidate: no split. Provisional: the split, flagged. Measured: the same split, solid.
+        # Withdrawn (gone from the run): the single level again. No date is read anywhere.
+        def ratio(*changes):
+            return [(s["from"], round(s["index"], 4), s["provisional"])
+                    for s in F.levels(list(changes), "ratio")]
+        base = ratio(SEP14, SEP23)
+        self.assertEqual(ratio(SEP14, SEP23, dict(OCT09, state="candidate")), base)
+        prov = ratio(SEP14, SEP23, OCT09)
+        meas = ratio(SEP14, SEP23, dict(OCT09, state="measured"))
+        self.assertEqual([x[:2] for x in prov], [x[:2] for x in meas])
+        self.assertEqual([x[2] for x in prov], [False, False, False, True])
+        self.assertEqual([x[2] for x in meas], [False] * 4)
+        self.assertEqual(ratio(SEP14, SEP23), base)
+        # The window regimes read the same: the provisional change opens one, flagged on the
+        # lines it is drawn on, and a candidate opens none.
+        rc = F.regime_changes(block_with([SEP14, SEP23, OCT09]))
+        self.assertEqual([(c["at"].isoformat(), c["state"]) for c in rc],
+                         [(SEP14["at"], "measured"), (SEP23["at"], "measured"), (OCT09["at"], "provisional")])
+        self.assertEqual({k: rc[-1][k]["provisional"] for k in ("five_hour", "weekly", "windows_per_week")},
+                         {"five_hour": True, "weekly": False, "windows_per_week": True})
+        self.assertEqual(len(F.regime_changes(block_with([SEP14, SEP23, dict(OCT09, state="candidate")]))), 2)
 
     def test_the_public_block_names_accounts_only_by_label(self):
         out = F.public_block(block_with([SEP14, SEP23, OCT09]))

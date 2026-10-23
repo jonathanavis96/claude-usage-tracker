@@ -280,6 +280,62 @@ def _reference_tokens(budget: float | None, meter_usd_per_token: float) -> int |
     return round(budget / meter_usd_per_token) if budget is not None and meter_usd_per_token > 0 else None
 
 
+def _opened_provisional(changes: list[dict], frm: str | None, line: str) -> bool:
+    """Whether the row opening at `frm` is a provisional level on the chart of `line`
+    (`five_hour`, `weekly` or `windows_per_week`, as `four_accounts.regime_changes` names the
+    sizes): it opens at a provisional change that chart draws (`four_accounts.provisional_on`)."""
+    if not frm:
+        return False
+    at = datetime.fromisoformat(frm)
+    change = next((c for c in changes if c["at"] == at), None)
+    return bool(((change or {}).get(line) or {}).get("provisional"))
+
+
+def flag_provisional_levels(changes: list[dict], credits_block: dict, weekly: dict) -> None:
+    """Flag every level a provisional change opens, wherever the page shows it (Jonathan's
+    decision, 2026-10-23: the charts update provisionally too). Each regime row of a series
+    gets `provisional`: true where it opens at a provisional change its chart draws, else
+    false; and each current figure read off the newest row says the same of it, so a
+    provisional level is never shown as a measured one. In place.
+
+    - `credits.window_tokens.regimes` and `credits.window_credits.regimes` (the 5-hour line),
+      with `provisional` on both blocks for their current figure; the window's
+      `account_regimes` rows likewise.
+    - `credits.window_tokens.per_week_regimes`: `provisional` for the week (the seven-day
+      line), `windows_per_week_provisional` for windows per week (the ratio), and the same
+      two on `window_tokens.per_week`.
+    - `weekly_windows.max20.regimes` and each account's (the ratio), `provisional` on max20
+      for its `current`.
+    """
+    def rows(regimes: list[dict] | None, line: str, frm: str = "from") -> bool:
+        for r in regimes or []:
+            r["provisional"] = _opened_provisional(changes, r.get(frm), line)
+        return bool(regimes) and bool(regimes[-1]["provisional"])
+
+    wt = credits_block.get("window_tokens") or {}
+    wc = credits_block.get("window_credits") or {}
+    if wt:
+        wt["provisional"] = rows(wt.get("regimes"), "five_hour")
+        for account_rows in (wt.get("account_regimes") or {}).values():
+            rows(account_rows, "five_hour")
+        weeks = wt.get("per_week_regimes") or []
+        for r in weeks:
+            r["windows_per_week_provisional"] = _opened_provisional(changes, r.get("from"),
+                                                                    "windows_per_week")
+        week_now = rows(weeks, "weekly")
+        if isinstance(wt.get("per_week"), dict):
+            wt["per_week"]["provisional"] = week_now
+            wt["per_week"]["windows_per_week_provisional"] = bool(
+                weeks and weeks[-1]["windows_per_week_provisional"])
+    if wc:
+        wc["provisional"] = rows(wc.get("regimes"), "five_hour")
+    max20 = (weekly or {}).get("max20") or {}
+    if max20:
+        max20["provisional"] = rows(max20.get("regimes"), "windows_per_week", "opened_by")
+        for block in (max20.get("by_account") or {}).values():
+            rows(block.get("regimes"), "windows_per_week", "opened_by")
+
+
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
                       effort_usd: dict | None = None, gs_passive: dict | None = None,
                       reference_mix: dict | None = None, *, masterrig_passive: dict | None = None,
@@ -290,11 +346,14 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
 
     Limit changes (ADR 0001 rule 22). `four_accounts_run` is the four-account detector's
     newest daily run (tracker/four_accounts.py, the `latest` of history/four-accounts.json):
-    its measured changes are the only source of `last_change`, `events` and every regime
-    boundary below, and the whole run is published as `four_accounts` for the page's chart.
-    `headline` is what the hero states: the newest provisional-or-measured change, named as the
-    5-hour or the weekly limit (`four_accounts_page.headline`); its provisional changes are
-    marked on the charts, never stepped (`four_accounts.change_markers`).
+    its measured changes are the only source of `last_change` and `events`, its provisional
+    and measured changes (`four_accounts.regime_changes`) of every regime boundary below, and
+    the whole run is published as `four_accounts` for the page's chart. `headline` is what the
+    hero states: the newest provisional-or-measured change, named as the 5-hour or the weekly
+    limit (`four_accounts_page.headline`). A provisional change opens a provisional level on
+    every chart it is drawn on, flagged `provisional` wherever it is shown
+    (`flag_provisional_levels`), and marked dashed (`four_accounts.change_markers`); a
+    candidate opens none (Jonathan's decision, 2026-10-23).
     Without one, nothing is called a change: one regime, no `last_change`, no `events`, no
     `headline`.
 
@@ -401,9 +460,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         credit_model.stretches_by_account(gs_five, mr_five),
         credit_model.harness_runs(), credits, model_rates, dict(ACCOUNT_LABELS),
         lambda rates: credit_model.comparison_value(credits, rates))
-    # The changes: the four-account detector's measured ones, and nothing else (ADR 0001
-    # rule 22). Each opens a regime in every series below, and each series steps there by
-    # the detector's own size on its line.
+    # The changes: the four-account detector's provisional and measured ones, and nothing
+    # else (ADR 0001 rule 22, amended 2026-10-23). Each opens a regime in every series below,
+    # and each series steps there by the detector's own size on its line.
     changes = four_accounts.regime_changes(four_accounts_run)
     regime_start = changes[-1]["at"].date() if changes else None
 
@@ -475,8 +534,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     for ts, v in day_readings:
         by_day.setdefault(ts.date(), []).append(v)
 
-    # The step function (restored 2026-09-17, findings 11/12): every measured change of the
-    # four-account detector bounds a regime. `day_readings` (broader than `series`: it fills
+    # The step function (restored 2026-09-17, findings 11/12): every provisional or measured
+    # change of the four-account detector bounds a regime. `day_readings` (broader than `series`: it fills
     # a measured day's gap with a legacy reading, see above) is bucketed into those regimes,
     # and every level is held so each step is the detector's five-hour size there
     # (`_chained_levels`).
@@ -523,6 +582,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     current_regime_idx = regime_index(last_day) if held else None
     regime_current_value = held[current_regime_idx] if current_regime_idx is not None else None
 
+    def regime_provisional(idx: int | None) -> bool:
+        """Whether regime `idx` is a provisional level on the 5-hour line."""
+        return bool(idx) and bool((changes[idx - 1].get("five_hour") or {}).get("provisional"))
+
     rates, history = {}, {}
     for model, price in prices.items():
         per_token = blended_price_per_token(mix, price) * price.get("meter_weight", 1.0)
@@ -561,6 +624,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
             "evidence": evidence,
             "quality": quality,
             "freshness": freshness,
+            # The current regime is a provisional level (`flag_provisional_levels`).
+            "provisional": regime_provisional(current_regime_idx),
             "measured_at": measured_at.isoformat() if measured_at else None,
             "probed_at": model_probe["ts"] if model_probe is not None else None,
             "probe_effort": latest_row["effort"] if latest_row is not None else None,
@@ -582,7 +647,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 hist.append({"date": d.isoformat(), "meter_budget_per_window": round(budget, 2),
                              "tokens_per_window": day_tokens, "api_value_per_window": day_api,
                              "api_list_value_per_window": day_api, "source": day_source,
-                             "quality": day_quality, "readings": len(by_day.get(d, [])), "interpolated": False})
+                             "quality": day_quality, "readings": len(by_day.get(d, [])), "interpolated": False,
+                             "provisional": regime_provisional(idx)})
                 d += timedelta(days=1)
         history[model] = hist
 
@@ -605,6 +671,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         gs_five, mr_five, all_probe_rows, effort_meta, credits, prices,
         session_split, session_split_source, passive.get("session_tokens", {}),
         weekly_windows, changes, model_rates)
+    flag_provisional_levels(changes, credits_block, weekly_windows)
     # Accounts behind the passive evidence: those with an accepted stretch (the rates)
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
@@ -1654,7 +1721,8 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                   "by_account": by_account,
                   "regimes": regimes,
                   "regimes_method": ("one regime per span between the four-account detector's "
-                                     "measured changes, pooled over every account's windows "
+                                     "provisional and measured changes (a span opened by a "
+                                     "provisional one flagged `provisional`), pooled over every account's windows "
                                      "ending in it; every step the ratio's size at the change "
                                      "(own level in `own_windows`)"),
                   "unit": "interactive_equivalent" if five_hour else "meter",

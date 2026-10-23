@@ -778,8 +778,9 @@ def chain_regimes(regimes: list[dict], changes: list[dict], size) -> list[dict]:
 
 
 REGIME_METHOD = (
-    "Every measured change of the four-account detector (`four_accounts`, state measured) opens "
-    "a regime at its own instant; nothing else does. Each regime is measured in the family "
+    "Every provisional or measured change of the four-account detector (`four_accounts`) opens "
+    "a regime at its own instant; nothing else does, and a candidate never does. A regime "
+    "opened by a provisional change is a provisional level (`provisional`). Each regime is measured in the family "
     "actually in use: its regime family is the family with the most pure clean stretches "
     "starting in it (`regime_family`, `n_regime_family`). Regimes joined by a change whose "
     "five-hour size holds no change form one run, and a run of two or more whose pure clean "
@@ -795,13 +796,15 @@ REGIME_METHOD = (
 
 
 def current_method(changes: list[dict]) -> str:
-    """REGIME_METHOD, and which measured changes opened regimes."""
+    """REGIME_METHOD, and which provisional and measured changes opened regimes."""
     if not changes:
-        return REGIME_METHOD + " No measured change yet: one regime."
-    applied = "; ".join(f"from {_utc(c['at'])}, five-hour "
+        return REGIME_METHOD + " No provisional or measured change yet: one regime."
+    applied = "; ".join(f"from {_utc(c['at'])}"
+                        + (" (provisional)" if c.get("state") == "provisional" else "")
+                        + ", five-hour "
                         + (f"{c['change_pct']:+g}%" if c.get("window_scaled") else "carried")
                         for c in changes)
-    return REGIME_METHOD + f" Measured changes applied: {applied}."
+    return REGIME_METHOD + f" Changes applied: {applied}."
 
 
 def _scaled(fig: dict, ratio: float, r_lo: float, r_hi: float) -> dict:
@@ -3139,8 +3142,10 @@ def _pooled_windows_per_week(rows: list[dict]) -> dict:
 
 
 PER_REGIME_METHOD = (
-    "The regimes are the window's own (`regimes`): one per measured change of the four-account "
-    "detector (`four_accounts`, state measured), and none anywhere else. "
+    "The regimes are the window's own (`regimes`): one per provisional or measured change of the "
+    "four-account detector (`four_accounts`), and none anywhere else; a row opened by a "
+    "provisional change its chart draws is flagged `provisional` (the week) and "
+    "`windows_per_week_provisional`. "
     "`per_week_regimes` states each regime's week directly on the seven-day meter: the "
     "credits per 1% of the seven-day meter (`weekly_credits_per_pct`), from every one-point "
     "seven-day step of every account lying wholly in the regime "

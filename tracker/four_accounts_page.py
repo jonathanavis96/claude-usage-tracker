@@ -202,18 +202,37 @@ def drawn_step(change: dict, line: str) -> float:
 
 def chart_step(change: dict, line: str) -> float:
     """The log step every chart's level takes on `line` at `change`: `drawn_step` once the
-    change is measured, else 0. A provisional change is shown as a dashed marker with its
-    figure (`change_markers`) and moves no level; the step appears by itself the run it is
-    measured (Jonathan's decision, 2026-10-23)."""
-    return drawn_step(change, line) if change.get("state") == "measured" else 0.0
+    change is provisional or measured, else 0. A provisional change opens a provisional level
+    (`provisional_on`) on every line it is drawn on: the chart splits at its instant, the part
+    before is restated through its size, and the part after is the level since. The run it is
+    measured the same step is a measured one; a provisional change that is withdrawn is gone
+    from the run, and the single level comes back by itself. A candidate moves no level
+    (Jonathan's decision, 2026-10-23: the charts update provisionally too)."""
+    return drawn_step(change, line) if change.get("state") in STATED_STATES else 0.0
+
+
+def provisional_on(change: dict, line: str) -> bool:
+    """Whether the level `change` opens on `line` is a provisional one: the change is
+    provisional and the charts draw it on that line with a size (`drawn`). A provisional
+    change a line does not draw opens a segment there that carries the level before it, and
+    that segment is no provisional level."""
+    size = ((change.get("sizes") or {}).get(line) or {}).get("change_pct")
+    return change.get("state") == "provisional" and size is not None and drawn(change, line)
+
+
+def stated_changes(changes: list[dict] | None) -> list[dict]:
+    """The provisional and measured changes of a run, oldest first: the changes that open a
+    level on the charts and a regime in every series (`levels`, `regime_changes`)."""
+    return sorted((c for c in changes or [] if c.get("state") in STATED_STATES),
+                  key=lambda c: parse(c["at"]))
 
 
 def levels(changes: list[dict], line: str) -> list[dict]:
     """The shared step line: the current segment at 1.0, each earlier one the next over 1 +
-    the step drawn at the measured change between them (`chart_step`). Only measured changes
-    open a segment; a provisional one is a marker (`change_markers`), never a level."""
-    ordered = sorted((c for c in changes if c.get("state") == "measured"),
-                     key=lambda c: parse(c["at"]))
+    the step drawn at the change between them (`chart_step`). Provisional and measured changes
+    open a segment; a candidate never does. `opened_by` is the opening change's state, and
+    `provisional` says the segment is a provisional level on this line (`provisional_on`)."""
+    ordered = stated_changes(changes)
     bounds = [None] + [c["at"] for c in ordered] + [None]
     index, vals = 1.0, [1.0]
     for c in reversed(ordered):
@@ -221,7 +240,8 @@ def levels(changes: list[dict], line: str) -> list[dict]:
         vals.append(index)
     vals = list(reversed(vals))
     return [{"from": bounds[i], "to": bounds[i + 1], "index": round(vals[i], 4),
-             "opened_by": ordered[i - 1]["state"] if i else None}
+             "opened_by": ordered[i - 1]["state"] if i else None,
+             "provisional": provisional_on(ordered[i - 1], line) if i else False}
             for i in range(len(ordered) + 1)]
 
 
@@ -407,11 +427,12 @@ def change_markers(block: dict | None) -> dict[str, list[dict]]:
     """`change_markers`: what every chart marks at each stated change, by the quantity the
     chart draws (`LINE_METRIC`: the 5-hour limit, the weekly limit, windows per week).
 
-    Every provisional or measured change marks each line it is shown on (`drawn`): a measured
-    one as the level's step (`style` "step"), a provisional one as a dashed marker with its
-    figure and the word provisional (`style` "dashed"), which moves no level. A candidate marks
-    nothing. The figure is the change's size on that line, the same one every other place on
-    the page states for it."""
+    Every provisional or measured change marks each line it is shown on (`drawn`), where the
+    level steps by its size (`levels`): a measured one as the level's step (`style` "step"), a
+    provisional one as a dashed marker with its figure and the word provisional (`style`
+    "dashed") at the provisional level it opens (`provisional_on`). A candidate marks nothing
+    and moves no level. The figure is the change's size on that line, the same one every other
+    place on the page states for it."""
     out: dict[str, list[dict]] = {LINE_METRIC[line]: [] for line in LINES}
     for c in sorted((c for c in (block or {}).get("changes") or []
                      if c.get("state") in STATED_STATES), key=lambda c: parse(c["at"])):
@@ -432,26 +453,32 @@ def change_markers(block: dict | None) -> dict[str, list[dict]]:
 
 
 def regime_changes(block: dict | None) -> list[dict]:
-    """The measured changes as the window and week regimes read them, oldest first.
+    """The provisional and measured changes as the window and week regimes read them, oldest
+    first (`stated_changes`; Jonathan's decision, 2026-10-23: the charts update provisionally
+    too). A candidate opens no regime.
 
     Each opens a regime at its instant. `window_scaled` (and `ratio`, its interval) is the
     five-hour size where the charts draw it (`drawn`), `weekly` the seven-day size and
     `windows_per_week` the ratio's, each with `drawn`. A size the charts do not draw moves
-    nothing on its chart: the level is carried across the change.
+    nothing on its chart: the level is carried across the change. `state` is the change's, and
+    each size's `provisional` says the regime it opens on that size's chart is a provisional
+    level (`provisional_on`): every series flags those rows provisional.
     """
     out = []
-    for c in measured_changes(block):
+    for c in stated_changes((block or {}).get("changes")):
         sizes = c.get("sizes") or {}
 
         def size(line: str) -> dict:
             x = sizes.get(line) or {}
             return {"drawn": drawn(c, line) and x.get("change_pct") is not None,
                     "excludes_no_change": bool(x.get("excludes_no_change")),
-                    "change_pct": x.get("change_pct"), "interval_pct": x.get("interval_pct")}
+                    "change_pct": x.get("change_pct"), "interval_pct": x.get("interval_pct"),
+                    "provisional": provisional_on(c, line)}
         five = size("five_hour")
         lo, hi = five["interval_pct"] or (0.0, 0.0)
         scaled = five["drawn"]
         out.append({"at": parse(c["at"]), "family": None, "found_on": c["found_on"],
+                    "state": c["state"], "provisional": c["state"] == "provisional",
                     "change_pct": five["change_pct"] if scaled else 0.0,
                     "scope": c.get("reading") or "undetermined", "window_scaled": scaled,
                     "ratio": 1 + (five["change_pct"] / 100 if scaled else 0.0),
@@ -487,7 +514,7 @@ def public_block(block: dict | None) -> dict | None:
         "lines": {line: {labels.get(a, a): rows for a, rows in by.items()}
                   for line, by in block["lines"].items()},
         "line_columns": ["day", "level", "points", "level_pooled_7d"],
-        # Re-read from the published changes, so a run written before measured-only levels
+        # Re-read from the published changes, so a run written before provisional levels
         # (2026-10-23) publishes them too.
         "levels": {line: levels(block["changes"], line) for line in LINES},
         "change_markers": change_markers(block),

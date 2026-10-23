@@ -269,11 +269,12 @@ nice python3 -m tracker.publish_gate \
 # detector's changes (ADR 0001 rule 22) stated once, drawn where they are and nowhere else.
 # Same semantics as the gate: one alert when a check starts failing, one on recovery, plus one
 # when the page starts being withheld and a reminder every 24 h while it is; its "invariants
-# alert:" line says what it sent. Checks 1-3, 9 and 10 never block (exit 1). Checks 4-8, 11
-# and 12 (exit 2: the headline is not the detector's newest stated change, a change is not drawn
-# on its line, one change has two figures, a chart steps where the detector measured no change,
-# an account is named other than by its label, or the email would lead with other words than
-# the hero's for its change) fail the publish: the last published JSON is
+# alert:" line says what it sent. Checks 1-3, 9 and 10 never block (exit 1). Checks 4-8, 11,
+# 12 and 13 (exit 2: the headline is not the detector's newest stated change, a change is not
+# drawn on its line, one change has two figures, a chart steps where the detector has no
+# provisional or measured change, an account is named other than by its label, the email would
+# lead with other words than the hero's for its change, or a provisional level is not flagged
+# provisional) fail the publish: the last published JSON is
 # put back, the site gets no commit, and the run finishes (state commit, notify) and exits 9.
 python3 -m tracker.invariants --json "$SITE/website/public/data/claude-usage.json"
 inv_rc=$?

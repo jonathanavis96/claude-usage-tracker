@@ -251,12 +251,14 @@ class BuildTests(unittest.TestCase):
                                    "tokens_per_window": r["tokens_per_window"],
                                    "api_value_per_window": r["api_value_per_window"],
                                    "api_list_value_per_window": r["api_value_per_window"],
-                                   "source": "held", "quality": "measured", "readings": 0, "interpolated": False})
+                                   "source": "held", "quality": "measured", "readings": 0, "interpolated": False,
+                                   "provisional": False})
         self.assertEqual(hist[-1], {"date": "2026-09-05", "meter_budget_per_window": 15.0,
                                     "tokens_per_window": r["tokens_per_window"],
                                     "api_value_per_window": r["api_value_per_window"],
                                     "api_list_value_per_window": r["api_value_per_window"],
-                                    "source": "passive", "quality": "measured", "readings": 1, "interpolated": False})
+                                    "source": "passive", "quality": "measured", "readings": 1, "interpolated": False,
+                                    "provisional": False})
         self.assertEqual(len(hist), 36)
 
     def test_fable_is_not_included_on_pro_and_has_half_the_weekly_limit_on_max(self):
@@ -1903,9 +1905,41 @@ class FourAccountsPublishTests(unittest.TestCase):
         self.assertEqual(before, {15.0})  # 10.5 / (1 - 30%): the detector's size, not the readings'
         self.assertEqual(j["rates"]["claude-sonnet-5"]["meter_budget_per_window"], 10.5)
 
-    def test_a_provisional_change_opens_no_regime(self):
+    def test_a_provisional_change_opens_a_provisional_regime(self):
+        # Jonathan's decision, 2026-10-23: the charts update provisionally too. 13 September
+        # (provisional, seven-day only) opens a regime in every series; the week it is drawn on
+        # is flagged provisional there, the window it carries is not.
         j = self.build(detector_run(SEP11, SEP13))
-        froms = [r.get("from") for r in j["credits"]["window_tokens"]["regimes"]]
-        self.assertEqual(froms, [None, "2026-09-11T00:00:00+00:00"])
+        wt = j["credits"]["window_tokens"]
+        self.assertEqual([(r.get("from"), r["provisional"]) for r in wt["regimes"]],
+                         [(None, False), ("2026-09-11T00:00:00+00:00", False),
+                          ("2026-09-13T06:00:00+00:00", False)])
+        self.assertFalse(wt["provisional"])
+        weeks = wt["per_week_regimes"]
+        self.assertEqual([r["provisional"] for r in weeks], [False, False, True])
+        self.assertEqual([r["windows_per_week_provisional"] for r in weeks], [False] * 3)
+        self.assertTrue(wt["per_week"]["provisional"])
         opened = {r.get("opened_by") for r in j["weekly_windows"]["max20"]["regimes"]} - {None}
-        self.assertLessEqual(opened, {"2026-09-11T00:00:00+00:00"})
+        self.assertLessEqual(opened, {"2026-09-11T00:00:00+00:00", "2026-09-13T06:00:00+00:00"})
+        self.assertFalse(any(r["provisional"] for r in j["weekly_windows"]["max20"]["regimes"]))
+        self.assertFalse(any(h["provisional"] for h in j["history"]["claude-sonnet-5"]))
+
+    def test_a_provisional_five_hour_change_flags_the_window_and_its_current_figures(self):
+        sep13 = dict(SEP13, sizes={"seven_day": _detector_size(12.0, 5.0, 19.0),
+                                   "five_hour": _detector_size(10.0, 4.0, 16.0)})
+        j = self.build(detector_run(SEP11, sep13))
+        wt = j["credits"]["window_tokens"]
+        self.assertEqual([r["provisional"] for r in wt["regimes"]], [False, False, True])
+        self.assertTrue(wt["provisional"])
+        self.assertTrue(j["credits"]["window_credits"]["provisional"])
+        hist = j["history"]["claude-sonnet-5"]
+        self.assertEqual({h["provisional"] for h in hist if h["date"] >= "2026-09-13"}, {True})
+        self.assertEqual({h["provisional"] for h in hist if h["date"] < "2026-09-13"}, {False})
+        self.assertTrue(j["rates"]["claude-sonnet-5"]["provisional"])
+        # Measured, the same split is solid; a candidate opens nothing.
+        j = self.build(detector_run(SEP11, dict(sep13, state="measured")))
+        self.assertEqual([r["provisional"] for r in j["credits"]["window_tokens"]["regimes"]],
+                         [False, False, False])
+        j = self.build(detector_run(SEP11, dict(sep13, state="candidate")))
+        self.assertEqual([r.get("from") for r in j["credits"]["window_tokens"]["regimes"]],
+                         [None, "2026-09-11T00:00:00+00:00"])

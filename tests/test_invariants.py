@@ -73,41 +73,51 @@ def _run() -> dict:
 
 
 def _good() -> dict:
-    """A page consistent with the detector: every regime opens at a measured change and steps
-    by the detector's size on its line, where the detector draws that line."""
+    """A page consistent with the detector: every regime opens at a provisional or measured
+    change and steps by the detector's size on its line, where the detector draws that line,
+    and the levels the provisional 9 October change opens are flagged provisional."""
     run = _run()
-    spans = [(None, SEP14), (SEP14, SEP24), (SEP24, None)]
-    # The window (five-hour): carried at 14 Sep, +31.4% at 24 Sep.
-    window = [500, 500, 657]
-    # The week (seven-day): carried at 14 Sep, +34.4% at 24 Sep; windows per week (the ratio):
-    # -17.1% at 14 Sep, carried at 24 Sep.
-    week = [3000, 3000, 4032]
-    wpw = [6.0, 4.974, 4.974]
+    spans = [(None, SEP14), (SEP14, SEP24), (SEP24, OCT09), (OCT09, None)]
+    # The window (five-hour): carried at 14 Sep, +31.4% at 24 Sep, +9.9% at 9 Oct (provisional:
+    # the level since is the newest, and the levels before it are restated through its size).
+    window = [455, 455, 598, 657]
+    # The week (seven-day): carried at 14 Sep, +34.4% at 24 Sep, carried at 9 Oct; windows per
+    # week (the ratio): -17.1% at 14 Sep, carried at 24 Sep, -8.9% at 9 Oct (provisional).
+    week = [3000, 3000, 4032, 4032]
+    wpw = [6.5862, 5.46, 5.46, 4.974]
+    prov = [False, False, False, True]
     regimes = [{"from": f, "until": u, "value": v, "source": "known_date_regime_cluster",
-                "measured_family": "opus-5-5", "measured_value": round(v * 665 / 657)}
-               for (f, u), v in zip(spans, window)]
+                "measured_family": "opus-5-5", "measured_value": round(v * 665 / 657),
+                "provisional": pv}
+               for (f, u), v, pv in zip(spans, window, prov)]
 
     def acct(windows, measured):
-        return [{"from": f, "until": u, "window": w, "measured_window": m}
-                for (f, u), w, m in zip(spans, windows, measured)]
+        return [{"from": f, "until": u, "window": w, "measured_window": m, "provisional": pv}
+                for (f, u), w, m, pv in zip(spans, windows, measured, prov)]
     return {
         "generated_at": "2026-10-23T02:45:00+00:00",
         "credits": {"window_tokens": {
-            "all": {"value": 657}, "measured_family": "opus-5-5",
+            "all": {"value": 657}, "measured_family": "opus-5-5", "provisional": True,
             "per_family": {"opus": {"all": {"value": 657}, "measured_directly": False,
                                     "rate_source": "anchor"},
                            "opus-5-5": {"all": {"value": 665}, "measured_directly": True,
                                         "rate_source": "measured"}},
             "regimes": regimes,
-            "per_week_regimes": [{"from": f, "until": u, "value": v, "windows_per_week": w}
-                                 for (f, u), v, w in zip(spans, week, wpw)],
-            "account_regimes": {"Max account 1": acct([450, 460, 600], [None, None, None]),
-                                "Max account 2": acct([490, 520, 700], [460, 500, 800]),
-                                "Max account 3": acct([None, None, 640], [None, None, 620])}},
-            "window_credits": {"regimes": [{"from": f, "until": u} for f, u in spans]}},
+            "per_week_regimes": [{"from": f, "until": u, "value": v, "windows_per_week": w,
+                                  "provisional": False, "windows_per_week_provisional": pv}
+                                 for (f, u), v, w, pv in zip(spans, week, wpw, prov)],
+            "per_week": {"provisional": False, "windows_per_week_provisional": True},
+            "account_regimes": {"Max account 1": acct([410, 420, 546, 600], [None, None, None, None]),
+                                "Max account 2": acct([446, 473, 637, 700], [420, 455, 728, 800]),
+                                "Max account 3": acct([None, None, 582, 640], [None, None, 620, 620])}},
+            "window_credits": {"provisional": True,
+                               "regimes": [{"from": f, "until": u, "provisional": pv}
+                                           for (f, u), pv in zip(spans, prov)]}},
         "weekly_windows": {"max20": {
-            "regimes": [{"opened_by": None, "windows": 6.0}, {"opened_by": SEP14, "windows": 4.974},
-                        {"opened_by": SEP24, "windows": 4.974}],
+            "provisional": True,
+            "regimes": [{"opened_by": None, "windows": 6.5862}, {"opened_by": SEP14, "windows": 5.46},
+                        {"opened_by": SEP24, "windows": 5.46},
+                        {"opened_by": OCT09, "windows": 4.974, "provisional": True}],
             "by_account": {"Max account 1": {"regimes": [{"opened_by": None}, {"opened_by": SEP14}]}}}},
         "four_accounts": F.public_block(run),
         "last_change": F.last_change(run),
@@ -374,17 +384,24 @@ class EveryChangeDrawnTest(unittest.TestCase):
         self.assertIn("opens no segment", msg)
 
     def test_a_step_line_stepping_by_another_size_fails(self):
-        # Only measured changes step, so the segment from 14 September sits at 1.0 and the one
-        # before it at 1 / 0.829; at 1.1 the line steps -9.09% where the detector says -17.1%.
+        # The segment from 9 October sits at 1.0, the one before it at 1 / 0.911 and the one
+        # from 14 September equal to it; at 1.1 before 14 Sep the line steps -0.20% there where
+        # the detector says -17.1%.
         doc = _good()
         doc["four_accounts"]["levels"]["ratio"][0]["index"] = 1.1
         (msg,) = I.every_change_drawn(doc)
         self.assertIn("-17.1%", msg)
-        self.assertIn("-9.09%", msg)
 
-    def test_a_provisional_change_moves_no_level_and_is_a_dashed_marker(self):
+    def test_a_provisional_change_opens_a_provisional_level_with_a_dashed_marker(self):
+        # Jonathan's decision, 2026-10-23: the charts update provisionally too.
         fa = _good()["four_accounts"]
-        self.assertEqual([s["from"] for s in fa["levels"]["ratio"]], [None, SEP14, SEP24])
+        self.assertEqual([(s["from"], s["opened_by"], s["provisional"]) for s in fa["levels"]["ratio"]],
+                         [(None, None, False), (SEP14, "measured", False),
+                          (SEP24, "measured", False), (OCT09, "provisional", True)])
+        # The seven-day line does not move at 9 Oct: its segment carries the level, no flag.
+        seven = fa["levels"]["seven_day"]
+        self.assertEqual((seven[-1]["from"], seven[-1]["index"], seven[-2]["index"], seven[-1]["provisional"]),
+                         (OCT09, 1.0, 1.0, False))
         marks = {q: [(m["at"], m["style"], m["change_pct"]) for m in rows]
                  for q, rows in fa["change_markers"].items()}
         self.assertEqual(marks, {
@@ -392,10 +409,15 @@ class EveryChangeDrawnTest(unittest.TestCase):
             "weekly_limit": [(SEP24, "step", 34.4)],
             "five_hour_limit": [(SEP24, "step", 31.4), (OCT09, "dashed", 9.9)]})
 
-    def test_a_provisional_change_that_steps_a_level_fails(self):
+    def test_a_provisional_change_that_opens_no_level_fails(self):
         doc = _good()
-        doc["four_accounts"]["levels"]["ratio"].append(
-            dict(doc["four_accounts"]["levels"]["ratio"][-1], **{"from": OCT09, "opened_by": "provisional"}))
+        doc["four_accounts"]["levels"]["ratio"] = doc["four_accounts"]["levels"]["ratio"][:-1]
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any(OCT09 in m and "opens no segment" in m for m in msgs), msgs)
+
+    def test_a_candidate_that_opens_a_level_fails(self):
+        doc = _good()
+        doc["four_accounts"]["changes"][2]["state"] = "candidate"
         msgs = I.every_change_drawn(doc)
         self.assertTrue(any(OCT09 in m and "opens a segment" in m for m in msgs), msgs)
 
@@ -428,6 +450,19 @@ class EveryChangeDrawnTest(unittest.TestCase):
         run = _run()
         run["changes"][2].update(sizes={}, change_pct=None, interval_pct=None)
         doc = _good()
+        # With no size the change opens a regime that carries every level, and no level of it
+        # is provisional.
+        wt = _wt(doc)
+        wt["regimes"][-1]["value"] = wt["regimes"][-2]["value"]
+        wt["per_week_regimes"][-1]["windows_per_week"] = wt["per_week_regimes"][-2]["windows_per_week"]
+        doc["weekly_windows"]["max20"]["regimes"][-1]["windows"] = 5.46
+        for rows in [wt["regimes"], wt["per_week_regimes"], doc["credits"]["window_credits"]["regimes"],
+                     doc["weekly_windows"]["max20"]["regimes"], *wt["account_regimes"].values()]:
+            for r in rows:
+                r["provisional"] = r["windows_per_week_provisional"] = False
+        for block in (wt, doc["credits"]["window_credits"], doc["weekly_windows"]["max20"]):
+            block["provisional"] = False
+        wt["per_week"]["windows_per_week_provisional"] = False
         doc["four_accounts"] = F.public_block(run)
         doc["headline"] = F.headline(run)
         self.assertEqual((doc["headline"]["at"], doc["headline"]["passed_over"][0]["reason"]),
@@ -555,22 +590,94 @@ class OneFigurePerChangeTest(unittest.TestCase):
         self.assertTrue(any("tokens-per-week chart steps +18.0%" in m and "+21%" in m for m in msgs), msgs)
 
 
-class RegimesOpenAtMeasuredChangesTest(unittest.TestCase):
-    def test_passes_when_every_boundary_is_a_measured_change(self):
-        self.assertEqual(I.regimes_open_at_measured_changes(_good()), [])
+class RegimesOpenAtStatedChangesTest(unittest.TestCase):
+    def test_passes_when_every_boundary_is_a_provisional_or_measured_change(self):
+        self.assertEqual(I.regimes_open_at_stated_changes(_good()), [])
 
-    def test_a_boundary_the_detector_did_not_measure_fails(self):
+    def test_a_boundary_the_detector_did_not_find_fails(self):
         doc = _good()
         _wt(doc)["regimes"][1]["from"] = "2026-09-13T22:45:34+00:00"
-        msgs = I.regimes_open_at_measured_changes(doc)
+        msgs = I.regimes_open_at_stated_changes(doc)
         self.assertTrue(any("2026-09-13T22:45:34" in m for m in msgs), msgs)
         self.assertTrue(any(f"{SEP14} opens no regime" in m for m in msgs), msgs)
 
-    def test_a_provisional_change_opens_no_regime(self):
+    def test_a_provisional_change_must_open_a_regime(self):
         doc = _good()
-        doc["weekly_windows"]["max20"]["regimes"].append({"opened_by": OCT09, "windows": 4.974})
-        (msg,) = I.regimes_open_at_measured_changes(doc)
-        self.assertIn(OCT09, msg)
+        _wt(doc)["regimes"] = _wt(doc)["regimes"][:-1]
+        (msg,) = I.regimes_open_at_stated_changes(doc)
+        self.assertIn(f"{OCT09} opens no regime", msg)
+
+    def test_a_candidate_opens_no_regime(self):
+        doc = _good()
+        doc["four_accounts"]["changes"][2]["state"] = "candidate"
+        msgs = I.regimes_open_at_stated_changes(doc)
+        self.assertTrue(msgs and all(OCT09 in m and "not a provisional or measured" in m for m in msgs), msgs)
+
+
+class ProvisionalLevelsFlaggedTest(unittest.TestCase):
+    def test_passes_when_every_provisional_level_is_flagged(self):
+        self.assertEqual(I.provisional_levels_flagged(_good()), [])
+
+    def test_an_unflagged_provisional_level_fails_wherever_it_is(self):
+        for where in ("window", "credits", "wpw", "max20", "levels", "account"):
+            with self.subTest(where=where):
+                doc = _good()
+                wt = _wt(doc)
+                if where == "window":
+                    wt["regimes"][-1]["provisional"] = False
+                elif where == "credits":
+                    doc["credits"]["window_credits"]["regimes"][-1]["provisional"] = False
+                elif where == "wpw":
+                    wt["per_week_regimes"][-1]["windows_per_week_provisional"] = False
+                elif where == "max20":
+                    doc["weekly_windows"]["max20"]["regimes"][-1]["provisional"] = False
+                elif where == "levels":
+                    doc["four_accounts"]["levels"]["five_hour"][-1]["provisional"] = False
+                else:
+                    wt["account_regimes"]["Max account 2"][-1]["provisional"] = False
+                msgs = I.provisional_levels_flagged(doc)
+                self.assertTrue(any(OCT09 in m and "is a provisional level" in m for m in msgs), msgs)
+
+    def test_a_level_the_change_does_not_draw_is_not_provisional(self):
+        # The week does not move at 9 October: flagging it provisional says a step it never takes.
+        doc = _good()
+        _wt(doc)["per_week_regimes"][-1]["provisional"] = True
+        msgs = I.provisional_levels_flagged(doc)
+        self.assertTrue(any("is not a provisional level on the seven_day line" in m for m in msgs), msgs)
+
+    def test_a_current_figure_must_say_what_its_newest_row_says(self):
+        for block in ("window_tokens", "window_credits", "max20", "per_week"):
+            with self.subTest(block=block):
+                doc = _good()
+                target = {"window_tokens": _wt(doc), "window_credits": doc["credits"]["window_credits"],
+                          "max20": doc["weekly_windows"]["max20"],
+                          "per_week": _wt(doc)["per_week"]}[block]
+                key = "windows_per_week_provisional" if block == "per_week" else "provisional"
+                target[key] = False
+                self.assertTrue(I.provisional_levels_flagged(doc))
+
+    def test_the_dollar_history_and_rates_are_flagged_from_the_change_day(self):
+        doc = _good()
+        doc["history"] = {"opus": [{"date": "2026-10-08", "provisional": False},
+                                   {"date": "2026-10-09", "provisional": True},
+                                   {"date": "2026-10-10", "provisional": True}]}
+        doc["rates"] = {"opus": {"provisional": True}}
+        self.assertEqual(I.provisional_levels_flagged(doc), [])
+        doc["rates"]["opus"]["provisional"] = False
+        self.assertTrue(I.provisional_levels_flagged(doc))
+        doc["rates"]["opus"]["provisional"] = True
+        doc["history"]["opus"][1]["provisional"] = False
+        self.assertTrue(I.provisional_levels_flagged(doc))
+
+    def test_once_measured_nothing_is_provisional(self):
+        run = _run()
+        run["changes"][2]["state"] = "measured"
+        doc = _good()
+        doc["four_accounts"] = F.public_block(run)
+        msgs = I.provisional_levels_flagged(doc)
+        self.assertTrue(msgs)   # the fixture's rows still say provisional
+        self.assertFalse(any(s["provisional"] for segs in doc["four_accounts"]["levels"].values()
+                             for s in segs))
 
 
 class AccountsNamedByLabelTest(unittest.TestCase):
@@ -674,13 +781,14 @@ class RunAllTest(unittest.TestCase):
         self.assertEqual([name for name, _ in I.CHECKS],
                          ["headline_inside_accounts", "direct_means_direct", "account_units",
                           "headline_is_newest_stated_change", "every_change_drawn",
-                          "one_figure_per_change", "regimes_open_at_measured_changes",
+                          "one_figure_per_change", "regimes_open_at_stated_changes",
                           "accounts_named_by_label", "measured_changes_still_found", "detector_ran",
-                          "last_change_is_newest_measured", "email_leads_with_hero_rule"])
+                          "last_change_is_newest_measured", "email_leads_with_hero_rule",
+                          "provisional_levels_flagged"])
         self.assertEqual(I.BLOCKING, {"headline_is_newest_stated_change", "every_change_drawn",
-                                      "one_figure_per_change", "regimes_open_at_measured_changes",
+                                      "one_figure_per_change", "regimes_open_at_stated_changes",
                                       "accounts_named_by_label", "last_change_is_newest_measured",
-                                      "email_leads_with_hero_rule"})
+                                      "email_leads_with_hero_rule", "provisional_levels_flagged"})
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()

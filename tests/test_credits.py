@@ -1711,7 +1711,7 @@ class WindowRegimeTests(unittest.TestCase):
         self.assertEqual(now["interval"], [round(10_000_000 * 1.04), round(13_000_000 * 1.13)])
         self.assertEqual((window["value"], window["interval"]), (now["value"], now["interval"]))
         self.assertEqual(window["credits_per_pct"], round(115_000 * 1.086))
-        self.assertIn("Measured changes applied: from 2026-09-14T12:00:00+00:00, five-hour +8.6%",
+        self.assertIn("Changes applied: from 2026-09-14T12:00:00+00:00, five-hour +8.6%",
                       window["current_method"])
 
     def test_a_thick_regime_states_itself_and_the_earlier_one_steps_by_the_detectors_size(self):
@@ -1736,11 +1736,15 @@ class WindowRegimeTests(unittest.TestCase):
                 self.assertEqual(before["chained"], {"at": CUT, "step_pct": 0.0})
                 self.assertIn("five-hour carried", window["current_method"])
 
-    def test_a_change_the_detector_has_not_measured_opens_no_regime(self):
-        for state in ("candidate", "provisional"):
-            with self.subTest(state=state):
-                block = {"changes": [{"at": CUT, "state": state, "found_on": "ratio", "sizes": {}}]}
-                self.assertEqual(F.regime_changes(block), [])
+    def test_a_candidate_opens_no_regime_and_a_provisional_change_does(self):
+        # Jonathan's decision, 2026-10-23: the charts update provisionally too.
+        block = {"changes": [{"at": CUT, "state": "candidate", "found_on": "ratio", "sizes": {}}]}
+        self.assertEqual(F.regime_changes(block), [])
+        block = {"changes": [{"at": CUT, "state": "provisional", "found_on": "ratio", "sizes": {}}]}
+        (change,) = F.regime_changes(block)
+        self.assertEqual((change["state"], change["provisional"], change["window_scaled"]),
+                         ("provisional", True, False))
+        self.assertIn("(provisional)", C.current_method([change]))
 
     def test_the_value_always_sits_inside_its_own_interval(self):
         for changes in ([], [drawn_five_hour(CUT)], [drawn_five_hour(CUT, -20.0, (-30.0, -10.0))],
