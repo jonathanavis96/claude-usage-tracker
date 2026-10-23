@@ -33,7 +33,7 @@ This page holds the full evidence. The data, scripts and commands are described 
 | meters | five-hour and seven-day utilization as each account's usage API reports it, in whole percentages, read a median of 130 seconds apart |
 | cap | no five-hour window the tracker recorded between 14 Sep and 11 Oct reached 100% on these three accounts. Their peaks were 55%, 71% and 95% |
 
-**Plan check.** The repo records all four accounts as Max 20x. Over 14 Sep to 11 Oct, across all steps, the meters read 4.41 (Max account 2), 4.57 (Max account 4) and 4.73 (Max account 1) five-hour points per seven-day point. Max account 3 is left out because its headless work raises its ratio. A Max 5x account would read about 1.67 times as many (the repo's credits-table ratio). That shows the accounts are consistent with one plan and with one another. Billing data was not checked.
+**Plan check.** The repo records all four accounts as Max 20x. Over 14 Sep to 11 Oct, across all steps, the meters read 4.41 (Max account 2), 4.57 (Max account 4) and 4.73 (Max account 1) five-hour points per seven-day point. Max account 3, whose work is the most headless, reads 6.32. A Max 5x account would read about 1.67 times as many (the repo's credits-table ratio). That shows the accounts are consistent with one plan and with one another. Billing data was not checked.
 
 **Headless runs drew on the subscription.** Anthropic's [support article](https://support.claude.com/en/articles/15036540) says: "Update June 15, 2026: We've paused the previously-announced changes to Claude Agent SDK usage. For now, nothing has changed: Claude Agent SDK, `claude -p`, and third-party app usage still draw from your subscription limits." The headless-heavy steps moved both meters, which fits that. On 7 Oct, Max plans gained monthly API credits that cover `claude -p`. The main window ends before that change; the check to 11 Oct spans it.
 
@@ -295,10 +295,19 @@ The meters' own data reject the weights that push (b) below 1 (cache reads at 0,
 
 ## 8. How to reproduce
 
-[REPRODUCE.md](REPRODUCE.md) in this folder lists the per-step data, the scripts and the commands, with the figure each command prints. Two levels are possible:
+[REPRODUCE.md](REPRODUCE.md) in this folder lists the per-step data, the scripts and the commands, with the figure each command prints. Everything runs from files in this folder with Python 3 and numpy:
 
-- **From public files.** The tracker's four-account fit (1.486 [1.381, 1.599], 659 steps; 1.484 [1.384, 1.592], 738 steps to 11 Oct) runs from inputs committed to this repo. The headline, per-account and extended-window fits run from the per-step table in this folder.
-- **From the raw transcripts.** The full hypothesis runs need the raw Claude Code transcripts, which stay private:
+```sh
+cd docs/findings/2026-10-05-headless-repro
+python3 refit_from_csv.py          # the headline and each account
+python3 steps_checks.py            # every other figure from the per-step table
+python3 publisher_fit.py           # the tracker's own four-account fit
+python3 meter_split.py             # which meter carries it (section 6)
+python3 recorded.py                # the figures that need the private transcripts
+```
+
+- **From public files.** The per-step table gives the headline, the per-account and extended-window fits, section 1's step counts, peaks and plan check, and most of sections 4b, 4d, 4e and 5. `refit_from_csv.py --incl` prints the per-account table in section 3, and `--all --incl` the per-account figures to 11 Oct. The tracker's step records give the four-account fit (1.486 [1.381, 1.599], 659 steps; 1.484 [1.384, 1.592], 738 steps to 11 Oct) and section 6, including the token-class mix in 4d.
+- **From the raw transcripts.** The TTL write shares and pricings (4a), the first-turn share (4b), the timing shifts (4c) and three step features in 4d need the raw Claude Code transcripts, which stay private. `recorded.py` prints them as the re-run recorded them. The original runs were:
 
 ```sh
 git checkout da63a25
@@ -309,9 +318,9 @@ python3 -m tools.headless_hypotheses covariates    # the covariate table
 
 The commit matters: the cache-read weight comes from that commit's rates file. At `c87d4c7` the headline reads 1.53 [1.40, 1.67].
 
-On 23 Oct 2026 the 5 Oct analysis was re-run. These figures from Part 1 of the two findings docs reproduced to the printed digit: the headline, the per-account figures, the TTL, per-run, timing and covariate figures, and the four-account table. It was the same author running the same code, so this is a re-run, not an independent replication. Everything else on this page is new analysis from 23 Oct.
+REPRODUCE.md labels its output by an earlier section order: its sections 3, 4, 5a to 5e, 6 and 7 are sections 2, 3, 4a to 4e, 5 and 6 here.
 
-Section 4e, section 6, the token-class mix and peak-hours day-block figures in 4d, and the per-run term in 4b have no published script yet.
+On 23 Oct 2026 the 5 Oct analysis was re-run. These figures from Part 1 of the two findings docs reproduced to the printed digit: the headline, the per-account figures, the TTL, per-run, timing and covariate figures, and the four-account table. It was the same author running the same code, so this is a re-run, not an independent replication. Everything else on this page is new analysis from 23 Oct.
 
 ## 9. Findings docs
 
