@@ -54,11 +54,15 @@ A change found on the seven-day line also needs every voting account's capture t
 both sides (`capture_audit`: at least CAPTURE_MIN of the five-hour meter's movement in
 stretches with captured work); one that fails stays provisional and names the account.
 
-Only a measured change reaches the page's headline, `events`, the window regimes and the
-email. The search remembers nothing but its measured changes: each is carried into every
-later run as a fixed change (`carried`), never moved and never withdrawn, and re-tested every
-day within its published range; a run that no longer flags it says so (`found_today` false)
-and the invariants alert. A flagged instant inside a carried change's range (widened by
+Only a measured change reaches `last_change`, `events`, the window regimes, the charts'
+levels and the email. The hero (`headline`) states the newest provisional or measured change
+whose 5-hour or weekly size is clear, as that limit, tagged provisional until it is measured,
+and every chart it is shown on marks a provisional change with a dashed marker and its figure
+(`change_markers`) that moves no level (Jonathan's decision, 2026-10-23; ADR 0001 rule 22).
+The search remembers nothing but its measured changes: each is carried into every later run
+as a fixed change (`carried`), never moved and never withdrawn, and re-tested every day
+within its published range; a run that no longer flags it says so (`found_today` false) and
+the invariants alert. A flagged instant inside a carried change's range (widened by
 MIN_GAP_HOURS), on its line and in its direction, is that change found again, never a second
 one. What a measured change says moved (`decided`: which lines moved, and the interval
 factors that said so) is decided the day it is measured and never re-decided: its sizes and
@@ -109,11 +113,12 @@ from .atomic import write_text_atomic
 from .capture import COLLECTION_GAP
 # What the publisher and the invariants read lives in the stdlib module; re-exported here.
 from .four_accounts_page import (  # noqa: F401
-    CREDIT_LINES, EPOCH, HEADLINE_NAMES, LINE_METRIC, LINE_NAMES, LINES, METHOD, SCHEMA, SCOPES,
-    SEARCHED, SENSITIVITY, SENTENCE, account_labels, certified_on, change_record, drawn,
-    drawn_step, events, from_hours, hours, last_change, levels, line_moved, load_state,
-    measured_changes, moved, p_value, page_round, parse, pct, public_block, public_label,
-    reading, regime_changes, stamp, write_state,
+    CREDIT_LINES, EPOCH, HEADLINE_NAMES, HOLD_DAYS, LINE_METRIC, LINE_NAMES, LINES, METHOD,
+    SCHEMA, SCOPES, SEARCHED, SENSITIVITY, SENTENCE, account_labels, certified_on,
+    change_markers, change_record, chart_step, drawn, drawn_step, events, from_hours, headline,
+    hours, last_change, levels, line_moved, load_state, measured_changes, moved, p_value,
+    page_round, parse, pct, public_block, public_label, reading, regime_changes, stamp,
+    stated_quantity, write_state,
 )
 
 UTC = timezone.utc
@@ -143,7 +148,6 @@ UNIT_HOURS = 24.0
 PRIOR_UNITS = 4.0
 MIN_UNITS = 2
 MIN_POINTS = {"five_hour": 20.0, "seven_day": 5.0, "ratio": 5.0}
-HOLD_DAYS = 7
 #: One weekly cycle: how far a day's find may sit from the median of the hold's finds so far
 #: and still be the same change (module docstring).
 MATCH_HOURS = 7 * 24.0
@@ -1180,7 +1184,8 @@ def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = 
         c["at"] = stamp(c["_h"])
     lines = {}
     for line in LINES:
-        lines[line] = account_lines(preps[line], breaks, [drawn_step(c, line) for c in changes])
+        lines[line] = account_lines(preps[line], breaks, [chart_step(c, line) for c in changes])
+    public = [_public_change(c) for c in changes]
     return {
         "schema": SCHEMA, "method": METHOD, "day": day.isoformat(), "data_until": until.isoformat(),
         "replayed": bool(replayed), "rule": RULE, "valuation": valued or VALUATION,
@@ -1192,11 +1197,11 @@ def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = 
                                    for line in LINES}}
                      for a in sorted(readings)},
         "interval_coverage": cover,
-        "changes": [_public_change(c) for c in changes],
+        "changes": public,
         "withdrawn": _withdrawn(unmatched, changes, previous, day),
         "not_limit_changes": not_limit_changes(scanner, taus, fixed + [f["grid"] for f in found]),
         "lines": lines,
-        "levels": {line: levels(changes, line) for line in LINES},
+        "levels": {line: levels(public, line) for line in LINES},
     }
 
 

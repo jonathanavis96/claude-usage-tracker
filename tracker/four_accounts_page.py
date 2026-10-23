@@ -32,6 +32,15 @@ LINE_METRIC = {"seven_day": "weekly_limit", "ratio": "windows_per_week",
                "five_hour": "five_hour_limit"}
 #: The lines whose readings are valued in credits: a rate's uncertainty moves their sizes.
 CREDIT_LINES = ("seven_day", "five_hour")
+#: How many daily runs in a row a change is found before it is measured (the hold).
+HOLD_DAYS = 7
+#: The states a change is stated in on the page: the hero and the chart markers. A candidate
+#: (found on one run) and a withdrawn find never are.
+STATED_STATES = ("provisional", "measured")
+#: The two limits the hero can name, the line each is read on, and how the hero says it. The
+#: ratio (windows per week) is never the hero's quantity (Jonathan's decision, 2026-10-23).
+LIMIT_LINES = {"five_hour_limit": "five_hour", "weekly_limit": "seven_day"}
+LIMIT_WORDS = {"five_hour_limit": "5-hour limit", "weekly_limit": "weekly limit"}
 
 #: What a page says this method is, in one sentence.
 SENTENCE = ("Each Max account is its own ruler: when every account gets the same percentage more "
@@ -140,16 +149,39 @@ def reading(change: dict) -> str:
     return "figures_only"
 
 
+def stated_quantity(change: dict) -> str | None:
+    """The limit the hero names for `change` (Jonathan's decision, 2026-10-23): of the 5-hour
+    and the weekly limit, those whose size's 95% interval (widened by the line's coverage
+    factor, at the rates in force) excludes no change, the one with the larger absolute size;
+    `five_hour_limit` or `weekly_limit`, or None when neither interval excludes no change (the
+    change cannot be stated as a limit change). Read on the change's sizes as published today,
+    so it is the same answer the invariants recompute from the public JSON. An exact tie goes
+    to the weekly limit."""
+    sizes = change.get("sizes") or {}
+    clear = []
+    for quantity in ("weekly_limit", "five_hour_limit"):
+        x = sizes.get(LIMIT_LINES[quantity]) or {}
+        if x.get("excludes_no_change") and isinstance(x.get("change_pct"), (int, float)):
+            clear.append((abs(x["change_pct"]), quantity))
+    if not clear:
+        return None
+    return max(clear, key=lambda c: c[0])[1]
+
+
 def drawn(change: dict, line: str) -> bool:
-    """Whether every chart steps on `line` at `change`: always on the line that found it (the
-    change's own figure), and on another line where that line moved (`line_moved`). Where
-    neither holds the level is carried: the line is not shown to have moved there, and its
-    size stays published as a figure with its interval."""
-    return change["found_on"] == line or line_moved(change, line)
+    """Whether the charts show `change` on `line`: always on the line that found it (the
+    change's own figure), on another line where that line moved (`line_moved`), and on the
+    line of the limit the hero names for it (`stated_quantity`), so the page never names a
+    limit its chart does not show. Where none holds the level is carried: the line is not
+    shown to have moved there, and its size stays published as a figure with its interval.
+    How it is shown follows the change's state (`chart_step`, `change_markers`)."""
+    stated = stated_quantity(change)
+    return (change["found_on"] == line or line_moved(change, line)
+            or (stated is not None and LIMIT_LINES[stated] == line))
 
 
 def drawn_step(change: dict, line: str) -> float:
-    """The log step every chart draws on `line` at `change` (`drawn`), else 0."""
+    """The log step `change` would draw on `line` (`drawn`), else 0, whatever its state."""
     size = (change.get("sizes") or {}).get(line) or {}
     d = size.get("_d")
     if d is None and size.get("change_pct") is not None:
@@ -157,14 +189,24 @@ def drawn_step(change: dict, line: str) -> float:
     return d if d is not None and drawn(change, line) else 0.0
 
 
+def chart_step(change: dict, line: str) -> float:
+    """The log step every chart's level takes on `line` at `change`: `drawn_step` once the
+    change is measured, else 0. A provisional change is shown as a dashed marker with its
+    figure (`change_markers`) and moves no level; the step appears by itself the run it is
+    measured (Jonathan's decision, 2026-10-23)."""
+    return drawn_step(change, line) if change.get("state") == "measured" else 0.0
+
+
 def levels(changes: list[dict], line: str) -> list[dict]:
     """The shared step line: the current segment at 1.0, each earlier one the next over 1 +
-    the step drawn at the change between them (`drawn_step`)."""
-    ordered = sorted(changes, key=lambda c: parse(c["at"]))
+    the step drawn at the measured change between them (`chart_step`). Only measured changes
+    open a segment; a provisional one is a marker (`change_markers`), never a level."""
+    ordered = sorted((c for c in changes if c.get("state") == "measured"),
+                     key=lambda c: parse(c["at"]))
     bounds = [None] + [c["at"] for c in ordered] + [None]
     index, vals = 1.0, [1.0]
     for c in reversed(ordered):
-        index = index / math.exp(drawn_step(c, line))
+        index = index / math.exp(chart_step(c, line))
         vals.append(index)
     vals = list(reversed(vals))
     return [{"from": bounds[i], "to": bounds[i + 1], "index": round(vals[i], 4),
@@ -271,11 +313,77 @@ def events(block: dict | None) -> list[dict]:
 
 def last_change(block: dict | None) -> dict | None:
     """`last_change`: the newest measured change, or None. Never a candidate or a provisional
-    one: the page states it as what Anthropic last did to the limits."""
+    one: it is the record the subscriber email reads (bin/daily.sh). The hero reads `headline`,
+    which states provisional changes too."""
     found = events(block)
     if not found:
         return None
     return {k: v for k, v in max(found, key=lambda e: e["at"]).items() if k not in ("kind", "label")}
+
+
+def headline(block: dict | None) -> dict | None:
+    """`headline`: what the hero states (Jonathan's decision, 2026-10-23), or None.
+
+    The newest change that is provisional or measured (never a candidate, never a withdrawn
+    find) and whose 5-hour or weekly size is clear (`stated_quantity`), stated as that limit:
+    its whole percent, direction and date, its state, and how many of the HOLD_DAYS runs it
+    has been held. A newer provisional-or-measured change no limit of which is clear is passed
+    over, and listed in `passed_over` with why. While the stated change is provisional the page
+    tags the sentence "provisional"; the run it is measured the tag goes, and a provisional
+    change that is withdrawn is gone from the run, so the hero falls back by itself. None when
+    no change can be stated: the page then says the limits have not changed.
+    """
+    changes = sorted((c for c in (block or {}).get("changes") or []
+                      if c.get("state") in STATED_STATES), key=lambda c: parse(c["at"]), reverse=True)
+    passed = []
+    for c in changes:
+        quantity = stated_quantity(c)
+        if quantity is None:
+            passed.append({"at": c["at"], "state": c["state"], "found_on": c["found_on"],
+                           "reason": "no_limit_interval_excludes_no_change"})
+            continue
+        size = c["sizes"][LIMIT_LINES[quantity]]
+        pct_ = size["change_pct"]
+        return {
+            "date": c["at"][:10], "at": c["at"], "state": c["state"],
+            "provisional": c["state"] != "measured",
+            "held_days": c.get("held_days"), "holds_needed": HOLD_DAYS,
+            "quantity": quantity, "line": LIMIT_LINES[quantity], "limit": LIMIT_WORDS[quantity],
+            "direction": "increased" if pct_ > 0 else "decreased",
+            "percent": abs(page_round(pct_)), "change_pct": pct_,
+            "interval_pct": size.get("interval_pct"),
+            "found_on": c["found_on"], "first_found": c.get("first_found"),
+            "measured_on": c.get("measured_on"), "passed_over": passed,
+        }
+    return None
+
+
+def change_markers(block: dict | None) -> dict[str, list[dict]]:
+    """`change_markers`: what every chart marks at each stated change, by the quantity the
+    chart draws (`LINE_METRIC`: the 5-hour limit, the weekly limit, windows per week).
+
+    Every provisional or measured change marks each line it is shown on (`drawn`): a measured
+    one as the level's step (`style` "step"), a provisional one as a dashed marker with its
+    figure and the word provisional (`style` "dashed"), which moves no level. A candidate marks
+    nothing. The figure is the change's size on that line, the same one every other place on
+    the page states for it."""
+    out: dict[str, list[dict]] = {LINE_METRIC[line]: [] for line in LINES}
+    for c in sorted((c for c in (block or {}).get("changes") or []
+                     if c.get("state") in STATED_STATES), key=lambda c: parse(c["at"])):
+        for line in LINES:
+            size = (c.get("sizes") or {}).get(line) or {}
+            pct_ = size.get("change_pct")
+            if pct_ is None or not drawn(c, line):
+                continue
+            out[LINE_METRIC[line]].append({
+                "at": c["at"], "date": c["at"][:10], "state": c["state"],
+                "style": "step" if c["state"] == "measured" else "dashed",
+                "held_days": c.get("held_days"), "holds_needed": HOLD_DAYS,
+                "change_pct": pct_, "interval_pct": size.get("interval_pct"),
+                "percent": abs(page_round(pct_)),
+                "direction": "increased" if pct_ > 0 else "decreased",
+                "found_on": c["found_on"]})
+    return out
 
 
 def regime_changes(block: dict | None) -> list[dict]:
@@ -334,7 +442,10 @@ def public_block(block: dict | None) -> dict | None:
         "lines": {line: {labels.get(a, a): rows for a, rows in by.items()}
                   for line, by in block["lines"].items()},
         "line_columns": ["day", "level", "points", "level_pooled_7d"],
-        "levels": block["levels"],
+        # Re-read from the published changes, so a run written before measured-only levels
+        # (2026-10-23) publishes them too.
+        "levels": {line: levels(block["changes"], line) for line in LINES},
+        "change_markers": change_markers(block),
         "sensitivity": SENSITIVITY,
     }
 

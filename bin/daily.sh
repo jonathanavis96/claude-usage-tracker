@@ -511,7 +511,8 @@ PYEOF
   # Subscribers are emailed a change that is not provisional (checked above) and whose
   # `state`, when it has one, is "measured". The publisher puts nothing but the four-account
   # detector's measured changes in last_change (its candidates and provisional changes stay in
-  # `four_accounts`), so this is a guard: on 2026-10-17 an opus-4-6 "-43%" record of the old
+  # `four_accounts`, and the hero's `headline`, which states provisional changes, is never read
+  # here), so this is a guard: on 2026-10-17 an opus-4-6 "-43%" record of the old
   # change machinery carried `provisional: false` while its state was "provisional", and would
   # have been emailed. A record with no state is emailed as before (decided 2026-10-23, with
   # the loud-failure repair). Jonathan still hears about a held change, once per change and

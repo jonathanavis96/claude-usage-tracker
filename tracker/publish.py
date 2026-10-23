@@ -292,7 +292,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     newest daily run (tracker/four_accounts.py, the `latest` of history/four-accounts.json):
     its measured changes are the only source of `last_change`, `events` and every regime
     boundary below, and the whole run is published as `four_accounts` for the page's chart.
-    Without one, nothing is called a change: one regime, no `last_change`, no `events`.
+    `headline` is what the hero states: the newest provisional-or-measured change, named as the
+    5-hour or the weekly limit (`four_accounts_page.headline`); its provisional changes are
+    marked on the charts, never stepped (`four_accounts.change_markers`).
+    Without one, nothing is called a change: one regime, no `last_change`, no `events`, no
+    `headline`.
 
     Rates. The measured quantity is the meter budget: the meter dollars (list
     price x class_weight x meter_weight, tracker/join.py bundle_meter_usd) one
@@ -643,6 +647,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "reference": _reference_block(weekly_windows),
         # The changes: only the four-account detector's measured ones (ADR 0001 rule 22).
         "last_change": four_accounts.last_change(four_accounts_run),
+        # What the hero states: the newest provisional-or-measured change, as the 5-hour or
+        # the weekly limit, whichever clear size is larger (rule 22, amended 2026-10-23).
+        "headline": four_accounts.headline(four_accounts_run),
         "events": four_accounts.events(four_accounts_run),
         "four_accounts": four_accounts.public_block(four_accounts_run),
         # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the median
@@ -1922,7 +1929,8 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         print(f"warning: account feed stopped for {', '.join(stopped)}: older than its schedule allows "
               f"(account_feeds); publishing anyway", file=sys.stderr)
     write_json(a.out, j)
-    print(f"wrote {a.out}: {len(j['rates'])} models, last_change={j['last_change']}")
+    print(f"wrote {a.out}: {len(j['rates'])} models, last_change={j['last_change']}, "
+          f"headline={j['headline']}")
     return 0
 
 
