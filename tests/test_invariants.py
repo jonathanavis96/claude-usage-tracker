@@ -321,6 +321,46 @@ class OneFigurePerChangeTest(unittest.TestCase):
         self.assertEqual(I._page_round(-12.5), -12)
         self.assertEqual(I._page_round(12.5), 13)
 
+    @staticmethod
+    def _one_change(size, true, week=None):
+        """A page with one measured change on the seven-day line, published at `size` (one
+        decimal) and drawn on the step line at `true`, the detector's unrounded step; with
+        `week`, the tokens-per-week chart's two levels either side of it."""
+        sizes = {"seven_day": _size(size, size - 8, size + 8),
+                 "five_hour": _size(1.0, -9.0, 11.0), "ratio": _size(-1.0, -11.0, 9.0)}
+        sizes["seven_day"]["_d"] = math.log1p(true / 100)
+        run = _run()
+        changes = [_change(SEP24, "seven_day", "measured", sizes)]
+        run["changes"] = [F._public_change(c) | {"sizes": {k: {kk: vv for kk, vv in v.items() if kk != "_d"}
+                                                           for k, v in c["sizes"].items()}}
+                          for c in changes]
+        run["levels"] = {line: F.levels(changes, line) for line in F.LINES}
+        doc = {"four_accounts": F.public_block(run)}
+        if week:
+            doc["credits"] = {"window_tokens": {"per_week_regimes": [
+                {"from": None, "until": SEP24, "value": week[0]},
+                {"from": SEP24, "until": None, "value": week[1]}]}}
+        return doc
+
+    def test_a_size_rounded_up_to_a_half_reads_as_its_step(self):
+        # 20.467% publishes as 20.5% (+21%); its step line draws 20.467% (+20% unrounded).
+        # Halves go up, so a decrease's edge is the other side: -20.54% publishes as -20.5% (-20%).
+        for size, true in ((20.5, 20.467), (19.5, 19.4501), (20.5, 20.45), (-20.5, -20.54)):
+            with self.subTest(size=size, true=true):
+                self.assertEqual(I.one_figure_per_change(self._one_change(size, true)), [])
+
+    def test_a_chart_step_just_under_a_half_reads_as_the_size(self):
+        doc = self._one_change(20.5, 20.5, week=(1000.0, 1204.6))  # the chart steps +20.46%
+        self.assertEqual(I.one_figure_per_change(doc), [])
+
+    def test_a_step_line_of_another_whole_percent_still_fails(self):
+        msgs = I.one_figure_per_change(self._one_change(21.0, 18.0))
+        self.assertTrue(any("seven_day step line steps +18.0%" in m and "+21%" in m for m in msgs), msgs)
+
+    def test_a_chart_of_another_whole_percent_still_fails(self):
+        msgs = I.one_figure_per_change(self._one_change(21.0, 21.0, week=(1000.0, 1180.0)))
+        self.assertTrue(any("tokens-per-week chart steps +18.0%" in m and "+21%" in m for m in msgs), msgs)
+
 
 class RegimesOpenAtMeasuredChangesTest(unittest.TestCase):
     def test_passes_when_every_boundary_is_a_measured_change(self):

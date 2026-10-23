@@ -26,7 +26,10 @@ other figure on the page to it.
    draws the line (the window chart for the five-hour line, the tokens-per-week chart for the
    seven-day line, the windows-per-week chart and `weekly_windows` for the ratio, the dollar
    history for the five-hour line). A line the detector does not draw at a change
-   (`four_accounts.drawn`) steps 0 there everywhere.
+   (`four_accounts.drawn`) steps 0 there everywhere. A drawn step is read the way the size is
+   published, to one decimal and then to whole percent, and a step within DRAWN_TOLERANCE_PP
+   of the size is the size (`_same_figure`): the step line draws the detector's unrounded
+   step, so 20.467% is drawn where 20.5% (+21%) is published, and must not read +20%.
 7. `regimes_open_at_measured_changes`: every regime boundary on the page is a measured
    change, and every measured change opens one: no chart steps anywhere the detector did not
    measure a change.
@@ -208,6 +211,17 @@ def _signed(change: dict) -> int | None:
     return -_page_round(pct) if change.get("direction") == "decreased" else _page_round(pct)
 
 
+def _same_figure(step: float, size: float) -> bool:
+    """Whether a drawn step states the same whole percent as a published one-decimal size.
+
+    The size is the detector's step rounded to one decimal, so the step is read the same way
+    (one decimal, then the page's whole percent): 20.467% reads 20.5%, +21%, as its size does.
+    A step within DRAWN_TOLERANCE_PP of the size is the size: the step lines' levels are
+    published to four decimals, which moves a step drawn at 20.45% a hundredth either side."""
+    return (_page_round(round(step, 1)) == _page_round(size)
+            or abs(step - size) <= DRAWN_TOLERANCE_PP)
+
+
 def _expected(change: dict, line: str) -> float:
     """The percent every chart draws on `line` at `change`: its size where the detector draws
     the line there (`four_accounts.drawn`), else 0."""
@@ -317,14 +331,16 @@ def one_figure_per_change(doc: dict) -> list[str]:
     for c in _measured(doc):
         at = c["at"]
         for line in detector.LINES:
-            want = _page_round(_expected(c, line))
+            size = _expected(c, line)
+            want = _page_round(size)
             step = _level_step(levels.get(line) or [], at)
-            if step is not None and _page_round(step) != want:
+            if step is not None and not _same_figure(step, size):
                 out.append(f"At {at} the {line} step line steps {step:+.1f}% but the detector's "
                            f"figure there is {want:+d}%.")
         for chart, step in chart_steps(doc, at).items():
-            want = _page_round(_expected(c, CHART_LINE[chart]))
-            if step is not None and _page_round(step) != want:
+            size = _expected(c, CHART_LINE[chart])
+            want = _page_round(size)
+            if step is not None and not _same_figure(step, size):
                 out.append(f"At {at} the {CHART_NAMES[chart]} steps {step:+.1f}% but the detector's "
                            f"{CHART_LINE[chart]} figure there is {want:+d}%.")
         hist = doc.get("history") or {}
@@ -333,8 +349,9 @@ def one_figure_per_change(doc: dict) -> list[str]:
         for prev, row in zip(rows, rows[1:]):
             if row.get("date") == day and prev.get("meter_budget_per_window"):
                 step = (row["meter_budget_per_window"] / prev["meter_budget_per_window"] - 1) * 100
-                want = _page_round(_expected(c, "five_hour"))
-                if _page_round(step) != want:
+                size = _expected(c, "five_hour")
+                want = _page_round(size)
+                if not _same_figure(step, size):
                     out.append(f"On {day} the dollar history steps {step:+.1f}% but the detector's "
                                f"five_hour figure there is {want:+d}%.")
         for where, rec in records:
