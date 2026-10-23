@@ -54,11 +54,14 @@ A change found on the seven-day line also needs every voting account's capture t
 both sides (`capture_audit`: at least CAPTURE_MIN of the five-hour meter's movement in
 stretches with captured work); one that fails stays provisional and names the account.
 
-Only a measured change reaches `last_change`, `events`, the window regimes, the charts'
-levels and the email. The hero (`headline`) states the newest provisional or measured change
-whose 5-hour or weekly size is clear, as that limit, tagged provisional until it is measured,
-and every chart it is shown on marks a provisional change with a dashed marker and its figure
-(`change_markers`) that moves no level (Jonathan's decision, 2026-10-23; ADR 0001 rule 22).
+Only a measured change reaches `last_change`, `events` and the email. The hero (`headline`)
+states the newest provisional or measured change whose 5-hour or weekly size is clear, as that
+limit, tagged provisional until it is measured. A provisional change also opens a level on
+every chart it is shown on and a regime in every series (`levels`, `regime_changes`): the
+chart splits at it, the level after it is flagged provisional (`provisional_on`) and marked
+with a dashed marker and its figure (`change_markers`); the run it is measured the same step
+is a measured one, and a withdrawn find leaves the single level. A candidate moves nothing
+(Jonathan's decisions, 2026-10-23; ADR 0001 rule 22).
 The search remembers nothing but its measured changes: each is carried into every later run
 as a fixed change (`carried`), never moved and never withdrawn, and re-tested every day
 within its published range; a run that no longer flags it says so (`found_today` false) and
@@ -117,8 +120,8 @@ from .four_accounts_page import (  # noqa: F401
     SCHEMA, SCOPES, SEARCHED, SENSITIVITY, SENTENCE, account_labels, certified_on,
     change_markers, change_record, chart_step, drawn, drawn_step, events, from_hours, headline,
     hours, last_change, levels, line_moved, load_state, measured_changes, moved, p_value,
-    page_round, parse, pct, public_block, public_label, reading, regime_changes, stamp,
-    stated_limit, stated_quantity, stated_record, write_state,
+    page_round, parse, pct, provisional_on, public_block, public_label, reading, regime_changes,
+    stamp, stated_changes, stated_limit, stated_quantity, stated_record, write_state,
 )
 
 UTC = timezone.utc
