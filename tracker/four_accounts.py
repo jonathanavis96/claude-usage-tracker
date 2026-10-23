@@ -40,8 +40,8 @@ MATCH_HOURS of the day before. MATCH_HOURS is one weekly cycle: a weekly limit c
 each account at its own seven-day reset, so the instant of one shared step can sit anywhere in
 a week, and on the records of 2026-10-23 the 22 September step is a flat run of flagged
 instants from 22 September to 1 October on the seven-day line, whose strongest instant moved
-between 23, 25, 28 and 30 September from one daily run to the next (with the 36 hours of the
-spec it was never held seven runs). Only a measured change reaches the page's headline,
+anywhere from 23 to 30 September from one daily run to the next (replayed with the 36 hours of
+the spec, it was never held seven runs). Only a measured change reaches the page's headline,
 `events`, the window regimes and the email. The search remembers nothing but its measured
 changes: each is carried into every later run as a fixed change (`carried`), never moved and
 never withdrawn, re-tested at its own instant every day; a run that no longer flags it says so
