@@ -108,8 +108,8 @@ def public_label(label: str) -> str:
 # ------------------------------------------------------------------------------- which line moved
 def moved(size: dict | None) -> bool:
     """Whether a line's size at a change says the line moved: its interval (widened by the
-    line's coverage factor and by the rates' uncertainty) excludes no change, and its voting
-    accounts agree (a step every account takes on that line)."""
+    line's coverage factor, at the rates in force) excludes no change, and its voting accounts
+    agree (a step every account takes on that line)."""
     size = size or {}
     return bool(size.get("excludes_no_change")) and size.get("agree") is not False
 
@@ -212,10 +212,10 @@ def change_record(change: dict, labels: dict[str, str]) -> dict:
     The figure is the change's size on the line that found it (`metric`): the seven-day line
     states the weekly limit, the ratio windows per week. Each direct limit's own size and
     interval rides beside it, and `scope` names the direct limits that moved
-    (`windows_per_week` when only the ratio did). The interval is the published one: widened
-    by the line's coverage factor and, on a credit line, by the rates' uncertainty
-    (`rate_dependence`, the families whose rate interval moves the size most, and the
-    statistical interval alone). Accounts appear only by label.
+    (`windows_per_week` when only the ratio did). The interval is widened by the line's
+    coverage factor, at the rates in force. Beside it, `rate_limited` and
+    `interval_with_rates_pct` say what the families' rate intervals do to the figure
+    (`rate_dependence`, the family that moves it most first). Accounts appear only by label.
     """
     sizes = change.get("sizes") or {}
     found = sizes.get(change["found_on"]) or {}
@@ -235,8 +235,9 @@ def change_record(change: dict, labels: dict[str, str]) -> dict:
         "direction": "increased" if (pct_ or 0) > 0 else "decreased",
         "percent": abs(page_round(pct_)) if pct_ is not None else None,
         "change_pct": pct_, "interval_pct": found.get("interval_pct"),
-        "statistical_interval_pct": found.get("statistical_interval_pct"),
         "interval_excludes_no_change": found.get("excludes_no_change"),
+        "rate_limited": bool((found.get("rate_dependence") or {}).get("rate_limited")),
+        "interval_with_rates_pct": (found.get("rate_dependence") or {}).get("interval_pct"),
         "rate_dependence": _labelled(found.get("rate_dependence"), labels),
         "metric": metric, "found_on": change["found_on"], "line": LINE_NAMES[change["found_on"]],
         "scope": scope, "certified_on": certified, "reading": change.get("reading"),

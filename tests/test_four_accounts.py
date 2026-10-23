@@ -479,17 +479,22 @@ class RecoveryTest(unittest.TestCase):
         # announced +20%, the ratio not significant.
         seven, five, ratio = (c["sizes"][x] for x in ("seven_day", "five_hour", "ratio"))
         self.assertTrue(11.5 <= seven["change_pct"] <= 25.7, seven["change_pct"])
-        self.assertGreater(seven["statistical_interval_pct"][0], 0)
+        self.assertGreater(seven["interval_pct"][0], 0)
         self.assertTrue(five["interval_pct"][0] <= 20 <= five["interval_pct"][1])
         self.assertFalse(ratio["excludes_no_change"])
         # The after side runs on Opus 5.5, which the before side never used: across that
-        # family's rate interval the step runs from about nothing to about +35%. The published
-        # interval says so, and nothing is decided to have moved on a credit line.
+        # family's rate interval the step runs from about nothing to about +35%, and its
+        # record says so beside the figure at the rates in force.
         rd = seven["rate_dependence"]
         self.assertTrue(rd["rate_limited"])
         self.assertEqual(rd["families"][0]["family"], "opus-5-5")
-        self.assertLess(seven["interval_pct"][0], 0)
-        self.assertEqual(c["decided"]["moved"], {"seven_day": False, "ratio": False, "five_hour": False})
+        self.assertLess(rd["interval_pct"][0], 0)
+        self.assertFalse(rd["excludes_no_change"])
+        record = F.change_record(c, {})
+        self.assertTrue(record["rate_limited"])
+        self.assertEqual(record["interval_with_rates_pct"], rd["interval_pct"])
+        self.assertTrue(c["decided"]["moved"]["seven_day"])
+        self.assertFalse(c["decided"]["moved"]["ratio"])
         # The instant: the median of the hold's seven finds, the range spanning all of them.
         self.assertEqual(c["at"], sorted(f[0] for f in c["finds"])[(len(c["finds"]) - 1) // 2])
         self.assertLessEqual(F.parse(c["instant_range"][0]), min(F.parse(f[1]) for f in c["finds"]))
@@ -875,13 +880,17 @@ class WholeRunTest(unittest.TestCase):
         self.assertAlmostEqual(rd["change_pct_range"][0], -9.0, delta=3)
         self.assertAlmostEqual(rd["change_pct_range"][1], 69.0, delta=4)
         self.assertTrue(rd["rate_limited"])
-        self.assertLess(seven["interval_pct"][0], seven["statistical_interval_pct"][0])
-        self.assertFalse(seven["excludes_no_change"])
-        self.assertTrue(seven["statistical_interval_pct"][0] > 0)
-        self.assertFalse(c["decided"]["moved"]["seven_day"])
+        self.assertLess(rd["interval_pct"][0], 0)
+        self.assertFalse(rd["excludes_no_change"])
+        # The figure, its interval and what the charts draw stay at the rate in force.
+        self.assertGreater(seven["interval_pct"][0], 0)
+        self.assertTrue(seven["excludes_no_change"])
+        self.assertTrue(c["decided"]["moved"]["seven_day"])
         record = F.change_record(c, {})
         self.assertEqual(record["rate_dependence"]["families"][0]["family"], "newmodel")
-        self.assertFalse(record["interval_excludes_no_change"])
+        self.assertTrue(record["rate_limited"])
+        self.assertTrue(record["interval_excludes_no_change"])
+        self.assertEqual(record["interval_with_rates_pct"], rd["interval_pct"])
 
 
 class CaptureDependenceTest(unittest.TestCase):

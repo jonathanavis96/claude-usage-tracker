@@ -74,9 +74,11 @@ that date into the seven-day line. The ratio reads no rate except through a step
 share, so a refit moves the seven-day and five-hour sizes and never what the ratio finds.
 What a rate's own uncertainty does to a size is measured at every change (`rate_dependence`):
 each family's rate moved to either end of its published interval, the size re-read, and the
-published interval widened to cover it. A change whose after side runs on a model the before
-side never used cannot be told from that model's rate on the credit lines (22 September,
-Opus 5.5); its interval says so.
+interval it would then have published beside the size, flagged `rate_limited` where the rates
+move it more than the meters' own interval does. A change whose after side runs on a model the
+before side never used cannot be told from that model's rate on the credit lines (22
+September, Opus 5.5); its record says so. The size, its interval and what the charts draw stay
+at the rates in force, the valuation every figure on the page is in.
 
 The headless factor is fitted at every run from the seven-day steps, with one level per
 account per ISO week in place of dated regimes (`headless_factor`).
@@ -964,7 +966,7 @@ def size_on(prep: Prepared, line: str, tau: float, breaks: list[float], factor: 
             acc[a]["without_this_account"] = {"change_pct": pct(x["d_others"]),
                                               "z": round(x["z_others"], 2)}
     lo, hi = pct(r["d"] - half * r["se"]), pct(r["d"] + half * r["se"])
-    return {"change_pct": pct(r["d"]), "interval_pct": [lo, hi], "statistical_interval_pct": [lo, hi],
+    return {"change_pct": pct(r["d"]), "interval_pct": [lo, hi],
             "nominal_interval_pct": [pct(r["d"] - 1.96 * r["se"]), pct(r["d"] + 1.96 * r["se"])],
             "interval_factor": factor, "z": round(r["z"], 2), "p": p_value(r["p"]),
             "permutations": r["permutations"], "excludes_no_change": bool(lo > 0 or hi < 0),
@@ -996,16 +998,21 @@ def rate_variants(readings: dict[str, dict], factor: float | None, valued: dict 
 
 def rate_dependence(variants: dict, valued: dict | None, line: str, tau: float,
                     breaks: list[float], size: dict) -> None:
-    """Widen `size`'s interval by what each family's rate interval does to it, in place.
+    """What each family's rate interval does to `size`, as its `rate_dependence`, in place.
 
     Each family's rate moved to either end of its published interval (the others as in
     force), the step re-read at the same instant and sides: the family's two ends move the
     log step by delta_low and delta_high. The rates together move it from d + the sum of the
     falls to d + the sum of the rises (each family taken at its worse end, added: wider, never
-    narrower, than any joint draw), and the published interval runs from the lower end's
-    interval low to the upper end's interval high. `statistical_interval_pct` keeps the
-    interval of the rates in force alone, and `rate_limited` says the rates' range is wider
-    than it: the size is limited by what a rate is, not by the meters."""
+    narrower, than any joint draw): `change_pct_range`. `interval_pct` runs from the lower
+    end's interval low to the upper end's interval high, and `excludes_no_change` reads it.
+    `rate_limited` says the rates' range is wider than the size's own interval: the size is
+    limited by what a rate is, not by the meters.
+
+    The size's own interval, and every decision drawn from it (`moved`, what the charts
+    draw, the scope), stay at the rates in force: every chart, window and week figure on the
+    page is valued at those rates, so a step drawn there is drawn in the valuation it is
+    drawn in. The rate's uncertainty is stated beside it, never folded into it."""
     fams = ((valued or {}).get("rate_intervals") or {})
     d, se = size["_d"], size["_se"]
     half = 1.96 * size["interval_factor"]
@@ -1023,17 +1030,12 @@ def rate_dependence(variants: dict, valued: dict | None, line: str, tau: float,
         rows.append({"family": fam, "times_opus": info["times_opus"], "interval": info["interval"],
                      "change_pct_at_interval": [pct(d + ds[0]), pct(d + ds[1])],
                      "_moves": max(abs(x) for x in ds)})
-    if not rows:
-        size["rate_dependence"] = {"families": [], "change_pct_range": [size["change_pct"]] * 2,
-                                   "rate_limited": False, "interval_percentiles": fams.get("percentiles")}
-        return
     rows.sort(key=lambda x: -x["_moves"])
     lo, hi = pct(d + fall - half * se), pct(d + rise + half * se)
-    size["interval_pct"] = [lo, hi]
-    size["excludes_no_change"] = bool(lo > 0 or hi < 0)
     size["rate_dependence"] = {
         "families": [{k: v for k, v in x.items() if not k.startswith("_")} for x in rows],
         "change_pct_range": [pct(d + fall), pct(d + rise)],
+        "interval_pct": [lo, hi], "excludes_no_change": bool(lo > 0 or hi < 0),
         "rate_limited": bool(rise - fall > 2 * half * se),
         "interval_percentiles": fams.get("percentiles"),
     }

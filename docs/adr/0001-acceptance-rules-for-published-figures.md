@@ -466,10 +466,10 @@ These are the acceptance rules. Each names where it lives.
     it ran and against the account that did it. That is the counting-error evidence this rule
     asks for. On the repaired records this rule's figure read -10.30%, and check 12 failed.
     The 14 September weekly figure is now the detector's seven-day size at its 14 September
-    change: -7.0% [-15.0, +1.8] on the records of 2026-10-23, with Max account 1 at +27.7%
-    and Max account 2 at -10.1%. Its interval includes no change, so the tokens-per-week
-    chart carries its level across 14 September. The page states that change on the line
-    that found it: windows per week -17.4% [-25.9, -8.1]. `FROZEN_14SEP_WEEKLY_PCT`,
+    change: -4.2% [-15.4, +8.5] on the records of 2026-10-23 (at 12:02Z), with Max account 1
+    at +28.0% and Max account 2 at -10.1%. Its interval includes no change, so the
+    tokens-per-week chart carries its level across 14 September. The page states that change
+    on the line that found it: windows per week -17.4% [-25.7, -8.1]. `FROZEN_14SEP_WEEKLY_PCT`,
     `FROZEN_14SEP_REACH_DAYS`, check 12 and `FourteenSepFrozenTest` are removed with this
     entry.
 
@@ -494,13 +494,22 @@ These are the acceptance rules. Each names where it lives.
       a reading counts by the meter movement it carries, and is read in 24-hour units. The
       accounts' steps are averaged by inverse variance. The instant flags when all three of
       these hold. (a) Shuffling each account's days between the two sides 4,000 times makes a
-      pooled step that large less than once in a thousand tries (permutation p < 0.001). (b)
+      pooled step that large less than once in a thousand tries (permutation p < 0.001).
+      The shuffles at an instant are seeded by the line, the instant and the account alone,
+      never by the day the search runs, so the same readings give the same p on every run.
+      Where p lies within three Monte Carlo standard errors of 0.001 the shuffles go on, five
+      times as many each round, up to 100,000, and flagged instants are ranked at the first
+      round's resolution. Before this, the seed was the run's day: at 9 October 18:00 p is
+      0.00079 by 100,000 shuffles, 20 of 30 seeds passed it at 4,000, and on unchanged
+      records the 9 October change was withdrawn on 24 October and back on 25 October. (b)
       Every voting account agrees: none is more than 2.5 standard errors from the others, none
       is significant the other way, and at least two vote. (c) The step holds with any one
       account left out, at |z| >= 1.96 for the rest: rule 9's test, on every line. The
       strongest flagged instant becomes a change, the history is split there, and the search
-      repeats until nothing flags. The change's instant is then the hour of the largest |z|
-      within 48 hours of it, published with the range of hours within one z of that. A step
+      repeats until nothing flags. A day's find is the hour of the largest |z| within 48
+      hours of the flagged instant, with the range of hours within one z of that. A change's
+      instant is the median of its hold's finds (the lower middle one), and its published
+      range spans every find's range. A step
       one account takes alone is a counting problem on that account (`not_limit_changes`),
       never a limit change.
     - No date is an input. No cut, announcement, family's first use or account list enters
@@ -516,29 +525,73 @@ These are the acceptance rules. Each names where it lives.
       refit changes nothing here until it is accepted.
     - The hold. The detector runs once a day on the data known at midnight UTC (bin/daily.sh).
       A change is a `candidate` the day it is first found. It is `provisional` while it is
-      found again on the same line, in the same direction, within one weekly cycle of the day
-      before (`MATCH_HOURS`, 7 days), and `measured` once it has been found on 7 runs in a row.
-      From then on it is carried into every later run as a fixed change: never moved, never
-      withdrawn, and re-tested at its own instant each day (`found_today`). The match is one
-      weekly cycle, not the 36 hours of the design, because a weekly limit change reaches each
-      account at its own seven-day reset. Replayed on the records of 2026-10-23 with 36 hours,
-      the strongest instant of the 22 September step moved anywhere from 23 to 30 September
-      from one run to the next, and it was never held 7 runs. The state is
-      history/four-accounts.json, committed by the daily run: one row per run of what it found
-      and held, and the newest run in full. A run with no state replays every day from the
-      first possible one, which took about a minute on the records of 2026-10-23. One day's
-      run takes about 3 seconds.
+      found again on the same line, in the same direction, within one weekly cycle
+      (`MATCH_HOURS`, 7 days) of the median of its hold's finds so far, and `measured` once it
+      has been found on 7 runs in a row. Matching against the hold's median, not yesterday's
+      find, keeps a find from walking a week a day; the median and the range of every find
+      keep the date from being whichever instant the seventh run picked. From then on it is
+      carried into every later run as a fixed change: never moved, never withdrawn, and
+      re-tested inside its published range each day (`found_today`). A flagged instant inside
+      that range (widened by 48 hours), on its line and in its direction, is that change found
+      again; one further off is a change of its own. The match is one weekly cycle, not the 36
+      hours of the design, because a weekly limit change reaches each account at its own
+      seven-day reset. Replayed on the records of 2026-10-23 with 36 hours, the strongest
+      instant of the 22 September step moved anywhere from 23 to 30 September from one run to
+      the next, and it was never held 7 runs. Its seven finds were 22 September 15:00, 28
+      September 14:00, 29 September 13:00 and 23 September 13:00 four times: measured at 23
+      September 13:00, range 20 September 12:00 to 29 September 16:00.
+    - What a measured change says moved is decided the day it is measured (`decided`: which
+      lines moved, and the interval factors that said so) and never re-decided. Its sizes and
+      intervals are re-measured every run, but what the charts draw, `scope` and the email do
+      not flip with them: re-estimated daily, the 23 September five-hour interval read
+      [+0.1, +38.6] on 21 October, [-0.4, +39.2] on 22 October and [+1.3, +37.0] on 23
+      October, and the scope would have read "weekly" for one day.
+    - Capture. A change found on the seven-day line also needs every voting account to pass
+      the capture audit on both sides (`capture_audit`, spec 9.7): at least 90% of its
+      five-hour meter movement in stretches with captured work (not a collection gap). One
+      that fails stays provisional and names the account (`held_by_capture`). The ratio reads
+      no transcript work and is not audited. The audit sees a meter that moved with nothing
+      recorded. It does not see partial capture: on the records before PR #137, Max account 2
+      had no collection-gap stretch on 17 October, while its stretches there read 8-61% of
+      its own reference. The protection against a shared partial gap is the capture itself, and
+      `CaptureDependenceTest` (R3) shows the detector still sees one: on those records the
+      seven-day line steps by -43% on 17 October at p < 0.001, kept out only by the
+      leave-one-out test.
+    - Replays. A run with no state replays every day from the first possible one and marks
+      each run `replayed`, each change it holds `hold_replayed`, and the state
+      `replayed_through`: their dates were found after the fact, not seen live. On the records
+      of 2026-10-23 a replay takes about two minutes; one day's run about 4 seconds. The state
+      is history/four-accounts.json, committed by the daily run: one row per run of what it
+      found and held, and the newest run in full.
     - Sizes. At each change the step on all three lines is measured with sides of 14 days, cut
       at the neighbouring changes. Each account's own step, and the pooled step with each
       account left out, are published beside it. Each line's 95% interval is widened by the
       spread of z over the history with the measured changes divided out (`coverage`), and
       never narrowed. The 2026-10-23 re-check found that the nominal intervals of the
       five-hour line and the ratio covered 59-74% of injected steps. On the records of
-      2026-10-23 the factors are 1.79 (five-hour), 2.01 (ratio) and 1.0 (seven-day).
+      2026-10-23 the factors are 1.79 (five-hour), 2.01 (ratio) and 1.0 (seven-day). The
+      unmeasured 9 October step sits in that bed as noise; once it is measured and divided
+      out the factors fall (1.16 and 1.10 on a run of 26 October on the same records).
+    - Rates. At every change each family with a rate interval in history/model-rates.json
+      (10th to 90th percentile) has its rate moved to either end of it, the others as in
+      force, and every size re-read (`rate_dependence`): the range the rates move the figure
+      over, each family taken at its worse end and added, and the interval that would then be
+      published. The figure, its interval and what the charts draw stay at the rates in
+      force, the valuation every chart, window and week figure is in. The change record says
+      `rate_limited` where the rates move the figure more than its own interval does, with
+      `interval_with_rates_pct`. On the records of 2026-10-23 the 23 September weekly limit
+      is +18.3% [+11.5, +25.6] at the rates in force and rate-limited: across Opus 5.5's
+      interval [0.652, 0.938] x Opus it reads +5.0% to +34.6%, and with every family +0.6% to
+      +39.3%, interval [-5.2, +47.8]. The five-hour line there reads +0.7% to +38.8%. The
+      after side runs on a model the before side never used, so a credit line cannot tell
+      that model's rate from a limit change. The ratio moves by under half a point across
+      every family's interval.
     - What the page states. Only measured changes reach `last_change` (the newest), `events`,
       the window and week regimes, and the email (bin/daily.sh mails a change whose state is
-      `measured`). A change's figure is its size on the line that found it: the seven-day line
-      states the weekly limit (`metric` `weekly_limit`), the ratio states windows per week
+      `measured`; the site takes scope "window" or "weekly", so a five-hour or both-limits
+      change is sent as "window", a weekly one as "weekly", and a windows-per-week or
+      undetermined one with no scope). A change's figure is its size on the line that found
+      it: the seven-day line states the weekly limit (`metric` `weekly_limit`), the ratio states windows per week
       (`windows_per_week`). Each direct limit's own size and interval ride beside it, and
       `scope` names the direct limits that moved: their interval excludes no change and their
       accounts agree. A chart steps at a change on the line that found it, and on another line
@@ -573,13 +626,17 @@ These are the acceptance rules. Each names where it lives.
       shifted in time by its own random offset, 2 flagged with the 9 October ratio step left
       in as noise and none with it divided out. The 7-day hold is what keeps such a flag from
       becoming measured.
-    - On the records of 2026-10-23 (main at 7af6af1), with no date given: 14 September 16:00Z
-      on the ratio, windows per week -17.4% [-25.9, -8.1], Max accounts 1 and 2 voting,
-      measured since 25 September; 23 September 13:00Z on the seven-day line, weekly limit
-      +18.3% [+11.5, +25.6], Max accounts 1 to 3 voting (Max account 4's readings start a
-      few hours before it), with the five-hour limit +17.8% [+1.3, +37.0] beside it,
-      measured since 11 October; and 9 October 16:00Z on the ratio, -9.2% [-16.2, -1.6] with
-      all four accounts agreeing, provisional since 20 October. Nothing at 17 October.
+    - On the records of 2026-10-23 (main at 689db7d), with no date given (a replay, so every
+      hold below was found after the fact): 14 September 09:00Z on the ratio (range 14
+      September 00:00 to 17 September 00:00), windows per week -17.4% [-25.7, -8.1], Max
+      accounts 1 and 2 voting, measured since 25 September; 23 September 13:00Z on the
+      seven-day line (range 20 September 12:00 to 29 September 16:00), weekly limit +18.3%
+      [+11.5, +25.6], rate-limited, Max accounts 1 to 3 voting (Max account 4's readings
+      start a few hours before it), with the five-hour limit +17.8% [+1.3, +37.0] beside it,
+      measured since 11 October; and 9 October 16:00Z on the ratio, -9.2% [-16.2, -1.6]
+      (p = 0.00046) with all four accounts agreeing, provisional since 20 October. Nothing
+      at 17 October. Run forward on the same records, 9 October is held 5 and 6 days on 24
+      and 25 October and measured on 26 October, at -9.2% [-13.1, -5.1].
     - Before and after, rebuilt from those same records with main's code and with this rule's
       code. Before: `last_change` 22 September 19:41Z, five-hour limit +20.1% [+11.3, +29.6];
       `events` 5 September `weekly_to_five_hour_ratio` -17%, 13 September windows per week -9%,
@@ -595,7 +652,9 @@ These are the acceptance rules. Each names where it lives.
       14-22 September, which holds one pure-Opus stretch: 98.7% cache reads and almost all
       headless. Alone it read 906M tokens per window against the 624M median of the account's
       27 stretches there. That is one stretch's own token mix, not the account's level.
-    Source: `tracker/four_accounts.py`, `tracker/publish.py` (`load_four_accounts`,
+    Source: `tracker/four_accounts.py`, `tracker/four_accounts_page.py` (what the publisher
+    and the invariants read of a run, stdlib only, so numpy stays out of the publisher),
+    `tracker/publish.py` (`load_four_accounts`,
     `_segment_regimes`, `_chained_levels`), `tracker/credits.py` (`regime_index`,
     `chain_regimes`, `chain_certified_weeks`, `REGIME_METHOD`, `regime_figures`),
     `tracker/invariants.py` (checks 4-10), `bin/daily.sh` (the daily run and the state commit),
