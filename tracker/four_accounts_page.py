@@ -325,11 +325,43 @@ def events(block: dict | None) -> list[dict]:
 def last_change(block: dict | None) -> dict | None:
     """`last_change`: the newest measured change, or None. Never a candidate or a provisional
     one: it is the record the subscriber email reads (bin/daily.sh). The hero reads `headline`,
-    which states provisional changes too."""
-    found = events(block)
+    which states provisional changes too.
+
+    `hero` is the hero's sentence for this change (`stated_record`, the rule `headline` states
+    by), or None when no limit of it can be stated: the email leads with it (Jonathan's
+    decision, 2026-10-23), so the email and the hero say the same limit, direction and whole
+    percent for the same change."""
+    found = measured_changes(block)
     if not found:
         return None
-    return {k: v for k, v in max(found, key=lambda e: e["at"]).items() if k not in ("kind", "label")}
+    newest = max(found, key=lambda c: c["at"])
+    record = change_record(newest, account_labels(block or {}))
+    out = {k: v for k, v in record.items() if k not in ("kind", "label")}
+    out["hero"] = stated_record(newest)
+    return out
+
+
+def stated_record(change: dict) -> dict | None:
+    """The hero's sentence for one change, or None when it cannot be stated as a limit change:
+    the limit it names (`stated_quantity`), that limit's whole percent and direction, its date,
+    state and hold. `headline` states the newest change this gives a record for; `last_change`
+    carries it for the email."""
+    quantity = stated_quantity(change)
+    size = ((change.get("sizes") or {}).get(LIMIT_LINES[quantity]) or {}) if quantity else {}
+    if quantity is None or not isinstance(size.get("change_pct"), (int, float)):
+        return None
+    pct_ = size["change_pct"]
+    return {
+        "date": change["at"][:10], "at": change["at"], "state": change["state"],
+        "provisional": change["state"] != "measured",
+        "held_days": change.get("held_days"), "holds_needed": HOLD_DAYS,
+        "quantity": quantity, "line": LIMIT_LINES[quantity], "limit": LIMIT_WORDS[quantity],
+        "direction": "increased" if pct_ > 0 else "decreased",
+        "percent": abs(page_round(pct_)), "change_pct": pct_,
+        "interval_pct": size.get("interval_pct"),
+        "found_on": change["found_on"], "first_found": change.get("first_found"),
+        "measured_on": change.get("measured_on"),
+    }
 
 
 def headline(block: dict | None) -> dict | None:
@@ -348,24 +380,12 @@ def headline(block: dict | None) -> dict | None:
                       if c.get("state") in STATED_STATES), key=lambda c: parse(c["at"]), reverse=True)
     passed = []
     for c in changes:
-        quantity = stated_quantity(c)
-        size = ((c.get("sizes") or {}).get(LIMIT_LINES[quantity]) or {}) if quantity else {}
-        if quantity is None or not isinstance(size.get("change_pct"), (int, float)):
+        record = stated_record(c)
+        if record is None:
             passed.append({"at": c["at"], "state": c["state"], "found_on": c["found_on"],
-                           "reason": _passed_reason(c, quantity)})
+                           "reason": _passed_reason(c, stated_quantity(c))})
             continue
-        pct_ = size["change_pct"]
-        return {
-            "date": c["at"][:10], "at": c["at"], "state": c["state"],
-            "provisional": c["state"] != "measured",
-            "held_days": c.get("held_days"), "holds_needed": HOLD_DAYS,
-            "quantity": quantity, "line": LIMIT_LINES[quantity], "limit": LIMIT_WORDS[quantity],
-            "direction": "increased" if pct_ > 0 else "decreased",
-            "percent": abs(page_round(pct_)), "change_pct": pct_,
-            "interval_pct": size.get("interval_pct"),
-            "found_on": c["found_on"], "first_found": c.get("first_found"),
-            "measured_on": c.get("measured_on"), "passed_over": passed,
-        }
+        return {**record, "passed_over": passed}
     return None
 
 

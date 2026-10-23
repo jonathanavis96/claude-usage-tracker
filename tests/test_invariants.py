@@ -611,6 +611,64 @@ class DetectorRanTest(unittest.TestCase):
         self.assertIn("no four_accounts block", msg)
 
 
+class EmailLeadsWithHeroRuleTest(unittest.TestCase):
+    """The email's lead (`last_change.hero`) is the hero's rule for the change it announces
+    (Jonathan's decision, 2026-10-23)."""
+
+    @staticmethod
+    def _oct09_measured() -> dict:
+        run = _run()
+        run["changes"][2]["state"] = "measured"
+        doc = _good()
+        doc["four_accounts"] = F.public_block(run)
+        doc["last_change"] = F.last_change(run)
+        doc["headline"] = F.headline(run)
+        return doc
+
+    def test_the_lead_is_the_heros_sentence_for_the_measured_change(self):
+        self.assertEqual(I.email_leads_with_hero_rule(_good()), [])
+        hero = _good()["last_change"]["hero"]
+        self.assertEqual((hero["at"], hero["quantity"], hero["direction"], hero["percent"]),
+                         (SEP24, "weekly_limit", "increased", 34))
+        # 9 October measured: found on windows per week (-8.9%), the email leads with what the
+        # hero says, the 5-hour limit +10%, the very record the hero states.
+        doc = self._oct09_measured()
+        self.assertEqual(I.email_leads_with_hero_rule(doc), [])
+        lead = doc["last_change"]["hero"]
+        self.assertEqual((doc["last_change"]["metric"], doc["last_change"]["percent"]),
+                         ("windows_per_week", 9))
+        self.assertEqual((lead["quantity"], lead["direction"], lead["percent"], lead["change_pct"]),
+                         ("five_hour_limit", "increased", 10, 9.9))
+        self.assertEqual(lead, {k: v for k, v in doc["headline"].items() if k != "passed_over"})
+
+    def test_another_lead_figure_or_limit_fails(self):
+        for key, value in (("percent", 9), ("direction", "decreased"), ("change_pct", -8.9),
+                           ("quantity", "weekly_limit"), ("limit", "weekly limit"),
+                           ("interval_pct", [-15.2, -2.2]), ("date", "2026-10-08")):
+            doc = self._oct09_measured()
+            doc["last_change"]["hero"][key] = value
+            msgs = I.email_leads_with_hero_rule(doc)
+            self.assertTrue(any(f"lead {key}" in m for m in msgs), (key, msgs))
+
+    def test_a_change_with_no_limit_to_state_has_no_lead_and_none_passes(self):
+        doc = _good()
+        run = _run()
+        run["changes"] = run["changes"][:1]
+        doc["four_accounts"] = F.public_block(run)
+        doc["last_change"] = F.last_change(run)
+        self.assertIsNone(doc["last_change"]["hero"])
+        self.assertEqual(I.email_leads_with_hero_rule(doc), [])
+        doc["last_change"]["hero"] = {"limit": "5-hour limit", "quantity": "five_hour_limit"}
+        (msg,) = I.email_leads_with_hero_rule(doc)
+        self.assertIn("no limit to state", msg)
+
+    def test_a_stated_change_with_no_lead_fails(self):
+        doc = _good()
+        doc["last_change"]["hero"] = None
+        (msg,) = I.email_leads_with_hero_rule(doc)
+        self.assertIn("no hero sentence for the email", msg)
+
+
 class RunAllTest(unittest.TestCase):
     def test_every_check_runs_and_is_named(self):
         self.assertEqual([name for name, _ in I.CHECKS],
@@ -618,10 +676,11 @@ class RunAllTest(unittest.TestCase):
                           "headline_is_newest_stated_change", "every_change_drawn",
                           "one_figure_per_change", "regimes_open_at_measured_changes",
                           "accounts_named_by_label", "measured_changes_still_found", "detector_ran",
-                          "last_change_is_newest_measured"])
+                          "last_change_is_newest_measured", "email_leads_with_hero_rule"])
         self.assertEqual(I.BLOCKING, {"headline_is_newest_stated_change", "every_change_drawn",
                                       "one_figure_per_change", "regimes_open_at_measured_changes",
-                                      "accounts_named_by_label", "last_change_is_newest_measured"})
+                                      "accounts_named_by_label", "last_change_is_newest_measured",
+                                      "email_leads_with_hero_rule"})
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()

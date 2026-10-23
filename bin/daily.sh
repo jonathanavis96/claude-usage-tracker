@@ -269,10 +269,11 @@ nice python3 -m tracker.publish_gate \
 # detector's changes (ADR 0001 rule 22) stated once, drawn where they are and nowhere else.
 # Same semantics as the gate: one alert when a check starts failing, one on recovery, plus one
 # when the page starts being withheld and a reminder every 24 h while it is; its "invariants
-# alert:" line says what it sent. Checks 1-3, 9 and 10 never block (exit 1). Checks 4-8
-# (exit 2: the headline is not the detector's newest measured change, a change is not drawn on
-# its line, one change has two figures, a chart steps where the detector measured no change, or
-# an account is named other than by its label) fail the publish: the last published JSON is
+# alert:" line says what it sent. Checks 1-3, 9 and 10 never block (exit 1). Checks 4-8, 11
+# and 12 (exit 2: the headline is not the detector's newest stated change, a change is not drawn
+# on its line, one change has two figures, a chart steps where the detector measured no change,
+# an account is named other than by its label, or the email would lead with other words than
+# the hero's for its change) fail the publish: the last published JSON is
 # put back, the site gets no commit, and the run finishes (state commit, notify) and exits 9.
 python3 -m tracker.invariants --json "$SITE/website/public/data/claude-usage.json"
 inv_rc=$?
@@ -480,6 +481,24 @@ SITE_SCOPE = {"five_hour": "window", "both": "window", "weekly": "weekly",
               "window": "window", "windows_per_week": None, "undetermined": None}
 if SITE_SCOPE.get(change.get("scope")):
     payload["scope"] = SITE_SCOPE[change["scope"]]
+# The email leads with the hero's sentence for this change (Jonathan's decision, 2026-10-23):
+# `hero` is the hero's rule applied to it (tracker/four_accounts_page.py `stated_record`, held
+# to that rule by the invariants check `email_leads_with_hero_rule`), so its limit, direction
+# and whole percent replace the found line's, and the site says "Anthropic <direction>
+# Claude's <limit> by N%" and explains the 5-hour limit, the weekly limit and windows per week
+# below it. A change with no limit to state (14 Sep) has no `hero` and is sent as before.
+hero = change.get("hero")
+if (isinstance(hero, dict) and hero.get("quantity") in ("five_hour_limit", "weekly_limit")
+        and hero.get("direction") in ("increased", "decreased")
+        and isinstance(hero.get("percent"), (int, float))):
+    payload.update(direction=hero["direction"], percent=hero["percent"], limit=hero["quantity"])
+    for key in ("five_hour_limit_change_pct", "five_hour_limit_change_interval_pct",
+                "weekly_limit_change_pct", "weekly_limit_change_interval_pct",
+                "windows_per_week_change_pct", "windows_per_week_change_interval_pct"):
+        if change.get(key) is not None:
+            payload[key] = change[key]
+    if change.get("accounts"):
+        payload["accounts"] = len(change["accounts"])
 print(json.dumps(payload))
 PYEOF
 )"
@@ -504,7 +523,8 @@ if c.get("weekly_limit_change_pct") is not None:
         lo, hi = c["weekly_limit_change_interval_pct"]
         figure += f" [{lo:+g}, {hi:+g}]"
 state = f", {c['state']}" if c.get("state") else ""
-print(f"{c['direction']} {c['percent']}% on {c['date']}{model}{figure}{state}")
+limit = {"five_hour_limit": "5-hour limit ", "weekly_limit": "weekly limit "}.get(c.get("limit"), "")
+print(f"{limit}{c['direction']} {c['percent']}% on {c['date']}{model}{figure}{state}")
 PYEOF
 )"
 

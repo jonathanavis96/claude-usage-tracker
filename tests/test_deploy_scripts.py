@@ -590,6 +590,59 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertEqual(self.state, ["2026-09-23", "2026-10-09"])
         self.assertNotIn('"headline"', self.func, "the email never reads the hero's record")
 
+    # 9 October as the publisher writes it once measured, replayed to 2026-10-27 on the 23 Oct
+    # records: found on windows per week, `hero` the hero's sentence for it (the 5-hour limit).
+    OCT09_HERO_MEASURED: ClassVar[dict] = {
+        "date": "2026-10-09", "at": "2026-10-09T16:00:00+00:00", "state": "measured",
+        "provisional": False, "held_days": 8, "holds_needed": 7, "quantity": "five_hour_limit",
+        "line": "five_hour", "limit": "5-hour limit", "direction": "increased", "percent": 17,
+        "change_pct": 17.1, "interval_pct": [9.3, 25.5], "found_on": "ratio"}
+    OCT09_MEASURED_WITH_HERO: ClassVar[dict] = {
+        **OCT09_MEASURED, "change_pct": -9.2, "interval_pct": [-12.9, -5.2],
+        "five_hour_limit_change_pct": 17.1, "five_hour_limit_change_interval_pct": [9.3, 25.5],
+        "weekly_limit_change_pct": 5.6, "weekly_limit_change_interval_pct": [-0.0, 11.6],
+        "windows_per_week_change_pct": -9.2, "windows_per_week_change_interval_pct": [-12.9, -5.2],
+        "accounts": ["Max account 1", "Max account 2", "Max account 3", "Max account 4"],
+        "hero": OCT09_HERO_MEASURED}
+
+    def test_the_email_leads_with_the_heros_sentence_for_the_measured_change(self) -> None:
+        # Jonathan's decision, 2026-10-23: the email says what the hero says. The lead figure is
+        # `last_change.hero`'s (the 5-hour limit +17%), never the line the change was found on
+        # (windows per week -9%), and the figures that explain it ride beside it.
+        stamps = ["2026-10-27T03:00:00+00:00"] * 2
+        _procs, requests, alerts = self._publishes(
+            (self.OCT09_MEASURED_WITH_HERO, self.W1), (self.OCT09_MEASURED_WITH_HERO, self.W2),
+            notified="2026-09-23", generated_at=stamps)
+        payload = self._payload(requests[1])
+        hero = self.OCT09_HERO_MEASURED
+        self.assertEqual((payload["limit"], payload["direction"], payload["percent"]),
+                         (hero["quantity"], hero["direction"], hero["percent"]))
+        self.assertEqual(
+            {k: payload[k] for k in ("five_hour_limit_change_pct", "five_hour_limit_change_interval_pct",
+                                     "weekly_limit_change_pct", "weekly_limit_change_interval_pct",
+                                     "windows_per_week_change_pct",
+                                     "windows_per_week_change_interval_pct", "accounts")},
+            {"five_hour_limit_change_pct": 17.1, "five_hour_limit_change_interval_pct": [9.3, 25.5],
+             "weekly_limit_change_pct": 5.6, "weekly_limit_change_interval_pct": [-0.0, 11.6],
+             "windows_per_week_change_pct": -9.2, "windows_per_week_change_interval_pct": [-12.9, -5.2],
+             "accounts": 4})
+        self.assertNotIn("hero", payload)
+        self.assertIn("Observed change: 5-hour limit increased 17% on 2026-10-09", alerts[1])
+        self.assertEqual(self.state, ["2026-09-23", "2026-10-09"])
+
+    def test_a_change_with_no_limit_to_state_keeps_the_older_email(self) -> None:
+        # 14 September: neither limit's interval excludes no change, so `hero` is None and the
+        # payload is the found line's figure with no `limit`, as before.
+        sep14 = {"date": "2026-09-14", "at": "2026-09-14T09:00:00+00:00", "direction": "decreased",
+                 "percent": 17, "state": "measured", "provisional": False,
+                 "metric": "windows_per_week", "change_pct": -17.4, "scope": "windows_per_week",
+                 "weekly_limit_change_pct": -4.2, "interval_excludes_no_change": True, "hero": None}
+        _procs, requests, _alerts = self._publishes((sep14, self.W1), (sep14, self.W2))
+        self.assertEqual(self._payload(requests[1]),
+                         {"date": "2026-09-14", "direction": "decreased", "percent": 17,
+                          "metric": "windows_per_week", "change_pct": -17.4,
+                          "weekly_limit_change_pct": -4.2, "state": "measured"})
+
     def test_a_change_with_no_state_is_emailed(self) -> None:
         # Director's ruling (2026-10-23): a change with no `state` is not held. Only a stated
         # state other than "measured" (the 17 Oct "provisional" record) keeps the email back.
