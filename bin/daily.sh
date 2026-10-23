@@ -206,11 +206,23 @@ if rates_due; then
   esac
 fi
 
+# The four-account limit-change detector (tracker/four_accounts.py, ADR 0001 rule 22), the
+# only source of the limit changes the page states. Once per UTC day, on the records known at
+# midnight (the gs-passive rebuild above, masterrig's pushed history), under nice: it finds the
+# steps every Max account takes together, holds each one 7 daily runs before it is measured,
+# and writes history/four-accounts.json, which the publish below copies into the page and the
+# state commit carries. Every later tick that day is a no-op (exit 0). Advisory: a failed run
+# publishes with the previous state, and the invariants check `detector_ran` alerts once the
+# newest run is more than a day old.
+nice python3 -m tracker.four_accounts --state history/four-accounts.json
+advisory tracker.four_accounts $? "publishing with the previous history/four-accounts.json"
+
 python3 -m tracker.publish \
   --probes history/probes.jsonl \
   --passive history/passive.json \
   --contributed data/contributed.json \
   --gs-passive history/gs-passive.json \
+  --four-accounts history/four-accounts.json \
   --out "$SITE/website/public/data/claude-usage.json"
 rc=$?
 
@@ -235,16 +247,15 @@ fi
 nice python3 -m tracker.publish_gate \
   || echo "warning: publish test gate failed (its alert line is above), publishing anyway" >&2
 # Invariants over the JSON just built (tracker/invariants.py): the headline inside its
-# accounts, no step a change that failed ADR 0001 rules 8 and 9 scales, direct figures
-# published as measured, account units, steps that agree with the meters. On 2026-10-04 a
-# window chained through two unproven steps reached the page unnoticed. Same semantics as
-# the gate: one alert when a check starts failing, one on recovery, plus one when the page
-# starts being withheld and a reminder every 24 h while it is; its "invariants alert:" line
-# says what it sent. Checks 1-6 never block
-# (exit 1). Checks 7-9 (exit 2: the headline, the charts and the published changes give one
-# change different percents, or a windows-per-week step the weekly and window steps do not
-# imply) fail the publish: the last published JSON is put back, the site gets no commit,
-# and the run finishes (state commit, notify) and exits 9.
+# accounts, direct figures published as measured, account units, and the four-account
+# detector's changes (ADR 0001 rule 22) stated once, drawn where they are and nowhere else.
+# Same semantics as the gate: one alert when a check starts failing, one on recovery, plus one
+# when the page starts being withheld and a reminder every 24 h while it is; its "invariants
+# alert:" line says what it sent. Checks 1-3, 9 and 10 never block (exit 1). Checks 4-8
+# (exit 2: the headline is not the detector's newest measured change, a change is not drawn on
+# its line, one change has two figures, a chart steps where the detector measured no change, or
+# an account is named other than by its label) fail the publish: the last published JSON is
+# put back, the site gets no commit, and the run finishes (state commit, notify) and exits 9.
 python3 -m tracker.invariants --json "$SITE/website/public/data/claude-usage.json"
 inv_rc=$?
 withheld=0
@@ -262,7 +273,8 @@ STATE_FILES=(data/prices.json)
 git add data/prices.json
 # None of these exist until their first successful run (contributed) or first
 # tick of usable transcript+meter data (gs-passive).
-for f in history/contributed.jsonl data/contributed.json history/gs-passive.json history/model-rates.json; do
+for f in history/contributed.jsonl data/contributed.json history/gs-passive.json history/model-rates.json \
+         history/four-accounts.json; do
   if [ -f "$f" ]; then git add "$f"; STATE_FILES+=("$f"); fi
 done
 if ! git diff --cached --quiet HEAD -- "${STATE_FILES[@]}"; then
@@ -322,30 +334,21 @@ notify_change() {
   [ -f "$json" ] || { echo "notify: $json missing, skipping" >&2; return 0; }
 
   # One python3 read: record what this publish shows, then emit the POST body, or
-  # nothing at all when there is nothing to announce yet. Weekly segmentation is
-  # retrospective: on masterrig's 2026-09-15 history a partial post-cut pool
-  # certified -19% dated 2026-08-28, and the next day's windows moved it to the
-  # real cut on 2026-09-14 (tracker/detect.py, why these constants). So a change is
-  # announced only once two consecutive publishes of new weekly evidence show it
-  # dated within a day of each other, and never when it is within a day of a date
-  # already announced. New evidence means a newer window in weekly_windows.passive,
-  # or a newer stretch on any account (account_feeds[].newest_stretch_end): this
-  # script publishes every half hour but the histories arrive daily, and a re-read of
-  # the same windows and stretches is not a second look. Stretches count as well as
-  # windows because a five-hour change (last_change.scope "five_hour") is dated by a
-  # model's first turn in the stretches, and the weekly windows can stall for days
-  # while stretches keep arriving -- keyed on windows alone, the 2026-09-22 five-hour
-  # change waited four days on a window list stuck at 2026-09-24. The observation is
-  # recorded before the env file is checked, so it never skips a day.
+  # nothing at all when there is nothing to announce yet. `last_change` is the four-account
+  # detector's newest measured change (tracker/four_accounts.py, ADR 0001 rule 22): found on
+  # 7 daily runs in a row before it reaches the page, and never moved or withdrawn after, so
+  # the guards below rarely wait. They stay as guards: a change is announced only once two
+  # consecutive publishes of new evidence show it dated within a day of each other, and
+  # never when it is within a day of a date already announced. New evidence means a newer
+  # window in weekly_windows.passive, or a newer stretch on any account
+  # (account_feeds[].newest_stretch_end): this script publishes every half hour but the
+  # histories arrive daily, and a re-read of the same windows and stretches is not a second
+  # look. The observation is recorded before the env file is checked, so it never skips a day.
   #
-  # Changes reach the page at once, but the email waits for the data to settle: nothing
-  # goes out until the change is 24 hours old (its instant `at`, or the start of its
-  # date when it has none, to the publish's generated_at). From 24 hours it goes out if
-  # its interval excludes no change -- on the five-hour or the weekly limit change,
-  # whichever is larger, as the publisher reads it (a weekly event is certified, so it
-  # does); from 48
-  # hours it goes out at whatever figure it then has. The email states the measured
-  # figure and how settled it is (`state`), never announcement text.
+  # The email also waits for the change to be 24 hours old (its instant `at`, or the start
+  # of its date when it has none, to the publish's generated_at), and to 48 hours while the
+  # interval of its own figure includes no change. The email states the measured figure and
+  # its state, never announcement text.
   local body
   body="$(SEEN="$seen" NOTIFIED="$state" python3 - "$json" <<'PYEOF'
 import json, os, sys
@@ -445,10 +448,20 @@ if any(same_event(d, shown) for d in announced):
 payload = {k: change[k] for k in required}
 if change.get("model"):
     payload["model"] = change["model"]
-for key in ("scope", "metric", "change_pct", "interval_pct", "weekly_limit_change_pct",
+for key in ("metric", "change_pct", "interval_pct", "weekly_limit_change_pct",
             "weekly_limit_change_interval_pct", "state"):
     if change.get(key) is not None:
         payload[key] = change[key]
+# The site's /api/notify/send takes scope "window" or "weekly" and answers 400 to anything
+# else (functions/api/notify/send.js), so the publisher's scopes are mapped here: a five-hour
+# change is the window's; one that moved both limits is sent as the window's, its weekly
+# figure riding in weekly_limit_change_pct; a windows-per-week change (one limit against the
+# other, which one not known) or an undetermined one goes without a scope, which the site
+# accepts. An unmapped scope is never sent as it is.
+SITE_SCOPE = {"five_hour": "window", "both": "window", "weekly": "weekly",
+              "window": "window", "windows_per_week": None, "undetermined": None}
+if SITE_SCOPE.get(change.get("scope")):
+    payload["scope"] = SITE_SCOPE[change["scope"]]
 print(json.dumps(payload))
 PYEOF
 )"
@@ -478,12 +491,12 @@ PYEOF
 )"
 
   # Subscribers are emailed a change that is not provisional (checked above) and whose
-  # `state`, when it has one, is "measured". `provisional: false` is not enough: the
-  # 2026-10-17 opus-4-6 "-43%" record carries it while its state is "provisional", and the
-  # email would have gone out once its interval excluded no change, though its figures point
-  # to a counting error on the accounts used on masterrig. A record with no state at all is
-  # a weekly detector event (the 2026-09-14 weekly cut was one), certified by the detector,
-  # and is emailed as before. Jonathan still hears about a held change, once per change and
+  # `state`, when it has one, is "measured". The publisher puts nothing but the four-account
+  # detector's measured changes in last_change (its candidates and provisional changes stay in
+  # `four_accounts`), so this is a guard: on 2026-10-17 an opus-4-6 "-43%" record of the old
+  # change machinery carried `provisional: false` while its state was "provisional", and would
+  # have been emailed. A record with no state is emailed as before (decided 2026-10-23, with
+  # the loud-failure repair). Jonathan still hears about a held change, once per change and
   # state (a line in .notify-attempts), and it is emailed if it later reads "measured".
   local change_state
   change_state="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state") or "")')"

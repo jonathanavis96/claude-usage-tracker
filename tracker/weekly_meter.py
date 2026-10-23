@@ -17,9 +17,10 @@ Two halves:
 - the collector's (`seven_day_steps`, called by tracker/gs_passive.py `report`): every
   one-point step of an account's seven-day meter, tiled end to end, with the account's own
   tokens in it, recorded as `weekly_steps` on the account's record;
-- the publisher's (`clean_steps`, `valued`, `level`, `weekly_change`): the selection the other
-  figures use, each step valued as they value a stretch, pooled meter-weighted with a
-  whole-UTC-day bootstrap, and the known-date test on it.
+- the publisher's (`clean_steps`, `valued`, `level`): the selection the other figures use,
+  each step valued as they value a stretch, pooled meter-weighted with a whole-UTC-day
+  bootstrap. The known-date test on it (`weekly_change`) was retired on 2026-10-23: the
+  four-account detector (tracker/four_accounts.py, ADR 0001 rule 22) finds and sizes changes.
 
 No fitted coefficient enters any figure here: a level is a sum of credits over a sum of
 seven-day points.
@@ -27,11 +28,9 @@ seven-day points.
 from __future__ import annotations
 
 import bisect
-import math
 import random
 from collections.abc import Collection, Iterable
 from datetime import datetime, timezone
-from statistics import stdev
 
 from . import credits as credit_model
 from .cloud_sessions import CloudSpan, overlaps
@@ -44,11 +43,6 @@ from .turns import Turn
 #: (a publish is reproducible: the same history gives the same intervals).
 WEEKLY_BOOTSTRAP = 400
 WEEKLY_SEED = 20261005
-#: An account's change across a candidate needs whole UTC days of steps on each side: its
-#: standard error is read off resampled days, and one day resamples to itself.
-WEEKLY_MIN_DAYS = 2
-
-
 def seven_day_steps(samples: Iterable[Sample], turns: Iterable[Turn], prices: dict,
                     cloud: Iterable[CloudSpan] = (), fast: Collection[str] = frozenset()) -> list[dict]:
     """Every one-point step of the seven-day meter, tiled, with the account's tokens in it.
@@ -126,8 +120,8 @@ def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.Harne
     about 1M on its other days.
 
     With `whole_history` masterrig's history before MASTERRIG_FROM is read too, less
-    MASTERRIG_PHANTOM (`credits.masterrig_excluded`): the 14 September before side
-    (`credits.cut_direct_tests`) reads it back to the account's last certified boundary.
+    MASTERRIG_PHANTOM (`credits.masterrig_excluded`), as the retired 14 September before side
+    (`credits.cut_direct_tests`) read it back to the account's last certified boundary.
     """
     withheld: dict[str, list[tuple[datetime, datetime]]] = {}
     for account, rows in (stretches or {}).items():
@@ -249,172 +243,3 @@ def level(rows_by_label: dict[str, list[dict]], seed: str) -> dict:
     return out
 
 
-#: The three quantities one set of seven-day steps carries, as (numerator, denominator)
-#: indices into a `_by_day` tuple: the weekly limit (credits per seven-day point), the window
-#: (credits per five-hour point) and windows per week (five-hour per seven-day points). On the
-#: same steps the first is the product of the other two exactly (ADR 0001 rule 20).
-QUANTITIES = {"weekly": (0, 1), "window": (0, 2), "windows_per_week": (2, 1)}
-
-
-def account_change(before: list[dict], after: list[dict], seed: str,
-                   quantity: str = "weekly") -> dict | None:
-    """One account's change in credits per 1% of the seven-day meter, against itself.
-
-    Each side's level is its credits over its seven-day points. The log ratio's standard
-    error is the spread of the log ratio over `WEEKLY_BOOTSTRAP` draws resampling each side's
-    whole UTC days, and the 95% interval a t interval on it with (days before + days after -
-    2) degrees of freedom. None when the before side holds fewer than
-    `credit_model.ANNOUNCED_MIN_BEFORE` steps, either side fewer than `WEEKLY_MIN_DAYS` days, or a
-    level or the spread is zero.
-
-    `quantity` reads another of the steps' `QUANTITIES` the same way, on the same days (the
-    window or windows per week); its draws use their own stream, so the weekly figure is the
-    one this function has always returned.
-    """
-    db, da = _by_day(before), _by_day(after)
-    if (len(before) < credit_model.ANNOUNCED_MIN_BEFORE or not after
-            or len(db) < WEEKLY_MIN_DAYS or len(da) < WEEKLY_MIN_DAYS):
-        return None
-    num, den = QUANTITIES[quantity]
-
-    def lvl(ds):
-        d = sum(x[den] for x in ds)
-        c = sum(x[num] for x in ds)
-        return c / d if d and c > 0 else None
-
-    lb, la = lvl(db), lvl(da)
-    if lb is None or la is None:
-        return None
-    rng = random.Random(f"{WEEKLY_SEED}:{seed}" if quantity == "weekly"
-                        else f"{WEEKLY_SEED}:{seed}:{quantity}")
-    draws = []
-    for _ in range(WEEKLY_BOOTSTRAP):
-        b, a = lvl(_resample(db, rng)), lvl(_resample(da, rng))
-        if b and a:
-            draws.append(math.log(a / b))
-    se = stdev(draws) if len(draws) > 1 else 0.0
-    if se <= 0:
-        return None
-    d, df = math.log(la / lb), len(db) + len(da) - 2
-    h = credit_model._t975(df) * se
-    return {"log_ratio": d, "se": se, "df": df, "ratio": math.exp(d),
-            "interval": (math.exp(d - h), math.exp(d + h)),
-            "level_before": lb, "level_after": la,
-            "n_before": len(before), "n_after": len(after),
-            "days_before": len(db), "days_after": len(da)}
-
-
-WEEKLY_CHANGE_ESTIMATOR = ("the combined change in credits per 1% of the seven-day meter, each "
-                           "account against itself, weights 1 / se squared")
-
-
-def weekly_change(sides: dict[str, tuple[list[dict], list[dict]]], seed: str) -> dict:
-    """The known-date test on the seven-day meter: per account, combined, and plan-wide.
-
-    `sides[label]` is that account's (before, after) valued steps. Each account is compared
-    with itself (`account_change`); those with both sides are combined by inverse variance
-    (`credits.combine_inverse_variance`), and the combined change is refitted with each
-    account left out (`credits.inverse_variance_plan_wide`, ADR 0001 rule 9). `certified` when
-    that test passes and the combined interval excludes no change.
-    """
-    per_account, paired = {}, {}
-    for label in sorted(sides):
-        before, after = sides[label]
-        pair = account_change(before, after, f"{seed}:{label}")
-        row = {"n_before": len(before), "n_after": len(after), "change_pct": None,
-               "interval_pct": None, "combined": False}
-        if pair is not None:
-            paired[label] = pair
-            row.update(change_pct=credit_model._pct_of(pair["ratio"]),
-                       interval_pct=[credit_model._pct_of(x) for x in pair["interval"]],
-                       combined=True, log_ratio=round(pair["log_ratio"], 6),
-                       se=round(pair["se"], 6), df=pair["df"],
-                       days_before=pair["days_before"], days_after=pair["days_after"],
-                       level_before=round(pair["level_before"]),
-                       level_after=round(pair["level_after"]))
-        per_account[label] = row
-    return credit_model.direct_change(per_account, paired, WEEKLY_CHANGE_ESTIMATOR,
-                                      "credits per 1% of the seven-day meter")
-
-
-RECONCILE_METHOD = (
-    "The 14 September weekly change and its two factors, each account against itself, on one "
-    "set of readings: the direct weekly test's own clean seven-day steps on its own sides "
-    "(`credits.cut_weekly_steps`). On those steps the weekly limit (credits per seven-day "
-    "point, the measured figure) is the window (credits per five-hour point, each step's "
-    "five-hour points over its headless inflation, ADR 0001 rule 16) times windows per week "
-    "(five-hour over seven-day points, the derived quotient) exactly, per account. Each has "
-    "its own whole-UTC-day bootstrap t interval on the same days. The accounts are combined at "
-    "one set of weights, the weekly figure's inverse variances, so the combined log changes "
-    "add up exactly too; each combined interval is a t interval on its own weighted standard "
-    "error. Each combined change is tested as every direct change is (ADR 0001 rule 9: each "
-    "account left out in turn, and the interval excluding no change) (ADR 0001 rule 20).")
-
-
-def reconcile(sides: dict[str, tuple[list[dict], list[dict]]], seed: str) -> dict:
-    """The weekly change, the window change and the windows-per-week change on the same steps.
-
-    `sides[label]` is that account's (before, after) valued steps, as `weekly_change` reads
-    them, so the weekly figures here are its own. See RECONCILE_METHOD.
-    """
-    per_account, paired = {}, {}
-    for label in sorted(sides):
-        before, after = sides[label]
-        weekly = account_change(before, after, f"{seed}:{label}")
-        if weekly is None:
-            continue
-        rows = {"weekly": weekly}
-        for q in ("window", "windows_per_week"):
-            rows[q] = account_change(before, after, f"{seed}:{label}", q)
-        if any(r is None for r in rows.values()):
-            continue
-        paired[label] = rows
-        per_account[label] = {
-            q: {"change_pct": credit_model._pct_of(r["ratio"]),
-                "interval_pct": [credit_model._pct_of(x) for x in r["interval"]],
-                "log_ratio": round(r["log_ratio"], 6), "se": round(r["se"], 6), "df": r["df"],
-                "level_before": round(r["level_before"], 4 if q == "windows_per_week" else None),
-                "level_after": round(r["level_after"], 4 if q == "windows_per_week" else None)}
-            for q, r in rows.items()}
-        per_account[label].update(
-            n_before=weekly["n_before"], n_after=weekly["n_after"],
-            days_before=weekly["days_before"], days_after=weekly["days_after"],
-            identity_gap=round(rows["weekly"]["log_ratio"] - rows["window"]["log_ratio"]
-                               - rows["windows_per_week"]["log_ratio"], 12) + 0.0)
-
-    def combined(labels: list[str], q: str) -> dict | None:
-        if not labels:
-            return None
-        inv = {k: 1 / paired[k]["weekly"]["se"] ** 2 for k in labels}
-        total = sum(inv.values())
-        w = {k: v / total for k, v in inv.items()}
-        d = sum(w[k] * paired[k][q]["log_ratio"] for k in labels)
-        se = math.sqrt(sum((w[k] * paired[k][q]["se"]) ** 2 for k in labels))
-        h = credit_model._t975(sum(paired[k][q]["df"] for k in labels)) * se
-        return {"weights": w, "log_ratio": d, "change_pct": credit_model._pct_of(math.exp(d)),
-                "interval_pct": [credit_model._pct_of(math.exp(d - h)),
-                                 credit_model._pct_of(math.exp(d + h))]}
-
-    out = {"accounts": sorted(paired), "per_account": per_account, "combined": {},
-           "method": RECONCILE_METHOD}
-    for q in QUANTITIES:
-        c = combined(sorted(paired), q)
-        if c is None:
-            out["combined"][q] = None
-            continue
-        without = {}
-        for label in paired if len(paired) > 1 else ():
-            rest = combined([k for k in sorted(paired) if k != label], q)
-            without[label] = {"change_pct": rest["change_pct"], "interval_pct": rest["interval_pct"]}
-        plan_wide = credit_model.plan_wide_verdict(c["change_pct"], sorted(paired), without,
-                                                   f"{q}, each account against itself, at the "
-                                                   "weekly figure's inverse-variance weights")
-        lo, hi = c["interval_pct"]
-        excludes = not lo <= 0 <= hi
-        out["combined"][q] = {"change_pct": c["change_pct"], "interval_pct": c["interval_pct"],
-                              "log_ratio": round(c["log_ratio"], 6),
-                              "interval_excludes_no_change": excludes, "plan_wide": plan_wide,
-                              "certified": plan_wide["state"] == "passed" and excludes}
-        for label, w in c["weights"].items():
-            per_account[label]["weight"] = round(w, 4)
-    return out

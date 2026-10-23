@@ -75,12 +75,11 @@ import math
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
 
 from .detect import ratio_interval
-from .passive import PLAN_CHANGE_AT
 
 PRICES_PATH = Path(__file__).resolve().parent.parent / "data" / "prices.json"
 #: The meter's own per-model rates, fitted from the passive stretches by
@@ -144,10 +143,6 @@ ANNOUNCEMENTS = [
 #: the 14 September change: a temporary +50% from May, made a permanent +25% on
 #: 14 September. Policy, announced and cited -- never a measurement.
 WEEKLY_CAP_MULTIPLIER = {"before": 1.5, "after": 1.25}
-#: How many stretches an account needs on each side of the cut before its own five-hour
-#: change is read as a measurement of that account's window (`five_hour_window_change`).
-#: A side of two or three stretches is a median of two or three stretches.
-FIVE_HOUR_MIN_SIDE = 10
 #: How many readings the after cluster needs before it states the current five-hour window
 #: on its own. Below it the before cluster carries the figure, scaled by the measured
 #: five-hour change, and `current_source` says so.
@@ -613,8 +608,9 @@ def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *
 #: (docs/findings-2026-09-23-masterrig-admitted.md).
 MASTERRIG_FROM = datetime(2026, 9, 6, tzinfo=timezone.utc)
 #: The part of masterrig's history before MASTERRIG_FROM that is not ordinary use: the four
-#: whole UTC days the takeoff pipeline ran on the account. The rest of that history is read by
-#: the 14 September weekly before side (`cut_before_start`); its steps from before the
+#: whole UTC days the takeoff pipeline ran on the account. The rest of that history was read
+#: by the 14 September weekly before side (`cut_before_start`, retired 2026-10-23 with the
+#: known-date tests, ADR 0001 rule 22); its steps from before the
 #: transcripts survive on disk hold nothing, read capture 0.0 and fail the `status` gate, so
 #: no date is needed for them (docs/findings/2026-10-05-a1-long-before.md).
 MASTERRIG_PHANTOM = (datetime(2026, 9, 2, tzinfo=timezone.utc), MASTERRIG_FROM)
@@ -720,85 +716,6 @@ def selection_sentence(min_delta_pct: float = MIN_DELTA_PCT) -> str:
             f"Max account 1 counts from 6 September, as its seven-day steps do.")
 
 
-def five_hour_window_changes(across: dict | None) -> dict[str, float]:
-    """Each qualifying account's own measured change in the five-hour window, by label.
-
-    The accounts `five_hour_window_change` reads (a capture reading at all, and at least
-    FIVE_HOUR_MIN_SIDE stretches on each side of the cut), before it takes their median:
-    the tokens-per-week change pairs each of them with the same account's own change in
-    windows per week.
-    """
-    per_account = (across or {}).get("per_account") or {}
-    return {label: row["change_pct"] for label, row in per_account.items()
-            if row.get("change_pct") is not None
-            and (row.get("n_with_capture") or 0) > 0
-            and (row.get("n_before") or 0) >= FIVE_HOUR_MIN_SIDE
-            and (row.get("n_after") or 0) >= FIVE_HOUR_MIN_SIDE}
-
-
-def five_hour_window_change(across: dict | None) -> dict | None:
-    """The measured change in the five-hour window across the cut, as one percent.
-
-    `across_cut` reads every watched account's credits per 1% either side of 14 September,
-    but not every account's two medians are a reading of that account's own window: one
-    with no usable capture column (`n_with_capture` 0) divides meter movement this host
-    never saw by transcripts it did see, and a side of two or three stretches is a median
-    of two or three stretches. Only accounts with a capture reading at all and at least
-    FIVE_HOUR_MIN_SIDE stretches on each side are read, and the figure is the median of
-    their own `change_pct` -- on today's data one account, at +8.6%.
-
-    None when no account qualifies, and the publisher then states no tokens-per-week
-    change and scales no window by it, rather than compounding a number nobody measured.
-    """
-    qualifying = five_hour_window_changes(across)
-    if not qualifying:
-        return None
-    return {"pct": round(median(list(qualifying.values())), 1), "accounts": sorted(qualifying)}
-
-
-def cut_side(row: dict) -> str | None:
-    """Which side of the announced change a cluster row's stretch started on.
-
-    The stretch's own `start` against CUT_AT, the same instant and the same rule
-    `across_cut` splits by. A row with no start stamp is placed on neither side: every
-    real stretch carries one, and a fixture that does not must not be read as pre-cut.
-    """
-    start = row.get("start")
-    return None if not start else ("before" if datetime.fromisoformat(start) < CUT_AT else "after")
-
-
-def current_cluster_rule(n_before: int, n_after: int,
-                         five_hour_pct: float | None) -> tuple[str, float, str]:
-    """(which side states the window now, the factor it is scaled by, the published source).
-
-    The pure-family cluster spans 14 September, and a median over the whole of it is
-    mostly a pre-cut reading published as the current one: ten of today's twelve stretches
-    are one account's from 9-10 September. So the after cluster states the window itself
-    once it holds MIN_AFTER_CLUSTER readings; below that the before cluster carries it,
-    scaled by the measured five-hour change across the cut (`five_hour_window_change`).
-    With no measured change to scale by, the before cluster is published unscaled, and
-    with no stretch placeable on either side the whole cluster is -- each case naming
-    itself in `current_source` rather than publishing a number with no provenance.
-    """
-    if n_after >= MIN_AFTER_CLUSTER:
-        return "after", 1.0, "after_cluster"
-    if n_before:
-        if five_hour_pct is not None:
-            return "before", 1 + five_hour_pct / 100, "before_cluster_scaled_by_five_hour_change"
-        return "before", 1.0, "before_cluster_unscaled"
-    if n_after:
-        return "after", 1.0, "after_cluster"
-    return "whole", 1.0, "whole_cluster_unsplit"
-
-
-CURRENT_METHOD = (
-    "the pure-family cluster is split on cut_at by each stretch's own start. The after "
-    f"cluster states the current window once it holds {MIN_AFTER_CLUSTER} readings; below "
-    "that the before cluster states it, scaled by the median five-hour window change across "
-    "the cut over the accounts whose capture column can carry one. `current_source` names "
-    "which of the two the published value and interval came from; `n` counts the whole "
-    "cluster, and each side carries its own count.")
-
 #: `current_source` of a regime opened by a measured known-date change and stated by the
 #: previous regime times that change, or by the regime's own cluster once it is thick enough.
 KNOWN_DATE_SCALED_SOURCE = "previous_regime_scaled_by_known_date_change"
@@ -810,107 +727,81 @@ KNOWN_DATE_CLUSTER_SOURCE = "known_date_regime_cluster"
 #: measure, stated by the whole run's cluster in the run's own family (`window_runs`).
 RUN_CLUSTER_SOURCE = "unmeasured_boundary_run_cluster"
 
-KNOWN_DATE_METHOD = (
-    " After that, every change measured on the two meters (`five_hour_on_meters`, the "
-    "windows-per-week ratio across a change candidate; `measurable`, dated after cut_at) opens "
-    "a new regime in `regimes`, from the candidate's own instant, whether it is published "
-    "(`applies`) or withheld. Each such regime is measured in the family "
-    "actually in use: its regime family is the family with the most pure clean stretches "
-    "starting in it (`regime_family`, `n_regime_family`). A boundary the tracker could not "
-    "measure (a change whose joint fit cannot separate the new family's rate from the limit "
-    "change, or a withheld one: ADR 0001 rules 8 and 9) does not split the window cluster: the regimes it joins form one run, from the "
-    "last measured boundary (the cut, or a change whose fit separates), and `run_from` names "
-    "its first instant. A run of two or more regimes whose pure clean stretches, starting "
-    f"anywhere in it, hold {MIN_AFTER_CLUSTER} readings of its most common family states every "
-    "regime in it with that family's direct median and spread "
-    f"(`{RUN_CLUSTER_SOURCE}`); the 14 September regime's own rule above gives way to it. "
-    "Where that family is not the anchor and the boundary opening the run has a five-hour "
-    "change the meters measured (the change across the cut, or a separable change's g), the "
-    "run's anchor-unit `value` and `interval`, and every earlier regime's figure in the run "
-    "family's units, go through the bridge rate rather than the fitted one: the previous "
-    "regime's anchor window times that change, over the run's direct window. The step at "
-    "that boundary is then the meters' change. `bridge_rate`, `bridge_rate_interval` (the "
-    "same over the run's highest and lowest reading) and `bridge_rate_source` are published "
-    "on the run's first regime; the fitted rate stays published as the fitted figure, and "
-    "other families still convert from the anchor at their own rates. "
-    "Otherwise each regime is measured on its own: once its regime family holds "
-    f"{MIN_AFTER_CLUSTER} readings in the regime, the regime is their median tokens per 1% "
-    "times 100, read straight off their token counts with no rate in it, published as "
-    "`measured_value` and `measured_interval`. `value` and `interval` give the same window in "
-    "the anchor family's tokens, converted at the two families' point rates where the regime "
-    "family is not the anchor. Below that many readings the regime carries the previous "
-    "regime's figure in the same family's units, and `measured_family` names the family the "
-    "figure was measured in "
-    f"(`{KNOWN_DATE_UNSCALED_SOURCE}`), because the joint fit cannot yet separate the new "
-    "family's rate from the five-hour limit change g or the change is withheld. Only where the "
-    "joint fit does separate them and the change is published (`applies`) is the previous "
-    "regime's figure scaled by g instead, each interval edge by g's same "
-    "edge. The window interval is a spread of readings, not a standard error. The published "
-    "value and interval are the newest regime's. Where the newest regime is measured in a "
-    "family other than the anchor, that family's row in `per_family` is its direct reading, "
-    "never a conversion.")
-
-
-def known_date_changes(meters: dict | None) -> list[dict]:
-    """The measured changes that open window regimes, oldest first, with their window ratio.
-
-    The candidates of the `five_hour_on_meters` block that are `measurable` (a combined
-    reading, dated after CUT_AT: the 14 September split already stands for everything before
-    it; `five_hour_meter_boundaries`). Each carries its instant, its scope, and the five-hour
-    window ratio and interval, from the published rounded percents so a reader can redo the
-    arithmetic. The ratio is the direct window change (credits per 1% of the five-hour
-    meter, `window_change`) at its point estimate, and only for a change that `applies` on
-    that measurement (ADR 0001 rule 9: plan-wide, its interval excluding no change). A
-    change certified on the weekly limit alone, one with no window change, or a withheld one
-    has none, and
-    `window_scaled` False tells `window_regimes` to carry the previous regime and not to
-    split the run there. Nothing here names a date; the boundaries are the candidate records'
-    own.
-    """
-    out = []
-    for cand in five_hour_meter_boundaries(meters):
-        at = datetime.fromisoformat(cand["at"])
-        if at <= CUT_AT:
-            continue
-        # Only a published change may scale a window, and only by the measurement it was
-        # certified on: the window change, certified on its own (ADR 0001 rule 9). A
-        # change certified on the weekly limit alone steps the week, never the window.
-        window = cand.get("window_change")
-        scaled = (bool(cand.get("applies")) and cand.get("change_pct") is not None
-                  and bool(cand.get("interval_pct"))
-                  and (window is None or bool(window.get("certified"))))
-        lo, hi = cand["interval_pct"] if scaled else (0.0, 0.0)
-        pct = cand["change_pct"] if scaled else 0.0
-        out.append({"at": at, "family": cand["family"], "change_pct": pct,
-                    "scope": (cand.get("scope") or {}).get("state") or "undetermined",
-                    "window_scaled": scaled, "ratio": 1 + pct / 100,
-                    "ratio_interval": (1 + lo / 100, 1 + hi / 100)})
-    return sorted(out, key=lambda c: c["at"])
-
-
 def regime_index(row: dict, changes: list[dict]) -> int | None:
-    """Which window regime a cluster row's stretch started in: 0 before CUT_AT, then one
-    more for every known-date change at or before its start. None with no start stamp."""
-    side = cut_side(row)
-    if side is None:
+    """Which window regime a cluster row's stretch started in: 0 before the first measured
+    change (`changes`, `four_accounts.regime_changes`), then one more for every change at or
+    before its start. None with no start stamp."""
+    start = row.get("start")
+    if not start:
         return None
-    if side == "before":
-        return 0
-    start = datetime.fromisoformat(row["start"])
-    return 1 + sum(1 for c in changes if c["at"] <= start)
+    start = datetime.fromisoformat(start)
+    return sum(1 for c in changes if c["at"] <= start)
+
+
+def split_side(row: dict, split: datetime | None) -> str | None:
+    """"before" or "after" the newest measured change a cluster row's stretch started, or None
+    with no start stamp or no change: the two sides `window_credits` and `window_tokens`
+    publish beside the current figure."""
+    start = row.get("start")
+    if not start or split is None:
+        return None
+    return "before" if datetime.fromisoformat(start) < split else "after"
+
+
+def chain_regimes(regimes: list[dict], changes: list[dict], size) -> list[dict]:
+    """The regimes with every step drawn at a measured change set to that change's own size.
+
+    `size(change)` is the ratio the change moved this chart's quantity by, or None where its
+    interval holds no change (the level is carried across it). The newest regime keeps its own
+    figure; each earlier one is the next over that ratio, `value` and `interval` alike, its own
+    reading kept as `own_value`/`own_interval` and the restatement in `chained`. So a chart
+    never draws a step at a change other than the one the four-account detector measured there,
+    and draws none where it measured none (ADR 0001 rule 22).
+    """
+    out = [dict(r) for r in regimes]
+    for k in range(len(out) - 2, -1, -1):
+        nxt, cur = out[k + 1], out[k]
+        if nxt.get("value") is None:
+            continue
+        g = size(changes[k]) or 1.0
+        own_v, own_iv = cur.get("value"), cur.get("interval")
+        value = nxt["value"] / g
+        if own_v and own_iv:
+            interval = [x * value / own_v for x in own_iv]
+        else:
+            interval = [x / g for x in nxt["interval"]] if nxt.get("interval") else None
+        cur.pop("step", None)
+        cur.update(value=value, interval=interval, own_value=own_v, own_interval=own_iv,
+                   chained={"at": nxt.get("from"), "step_pct": round((g - 1) * 100, 4)})
+    out[-1].pop("step", None)
+    return out
+
+
+REGIME_METHOD = (
+    "Every measured change of the four-account detector (`four_accounts`, state measured) opens "
+    "a regime at its own instant; nothing else does. Each regime is measured in the family "
+    "actually in use: its regime family is the family with the most pure clean stretches "
+    "starting in it (`regime_family`, `n_regime_family`). Regimes joined by a change whose "
+    "five-hour size holds no change form one run, and a run of two or more whose pure clean "
+    f"stretches hold {MIN_AFTER_CLUSTER} readings of its most common family is stated by that "
+    f"one cluster (`{RUN_CLUSTER_SOURCE}`). Otherwise a regime with {MIN_AFTER_CLUSTER} readings "
+    "is their median tokens per 1% times 100 (`measured_value`, no rate in it); below that it "
+    "is the previous regime times the change's five-hour size where that size excludes no "
+    f"change (`{KNOWN_DATE_SCALED_SOURCE}`), else the previous regime carried "
+    f"(`{KNOWN_DATE_UNSCALED_SOURCE}`). The published value is the newest regime's. Every "
+    "earlier regime's `value` is then the next one's over the detector's five-hour size at the "
+    "change between them (carried where that size holds no change), so the chart's every step "
+    "is the detector's own figure; the regime's own reading stays as `own_value`.")
 
 
 def current_method(changes: list[dict]) -> str:
-    """CURRENT_METHOD, plus the known-date regimes and, where one applied, which."""
+    """REGIME_METHOD, and which measured changes opened regimes."""
     if not changes:
-        return CURRENT_METHOD + KNOWN_DATE_METHOD
-    applied = "; ".join(f"from {_utc(c['at'])} ({c['family']} first turn), "
-                        + (f"{c['change_pct']:+g}%" if c.get("window_scaled", True)
-                           else "window carried, joint fit not separable or change withheld, "
-                                "unless the regime's own family states it")
+        return REGIME_METHOD + " No measured change yet: one regime."
+    applied = "; ".join(f"from {_utc(c['at'])}, five-hour "
+                        + (f"{c['change_pct']:+g}%" if c.get("window_scaled") else "carried")
                         for c in changes)
-    return (CURRENT_METHOD + KNOWN_DATE_METHOD
-            + f" Known-date changes applied: {applied}.")
+    return REGIME_METHOD + f" Measured changes applied: {applied}."
 
 
 def _scaled(fig: dict, ratio: float, r_lo: float, r_hi: float) -> dict:
@@ -923,13 +814,12 @@ def _scaled(fig: dict, ratio: float, r_lo: float, r_hi: float) -> dict:
 def window_runs(changes: list[dict]) -> list[list[int]]:
     """The window regimes grouped into runs, oldest first, as lists of regime indices.
 
-    A boundary the tracker measured splits two runs: the 14 September cut, and every change
-    whose joint fit separates the new family's rate from the limit change (`window_scaled`).
-    A change it could not measure does not: the regimes either side of it are one run, so
-    one cluster. Regime 0, before the cut, is always a run of its own.
+    A measured change whose five-hour size excludes no change (`window_scaled`) splits two
+    runs. One whose five-hour size holds no change does not: the window is not shown to have
+    moved there, so the regimes either side of it are one run, so one cluster.
     """
-    runs = [[0], [1]]
-    for k, change in enumerate(changes, start=2):
+    runs = [[0]]
+    for k, change in enumerate(changes, start=1):
         if change.get("window_scaled", True):
             runs.append([k])
         else:
@@ -937,37 +827,36 @@ def window_runs(changes: list[dict]) -> list[list[int]]:
     return runs
 
 
-def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
-                   changes: list[dict], direct=None,
+def window_regimes(counts: dict[int, int], own, changes: list[dict], direct=None,
                    anchor_fam: str | None = None) -> tuple[list[dict], str]:
     """The window regimes oldest first, and the current one's `current_source`.
 
     `own(key, scale)` is one cluster as {value, interval} (unrounded is fine), where key is
-    a regime index or "whole". Regime 0 is the before cluster as measured. Regime 1 is the
-    14 September split exactly as `current_cluster_rule` states it, over the stretches
-    that started before the first known-date change. Both are in `anchor_fam`.
+    a regime index or "whole". Regime 0 is the cluster before the first measured change
+    (`changes`, `four_accounts.regime_changes`), every later regime opens at one, and all are
+    in `anchor_fam` unless measured in another family.
 
-    Every later regime is measured in the family actually in use. `direct(ks)`, where given,
-    returns the cluster of the regimes `ks` (a tuple of indices) as {family, n, measured,
-    anchor}: the family with the most pure clean stretches starting in them, how many, their
-    direct figure in that family's tokens, and the same figure in anchor-family units.
+    `direct(ks)`, where given, returns the cluster of the regimes `ks` (a tuple of indices) as
+    {family, n, measured, anchor}: the family with the most pure clean stretches starting in
+    them, how many, their direct figure in that family's tokens, and the same figure in
+    anchor-family units.
 
-    Regimes joined by boundaries the tracker could not measure form one run (`window_runs`).
-    A run of two or more regimes whose cluster holds MIN_AFTER_CLUSTER readings states every
-    regime in it with that one cluster (`RUN_CLUSTER_SOURCE`, `run_from` the run's first
-    instant). Where the run's family is not the anchor and the boundary opening the run has a
-    five-hour change the meters measured (`five_hour_pct` across the cut, a separable g after
-    it), the run's anchor-unit figure goes through the bridge rate rather than the fitted one:
-    the previous regime's anchor window times that change over the run's direct window, so
-    the step there is the meters' change (`bridge_rate`, on the run's first regime). Any
-    other regime follows the rules below. Without it the regime's
-    cluster is the anchor family's (`own`). With MIN_AFTER_CLUSTER readings the regime is
-    that cluster. Below that it is the previous regime times the change's g where the joint
-    fit separates g from the new family's rate, and the previous regime carried, in the same
-    family's units, where it does not. `measured_family`, `measured_value` and
-    `measured_interval` publish the figure in the family it was measured in; `value` and
-    `interval` stay in anchor-family units. `regime_family` and `n_regime_family` name the
-    regime's own family and its count whether or not that count was enough to state it.
+    Regimes joined by a change whose five-hour size holds no change form one run
+    (`window_runs`). A run of two or more regimes whose cluster holds MIN_AFTER_CLUSTER
+    readings states every regime in it with that one cluster (`RUN_CLUSTER_SOURCE`,
+    `run_from` the run's first instant). Where the run's family is not the anchor and the
+    change opening the run has a five-hour size that excludes no change, the run's
+    anchor-unit figure goes through the bridge rate rather than the fitted one: the previous
+    regime's anchor window times that change over the run's direct window, so the step there
+    is the detector's change (`bridge_rate`, on the run's first regime). Any other regime
+    follows the rules below. Without `direct` the regime's cluster is the anchor family's
+    (`own`). With MIN_AFTER_CLUSTER readings the regime is that cluster. Below that it is the
+    previous regime times the change's five-hour size where that size excludes no change, and
+    the previous regime carried, in the same family's units, where it does not.
+    `measured_family`, `measured_value` and `measured_interval` publish the figure in the
+    family it was measured in; `value` and `interval` stay in anchor-family units.
+    `regime_family` and `n_regime_family` name the regime's own family and its count whether
+    or not that count was enough to state it.
     """
     def row(fig: dict, measured: dict, fam: str | None, source: str, frm, until,
             regime_fam: str | None, n: int, run_from=None) -> dict:
@@ -983,28 +872,28 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
         if cluster and cluster["n"] >= MIN_AFTER_CLUSTER:
             for k in run:
                 run_clusters[k] = cluster
-    froms = [None, CUT_AT.isoformat(), *(_utc(c["at"]) for c in changes)]
+    froms = [None, *(_utc(c["at"]) for c in changes)]
 
     def opening_change(k: int) -> float | None:
-        """The five-hour change the meters measured at the boundary opening regime k, as a
-        ratio: the change across the cut for regime 1, a separable change's g after it."""
-        if k == 1:
-            return 1 + five_hour_pct / 100 if five_hour_pct is not None else None
-        change = changes[k - 2]
+        """The five-hour change at the measured change opening regime k, as a ratio, where
+        its interval excludes no change."""
+        if k == 0:
+            return None
+        change = changes[k - 1]
         return change["ratio"] if change.get("window_scaled", True) else None
 
     bridges: dict[int, dict] = {}
 
-    def run_row(k: int, until, prev: dict) -> dict:
+    def run_row(k: int, until, prev: dict | None) -> dict:
         cluster = run_clusters[k]
         first = min(j for j in run_clusters if run_clusters[j] is cluster)
         anchor_fig, extra = cluster["anchor"], {}
-        if k == first and cluster["family"] != anchor_fam:
+        if k == first and prev is not None and cluster["family"] != anchor_fam:
             g = opening_change(k)
             measured = cluster["measured"]
             if g is not None and prev["value"] and measured["value"] and measured["interval"]:
                 # The bridge rate: the run family's tokens priced so that the step at the
-                # opening boundary equals the five-hour change the meters measured there.
+                # opening change equals the five-hour size the detector measured there.
                 rate = prev["value"] * g / measured["value"]
                 lo, hi = measured["interval"]
                 bridges[first] = {
@@ -1012,7 +901,7 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
                     "bridge_rate_interval": [prev["value"] * g / hi, prev["value"] * g / lo],
                     "bridge_rate_source": (
                         f"derived: the rate that makes the step at {froms[k]} equal the "
-                        f"five-hour change the meters measured there ({(g - 1) * 100:+.1f}%): "
+                        f"five-hour change the detector measured there ({(g - 1) * 100:+.1f}%): "
                         f"the previous regime's {anchor_fam} window times that change, over "
                         f"the run's direct {cluster['family']} window; its interval is the same "
                         f"over the run's highest and lowest reading")}
@@ -1023,20 +912,14 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
         return dict(row(anchor_fig, cluster["measured"], cluster["family"], RUN_CLUSTER_SOURCE,
                         froms[k], until, cluster["family"], cluster["n"], froms[first]), **extra)
 
-    before = own(0, 1.0)
-    regimes = [row(before, before, anchor_fam, "before_cluster", None, CUT_AT.isoformat(),
-                   anchor_fam, counts.get(0, 0))]
-    if 1 in run_clusters:
-        regimes.append(run_row(1, None, regimes[0]))
+    if 0 in run_clusters:
+        regimes = [run_row(0, None, None)]
     else:
-        chosen, factor, source = current_cluster_rule(counts.get(0, 0), counts.get(1, 0),
-                                                      five_hour_pct)
-        fig = own({"before": 0, "after": 1, "whole": "whole"}[chosen], factor)
-        regimes.append(row(fig, fig, anchor_fam, source, CUT_AT.isoformat(), None,
-                           anchor_fam, counts.get(1, 0)))
-        if chosen == "before" and factor != 1.0:
-            regimes[-1]["step"] = factor
-    for k, change in enumerate(changes, start=2):
+        before = own(0, 1.0)
+        regimes = [row(before, before, anchor_fam,
+                       "before_first_change" if changes else "whole_cluster", None, None,
+                       anchor_fam, counts.get(0, 0))]
+    for k, change in enumerate(changes, start=1):
         prev = regimes[-1]
         prev["until"] = _utc(change["at"])
         if k in run_clusters:
@@ -1053,9 +936,9 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
             source = KNOWN_DATE_CLUSTER_SOURCE
             if (fam != anchor_fam and change.get("window_scaled") and prev["value"]
                     and measured["value"] and measured["interval"]):
-                # A regime measured in a new family and opened by a certified window change:
-                # its anchor-unit figure goes through the bridge rate, as a run's does, so
-                # the step here is the certified change and not a rate conversion.
+                # A regime measured in a new family and opened by a change with a five-hour
+                # size: its anchor-unit figure goes through the bridge rate, as a run's does,
+                # so the step here is the detector's change and not a rate conversion.
                 rate = prev["value"] * change["ratio"] / measured["value"]
                 lo, hi = measured["interval"]
                 extra = {"bridge_rate": rate,
@@ -1063,7 +946,7 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
                                                   prev["value"] * change["ratio"] / lo],
                          "bridge_rate_source": (
                              f"derived: the rate that makes the step at {_utc(change['at'])} "
-                             f"equal the certified five-hour change there "
+                             f"equal the five-hour change the detector measured there "
                              f"({change['change_pct']:+.1f}%): the previous regime's "
                              f"{anchor_fam} window times that change, over the regime's direct "
                              f"{fam} window; its interval is the same over the regime's "
@@ -1079,13 +962,16 @@ def window_regimes(counts: dict[int, int], own, five_hour_pct: float | None,
             fam, source = prev["measured_family"], KNOWN_DATE_SCALED_SOURCE
             extra = {"step": change["ratio"]}
         else:
-            # No separable fit, so no estimate of the limit change, and too few readings to
-            # state the regime: the previous regime's figure carries, in its own family.
+            # The five-hour size holds no change and too few readings state the regime: the
+            # previous regime's figure carries, in its own family.
             fig = {"value": prev["value"], "interval": prev["interval"]}
             measured = {"value": prev["measured_value"], "interval": prev["measured_interval"]}
             fam, source = prev["measured_family"], KNOWN_DATE_UNSCALED_SOURCE
         regimes.append(dict(row(fig, measured, fam, source, _utc(change["at"]), None,
                                 cluster["family"], cluster["n"]), **extra))
+    # Every step the chart draws is the detector's own five-hour size at its change.
+    regimes = chain_regimes(regimes, changes,
+                            lambda c: c["ratio"] if c.get("window_scaled") else None)
     return regimes, regimes[-1]["source"]
 
 
@@ -1126,11 +1012,13 @@ def _rounded_regimes(regimes: list[dict], unit: float = 1.0) -> list[dict]:
                 value = _stepped(prev["value"], step)
             elif r["value"] == regimes[len(out) - 1]["value"]:
                 value = prev["value"]
+        own = ({"own_value": _round(r["own_value"] * unit if r["own_value"] is not None else None),
+                "own_interval": edges(r.get("own_interval"))} if "own_value" in r else {})
         out.append(dict(r, value=value,
                         interval=edges(r["interval"]),
                         measured_value=_round(r["measured_value"] * unit
                                               if r.get("measured_value") is not None else None),
-                        measured_interval=edges(r.get("measured_interval")),
+                        measured_interval=edges(r.get("measured_interval")), **own,
                         **({"bridge_rate": round(r["bridge_rate"], 4),
                             "bridge_rate_interval": [round(x, 4) for x in r["bridge_rate_interval"]]}
                            if r.get("bridge_rate") is not None else {})))
@@ -1139,7 +1027,7 @@ def _rounded_regimes(regimes: list[dict], unit: float = 1.0) -> list[dict]:
 
 def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
                    fam: str = "opus", weight: float | None = None,
-                   five_hour_pct: float | None = None, meters: dict | None = None) -> dict:
+                   changes: list[dict] | None = None) -> dict:
     """The five-hour window in credits, from the pure-`fam` cluster, as it is NOW.
 
     `value` is a full window (100% of the meter), so it is the median credits per 1%
@@ -1148,19 +1036,13 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
     readings and not a confidence interval -- there is no error model here, only
     a dozen readings of the same quantity.
 
-    The cluster spans the 14 September change, and a median over the whole of it is
-    mostly a pre-cut reading: ten of today's twelve stretches are one account's from
-    9-10 September, two are another's from after the cut. So the cluster is split on
-    `cut_at` by each stretch's own start and published as `before` and `after`, and
-    `value`, `credits_per_pct` and `interval` are the CURRENT window -- the after
-    cluster where it is thick enough to state one, else the before cluster scaled by
-    the measured five-hour change (`current_cluster_rule`, `current_source`). `n`
-    stays the whole cluster's count; each side carries its own.
-
-    A five-hour change measured on the meters after the cut (`meters`, the
-    `five_hour_on_meters` block; `known_date_changes`) opens a further regime, and the
-    current figure is the newest regime's (`window_regimes`). `regimes` publishes every
-    one, oldest first, in credits per full window.
+    Every measured change of the four-account detector (`changes`,
+    `four_accounts.regime_changes`) opens a regime, and the current figure is the newest
+    regime's (`window_regimes`): `value`, `credits_per_pct` and `interval` are the window
+    NOW. `regimes` publishes every one, oldest first, in credits per full window, each step
+    the detector's five-hour size at its change. The cluster is also split on the newest
+    change (`split_at`) and published as `before` and `after`. `n` stays the whole
+    cluster's count; each side carries its own.
 
     `accounts` reports every watched account by its published label, including the
     ones that contributed nothing, so a reader can see that a cluster came from two
@@ -1170,12 +1052,13 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
     per_account = pure_family_rows(clean, credits, fam, weight)
     pooled_rows = [r for rows in per_account.values() for r in rows]
     pooled = sorted(r["credits_per_pct"] for r in pooled_rows)
+    changes = changes or []
+    split = changes[-1]["at"] if changes else None
     sides: dict[str, list[float]] = {"before": [], "after": [], "whole": pooled}
     for row in pooled_rows:
-        side = cut_side(row)
+        side = split_side(row, split)
         if side:
             sides[side].append(row["credits_per_pct"])
-    changes = known_date_changes(meters)
     by_regime: dict[int, list[float]] = {}
     for row in pooled_rows:
         idx = regime_index(row, changes)
@@ -1189,11 +1072,11 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
                 "interval": [values[0] * scale, values[-1] * scale] if values else None}
 
     regimes, current_source = window_regimes(
-        {k: len(v) for k, v in by_regime.items()}, own, five_hour_pct, changes, anchor_fam=fam)
+        {k: len(v) for k, v in by_regime.items()}, own, changes, anchor_fam=fam)
     per_pct, per_pct_interval = regimes[-1]["value"], regimes[-1]["interval"]
 
     def side_figure(values: list[float]) -> dict:
-        """One side of the cut as the published {value, interval, n}."""
+        """One side of the newest change as the published {value, interval, n}."""
         values = sorted(values)
         return {"value": round(median(values) * 100) if values else None,
                 "interval": [round(values[0] * 100), round(values[-1] * 100)] if values else None,
@@ -1220,12 +1103,11 @@ def window_credits(clean: dict[str, list[dict]], credits: dict, labels: dict[str
         "interval": ([round(per_pct_interval[0] * 100), round(per_pct_interval[1] * 100)]
                      if per_pct_interval else None),
         "n": len(pooled),
-        "cut_at": CUT_AT.isoformat(),
+        "split_at": _utc(split) if split else None,
         "before": side_figure(sides["before"]),
         "after": side_figure(sides["after"]),
         "regimes": _rounded_regimes(regimes, 100),
         "current_source": current_source if pooled else None,
-        "five_hour_window_pct": five_hour_pct,
         "current_method": current_method(changes),
         "accounts": accounts,
         "pure_family": fam,
@@ -1422,7 +1304,7 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
                   windows_per_week_interval: list | None = None,
                   windows_per_week_source: str = "weekly_windows current, max20, newest regime",
                   fam: str = "opus", weight: float | None = None,
-                  five_hour_pct: float | None = None, meters: dict | None = None) -> dict:
+                  changes: list[dict] | None = None) -> dict:
     """What a five-hour window buys in tokens, measured on the meter rather than priced.
 
     The same cluster `window_credits` is the median of -- the capture-accepted,
@@ -1434,17 +1316,13 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     rate for one class answers "how much fresh Sonnet input alone would fill a window" --
     a quantity no account's use looks like (docs/findings-2026-09-20-window-tokens.md).
 
-    The cluster spans the 14 September change, so it is split on `cut_at` by each
-    stretch's own start: `before` and `after` at the top level for the all-classes figure,
-    and inside each `per_class` entry for that class. `all` is the CURRENT window -- the
-    after cluster where it is thick enough to state one, else the before cluster scaled by
-    the measured five-hour change (`current_cluster_rule`, `current_source`) -- because
-    ten of today's twelve stretches are one account's from before the cut and a median
-    over the whole cluster is a pre-cut figure published as the current one. `per_class`
+    Every measured change of the four-account detector (`changes`) opens a regime exactly
+    as in `window_credits`: `all` is the newest regime's, and `regimes` publishes every one in
+    tokens per window, each step the detector's five-hour size at its change. The cluster is
+    also split on the newest change (`split_at`): `before` and `after` at the top level for
+    the all-classes figure, and inside each `per_class` entry for that class. `per_class`
     keeps its own median over the whole cluster: it is the mix the conversions hold their
-    shape from (below), and each class states its own two sides beside it. A five-hour
-    change measured on the meters after the cut opens a further regime exactly as in `window_credits`,
-    `all` is the newest regime's, and `regimes` publishes every one in tokens per window.
+    shape from (below), and each class states its own two sides beside it.
 
     `per_class` is what makes it a measurement rather than a mix assumption: the cluster's
     own median is 444M cache reads, 15M cache writes, 2.8M output and 5.8k input per
@@ -1484,16 +1362,17 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
             "per_class": {cls: _figure_from({label: readings(account_rows, cls)})
                           for cls in TOKEN_CLASSES},
         }
-    # The same rows split on the cut, per account, so every figure below can state its own
-    # two sides and the current one can be taken from whichever side states the window now.
+    # The same rows split on the newest measured change, per account, so every figure below
+    # can state its own two sides.
+    changes = changes or []
+    split = changes[-1]["at"] if changes else None
     sides = {"whole": rows,
-             "before": {label: [r for r in account_rows if cut_side(r) == "before"]
+             "before": {label: [r for r in account_rows if split_side(r, split) == "before"]
                         for label, account_rows in rows.items()},
-             "after": {label: [r for r in account_rows if cut_side(r) == "after"]
+             "after": {label: [r for r in account_rows if split_side(r, split) == "after"]
                        for label, account_rows in rows.items()}}
     n_side = {name: sum(len(account_rows) for account_rows in by_label.values())
               for name, by_label in sides.items()}
-    changes = known_date_changes(meters)
     by_regime: dict[int, dict[str, list[dict]]] = {}
     for label, account_rows in rows.items():
         for r in account_rows:
@@ -1535,7 +1414,7 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
     anchor_per_token = _mix_credits_per_token(shares, anchor.input, anchor.output, weight)
 
     # Every pure clean stretch of any family, by the regime it started in, so each regime
-    # after a known-date change is measured in the family actually in use.
+    # after a measured change is measured in the family actually in use.
     pure_by_regime = regime_family_rows(clean, credits, labels, changes)
 
     def direct(ks: tuple[int, ...]) -> dict | None:
@@ -1564,7 +1443,7 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
 
     regimes, current_source = window_regimes(
         {k: sum(len(v) for v in by_label.values()) for k, by_label in by_regime.items()},
-        own, five_hour_pct, changes, direct=direct, anchor_fam=fam)
+        own, changes, direct=direct, anchor_fam=fam)
     regimes = _rounded_regimes(regimes)
     measured_family = regimes[-1]["measured_family"]
 
@@ -1607,13 +1486,20 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
         if per_token and anchor_per_token:
             history_rate, history_source = per_token / anchor_per_token, "fitted"
     for r in regimes:
-        if r["measured_family"] == measured_family:
+        if r["measured_family"] == measured_family and "chained" not in r:
             r["family_value"], r["family_interval"] = r["measured_value"], r["measured_interval"]
         else:
             r["family_value"] = (_round(r["value"] / history_rate)
                                  if history_rate and r["value"] is not None else None)
             r["family_interval"] = ([_round(x / history_rate) for x in r["interval"]]
                                     if history_rate and r["interval"] else None)
+    # A regime restated from the one after it (`chain_regimes`) steps by the detector's own size
+    # in the family's units too, chained back from the newest regime's direct figure: a run
+    # carried across a change draws no step there from a rate rounded to four places.
+    for k in range(len(regimes) - 2, -1, -1):
+        r, nxt = regimes[k], regimes[k + 1]
+        if r.get("chained") and history_rate and nxt.get("family_value") is not None:
+            r["family_value"] = _round(nxt["family_value"] / (1 + r["chained"]["step_pct"] / 100))
     if measured_family and measured_family != fam and measured_family in families:
         families[measured_family]["history_rate"] = {
             "times_anchor": round(history_rate, 4) if history_rate else None,
@@ -1625,15 +1511,15 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
                               windows_per_week_source)
     method = (f"median over the pure-{fam} clean stretches of the tokens the stretch carried per 1% "
               f"of the five-hour meter, times 100, taken per token class and over all four classes "
-              f"together -- `all` over the current side of the cut alone (`current_method`), "
-              f"`per_class` over the whole cluster, and both sides published beside each. "
+              f"together -- `all` over the newest regime (`current_method`), `per_class` over the "
+              f"whole cluster, and both sides of the newest measured change published beside each. "
               f"The interval is the spread of the readings themselves -- per account its "
               f"own lowest and highest per-stretch value, pooled the union of the account intervals "
               f"-- and not a confidence interval. No credit rate and no class weight enters the "
               f"pure-{fam} figure: it is the stretch's own token counts over its own meter movement. "
               f"Every other family is a conversion of it at the two families' rates (`conversion`), "
               f"and a family whose rate is a status sentence publishes no number. A regime after "
-              f"a known-date change is measured the same way in its own regime family "
+              f"a measured change is measured the same way in its own regime family "
               f"(`measured_family`, `current_method`), and that family's row is its direct "
               f"reading.")
     return {
@@ -1643,12 +1529,11 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
         "current_method": current_method(changes),
         "selection": selection_sentence(),
         "n": len(pooled_rows),
-        "cut_at": CUT_AT.isoformat(),
+        "split_at": _utc(split) if split else None,
         # The all-classes figure's own two sides; every `per_class` entry carries its own.
         **both_sides(),
         "regimes": regimes,
         "current_source": current_source if pooled_rows else None,
-        "five_hour_window_pct": five_hour_pct,
         "measured_family": measured_family,
         "family_values_method": (
             "`family_value` and `family_interval` on each regime are its window in "
@@ -1851,19 +1736,6 @@ def _solved_fable_interval(clean: dict[str, list[dict]], credits: dict,
     }
 
 
-#: Why `across_cut` never resolves the attribution. Not a comparison across accounts -- an
-#: earlier version compared the accounts' post-change levels to each other and called that
-#: comparison the reason; the Codex review of commit 447b926 (2026-09-20) retracted it, because
-#: a stable account-specific scale cancels out of a within-account before/after ratio regardless
-#: of how far apart two different accounts sit, so the spread was never evidence either way.
-ACROSS_CUT_UNRESOLVED = (
-    "a stable account-specific scale cancels out of any within-account before/after ratio, so "
-    "these five-hour credit readings cannot separate a change in the five-hour window from a "
-    "change in the weekly cap on their own -- that needs an independent debit or allowance "
-    "observation, which no committed stretch carries. See the windows-per-week ratio note on "
-    "the event for what these same accounts' meters do identify.")
-
-
 def pooled_fit_prices(model_rates: dict | None) -> dict | None:
     """The pooled fit's whole coefficient vector, in credits, or None when there is none.
 
@@ -2011,150 +1883,6 @@ def comparison_value(credits: dict, model_rates: dict | None = None,
     return value
 
 
-def side_between(st: dict, at: datetime, bounds: list[datetime]) -> str | None:
-    """"before" or "after" a change at `at` within its own two regimes, or None.
-
-    `bounds` are every change instant known (the 14 September cut, each measured change in
-    `known_date_changes`, any later one). The before side runs from the latest of them
-    before `at`, the after side to the earliest after it, so a regime's figure never takes
-    stretches from the next one or the one before; a stretch that crosses any of them is on
-    no side.
-    """
-    start = datetime.fromisoformat(st["start"])
-    end = datetime.fromisoformat(st["end"]) if st.get("end") else start
-    lo = max((b for b in bounds if b < at), default=None)
-    hi = min((b for b in bounds if b > at), default=None)
-    if lo is not None and start < lo or hi is not None and end > hi:
-        return None
-    if end <= at:
-        return "before"
-    return "after" if start >= at else None
-
-
-def across_cut(clean: dict[str, list[dict]], credits: dict, labels: dict[str, str],
-               weight: float | None = None, model_rates: dict | None = None,
-               changes: list[datetime] | None = None) -> dict:
-    """Each account's five-hour window in credits before and after the announced change.
-
-    The after side ends at the first later change (`changes`, the `known_date_changes`
-    instants), which opens a regime of its own: `side_between`.
-
-    Every clean stretch is priced, not only the pure ones, so there is enough on both
-    sides of 14 September to compare. Where `model_rates` carries the pooled fit
-    (`pooled_fit_prices`), every family is priced at the fit's measured rate and cache reads
-    at its fitted weight -- one table on both sides of the cut, and the one the rates were
-    measured with, on the same selection (`rate_fit_stretches`). That fit found no change in
-    Fable's rate at the cut (docs/findings-2026-09-23-pooled-rates.md), so holding it on both
-    sides is a measurement rather than an assumption. Without a pooled fit (a fixture, an
-    archive from before it existed) the reference table prices the known families and one
-    Fable rate is held constant on both sides (`across_cut_fable_rate` in data/prices.json),
-    which is what this block did before. The level itself is not a claim;
-    `window_credits` is the claim.
-
-    **This does not resolve whether the five-hour window moved, and the block says so.**
-    An earlier version of this block compared the accounts' post-change levels to each
-    other and called the attribution unresolved because they differed by more than any
-    one of them moved (46.8% apart against a largest own-move of 12.8%). The Codex
-    review of commit 447b926 (2026-09-20) retracted that argument: a stable
-    account-specific scale cancels out of a within-account before/after ratio no matter
-    how far apart two different accounts sit, so the cross-account spread was never
-    evidence either way, and it is not published here any more. What actually blocks the
-    attribution is algebraic, not a spread: with complete capture, these readings
-    identify `rate / budget` for the five-hour meter, and multiplying every rate and
-    both budgets by the same positive number leaves every reading unchanged. Separating
-    a five-hour-window change from a weekly-cap change needs an independent debit or
-    allowance observation in a stable unit; nothing committed here is that. `resolved`
-    is always false for that reason, not a comparison across accounts. An earlier draft
-    of the reconciliation called the window flat within 4%; that came from gating on
-    `status` instead of `capture_status`, which let 42 unaccounted stretches into the
-    comparison, and the gate on PR #64 caught it.
-    """
-    fit = pooled_fit_prices(model_rates)
-    until = min((c for c in changes or [] if c > CUT_AT), default=None)
-    held = credits.get("across_cut_fable_rate") or {}
-    fable_in, fable_out = _rate(held.get("input")), _rate(held.get("output"))
-    value = across_cut_value(credits, weight, model_rates)
-    out = {}
-    for name, label in labels.items():
-        sides: dict[str, list[float]] = {"before": [], "after": []}
-        for st in clean.get(name, []):
-            total = value(st["tokens"])
-            if total is None:
-                continue
-            if not st.get("start"):
-                continue  # unplaceable: no stamp to put it on one side of the change
-            side = side_between(st, CUT_AT, [CUT_AT, *(changes or [])])
-            if side is not None:
-                sides[side].append(total / st["delta_pct"])
-        before = round(median(sides["before"])) if sides["before"] else None
-        after = round(median(sides["after"])) if sides["after"] else None
-        out[label] = {
-            "before": before, "after": after,
-            "n_before": len(sides["before"]), "n_after": len(sides["after"]),
-            "change_pct": round((after - before) / before * 100, 1) if before and after else None,
-            # How many of the account's clean stretches carry a capture reading at all.
-            # Zero means the capture column is not usable on that account, so its two
-            # medians divide the whole account's meter movement -- web, phone and every
-            # other machine included -- by only what this host's transcripts saw.
-            "n_with_capture": sum(1 for st in clean.get(name, []) if st.get("capture") is not None),
-        }
-    if fit is not None:
-        rates_used = {
-            "source": "pooled_fit",
-            "times_opus": {fam: round(v, 4) for fam, v in sorted(fit["times_opus"].items())},
-            "cache_read_weight": round(fit["cache_read_weight"], 6),
-            "output_multiplier": fit["output_multiplier"],
-            "why": ("every family at the pooled fit's own rate, Opus the unit, and every cache "
-                    "read at its fitted weight: the same rates on both sides of the cut, "
-                    "measured on the same stretches. The fit separates Fable's rate either "
-                    "side of the cut and finds no change in it."),
-        }
-        method = ("median credits per 1% over the stretches the rate fits run over (capture test "
-                  "on every account, the personal account from 6 September, no stretch that "
-                  "spans the cut), split on the announced change, every stretch priced at the "
-                  "pooled fit's rates so the two medians are comparable to each other. An "
-                  "account whose n_with_capture is 0 has no usable capture column, so its meter "
-                  "movement includes work this host never saw and its level reads low.")
-    else:
-        rates_used = None
-        method = ("median credits per 1% over every clean stretch of the account, split on the "
-                  "announced change; one Fable rate held constant on both sides so the two "
-                  "medians are comparable to each other. An account whose n_with_capture is 0 "
-                  "has no usable capture column, so its meter movement includes work this host "
-                  "never saw and its level reads low; the comparison of its own two sides is "
-                  "still its own.")
-    return {
-        "per_account": out,
-        "resolved": False,
-        "unresolved": ACROSS_CUT_UNRESOLVED,
-        "unit": "credits per 1% of the five-hour meter",
-        "cut_at": CUT_AT.isoformat(),
-        "after_until": _utc(until) if until else None,
-        "rates_used": rates_used,
-        "fable_rate_held": {"input": fable_in, "output": fable_out,
-                            "why": held.get("why")} if fit is None and fable_out is not None else None,
-        "method": method,
-    }
-
-
-def _regime_rows(by_window: list[dict], regime: dict,
-                 exclude_at: datetime | None = None) -> list[dict]:
-    """The `by_window` rows inside one regime's own span, bounds inclusive.
-
-    `by_window` is pooled across accounts, and each account keeps its own window
-    cadence, so two different accounts' rows can share a `window_ending` instant. A row
-    could sit exactly on the instant where one regime ends and the next begins, and each
-    regime's own inclusive bounds would then both claim it. `exclude_at` names that one
-    instant (the earlier regime's own `end`) so it is dropped from the later regime only
-    -- never a whole boundary side, which would also drop the later regime's own first
-    window whenever that window's own timestamp happens to equal its own `start`.
-    """
-    lo, hi = datetime.fromisoformat(regime["start"]), datetime.fromisoformat(regime["end"])
-    return [r for r in by_window
-            if lo <= datetime.fromisoformat(r["window_ending"]) <= hi
-            and datetime.fromisoformat(r["window_ending"]) != exclude_at]
-
-
 def _raw_five_hour(rows: list[dict]) -> float:
     """The meter's own five-hour movement over `by_window` rows: `raw_five_hour_pct` where a
     row is in interactive-equivalent units (ADR 0001 rule 16), else `five_hour_pct`."""
@@ -2179,73 +1907,6 @@ def _side(rows: list[dict], regime: dict) -> dict | None:
             "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
             "accounts": sorted({r["account"] for r in rows if r.get("account")}),
             "start": regime["start"], "end": regime["end"]}
-
-
-def _one_sided_reason(rows: list[dict], before: dict, after: dict) -> str:
-    """Why an account with readings has no before/after change of its own."""
-    endings = [datetime.fromisoformat(r["window_ending"]) for r in rows]
-    if min(endings) >= datetime.fromisoformat(after["start"]):
-        return "readings_only_after_the_change"
-    if max(endings) <= datetime.fromisoformat(before["end"]):
-        return "readings_only_before_the_change"
-    return "no_certified_step_of_its_own"
-
-
-def _paired_account(rows: list[dict], block: dict) -> dict | None:
-    """One account's own change across its own last certified step, or None if unbounded.
-
-    The two sides are the account's own last two regimes (`by_account.<label>.regimes`),
-    not the pooled ones: the cut reaches each account at that account's own seven-day
-    reset, so a pooled boundary would put one account's first post-cut windows on the
-    before side. The change's interval takes the rounding interval of both sides at
-    their far ends: the lowest after over the highest before, and the other way round.
-    """
-    regimes = block["regimes"]
-    before = _side(_regime_rows(rows, regimes[-2]), regimes[-2])
-    after = _side(_regime_rows(rows, regimes[-1],
-                               exclude_at=datetime.fromisoformat(regimes[-2]["end"])), regimes[-1])
-    if before is None or after is None:
-        return None
-    (b_lo, b_hi), (a_lo, a_hi) = before["rounding_interval"], after["rounding_interval"]
-    if not (b_lo and b_hi and a_lo and a_hi):
-        return None
-    for side in (before, after):
-        del side["accounts"]
-    rho = after["ratio"] / before["ratio"]
-    rho_lo, rho_hi = a_lo / b_hi, a_hi / b_lo
-    return {"before": before, "after": after, "ratio_after_over_before": round(rho, 4),
-            "raw_ratio_after_over_before": round(after["raw_ratio"] / before["raw_ratio"], 4),
-            "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)],
-            "change_pct": round((rho - 1) * 100, 2),
-            "change_interval_pct": [round((rho_lo - 1) * 100, 2), round((rho_hi - 1) * 100, 2)]}
-
-
-def combine_log_ratios(per_account: dict[str, dict]) -> dict:
-    """The paired accounts' changes combined: a weighted mean of their own log ratios.
-
-    Each account's weight is the inverse square of the half-width of its own ratio
-    interval in log terms, normalised to sum to one, so an account whose own rounding
-    pins its change tightly counts for more than one whose readings are thin. The
-    weights depend on the intervals alone, never on the values, so with them fixed
-    the combined figure can sit no lower than the same weighted mean of every account's
-    lowest ratio and no higher than that of every highest: that is the published
-    interval. It bounds rounding, not the accounts' disagreement with each other, which
-    `per_account` shows directly. Worked from the published rounded values, so a reader
-    can redo it.
-    """
-    raw = {label: (math.log(a["ratio_interval"][1]) - math.log(a["ratio_interval"][0])) / 2
-           for label, a in per_account.items()}
-    inv = {label: 1 / h ** 2 if h > 0 else 0.0 for label, h in raw.items()}
-    if not any(inv.values()):  # every interval a point: weight the accounts equally
-        inv = dict.fromkeys(inv, 1.0)
-    total = sum(inv.values())
-    weights = {label: round(v / total, 4) for label, v in inv.items()}
-    norm = sum(weights.values())
-    log_mid = sum(w * math.log(per_account[k]["ratio_after_over_before"]) for k, w in weights.items()) / norm
-    log_lo = sum(w * math.log(per_account[k]["ratio_interval"][0]) for k, w in weights.items()) / norm
-    log_hi = sum(w * math.log(per_account[k]["ratio_interval"][1]) for k, w in weights.items()) / norm
-    return {"weights": weights, "ratio": math.exp(log_mid),
-            "interval": (math.exp(log_lo), math.exp(log_hi))}
 
 
 #: A change is `measured` once its 95% interval excludes no change and is no wider than this
@@ -2494,40 +2155,6 @@ def combine_inverse_variance(per_account: dict[str, dict]) -> dict | None:
     h = _t975(sum(a["df"] for a in per_account.values())) * se
     return {"weights": {k: v / total for k, v in inv.items()}, "ratio": math.exp(d),
             "interval": (math.exp(d - h), math.exp(d + h))}
-
-
-def inverse_variance_plan_wide(paired: dict[str, dict], change_pct: float | None,
-                               estimator: str) -> dict:
-    """ADR 0001 rule 9 on an inverse-variance combination (`combine_inverse_variance`): the
-    combined change refitted with each paired account left out in turn (`plan_wide_verdict`)."""
-    without = {}
-    for label in paired if len(paired) > 1 else ():
-        rest = combine_inverse_variance({k: v for k, v in paired.items() if k != label})
-        without[label] = {"change_pct": _pct_of(rest["ratio"]),
-                          "interval_pct": [_pct_of(x) for x in rest["interval"]]}
-    return plan_wide_verdict(change_pct, sorted(paired), without, estimator)
-
-
-def direct_change(per_account: dict[str, dict], paired: dict[str, dict], estimator: str,
-                  unit: str) -> dict:
-    """One direct measurement's change across a candidate, combined, tested and certified.
-
-    `paired[label]` carries each account's own `log_ratio`, `se` and `df`; `per_account` is
-    every account's published row. The combination is `combine_inverse_variance`, and the
-    change is `certified` (ADR 0001 rule 9) only when it holds with each account left out
-    (`inverse_variance_plan_wide`) and its own 95% interval excludes no change.
-    """
-    combined = combine_inverse_variance(paired)
-    pct = _pct_of(combined["ratio"]) if combined else None
-    interval = [_pct_of(x) for x in combined["interval"]] if combined else None
-    for label, w in (combined or {}).get("weights", {}).items():
-        per_account[label]["weight"] = round(w, 4)
-    plan_wide = inverse_variance_plan_wide(paired, pct, estimator)
-    excludes = bool(interval and not interval[0] <= 0 <= interval[1])
-    return {"unit": unit, "change_pct": pct, "interval_pct": interval,
-            "interval_excludes_no_change": excludes, "accounts_combined": sorted(paired),
-            "per_account": per_account, "plan_wide": plan_wide,
-            "certified": plan_wide["state"] == "passed" and excludes}
 
 
 def change_state(interval_pct: list[float] | tuple[float, float] | None) -> str:
@@ -2839,8 +2466,7 @@ def _known_date_rows(selected: dict[str, list[dict]], value, at: datetime,
             row.update({"change_pct": round((pair["ratio"] - 1) * 100, 1),
                         "interval_pct": [round((x - 1) * 100, 1) for x in pair["interval"]],
                         "combined": True,
-                        # What the leave-one-out refit of this window change reads
-                        # (`five_hour_on_meters`, `direct_change`).
+                        # What a leave-one-out refit of this window change reads.
                         "log_ratio": pair["log_ratio"], "se": pair["se"], "df": pair["df"]})
         per_account[label] = row
     return per_account, paired, shares
@@ -2861,7 +2487,9 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
     (`combine_inverse_variance`), pairing accounts the way the weekly event does. An
     account without both sides is listed with its counts and not combined. `joint_fits`
     (from `absorb_new_family_rates`, keyed by family and instant) is attached to each
-    candidate as `joint_fit`; `five_hour_on_meters` decides the scope from it.
+    candidate as `joint_fit`. A research tool since 2026-10-23 (tools/account_agreement.py):
+    no published figure reads it, the four-account detector states every change (ADR 0001
+    rule 22).
     """
     selected = announced_change_stretches(by_account, runs)
     cands = change_candidates(by_account, credits, announcements)
@@ -2922,7 +2550,7 @@ def announced_change(by_account: dict[str, list[dict]], runs: list[HarnessRun], 
             f"it also has a half-width of {CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less "
             "(`change_state`). `joint_fit` is the candidate "
             "family's rate fitted jointly with the five-hour limit change "
-            "(`joint_rate_fit`); `five_hour_on_meters` reads it to decide the change's scope. "
+            "(`joint_rate_fit`). "
             "`announcement` is reference metadata and changes no figure."),
     }
 
@@ -3134,18 +2762,6 @@ def _joint_scatter(groups: list[tuple[list[tuple], list[tuple]]], r: float, m: f
     return robust if robust > 0 else scatter_variance(ss, n - len(groups) - 2, rounding)
 
 
-#: How `plan_wide` reads a change (ADR 0001 rule 9): a plan limit changes for every account
-#: at the same instant, so a change that one account alone produces is not a plan change.
-PLAN_WIDE_METHOD = (
-    "A plan limit change applies to every account at the same instant. So a change whose "
-    "combined estimate draws on two or more accounts is refitted with each of them left out in "
-    "turn, by the same estimator that produced it (the joint fit's g, the weekly limit change "
-    "g times the windows-per-week ratio where that moved more, or the combined windows-per-week "
-    "ratio while the fit cannot separate g), and it is plan-wide only if every refit keeps its "
-    "direction with a 95% interval that still excludes no change. With two accounts that is "
-    "each account alone. A change resting on one account is not plan-wide.")
-
-
 def plan_wide_verdict(change_pct: float | None, accounts: list[str], without: dict[str, dict],
                       estimator: str) -> dict:
     """Whether a combined change holds with each of its accounts left out in turn.
@@ -3154,7 +2770,7 @@ def plan_wide_verdict(change_pct: float | None, accounts: list[str], without: di
     `change_pct` and `interval_pct`; each entry gains `holds`, True when the refit keeps the
     full change's direction and its interval excludes no change on that side. `passed` when
     every refit holds and there are at least two accounts; `failed` otherwise, with the
-    reason; `untested` without a change to test. See PLAN_WIDE_METHOD.
+    reason; `untested` without a change to test (ADR 0001 rule 9).
     """
     out = {"state": "untested", "estimator": estimator, "accounts": list(accounts),
            "without": without, "reason": None}
@@ -3467,796 +3083,11 @@ def absorb_new_family_rates(by_account: dict[str, list[dict]], runs: list[Harnes
     return (rates_now if changed else model_rates), fits
 
 
-def paired_levels(note: dict | None, by_window: list[dict]) -> tuple[dict, dict] | None:
-    """The before and after levels over the paired accounts only, each on its own sides.
-
-    The chart draws these as the step across the change instead of the pooled regimes,
-    which hold an account on one side only (a3 and a4 joined after the cut) and put
-    an early-stepping account's post-step windows on the before side (a1 stepped on
-    11 September, the pooled split is 14 September). Each level pools the paired
-    accounts' windows from their own regime on that side (`note.per_account`): total
-    five-hour movement over total seven-day movement, with that pool's rounding
-    interval. The accounts step at their own seven-day resets, so the level's `start`
-    and `end` are drawn at the earliest step -- the event's own date -- and
-    `per_account` names each account's actual span. None when no account pairs.
-    """
-    per_account = (note or {}).get("per_account") or {}
-    if not per_account:
-        return None
-    rows = {"before": [], "after": []}
-    spans = {"before": {}, "after": {}}
-    for label, a in per_account.items():
-        mine = [r for r in by_window if r.get("account") == label]
-        rows["before"] += _regime_rows(mine, a["before"])
-        rows["after"] += _regime_rows(mine, a["after"],
-                                      exclude_at=datetime.fromisoformat(a["before"]["end"]))
-        for side in ("before", "after"):
-            spans[side][label] = {"start": a[side]["start"], "end": a[side]["end"],
-                                  "windows": a[side]["ratio"]}
-
-    def level(side: str, start: str, end: str) -> dict:
-        pool = rows[side]
-        d5 = sum(r["five_hour_pct"] for r in pool)
-        d7 = sum(r["seven_day_pct"] for r in pool)
-        pieces = sum(r.get("pieces", 1) for r in pool)
-        raw = _raw_five_hour(pool)
-        lo, hi = ratio_interval(d5, d7, pieces, raw_d5=raw)
-        return {"start": start, "end": end, "windows": round(d5 / d7, 2) if d7 else None,
-                "raw_windows": round(raw / d7, 2) if d7 else None,
-                "seven_day_pct": round(d7, 1), "points": len(pool), "pieces": pieces,
-                "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
-                "quality": "bounded" if hi is not None else "insufficient_precision",
-                "accounts": sorted(per_account), "per_account": spans[side],
-                "source": "passive_paired_deltas_same_accounts", "assumed": False}
-
-    before_starts = [s["start"] for s in spans["before"].values()]
-    before_ends = [s["end"] for s in spans["before"].values()]
-    after_starts = [s["start"] for s in spans["after"].values()]
-    after_ends = [s["end"] for s in spans["after"].values()]
-    return (level("before", min(before_starts, key=datetime.fromisoformat),
-                  min(before_ends, key=datetime.fromisoformat)),
-            level("after", min(after_starts, key=datetime.fromisoformat),
-                  max(after_ends, key=datetime.fromisoformat)))
-
-
-def windows_per_week_ratio_note(weekly: dict) -> dict | None:
-    """What the windows-per-week ratio (five-hour movement over seven-day movement)
-    identifies across the certified change, measured on the same accounts either side.
-
-    The watched accounts differ in five-hour window size, and so in windows per week,
-    and they joined the pool at different times: a3's meter log starts 15 September and
-    a4's on 23 September, both after the cut. Pooling every account's windows either side
-    of the pooled regimes therefore changes the figure through which accounts are in the
-    pool, not only through the limit. So the change is measured account by account, each
-    against itself over its own last certified step (`_paired_account`), only for the
-    accounts with readings on both sides, and then combined (`combine_log_ratios`). An
-    account with readings on one side only is named under `excluded` with the reason; it
-    still counts towards every current-level figure elsewhere.
-
-    `ratio_fell_pct` is the combined fall, `ratio_fell_interval_pct` its rounding
-    interval, and `consistent_with` reworks the one-equation-two-unknowns algebra from
-    the combined figure: a fall in this ratio can come from the weekly cap, the
-    five-hour window, or both, and none of the splits is claimed. They are worked
-    examples ported from the Codex review of commit 447b926 (2026-09-20), which also
-    retracted the cross-account-spread argument this replaces (see
-    `ACROSS_CUT_UNRESOLVED`). `pooled_all_accounts` keeps the old figure -- every
-    account's windows in the last two pooled regimes -- for the record, since the charts
-    still draw those regimes (docs/findings-2026-09-23-pooled-rates.md, "Same accounts
-    either side").
-    """
-    max20 = weekly["max20"]
-    # The chart's own `regimes` are the paired levels (`paired_levels`) once there are any;
-    # the pooled record keeps the detector's regimes over every account.
-    regimes = max20.get("regimes_pooled_all_accounts") or max20["regimes"]
-    if len(regimes) < 2:
-        return None
-    by_window = max20["by_window"]
-    pooled_before = _side(_regime_rows(by_window, regimes[-2]), regimes[-2])
-    pooled_after = _side(_regime_rows(by_window, regimes[-1],
-                                      exclude_at=datetime.fromisoformat(regimes[-2]["end"])),
-                         regimes[-1])
-    if not pooled_before or not pooled_after:
-        return None
-
-    per_account: dict[str, dict] = {}
-    excluded: dict[str, str] = {}
-    for label, block in sorted((max20.get("by_account") or {}).items()):
-        rows = [r for r in by_window if r.get("account") == label]
-        if not rows:
-            continue
-        if not block.get("step") or len(block.get("regimes") or []) < 2:
-            excluded[label] = _one_sided_reason(rows, regimes[-2], regimes[-1])
-            continue
-        paired = _paired_account(rows, block)
-        if paired is None:
-            reason = _one_sided_reason(rows, regimes[-2], regimes[-1])
-            excluded[label] = ("rounding_interval_unbounded"
-                               if reason == "no_certified_step_of_its_own" else reason)
-            continue
-        per_account[label] = paired
-    pooled = {
-        "before": pooled_before, "after": pooled_after,
-        "ratio_fell_pct": round((1 - pooled_after["ratio"] / pooled_before["ratio"]) * 100, 2),
-        "why_not_used": ("pools every account's windows in each of the last two pooled "
-                         "regimes, so an account that only has readings after the change "
-                         "moves the after side through account mix; kept for the record"),
-    }
-    if not per_account:
-        # No account has readings on both sides of its own step: nothing is measured
-        # against itself, so no change is stated -- not the pooled one in its place.
-        return {"accounts": [], "excluded": excluded, "per_account": {},
-                "ratio_after_over_before": None, "ratio_interval": None,
-                "ratio_fell_pct": None, "ratio_fell_interval_pct": None,
-                "pooled_all_accounts": pooled, "consistent_with": [], "unit": "percent",
-                "method": "no account has readings on both sides of its own certified step"}
-    combined = combine_log_ratios(per_account)
-    for label, w in combined["weights"].items():
-        per_account[label]["weight"] = w
-    rho = combined["ratio"]
-    rho_lo, rho_hi = combined["interval"]
-    fall_pct = round((1 - rho) * 100, 2)
-    # The meter's own ratio on the same sides and weights: what the raw meter ratio said,
-    # before each window's headless inflation was taken out (ADR 0001 rule 16).
-    raw_rho = math.exp(sum(w * math.log(per_account[k]["raw_ratio_after_over_before"])
-                           for k, w in combined["weights"].items())
-                       / sum(combined["weights"].values()))
-
-    def pct(x: float) -> float:
-        return round(x * 100, 2)
-
-    return {
-        "accounts": sorted(per_account),
-        "excluded": excluded,
-        "per_account": per_account,
-        "ratio_after_over_before": round(rho, 4),
-        "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)],
-        "ratio_fell_pct": fall_pct,
-        "ratio_fell_interval_pct": [pct(1 - rho_hi), pct(1 - rho_lo)],
-        "raw_ratio_after_over_before": round(raw_rho, 4),
-        "raw_ratio_fell_pct": round((1 - raw_rho) * 100, 2),
-        "pooled_all_accounts": pooled,
-        "consistent_with": [
-            {"description": "the weekly cap falls by the whole measured amount, the five-hour "
-                            "window unchanged",
-             "weekly_cap_change_pct": -fall_pct, "five_hour_window_change_pct": 0.0,
-             "weekly_cap_change_interval_pct": [pct(rho_lo - 1), pct(rho_hi - 1)]},
-            {"description": "the five-hour window rises, the weekly cap unchanged",
-             "weekly_cap_change_pct": 0.0, "five_hour_window_change_pct": pct(1 / rho - 1),
-             "five_hour_window_change_interval_pct": [pct(1 / rho_hi - 1), pct(1 / rho_lo - 1)]},
-        ],
-        "unit": "percent", "windows_unit": "interactive_equivalent",
-        "method": ("each account with readings on both sides against itself: the pooled ratio of "
-                   "five-hour meter movement, each window over its headless inflation (ADR 0001 "
-                   "rule 16), to seven-day meter movement over its own last two certified regimes "
-                   "(tracker/detect.py weighted_regimes), after over before, with an interval from "
-                   "both sides' rounding intervals at their far ends; then a weighted mean of the "
-                   "accounts' log ratios, each weighted by the inverse square of its own log "
-                   "interval's half-width, and the same weighted mean of their interval ends as "
-                   "the combined interval. The fall is one equation in the ratio of the two meters' "
-                   "own budget changes; `consistent_with` lists example splits that reproduce it "
-                   "exactly, not measurements of which one moved. `raw_ratio_after_over_before` "
-                   "and `raw_ratio_fell_pct` are the meter's own ratio on the same sides and "
-                   "weights, a diagnostic: it moves with an account's headless share."),
-    }
-
-
-#: A five-hour window lasts this long, so a window whose ending falls this soon after a
-#: change instant began before it: it straddles the change and is on neither side.
-FIVE_HOUR_SPAN = timedelta(hours=5)
-
-WINDOWS_PER_WEEK_METHOD = (
-    "Every change candidate (each model family's first use, `announced_change`) is measured; "
-    "no announcement decides whether or how. Per account, the windows per week (five-hour "
-    "meter movement, each window over its headless inflation as ADR 0001 rule 16 reads it, "
-    "over seven-day meter movement, pooled over the account's own "
-    "`weekly_windows.max20.by_window` readings, the same pooling and rounding interval as the "
-    "14 September paired measurement) is compared either side of the candidate instant. The "
-    "before side runs from the previous boundary (the 14 September weekly change or an earlier "
-    "candidate), or from the account's own certified weekly step where that is later, to the "
-    "instant; the after side from five hours after the instant (a window ending sooner began "
-    "before it) to the next boundary, or to the end of the account's own pre-step regime where "
-    "the candidate precedes that step. An account needs "
-    f"{ANNOUNCED_MIN_BEFORE} readings before and 1 after, and bounded rounding intervals on both "
-    "sides. The accounts' ratios (after over before) are combined as a weighted mean of log "
-    "ratios, weights the inverse square of each account's own log interval half-width, and the "
-    "combined interval is the same weighted mean of the interval ends. No model rate enters. "
-    "`windows_per_week_change_pct` is that ratio as a change, and it is scope-free: a fall can "
-    "come from a larger five-hour window or a smaller weekly cap. `readings` works out both: "
-    "the five-hour change 1 / ratio - 1 with the weekly cap unchanged, and the weekly cap "
-    "change ratio - 1 with the window unchanged. `scope` decides between them from data. The "
-    "joint fit (`joint_fit`, `joint_rate_fit`) solves, over mixed stretches either side of "
-    "the candidate, for the new family's rate and the five-hour limit change g together: "
-    "per stretch, meter % = (credits of models whose rate is known + rate x the new family's "
-    "tokens at its base family's rate) / (the account's own before level x g). The weekly "
-    "limit's change is g times the windows-per-week ratio, its interval from g's bootstrap "
-    "interval and the ratio's (`windows_per_week_ratio_bootstrap_interval`) as independent "
-    "log-normal ones. The fit separates the rate from g only when the rate is pinned: its 95% "
-    f"interval spans at most {JOINT_SEPARABLE_SPAN:g}x end to end and touches neither search "
-    f"bound, and at least {JOINT_MIN_MIXED} pooled stretches after the candidate mix the new "
-    f"family at a share of {JOINT_MIXED_SHARE[0]:g} to {JOINT_MIXED_SHARE[1]:g} of the work, "
-    "because only mixing identifies the rate, and its rate interval reaches half to twice the "
-    "new family's input list-price ratio to its base family (`joint_fit.rate_check`, ADR 0001 "
-    "rule 8; a family with no list price skips that test and says so); `scope.reason` names "
-    "the test that failed. "
-    "`scope` describes which of the fit's intervals exclude no change: `five_hour` g's "
-    "alone, `weekly` g times the ratio's alone, `both` both, `undetermined` neither; it is "
-    "reference and certifies nothing. "
-    "A candidate is certified on the two direct measurements (ADR 0001 rules 9 and 11), "
-    "never on the meter ratio or the joint fit. `window_change` is the known-date test's "
-    "change in credits per 1% of the five-hour meter (`announced_change`, each account "
-    "against itself); `weekly_change` the same shape on the seven-day meter: each account's "
-    "credits over its seven-day points in its one-point steps either side (`weekly_meter."
-    "weekly_change`, the same bounds as the windows per week above, its standard error from "
-    "resampled whole UTC days, at least "
-    f"{ANNOUNCED_MIN_BEFORE} steps before and two days each side). Each combines the accounts "
-    "by inverse variance and is refitted with each account left out (`plan_wide`); it is "
-    "`certified` when that holds and its own 95% interval excludes no change. "
-    "`certified_on` names the certified ones, `headline` is a certified one (the larger "
-    "where both are), else the larger measured one, else the windows-per-week change, and "
-    "`state` reads its interval (`change_state`): measuring while it includes no change, "
-    "provisional once it excludes it, measured once it also has a half-width of "
-    f"{CHANGE_MEASURED_HALF_WIDTH_PCT:g} points or less; the notify step's 24 and 48 hour "
-    "rules time the email and never set it. `change_pct` and `interval_pct` are the window "
-    "change. A candidate after the weekly change that can be measured at all (`measurable`) "
-    "opens a window regime, which carries the previous window unless the candidate applies "
-    "on its window change. It `applies` -- enters `events`, can become `last_change` and "
-    "reach the email -- once one of the two is certified, and steps that measurement only: "
-    "a certified window change scales a thin regime's window by itself, a certified weekly "
-    "change opens a per-week regime, measured directly. Every publish recomputes it. Every "
-    "other candidate stays here with its figures, state and `withheld_reason`, which names "
-    "each measurement and the test it failed. `announcement` is reference metadata and "
-    "changes no figure, state or scope.")
-
-
-def own_weekly_step_start(block: dict | None) -> datetime | None:
-    """The start of an account's own last certified weekly regime, or None without a step.
-
-    The step stands for the 14 September weekly change reaching the account at its own
-    seven-day reset, so it needs a regime before it that began before the change: an account
-    first watched after CUT_AT has no before side (a3's meter log starts on 15 September,
-    and its own step on 21 September is a move in its meter ratio, not the weekly change).
-    """
-    regimes = (block or {}).get("regimes") or []
-    if not (block or {}).get("step") or len(regimes) < 2:
-        return None
-    if datetime.fromisoformat(regimes[-2]["start"]) >= CUT_AT:
-        return None
-    return datetime.fromisoformat(regimes[-1]["start"])
-
-
-def own_weekly_step_end(block: dict | None) -> datetime | None:
-    """The end of the regime before an account's own certified weekly step, or None."""
-    if own_weekly_step_start(block) is None:
-        return None
-    return datetime.fromisoformat(block["regimes"][-2]["end"])
-
-
-def cut_before_start(block: dict | None) -> datetime:
-    """Where an account's before side for the 14 September change starts.
-
-    At the account's last certified boundary before the change: the start of a regime of
-    its own windows-per-week series (`block`, `weekly_windows.max20.by_account.<label>`)
-    that a certified step opened, before its own weekly step (or before CUT_AT without
-    one), else PLAN_CHANGE_AT, where every account's Max 20x series starts. The first
-    regime's start is where the account's points begin, not a boundary, so it bounds
-    nothing. Within those bounds every clean seven-day step is read: an account with a
-    longer clean history uses all of it (ADR 0001 rule 13).
-    """
-    regimes = (block or {}).get("regimes") or []
-    until = own_weekly_step_start(block) or CUT_AT
-    opened = [datetime.fromisoformat(r["start"]) for r in regimes[1:]]
-    return max([PLAN_CHANGE_AT, *(b for b in opened if b < until)])
-
-
-def _five_hour_from_ratio(rho: float, rho_lo: float, rho_hi: float) -> tuple[float, list[float]]:
-    """The five-hour change in percent, and its interval, from a windows-per-week ratio."""
-    return (round((1 / rho - 1) * 100, 1),
-            [round((1 / rho_hi - 1) * 100, 1), round((1 / rho_lo - 1) * 100, 1)])
-
-
-def _pct_interval(lo: float, hi: float) -> list[float]:
-    return [round((lo - 1) * 100, 1), round((hi - 1) * 100, 1)]
-
-
-def scope_readings(rho: float, rho_lo: float, rho_hi: float) -> dict:
-    """The windows-per-week ratio read under each scope: which budget moved, and by how much."""
-    five, five_iv = _five_hour_from_ratio(rho, rho_lo, rho_hi)
-    return {"five_hour_scope": {"five_hour_window_change_pct": five,
-                                "five_hour_window_change_interval_pct": five_iv,
-                                "weekly_cap_change_pct": 0.0},
-            "weekly_scope": {"five_hour_window_change_pct": 0.0,
-                             "weekly_cap_change_pct": round((rho - 1) * 100, 1),
-                             "weekly_cap_change_interval_pct": _pct_interval(rho_lo, rho_hi)}}
-
-
-def _log_normal_product(x: float, x_iv: list[float], y: float, y_iv: list[float]) -> tuple:
-    """x times y, with a 95% interval from both intervals read as independent log-normal ones."""
-    se = math.sqrt(sum(((math.log(hi) - math.log(lo)) / (2 * 1.96)) ** 2
-                       for lo, hi in (x_iv, y_iv)))
-    v = x * y
-    return v, (v * math.exp(-1.96 * se), v * math.exp(1.96 * se))
-
-
-def meter_scope(joint: dict | None, rho: float, rho_iv: list[float] | None) -> dict:
-    """Which budget a candidate moved, from its own data (see WINDOWS_PER_WEEK_METHOD).
-
-    `joint` is the candidate's `joint_rate_fit`: g, the five-hour limit change, fitted on
-    mixed work jointly with the new family's rate. The weekly limit's change is g times the
-    windows-per-week ratio (credits per 1% of the weekly meter are credits per 1% of the
-    five-hour meter times five-hour over seven-day movement), its interval from g's and the
-    ratio's bootstrap intervals. Undetermined until the fit separates the rate from g.
-    """
-    fit = joint or {}
-    base = {"joint_fit_state": fit.get("state"), "separable": bool(fit.get("separable")),
-            "five_hour_limit_change_pct": None, "five_hour_limit_change_interval_pct": None,
-            "weekly_limit_change_pct": None, "weekly_limit_change_interval_pct": None}
-    if not fit.get("separable") or fit.get("five_hour_limit_change_pct") is None or not rho_iv:
-        return {"state": "undetermined", **base,
-                "reason": fit.get("reason") or "no joint fit of the new family's rate and the limit"}
-    g = 1 + fit["five_hour_limit_change_pct"] / 100
-    g_iv = [1 + x / 100 for x in fit["five_hour_limit_change_interval_pct"]]
-    w, (w_lo, w_hi) = _log_normal_product(g, g_iv, rho, rho_iv)
-    five_moved, weekly_moved = not g_iv[0] <= 1 <= g_iv[1], not w_lo <= 1 <= w_hi
-    state = {(True, False): "five_hour", (False, True): "weekly",
-             (True, True): "both"}.get((five_moved, weekly_moved), "undetermined")
-    base.update(five_hour_limit_change_pct=fit["five_hour_limit_change_pct"],
-                five_hour_limit_change_interval_pct=fit["five_hour_limit_change_interval_pct"],
-                weekly_limit_change_pct=_pct_of(w),
-                weekly_limit_change_interval_pct=[_pct_of(w_lo), _pct_of(w_hi)])
-    return {"state": state, **base,
-            "reason": ("neither limit's change excludes no change yet" if state == "undetermined"
-                       else "decided by which limit's change excludes no change")}
-
-
-def _bootstrap_ratio(sides: dict[str, tuple[list[dict], list[dict]]], weights: dict[str, float],
-                     seed: str) -> list[float] | None:
-    """A 95% percentile interval on the combined windows-per-week ratio: each paired account's
-    windows resampled within side, its pooled ratio recomputed, and the accounts' log ratios
-    combined at their fixed weights."""
-    rng = random.Random(seed)
-    norm = sum(weights.values())
-    draws = []
-    for _ in range(JOINT_BOOTSTRAP):
-        total = 0.0
-        for label, (before, after) in sides.items():
-            b = [rng.choice(before) for _ in before]
-            a = [rng.choice(after) for _ in after]
-            b7, a7 = sum(r["seven_day_pct"] for r in b), sum(r["seven_day_pct"] for r in a)
-            b5, a5 = sum(r["five_hour_pct"] for r in b), sum(r["five_hour_pct"] for r in a)
-            if not (b7 and a7 and b5 and a5):
-                break
-            total += weights[label] * math.log((a5 / a7) / (b5 / b7))
-        else:
-            draws.append(math.exp(total / norm))
-    if len(draws) < JOINT_BOOTSTRAP // 2:
-        return None
-    draws.sort()
-    return [round(draws[int(0.025 * len(draws))], 4),
-            round(draws[min(int(0.975 * len(draws)), len(draws) - 1)], 4)]
-
-
-def _candidate_plan_wide(cand: dict, headline: dict, paired: dict[str, dict],
-                         sides: dict[str, tuple[list[dict], list[dict]]],
-                         rho_boot: list[float] | None) -> dict:
-    """The plan-wide test (`plan_wide_verdict`, ADR 0001 rule 9) of the figure a candidate
-    would publish.
-
-    That figure is `headline`: the joint fit's five-hour limit change g, or the weekly limit
-    change g times the windows-per-week ratio where that moved more (the event reads the same
-    one), or the combined windows-per-week change while the fit is not separable. g's refits
-    are the joint fit's own (`joint_rate_fit`, `plan_wide.without`). The weekly change without
-    an account is that account's g refit times the windows-per-week ratio recombined without
-    it, with its bootstrap interval resampled the same way (`_bootstrap_ratio`).
-    """
-    metric = headline["metric"]
-    joint_pw = (cand.get("joint_fit") or {}).get("plan_wide")
-    if metric in ("five_hour_limit", "weekly_limit") and not joint_pw:
-        return dict(plan_wide_verdict(None, [], {}, "the joint fit's five-hour limit change g"),
-                    reason="the joint fit carries no leave-one-out refits")
-    if metric == "five_hour_limit":
-        return joint_pw
-    if metric == "windows_per_week":
-        without = {}
-        for label in paired if len(paired) > 1 else ():
-            rest = combine_log_ratios({k: v for k, v in paired.items() if k != label})
-            without[label] = {"change_pct": _pct_of(rest["ratio"]),
-                              "interval_pct": _pct_interval(*rest["interval"])}
-        return plan_wide_verdict(headline["change_pct"], sorted(paired), without,
-                                 "the combined windows-per-week ratio")
-    if metric is None:
-        return plan_wide_verdict(None, [], {}, "none")
-    fit = cand["joint_fit"]
-    accounts = sorted(set(joint_pw["accounts"]) | set(paired))
-    without = {}
-    for label in accounts if len(accounts) > 1 else ():
-        g_row = joint_pw["without"].get(label) or {
-            "change_pct": fit["five_hour_limit_change_pct"],
-            "interval_pct": fit["five_hour_limit_change_interval_pct"]}
-        rest = {k: v for k, v in paired.items() if k != label}
-        if not rest or g_row.get("change_pct") is None:
-            without[label] = {"change_pct": None, "interval_pct": None}
-            continue
-        if label in paired:
-            combined = combine_log_ratios(rest)
-            rho = combined["ratio"]
-            boot = _bootstrap_ratio({k: sides[k] for k in rest}, combined["weights"],
-                                    f"{JOINT_SEED}:{cand['at']}:without:{label}")
-        else:
-            rho, boot = combine_log_ratios(paired)["ratio"], rho_boot
-        if not boot:
-            without[label] = {"change_pct": None, "interval_pct": None}
-            continue
-        w, (w_lo, w_hi) = _log_normal_product(1 + g_row["change_pct"] / 100,
-                                              [1 + x / 100 for x in g_row["interval_pct"]],
-                                              rho, boot)
-        without[label] = {"change_pct": _pct_of(w), "interval_pct": [_pct_of(w_lo), _pct_of(w_hi)]}
-    return plan_wide_verdict(headline["change_pct"], accounts, without,
-                             "the weekly limit change, g times the windows-per-week ratio")
-
-
-WINDOW_CHANGE_ESTIMATOR = ("the combined change in credits per 1% of the five-hour meter, "
-                           "each account against itself, weights 1 / se squared")
-WINDOW_CHANGE_UNIT = "credits per 1% of the five-hour meter"
-
-
-def window_change(cand: dict) -> dict:
-    """The known-date test's window change (`announced_change`), combined, tested and certified.
-
-    Each account's row carries its own log ratio, standard error and degrees of freedom, so
-    the combined change can be refitted with each account left out (`direct_change`, ADR
-    0001 rule 9). A row written without them is listed and not combined.
-    """
-    per_account, paired = {}, {}
-    for label, row in sorted((cand.get("per_account") or {}).items()):
-        out = {k: row.get(k) for k in ("n_before", "n_after", "change_pct", "interval_pct")}
-        ok = bool(row.get("combined") and row.get("log_ratio") is not None and row.get("se"))
-        if ok:
-            paired[label] = {"log_ratio": row["log_ratio"], "se": row["se"], "df": row["df"]}
-        per_account[label] = dict(out, combined=ok)
-    return direct_change(per_account, paired, WINDOW_CHANGE_ESTIMATOR, WINDOW_CHANGE_UNIT)
-
-
-#: The two direct measurements a change is certified on, by the headline metric each gives.
-DIRECT_MEASUREMENTS = (("five_hour_limit", "window_change", "the five-hour window change "
-                        "(credits per 1% of the five-hour meter)"),
-                       ("weekly_limit", "weekly_change", "the weekly limit change "
-                        "(credits per 1% of the seven-day meter)"))
-
-
-def _direct_withheld_reason(at: datetime, measurable: bool, tests: dict[str, dict]) -> str | None:
-    """Why a candidate is withheld, or None when one of its direct measurements is certified.
-
-    ADR 0001 rule 9 on each direct measurement: a candidate `applies` once the five-hour
-    window change or the weekly limit change holds with each account left out and its 95%
-    interval excludes no change. Each part of the reason names the measurement and the test
-    it failed.
-    """
-    if not measurable:
-        return "not measurable: no account has readings on both sides of it yet"
-    if at <= CUT_AT:
-        return ("not measurable: dated before the 14 September weekly change, which stands for "
-                "everything before it")
-    if any(t["certified"] for t in tests.values()):
-        return None
-    why = []
-    for _metric, key, name in DIRECT_MEASUREMENTS:
-        t = tests[key]
-        if t["change_pct"] is None:
-            why.append(f"{name}: not measured, no account has both sides")
-            continue
-        parts = []
-        if t["plan_wide"]["state"] != "passed":
-            parts.append(f"plan-wide test (ADR 0001 rule 9) failed: {t['plan_wide']['reason']}")
-        if not t["interval_excludes_no_change"]:
-            lo, hi = t["interval_pct"]
-            parts.append(f"interval test (ADR 0001 rule 9) failed: its 95% interval "
-                         f"[{lo:g}, {hi:g}] includes no change")
-        why.append(f"{name} {t['change_pct']:+g}%: {'; '.join(parts)}")
-    return "; ".join(why)
-
-
-def five_hour_on_meters(announced: dict | None, max20: dict | None,
-                        weekly_rows: dict[str, list[dict]] | None = None) -> dict:
-    """Every change candidate measured on the two meters, per account and combined.
-
-    `announced` is the `announced_change` block, read for its candidates (instant, bounds,
-    the window change per account, and the `joint_fit` kept for reference); `max20` is
-    `weekly_windows.max20` (its `by_window` readings and `by_account` steps); `weekly_rows`
-    each account's valued seven-day steps by label (`weekly_meter.valued`). A candidate is
-    certified on the direct measurements (ADR 0001 rule 9): the five-hour window change
-    (`window_change`) and the weekly limit change (`weekly_change`). See
-    WINDOWS_PER_WEEK_METHOD. No announcement is read: a candidate's `announcement` is
-    carried through as reference metadata only.
-    """
-    from .weekly_meter import weekly_change
-
-    by_window = (max20 or {}).get("by_window") or []
-    by_account = (max20 or {}).get("by_account") or {}
-    weekly_rows = weekly_rows or {}
-    labels = sorted({r["account"] for r in by_window if r.get("account")})
-    out = []
-    for cand in (announced or {}).get("candidates", []):
-        at = datetime.fromisoformat(cand["at"])
-        lo = datetime.fromisoformat(cand["before_from"]) if cand.get("before_from") else None
-        hi = datetime.fromisoformat(cand["after_until"]) if cand.get("after_until") else None
-
-        def bounds(label: str) -> tuple[datetime | None, datetime | None]:
-            own = own_weekly_step_start(by_account.get(label))
-            start = max([b for b in (lo, own) if b is not None and b < at], default=None)
-            # A candidate before the account's own weekly step: the step bounds the after side.
-            own_end = own_weekly_step_end(by_account.get(label))
-            until = min([b for b in (hi, own_end) if b is not None and b > at], default=None)
-            return start, until
-
-        per_account, paired, sides = {}, {}, {}
-        for label in labels:
-            rows = [r for r in by_window if r.get("account") == label]
-            start, until = bounds(label)
-            before, after, straddling = [], [], 0
-            for r in rows:
-                t = datetime.fromisoformat(r["window_ending"])
-                if (start is None or t >= start) and t <= at:
-                    before.append(r)
-                elif at < t <= at + FIVE_HOUR_SPAN:
-                    straddling += 1
-                elif t > at and (until is None or t <= until):
-                    after.append(r)
-            row = {"n_before": len(before), "n_after": len(after), "n_straddling": straddling,
-                   "before_from": _utc(start) if start else None,
-                   "after_until": _utc(until) if until else None,
-                   "windows_per_week_before": None, "windows_per_week_after": None,
-                   "ratio_after_over_before": None, "ratio_interval": None,
-                   "windows_per_week_change_pct": None, "windows_per_week_change_interval_pct": None,
-                   "combined": False}
-            span = {"start": "", "end": ""}
-            b = _side(before, span) if before else None
-            a = _side(after, span) if after else None
-            if b:
-                row["windows_per_week_before"] = b["ratio"]
-                row["raw_windows_per_week_before"] = b["raw_ratio"]
-            if a:
-                row["windows_per_week_after"] = a["ratio"]
-                row["raw_windows_per_week_after"] = a["raw_ratio"]
-            if (len(before) >= ANNOUNCED_MIN_BEFORE and b and a
-                    and all(b["rounding_interval"]) and all(a["rounding_interval"])):
-                (b_lo, b_hi), (a_lo, a_hi) = b["rounding_interval"], a["rounding_interval"]
-                rho, rho_lo, rho_hi = a["ratio"] / b["ratio"], a_lo / b_hi, a_hi / b_lo
-                paired[label] = {"ratio_after_over_before": round(rho, 4),
-                                 "ratio_interval": [round(rho_lo, 4), round(rho_hi, 4)]}
-                sides[label] = (before, after)
-                row.update(paired[label], combined=True,
-                           windows_per_week_change_pct=round((rho - 1) * 100, 1),
-                           windows_per_week_change_interval_pct=_pct_interval(rho_lo, rho_hi),
-                           readings=scope_readings(rho, rho_lo, rho_hi))
-            per_account[label] = row
-        combined = combine_log_ratios(paired) if paired else None
-        for k, w in (combined or {}).get("weights", {}).items():
-            per_account[k]["weight"] = w
-        readings = scope = rho_boot = None
-        wpw_pct = wpw_interval = None
-        if combined:
-            rho, (rho_lo, rho_hi) = combined["ratio"], combined["interval"]
-            readings = scope_readings(rho, rho_lo, rho_hi)
-            rho_boot = _bootstrap_ratio(sides, combined["weights"], f"{JOINT_SEED}:{cand['at']}")
-            scope = meter_scope(cand.get("joint_fit"), rho, rho_boot)
-            wpw_pct, wpw_interval = round((rho - 1) * 100, 1), _pct_interval(rho_lo, rho_hi)
-
-        # The direct measurements the candidate is certified on: the window on the five-hour
-        # meter, the weekly limit on the seven-day meter, each account against itself.
-        steps = {}
-        for label in sorted(weekly_rows):
-            start, until = bounds(label)
-            rows = weekly_rows[label]
-            steps[label] = ([r for r in rows if (start is None or r["start"] >= start)
-                             and r["end"] <= at],
-                            [r for r in rows if r["start"] >= at
-                             and (until is None or r["end"] <= until)])
-        tests = {"window_change": window_change(cand),
-                 "weekly_change": weekly_change(steps, f"candidate:{cand['at']}")}
-        certified = [metric for metric, key, _ in DIRECT_MEASUREMENTS if tests[key]["certified"]]
-        measured = [(metric, tests[key]) for metric, key, _ in DIRECT_MEASUREMENTS
-                    if tests[key]["change_pct"] is not None]
-        # The headline is a certified measurement where there is one (the larger, if both
-        # are), else the larger measured one, else the windows-per-week change.
-        pool = [(m, t) for m, t in measured if m in certified] or measured
-        if pool:
-            metric, t = max(pool, key=lambda mt: abs(mt[1]["change_pct"]))
-            headline = {"metric": metric, "change_pct": t["change_pct"],
-                        "interval_pct": t["interval_pct"]}
-            plan_wide = t["plan_wide"]
-        elif combined:
-            headline = {"metric": "windows_per_week", "change_pct": wpw_pct,
-                        "interval_pct": wpw_interval}
-            plan_wide = _candidate_plan_wide(cand, headline, paired, sides, rho_boot)
-        else:
-            headline = {"metric": None, "change_pct": None, "interval_pct": None}
-            plan_wide = plan_wide_verdict(None, [], {}, "none")
-        measurable = bool(combined or any(t["accounts_combined"] for t in tests.values()))
-        withheld = _direct_withheld_reason(at, measurable, tests)
-        window = tests["window_change"]
-        out.append({
-            "family": cand["family"], "at": cand["at"], "at_source": cand.get("at_source"),
-            "first_seen_account": cand.get("first_seen_account"),
-            "first_seen_stretch_end": cand.get("first_seen_stretch_end"),
-            "before_from": cand.get("before_from"), "after_until": cand.get("after_until"),
-            "state": change_state(headline["interval_pct"]),
-            "scope": scope,
-            "plan_wide": plan_wide,
-            "window_change": window,
-            "weekly_change": tests["weekly_change"],
-            "certified_on": certified,
-            "windows_per_week_change_pct": wpw_pct,
-            "windows_per_week_change_interval_pct": wpw_interval,
-            "windows_per_week_change_excludes_no_change": bool(
-                wpw_interval and not wpw_interval[0] <= 0 <= wpw_interval[1]),
-            "readings": readings,
-            # The five-hour window change, measured directly; it steps a window regime only
-            # once it is certified (`window_change.certified`) and the candidate applies.
-            "change_pct": window["change_pct"], "interval_pct": window["interval_pct"],
-            "interval_excludes_no_change": window["interval_excludes_no_change"],
-            "windows_per_week_ratio": round(combined["ratio"], 4) if combined else None,
-            "windows_per_week_ratio_interval": ([round(x, 4) for x in combined["interval"]]
-                                                if combined else None),
-            "windows_per_week_ratio_bootstrap_interval": rho_boot,
-            "joint_fit": cand.get("joint_fit"),
-            "headline": headline,
-            "measurable": measurable and at > CUT_AT,
-            "applies": withheld is None,
-            "withheld_reason": withheld,
-            "accounts_combined": sorted(paired),
-            "per_account": per_account,
-            "announcement": cand.get("announcement"),
-            "method": "direct_on_both_meters",
-        })
-    return {"candidates": out, "unit": "percent",
-            "thresholds": {"measured_half_width_pct": CHANGE_MEASURED_HALF_WIDTH_PCT,
-                           "min_before": ANNOUNCED_MIN_BEFORE,
-                           "rate_plausible_times_list_ratio": list(JOINT_RATE_PLAUSIBLE)},
-            "method": WINDOWS_PER_WEEK_METHOD, "plan_wide_method": PLAN_WIDE_METHOD}
-
-
-CUT_DIRECT_METHOD = (
-    "The 14 September weekly change, found by the weekly detector on the windows-per-week "
-    "ratio, tested on the two direct measurements exactly as every candidate is "
-    "(`five_hour_on_meters`): the five-hour window change, the known-date test at cut_at with "
-    "its before side open and its after side to the first candidate after it; and the weekly "
-    "limit change on the seven-day steps, each account split at its own certified weekly "
-    "step where it has one (the change reaches each account at its own seven-day reset), "
-    "else at cut_at. Each is combined by inverse variance and certified under ADR 0001 rule 9 "
-    "(plan-wide, interval excluding no change). These are published with the event; the "
-    "14 September boundary itself is the weekly detector's certified step and is not "
-    "re-decided by them.")
-
-
-def cut_weekly_sides(block: dict | None, next_at: datetime | None
-                     ) -> tuple[datetime, datetime, datetime, datetime | None]:
-    """(before from, before until, after from, after until): one account's sides of the
-    14 September weekly change, as the direct weekly test reads them and the ratio route
-    with it (`cut_ratio_route`, ADR 0001 rule 15).
-
-    The before side starts at the account's last certified boundary (`cut_before_start`,
-    rule 13) and ends where its own weekly step's regime ends; the after side starts at its
-    own step (the change reaches each account at its own seven-day reset), else at CUT_AT,
-    and ends at `next_at`, the first change candidate after the cut.
-    """
-    return (cut_before_start(block), own_weekly_step_end(block) or CUT_AT,
-            own_weekly_step_start(block) or CUT_AT, next_at)
-
-
-def cut_weekly_steps(weekly_rows: dict[str, list[dict]], max20: dict | None,
-                     next_at: datetime | None) -> dict[str, tuple[list[dict], list[dict]]]:
-    """Each account's (before, after) valued seven-day steps for the 14 September change, on
-    its own sides (`cut_weekly_sides`): the readings the direct weekly test and the ratio
-    route both read (ADR 0001 rules 15 and 20). A step enters a side only lying wholly in it."""
-    by_acc = (max20 or {}).get("by_account") or {}
-    steps = {}
-    for label, rows in sorted(weekly_rows.items()):
-        if not rows:
-            continue
-        before_start, before_end, after_start, after_end = cut_weekly_sides(by_acc.get(label), next_at)
-        steps[label] = ([r for r in rows if r["start"] >= before_start and r["end"] <= before_end],
-                        [r for r in rows if r["start"] >= after_start
-                         and (after_end is None or r["end"] <= after_end)])
-    return steps
-
-
-def cut_direct_tests(by_account: dict[str, list[dict]], runs: list[HarnessRun], value,
-                     labels: dict[str, str], weekly_rows: dict[str, list[dict]],
-                     max20: dict | None, next_at: datetime | None) -> dict:
-    """The 14 September weekly change on the direct measurements (CUT_DIRECT_METHOD).
-
-    `value` values stretches and was used for `weekly_rows` (each account's valued seven-day
-    steps by label, selected with `weekly_meter.clean_steps(whole_history=True)`); `next_at`
-    is the first change candidate after CUT_AT, which ends both after sides. On the seven-day
-    meter each account's before side starts at its last certified boundary
-    (`cut_before_start`) and reads its whole clean history from there. The window change
-    keeps the known-date selection (`announced_change_stretches`, masterrig from
-    MASTERRIG_FROM): on masterrig's five-hour meter late August is not the level of 6-13
-    September, while on its seven-day meter it is
-    (docs/findings/2026-10-05-a1-long-before.md).
-    """
-    from .weekly_meter import weekly_change
-
-    selected = {name: [st for st in rows if st.get("start") and st.get("end")]
-                for name, rows in announced_change_stretches(by_account, runs).items()}
-    per_account, _paired, _shares = _known_date_rows(selected, value, CUT_AT, None, next_at,
-                                                     labels, list(by_account))
-    # An account with no stretch on either side is no part of the test, so a history that
-    # lists an account with no readings publishes what a history without it does.
-    per_account = {k: v for k, v in per_account.items() if v["n_before"] or v["n_after"]}
-    steps = cut_weekly_steps(weekly_rows, max20, next_at)
-    tests = {"window_change": window_change({"per_account": per_account}),
-             "weekly_change": weekly_change(steps, f"cut:{_utc(CUT_AT)}")}
-    return {"at": _utc(CUT_AT), **tests,
-            "certified_on": [m for m, key, _ in DIRECT_MEASUREMENTS if tests[key]["certified"]],
-            "method": CUT_DIRECT_METHOD}
-
-
-CUT_RATIO_ROUTE_METHOD = (
-    "The 14 September weekly change read the second way, as windows per week times the window, "
-    "each account against itself, on the direct weekly test's own readings: its clean "
-    "seven-day steps on its own sides (`cut_weekly_sides`), valued as it values them. On "
-    "those steps the weekly limit (credits per 1% of the seven-day meter, measured directly) "
-    "is the window (credits per 1% of the five-hour meter, each step's five-hour points over "
-    "its headless inflation, ADR 0001 rule 16) times windows per week (five-hour over "
-    "seven-day points, the derived quotient), exactly, per account and, at the weekly "
-    "figure's weights, combined: the route is the direct weekly change and its two factors, "
-    "never a weekly figure built from them (`weekly_meter.reconcile`, ADR 0001 rule 20). "
-    "Before rule 20 the windows-per-week factor was read on five-hour meter windows and the "
-    "window on stretches, two other kinds of reading over other hours, and the route stood "
-    "4 to 7 points from the direct figure (docs/findings-2026-10-08-14sep-reconcile.md).")
-
-
-def cut_ratio_route(weekly_rows: dict[str, list[dict]], max20: dict | None,
-                    next_at: datetime | None) -> dict:
-    """The 14 September weekly change and its two factors on one set of readings
-    (CUT_RATIO_ROUTE_METHOD).
-
-    `weekly_rows` are the direct weekly test's own valued steps by label (`cut_direct_tests`),
-    so the weekly figures here are that test's, to the digit, and each account's window and
-    windows per week are read on the same steps and days.
-    """
-    from .weekly_meter import reconcile
-
-    by_acc = (max20 or {}).get("by_account") or {}
-    out = reconcile(cut_weekly_steps(weekly_rows, max20, next_at), f"cut:{_utc(CUT_AT)}")
-    for label, row in out["per_account"].items():
-        bs, be, as_, ae = cut_weekly_sides(by_acc.get(label), next_at)
-        row.update(before_from=_utc(bs), before_until=_utc(be), after_from=_utc(as_),
-                   after_until=_utc(ae) if ae else None)
-    out.update(unit="credits per 1% of the seven-day meter", method=CUT_RATIO_ROUTE_METHOD,
-               estimator_method=out.pop("method"))
-    return out
-
-
-def five_hour_meter_events(block: dict | None) -> list[dict]:
-    """The meter-measured five-hour candidates that are published: those that `apply`
-    (ADR 0001 rule 9: plan-wide, with a headline interval that excludes no change). Only
-    these enter `events`, can become `last_change` and reach the email."""
-    return [c for c in (block or {}).get("candidates", []) if c.get("applies")]
-
-
-def five_hour_meter_boundaries(block: dict | None) -> list[dict]:
-    """The meter-measured five-hour candidates that open a window regime: every one that is
-    `measurable` (a combined reading, dated after the weekly change), published or withheld.
-    A withheld one opens a regime that carries the previous window, never one scaled by its
-    g (`known_date_changes`). A record without `measurable` reads `applies` for it."""
-    return [c for c in (block or {}).get("candidates", [])
-            if c.get("measurable", c.get("applies"))]
-
-
-def _weekly_regime_index(t: datetime, own_end: datetime | None, regimes: list[dict]) -> int:
-    """Which window regime a weekly reading ending at `t` belongs to.
-
-    The weekly change reaches each account at its own seven-day reset, so an account with a
-    certified step of its own is before that change up to the end of its own earlier regime
-    (`own_end`) and after it from then on; one without is split at CUT_AT. Every later
-    regime opens at a five-hour change instant, and a reading belongs to it once it ends
-    after that instant.
-    """
-    if (t <= own_end) if own_end is not None else (t < CUT_AT):
-        return 0
-    return 1 + sum(1 for r in regimes[2:] if t > datetime.fromisoformat(r["from"]))
+def _weekly_regime_index(t: datetime, regimes: list[dict]) -> int:
+    """Which window regime a weekly reading ending at `t` belongs to: every regime after the
+    first opens at a measured change, and a reading belongs to it once it ends after that
+    instant."""
+    return sum(1 for r in regimes[1:] if t > datetime.fromisoformat(r["from"]))
 
 
 def _stretch_regime_index(st: dict, regimes: list[dict]) -> int | None:
@@ -4283,8 +3114,8 @@ def _pooled_windows_per_week(rows: list[dict]) -> dict:
 
 
 PER_REGIME_METHOD = (
-    "The regimes are the window's own (`regimes`): the 14 September weekly change and every "
-    "change measured on the meters, so every weekly and every five-hour boundary. "
+    "The regimes are the window's own (`regimes`): one per measured change of the four-account "
+    "detector (`four_accounts`, state measured), and none anywhere else. "
     "`per_week_regimes` states each regime's week directly on the seven-day meter: the "
     "credits per 1% of the seven-day meter (`weekly_credits_per_pct`), from every one-point "
     "seven-day step of every account lying wholly in the regime "
@@ -4294,40 +3125,26 @@ PER_REGIME_METHOD = (
     "values a stretch, pooled meter-weighted (every account's credits over every account's "
     "seven-day points), times 100, in the window's tokens through the anchor's credits per "
     "token at the published mix (`anchor_credits_per_token`). Its interval resamples each "
-    "account's whole UTC days. No fitted coefficient enters it. A step belongs to the regime "
-    "it lies in, the weekly change reaching each account at its own certified step. "
-    "`windows_per_week` is derived, never measured: the week over the regime's window "
-    "(`windows_per_week_source` `weekly_over_window`), its interval the week's ends over the "
-    "window's opposite ends. The meter ratio is published beside it for reference only: "
-    "`windows_per_week_meters`, five-hour over seven-day points in the same steps, and "
-    "`windows_per_week_pooled`, five-hour over seven-day movement pooled over every account's "
-    "`weekly_windows.max20.by_window` readings in the regime, with its rounding interval, both "
-    "with each step's or window's five-hour points over its headless inflation (ADR 0001 rule "
-    "16), the meter's own beside them as `raw_windows_per_week_meters` and "
+    "account's whole UTC days. No fitted coefficient enters it. Rows either side of a change "
+    "whose seven-day size holds no change state one week, over the steps of both. "
+    "`windows_per_week` is the week over the regime's window (`windows_per_week_source` "
+    "`weekly_over_window`), its interval the week's ends over the window's opposite ends. "
+    "The newest row is its own direct level. Every earlier row is restated from the one after "
+    "it so each step the charts draw is the detector's own size at the change: the week by "
+    "the change's seven-day size (`week_bridge`), windows per week by the ratio's "
+    "(`windows_per_week_bridge`), each carried where that size holds no change; the row's "
+    "direct figure stays in the bridge record. The meter ratio is published beside it for "
+    "reference only: `windows_per_week_meters`, five-hour over seven-day points in the same "
+    "steps, and `windows_per_week_pooled`, five-hour over seven-day movement pooled over every "
+    "account's `weekly_windows.max20.by_window` readings in the regime, with its rounding "
+    "interval, both with each step's or window's five-hour points over its headless inflation "
+    "(ADR 0001 rule 16), the meter's own beside them as `raw_windows_per_week_meters` and "
     "`raw_windows_per_week_pooled`. "
-    "A change the tracker withholds (ADR 0001 rule 9 on both direct measurements: `applies` "
-    "false) opens no regime here or in `account_regimes`: the regime it would have opened is "
-    "pooled with the one before, one row from the earlier regime's start to the later one's "
-    "end, its week over every step in both, and its window the newest of the pooled regimes' "
-    "windows (they carry one value while nothing measured steps between them). A change "
-    "certified on the weekly limit alone opens a row here and leaves the window carried, and "
-    "with it the windows per week (`windows_per_week_source` `carried_across_withheld_window`): "
-    "a carried window is not measured unchanged, so the week over it would draw the whole "
-    "weekly change as a windows-per-week step. Each row's week is a level pooled over the "
-    "accounts with steps in it, while a change is certified on each account against itself, "
-    "so every row before a change certified on the weekly limit is scaled to make the step "
-    "there the certified change (`week_bridge`: the factor and the row's direct value), as the "
-    "window's history is bridged; the newest row is its own direct level. The 14 September "
-    "boundary is bridged the same way to the direct weekly test's combined change there, each "
-    "account against itself (`five_hour_window_credits.direct_tests.weekly_change`), "
-    "certified there or not: an account whose readings start after the change never moves "
-    "that step (ADR 0001 rule 20). "
     "`per_week` is the newest regime's figure, and every family's week moves from its window "
     "the way the anchor's does. "
     "`account_regimes` gives each account's own figures in each regime and never another "
     "account's: its week from its own steps the same way (`per_week`), its window, and "
-    "`windows_per_week` its week over its window (carried across a withheld window change as "
-    "the pooled row's is). Its window, in anchor units, is the "
+    "`windows_per_week` its week over its window. Its window, in anchor units, is the "
     "regime's window times the account's median credits per 1% of the five-hour meter "
     "over its own clean stretches lying wholly in the regime, any family, valued as "
     "`across_cut` values them, over the same median pooled across every account's such "
@@ -4335,7 +3152,9 @@ PER_REGIME_METHOD = (
     "each other inside one regime and the pool's median account sits at the regime's window. "
     "`measured_window` is the account's direct reading beside it: the median tokens per 1% "
     "times 100 of its own pure stretches of the regime's `regime_family` (named on the row "
-    "as `measured_family`, counted in `n_measured_window`), with no rate in it. For regimes "
+    "as `measured_family`, counted in `n_measured_window`), with no rate in it, published "
+    f"from {MIN_AFTER_CLUSTER} such stretches as a regime's own direct window is (null below "
+    "that: one stretch reads its own token mix, not the account's level). For regimes "
     "stated by one run's cluster, both medians are over the stretches lying wholly in the "
     "run, and every regime of the run carries the same readings. `windows_per_week_meters` "
     "is its own five-hour over seven-day readings, for reference. A figure with no reading "
@@ -4362,12 +3181,15 @@ def _over(week: float | None, week_iv: list | None, window: float | None,
     return round(week / window, 4), iv
 
 
-def _scale_week_row(row: dict, factor: float) -> None:
-    """Scale one `per_week_regimes` row's week, and the windows per week derived from it."""
+def _scale_week_row(row: dict, factor: float, windows: bool = True) -> None:
+    """Scale one `per_week_regimes` row's week, and with `windows` the windows per week
+    derived from it."""
     if row["value"] is not None:
         row["value"] = round(row["value"] * factor)
     if row["interval"]:
         row["interval"] = [round(x * factor) for x in row["interval"]]
+    if not windows:
+        return
     if row["windows_per_week"] is not None:
         row["windows_per_week"] = round(row["windows_per_week"] * factor, 4)
     if row["windows_per_week_interval"]:
@@ -4375,131 +3197,78 @@ def _scale_week_row(row: dict, factor: float) -> None:
                                             for x in row["windows_per_week_interval"]]
 
 
-def chain_certified_weeks(per_week: list[dict], meters: dict | None,
-                          cut_weekly: dict | None = None) -> None:
-    """Make each published step of `per_week_regimes` the figure its change was certified at.
+def chain_certified_weeks(per_week: list[dict], changes: list[dict]) -> None:
+    """Make each step of `per_week_regimes` the detector's own size at its change.
 
-    Each row's week is a pooled level over whichever accounts had steps in it, while a
-    change is certified on each account compared with itself (`weekly_change`, ADR 0001
-    rule 11). The two differ when the accounts differ either side (a4 starts on
-    23 September), and the page drew the level ratio (+32%) beside a headline of the
-    certified change (+30%). So, as the window's history is bridged to the meters' change
-    (`bridge_rate`), every row before a boundary certified on the weekly limit is scaled so
-    the step there is the certified change; the newest row stays its own direct level.
-    `week_bridge` records the factor and the row's direct `value`.
-
-    The 14 September boundary (the second row, which the weekly detector's certified step
-    opens) is bridged the same way to `cut_weekly`, the direct weekly test's combined change
-    there (`cut_direct_tests`, each account against itself), whether or not that test
-    certifies it: the boundary is certified by the detector and is drawn either way, and
-    without the bridge its step was a level ratio over different accounts (Max account 3's
-    meter log starts after the change), -10.75% on 2026-10-08 against the same accounts'
-    -9.9% (ADR 0001 rule 20).
-
-    A boundary whose five-hour window change was measured and withheld carries the window
-    across it, so the window there is not known to be unchanged: dividing the new week by
-    the carried window would draw the whole weekly change as a windows-per-week step. The
-    row after such a boundary carries the windows per week of the row before
-    (`windows_per_week_source` `carried_across_withheld_window`) instead.
-
-    Edits `per_week` in place, newest boundary first.
+    The week (`value`, `interval`) steps by the change's seven-day size where the charts draw
+    it (`four_accounts.drawn`: the line that found the change, or an interval excluding no
+    change), and is carried where they do not; windows per week by the ratio's size the same
+    way. The newest row is its own direct level; every earlier row is restated
+    from the one after it (`week_bridge`: the factor and the row's direct `value`, and
+    `windows_per_week_bridge` likewise), as the window's history is (`chain_regimes`). Each
+    row's own direct week and windows per week stay published as `direct_value` and
+    `direct_windows_per_week`. Edits `per_week` in place.
     """
-    by_at = {datetime.fromisoformat(c["at"]): c for c in (meters or {}).get("candidates", [])
-             if c.get("at") and c.get("applies")}
-    for i in range(len(per_week) - 1, 0, -1):
-        row, prev = per_week[i], per_week[i - 1]
-        cand = by_at.get(datetime.fromisoformat(row["from"])) if row["from"] else None
-        weekly = (cand or {}).get("weekly_change") or {}
-        if i == 1 and cand is None and (cut_weekly or {}).get("change_pct") is not None:
-            weekly = {"certified": True, "change_pct": cut_weekly["change_pct"]}
-        if (weekly.get("certified") and weekly.get("change_pct") is not None
-                and row["value"] and prev["value"]):
-            factor = row["value"] / (1 + weekly["change_pct"] / 100) / prev["value"]
-            for earlier in per_week[:i]:
-                earlier.setdefault("week_bridge", {"direct_value": earlier["value"], "factor": 1.0,
-                                                   "at": []})
-                earlier["week_bridge"]["factor"] = round(earlier["week_bridge"]["factor"] * factor, 6)
-                earlier["week_bridge"]["at"].append(row["from"])
-                _scale_week_row(earlier, factor)
-    carry_across_withheld_windows(per_week, meters)
-
-
-def carry_across_withheld_windows(rows: list[dict], meters: dict | None) -> None:
-    """Hold windows per week across each boundary whose window change was withheld.
-
-    `rows` are `per_week_regimes` rows or one account's `account_regimes` rows. A row
-    opening at a change that applies while the window change it records (`window_change`)
-    is not certified takes the windows per week (and interval, where it has one) of the row
-    before it, since its window is carried rather than measured (`chain_certified_weeks`).
-    A row whose predecessor has no windows per week keeps its own: no step is drawn there.
-    """
-    by_at = {datetime.fromisoformat(c["at"]): c for c in (meters or {}).get("candidates", [])
-             if c.get("at") and c.get("applies")}
-    for prev, row in zip(rows, rows[1:]):
-        cand = by_at.get(datetime.fromisoformat(row["from"])) if row.get("from") else None
-        if cand and cand.get("measurable", True) and prev.get("windows_per_week") is not None \
-                and cand.get("window_change") is not None \
-                and not cand["window_change"].get("certified"):
-            row["windows_per_week"] = prev["windows_per_week"]
-            if "windows_per_week_interval" in row:
-                row["windows_per_week_interval"] = prev.get("windows_per_week_interval")
-            row["windows_per_week_source"] = "carried_across_withheld_window"
+    by_at = {c["at"]: c for c in changes}
+    for i in range(len(per_week) - 2, -1, -1):
+        row, nxt = per_week[i], per_week[i + 1]
+        change = by_at.get(datetime.fromisoformat(nxt["from"])) if nxt.get("from") else None
+        for key, iv_key, line, bridge_key in (
+                ("value", "interval", "weekly", "week_bridge"),
+                ("windows_per_week", "windows_per_week_interval", "windows_per_week",
+                 "windows_per_week_bridge")):
+            size = (change or {}).get(line) or {}
+            g = (1 + size["change_pct"] / 100) if size.get("drawn") else 1.0
+            if nxt.get(key) is None or row.get(key) is None:
+                continue
+            target = nxt[key] / g
+            factor = target / row[key] if row[key] else 1.0
+            row.setdefault(bridge_key, {"direct_value": row[key], "factor": 1.0, "at": []})
+            row[bridge_key]["factor"] = round(row[bridge_key]["factor"] * factor, 6)
+            row[bridge_key]["at"].append(nxt["from"])
+            if key == "value":
+                _scale_week_row(row, factor, windows=False)
+            else:
+                row["windows_per_week"] = round(target, 4)
+                if row.get("windows_per_week_interval"):
+                    row["windows_per_week_interval"] = [round(x * factor, 4)
+                                                        for x in row["windows_per_week_interval"]]
 
 
 def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None,
                    stretches: dict[str, list[dict]], labels: dict[str, str], value,
-                   meters: dict | None = None, credits: dict | None = None,
-                   steps: dict[str, list[dict]] | None = None,
-                   cut_weekly: dict | None = None) -> dict:
+                   changes: list[dict] | None = None, credits: dict | None = None,
+                   steps: dict[str, list[dict]] | None = None) -> dict:
     """`per_week_regimes`, `account_regimes` and the matching `per_week` for `window_tokens`.
 
-    `stretches` is the across-the-cut selection by account name (`rate_fit_stretches`),
+    `stretches` is the rate fits' selection by account name (`rate_fit_stretches`),
     `value(tokens)` its valuation (`across_cut_value`), which the account windows compare
     accounts with inside one regime and the seven-day steps are valued at (`window_credits`
-    is kept in the signature though no figure uses it now), `meters` the
-    `five_hour_on_meters` block whose published changes open regimes, and `steps` each
-    account's clean seven-day steps by name (`weekly_meter.clean_steps`). Each regime's week
-    is measured directly on the seven-day meter and windows per week is derived from it.
-    `per_week` replaces the block's own with the newest regime's week. See PER_REGIME_METHOD.
-    `credits` is the rate table whose families the stretches are filed under
-    (data/prices.json when None). `cut_weekly` is the 14 September direct weekly change
-    (`cut_direct_tests`), the step the first boundary is bridged to (`chain_certified_weeks`).
+    is kept in the signature though no figure uses it now), `changes` the four-account
+    detector's measured changes that open regimes (`four_accounts.regime_changes`), and
+    `steps` each account's clean seven-day steps by name (`weekly_meter.clean_steps`). Each
+    regime's week is measured directly on the seven-day meter and windows per week is derived
+    from it. `per_week` replaces the block's own with the newest regime's week. See
+    PER_REGIME_METHOD. `credits` is the rate table whose families the stretches are filed
+    under (data/prices.json when None).
     """
     from .weekly_meter import level, valued
 
     credits = load_credits() if credits is None else credits
-    # A change with no published figure (ADR 0001 rule 9 on both direct measurements) is no
-    # boundary here.
-    withheld = {datetime.fromisoformat(c["at"]) for c in (meters or {}).get("candidates", [])
-                if c.get("at") and not c.get("applies")}
+    changes = changes or []
     regimes = window_tokens["regimes"]
     anchor = window_tokens.get("anchor_credits_per_token")
 
-    def merged(k: int) -> bool:
-        return k >= 2 and bool(regimes[k]["from"]) \
-            and datetime.fromisoformat(regimes[k]["from"]) in withheld
-
-    # The per-week regimes: the window's, a withheld boundary joining its regime to the one
-    # before. `week_of` maps a window regime to its per-week regime.
-    weeks: list[list[int]] = []
-    for k in range(len(regimes)):
-        if weeks and merged(k):
-            weeks[-1].append(k)
-        else:
-            weeks.append([k])
+    # The per-week regimes are the window's. `week_of` maps a window regime to its per-week
+    # regime.
+    weeks: list[list[int]] = [[k] for k in range(len(regimes))]
     week_of = {k: i for i, g in enumerate(weeks) for k in g}
     by_window = (max20 or {}).get("by_window") or []
-    by_account = (max20 or {}).get("by_account") or {}
-
-    def own_end(label: str) -> datetime | None:
-        rs = (by_account.get(label) or {}).get("regimes") or []
-        return (datetime.fromisoformat(rs[-2]["end"])
-                if own_weekly_step_start(by_account.get(label)) else None)
 
     rows_in: dict[str, dict[int, list[dict]]] = {}
     for r in by_window:
         label = r.get("account")
-        k = _weekly_regime_index(datetime.fromisoformat(r["window_ending"]), own_end(label), regimes)
+        k = _weekly_regime_index(datetime.fromisoformat(r["window_ending"]), regimes)
         rows_in.setdefault(label, {}).setdefault(week_of[k], []).append(r)
 
     # Every clean seven-day step lying wholly in one per-week regime, valued, by account label,
@@ -4508,21 +3277,18 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
     steps_in: dict[int, dict[str, list[dict]]] = {}
     for name, label in labels.items():
         for row in valued((steps or {}).get(name, []), value, factor):
-            k0 = _weekly_regime_index(row["start"], own_end(label), regimes)
-            k1 = _weekly_regime_index(row["end"], own_end(label), regimes)
+            k0 = _weekly_regime_index(row["start"], regimes)
+            k1 = _weekly_regime_index(row["end"], regimes)
             if week_of[k0] == week_of[k1]:
                 steps_in.setdefault(week_of[k0], {}).setdefault(label, []).append(row)
 
-    # A boundary certified on the window alone steps the window and not the week (ADR 0001
-    # rule 11): the rows either side state one week, measured over the steps of both.
-    window_only = {datetime.fromisoformat(c["at"]) for c in (meters or {}).get("candidates", [])
-                   if c.get("at") and c.get("applies")
-                   and (c.get("window_change") or {}).get("certified")
-                   and not (c.get("weekly_change") or {}).get("certified", True)}
+    # A change whose seven-day size holds no change does not move the week: the rows either
+    # side state one week, measured over the steps of both.
+    week_flat = {c["at"] for c in changes if not (c.get("weekly") or {}).get("drawn")}
     week_runs: list[list[int]] = []
     for i, group in enumerate(weeks):
         frm = regimes[group[0]]["from"]
-        if week_runs and frm and datetime.fromisoformat(frm) in window_only:
+        if week_runs and frm and datetime.fromisoformat(frm) in week_flat:
             week_runs[-1].append(i)
         else:
             week_runs.append([i])
@@ -4569,16 +3335,14 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             "windows_per_week_pooled_interval": pooled["interval"],
             "raw_windows_per_week_pooled": pooled["raw"],
             "n_windows_per_week": pooled["n"]})
-    chain_certified_weeks(per_week, meters, cut_weekly)
+    chain_certified_weeks(per_week, changes)
 
     # A run of regimes stated by one cluster (`RUN_CLUSTER_SOURCE`) is one span for the
-    # account windows: each account's readings are pooled over the whole run. So is a
-    # regime pooled with the one before at a withheld boundary, so a span never splits a
-    # per-week regime.
+    # account windows: each account's readings are pooled over the whole run.
     groups: list[list[int]] = []
     for k, reg in enumerate(regimes):
-        if groups and (merged(k) or (reg.get("run_from")
-                                     and reg["run_from"] == regimes[groups[-1][0]].get("run_from"))):
+        if groups and (reg.get("run_from")
+                       and reg["run_from"] == regimes[groups[-1][0]].get("run_from")):
             groups[-1].append(k)
         else:
             groups.append([k])
@@ -4634,7 +3398,13 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             rows.append({"from": regimes[k]["from"], "until": reg["until"], "window": window,
                          "measured_family": (reg.get("regime_family") or reg.get("measured_family")
                                              or "opus"),
-                         "measured_window": round(median(readings)) if readings else None,
+                         # A direct reading needs the readings a regime's own direct window
+                         # needs (MIN_AFTER_CLUSTER): one stretch is that stretch's own token
+                         # mix, not the account's level (a3's one pure-Opus stretch of 14-22
+                         # September, 98.7% cache reads and almost all headless, read 906M
+                         # against its 27 stretches' 624M; `invariants.account_units`).
+                         "measured_window": (round(median(readings))
+                                             if len(readings) >= MIN_AFTER_CLUSTER else None),
                          "per_week": round(acct_week) if acct_week is not None else None,
                          "per_week_interval": ([round(x) for x in acct_week_iv]
                                                if acct_week_iv else None),
@@ -4650,7 +3420,6 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
                          "raw_windows_per_week_meters": meters_wpw["raw"],
                          "n_window": len(own), "n_measured_window": len(readings),
                          "n_wpw": meters_wpw["n"]})
-        carry_across_withheld_windows(rows, meters)
         accounts[label] = rows
     newest = per_week[-1]
     all_fig = window_tokens["all"]

@@ -67,8 +67,8 @@ median was the median of the expensive half. Every priced stretch counts now
 (bar one the transcripts leave empty, see `publishable`), pooled per UTC day for
 the published rate, and step detection reads the stretches one by one in meter
 credits, weighted by the meter movement each one carries
-(`passive_credit_points`, tracker/detect.py `detect_credit_changes`), instead of
-gating stretch by stretch.
+(`passive_credit_points`; tracker/detect.py `detect_credit_changes` read them until the
+four-account detector replaced it on 2026-10-23), instead of gating stretch by stretch.
 
     python3 -m tracker.gs_passive --out history/passive-gs.json
     python3 -m tracker.gs_passive --account jwork --until 2026-09-13T00:00:00+00:00
@@ -1121,8 +1121,9 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                           allow_legacy_unverified: bool = False) -> list[tuple]:
     """Accepted passive stretches as (end, credits, delta_pct, pieces) points, one per stretch.
 
-    The credit-valued twin of `passive_dollar_readings`, and the series change
-    detection runs on (`tracker.detect.detect_credit_changes`). Two differences,
+    The credit-valued twin of `passive_dollar_readings`, and the series change detection
+    ran on until 2026-10-23 (`tracker.detect.detect_credit_changes`, retired for
+    tracker/four_accounts.py). Two differences,
     both deliberate:
 
     - No day pooling. A day is not a unit of evidence -- the meter is -- so each

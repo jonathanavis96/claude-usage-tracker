@@ -2,9 +2,10 @@
 
     python3 -m tracker.advisory --step tools.model_rates --exit 1
 
-bin/daily.sh runs four steps whose failure must never stop the publish: tracker.list_prices,
-tracker.contributed, tracker.gs_passive and the tools.model_rates refit. Each failure is one
-warning line in the run log and the publish carries on with the step's previous output.
+bin/daily.sh runs five steps whose failure must never stop the publish: tracker.list_prices,
+tracker.contributed, tracker.gs_passive, the tools.model_rates refit and the
+tracker.four_accounts daily run. Each failure is one warning line in the run log and the
+publish carries on with the step's previous output.
 That is right for one run and wrong for nine days: from 2026-10-13T19:30Z the refit crashed
 on every run, 48 a day, the page kept the 13 October rates, and only the warning line said
 so. This keeps, per step, when it last ran, its exit, and since when it has failed on every

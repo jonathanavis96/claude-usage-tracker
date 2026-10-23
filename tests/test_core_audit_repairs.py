@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tracker import detect
 from tracker.capture import judge
-from tracker.detect import detect_smoothed_changes, detect_weighted_changes
+from tracker.detect import _detect_weighted, detect_smoothed_changes
 from tracker.gs_passive import publishable
 from tracker.join import Stretch
 from tracker.publish import build_public_json, meter_usd, tokens_usd
@@ -15,6 +15,12 @@ from tracker.turns import Turn, iter_turns
 from tracker.weekly import weekly_windows
 
 T0 = datetime(2026, 8, 20, tzinfo=timezone.utc)
+
+
+def detect_weighted_changes(points, threshold=0.15, series=detect.WINDOWS):
+    """The weighted detector's certified events (`detect._detect_weighted`, the core of
+    `weighted_regimes`); its public wrapper went with the change machinery (ADR 0001 rule 22)."""
+    return _detect_weighted(points, threshold, series)[0]
 MODEL = "claude-sonnet-5"
 PRICES = {
     MODEL: {

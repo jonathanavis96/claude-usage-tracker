@@ -594,6 +594,8 @@ BLOCK_KIND = {
     "effort_usd": "derived",
     "events": "derived",
     "five_hour_meter": "derived",
+    # The four-account detector's newest run (history/four-accounts.json), copied as it is.
+    "four_accounts": "derived",
     "history": "derived",
     "instrument": "derived",
     "last_change": "derived",

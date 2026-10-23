@@ -85,16 +85,6 @@ class ChangeStateTests(unittest.TestCase):
         self.assertEqual(C.change_state([10.0, 30.0]), "measured")     # half-width exactly 10
         self.assertEqual(C.change_state([-18.5, -0.5]), "measured")
 
-    def test_the_email_rules_do_not_set_it(self):
-        # The notify step's 24 and 48 hour rules read an event's age and its
-        # `interval_excludes_no_change`; the state has no clock in it. The same candidate
-        # published as one hour old and as five days old carries the same state.
-        cand = _direct(window={"a1": (8.0, 0.1), "a2": (8.0, 0.1)})["candidates"][0]
-        young = P._announced_event_record(cand)
-        old = P._announced_event_record({**cand, "at": (CAND - timedelta(days=5)).isoformat()})
-        self.assertEqual(young["state"], "measuring")
-        self.assertEqual(old["state"], young["state"])
-
 
 class AnnouncedChangeTests(unittest.TestCase):
     def _block(self, **kw):
@@ -170,80 +160,6 @@ class AnnouncedChangeTests(unittest.TestCase):
         self.assertEqual(cand["per_account"]["a1"]["n_after"], 10)
         self.assertEqual(cand["per_account"]["a1"]["n_after_unpriced"], 0)
         self.assertIsNotNone(cand["change_pct"])
-
-
-FIVE_HOUR_NOTE = next(a for a in C.ANNOUNCEMENTS if a["scope"] == "five_hour")
-
-
-def _window(label, ending, d5, d7, pieces=1):
-    return {"account": label, "window_ending": ending.isoformat(), "five_hour_pct": d5,
-            "seven_day_pct": d7, "pieces": pieces, "reset_verified": True}
-
-
-def _max20(n_after=10, after_wpw=4.5, n_before=20):
-    """a1 and a2 at 5 windows per week from the cut, then `after_wpw` from CAND; a3 after only.
-
-    One window straddles CAND (ends 2 hours after it) and belongs to neither side.
-    """
-    rows = []
-    for label in ("a1", "a2"):
-        rows += [_window(label, C.CUT_AT + timedelta(hours=6 * (i + 1)), 50.0, 10.0)
-                 for i in range(n_before)]
-        rows.append(_window(label, CAND + timedelta(hours=2), 50.0, 1.0))
-        rows += [_window(label, CAND + timedelta(hours=6 * (i + 1)), 50.0, 50.0 / after_wpw)
-                 for i in range(n_after)]
-    rows += [_window("a3", CAND + timedelta(hours=6 * (i + 1)), 40.0, 10.0) for i in range(4)]
-    return {"by_window": rows, "by_account": {}}
-
-
-def _announced(note=FIVE_HOUR_NOTE, at=CAND, joint_fit=None):
-    return {"candidates": [{"family": "opus-5-5", "at": at.isoformat(), "at_source": "first_turn",
-                            "first_seen_account": "a1", "first_seen_stretch_end": at.isoformat(),
-                            "before_from": C.CUT_AT.isoformat(), "after_until": None,
-                            "announcement": note, "joint_fit": joint_fit}]}
-
-
-def _window_rows(changes):
-    """`announced_change` per-account rows carrying each account's own window change: label to
-    (change in percent, standard error of its log ratio)."""
-    rows = {}
-    for label, (pct, se) in changes.items():
-        lr = math.log(1 + pct / 100)
-        h = C._t975(28) * se
-        rows[label] = {"n_before": 20, "n_after": 10, "combined": True, "change_pct": pct,
-                       "interval_pct": [round((math.exp(lr - h) - 1) * 100, 1),
-                                        round((math.exp(lr + h) - 1) * 100, 1)],
-                       "log_ratio": lr, "se": se, "df": 28}
-    return rows
-
-
-def _steps(label_changes, seed=2, days_before=6, days_after=4, per_day=6, sd=0.1):
-    """Valued seven-day steps per label: 1000 credits per 1% from the cut to CAND, then
-    1000 x (1 + change / 100), one step an hour, `per_day` a UTC day."""
-    rng = random.Random(seed)
-    out = {}
-    for label, pct in sorted(label_changes.items()):
-        rows = []
-        for side, first, n_days, level in (("b", CAND - timedelta(days=days_before), days_before, 1000.0),
-                                           ("a", CAND + timedelta(hours=1), days_after,
-                                            1000.0 * (1 + pct / 100))):
-            for d in range(n_days):
-                for h in range(per_day):
-                    start = first + timedelta(days=d, hours=h)
-                    rows.append({"start": start, "end": start + timedelta(minutes=30),
-                                 "day": (start + timedelta(minutes=30)).date().isoformat(),
-                                 "credits": level * math.exp(rng.gauss(0, sd)), "d7": 1, "d5": 5})
-        out[label] = rows
-    return out
-
-
-def _direct(window=None, weekly=None, max20=None, **kw):
-    """`five_hour_on_meters` on a candidate with direct measurements: `window` per-account
-    window changes (`_window_rows`), `weekly` per-account weekly changes (`_steps`)."""
-    announced = _announced(**kw)
-    announced["candidates"][0]["per_account"] = _window_rows(window or {})
-    return C.five_hour_on_meters(announced, max20 if max20 is not None else _max20(),
-                                 _steps(weekly or {}))
 
 
 def _mixed(g=1.2, r=0.6, n=24, sd=0.08, seed=5, share=None, shares=None):
@@ -352,282 +268,6 @@ class SeparabilityTests(unittest.TestCase):
         fit = _joint(by)
         self.assertEqual(fit["n_mixed_after"], 3)
         self.assertTrue(fit["separable"], fit["reason"])
-
-
-class MeterTests(unittest.TestCase):
-    def test_windows_per_week_ratio_gives_the_change_and_both_readings(self):
-        cand = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
-        a1 = cand["per_account"]["a1"]
-        self.assertEqual((a1["n_before"], a1["n_after"], a1["n_straddling"]), (20, 10, 1))
-        self.assertEqual((a1["windows_per_week_before"], a1["windows_per_week_after"]), (5.0, 4.5))
-        self.assertEqual(a1["windows_per_week_change_pct"], -10.0)
-        self.assertEqual(a1["readings"]["five_hour_scope"]["five_hour_window_change_pct"],
-                         round((5.0 / 4.5 - 1) * 100, 1))
-        lo, hi = a1["windows_per_week_change_interval_pct"]
-        self.assertLess(lo, -10.0)
-        self.assertGreater(hi, -10.0)
-        self.assertEqual(cand["accounts_combined"], ["a1", "a2"])
-        self.assertFalse(cand["per_account"]["a3"]["combined"])
-        self.assertEqual(cand["windows_per_week_change_pct"], -10.0)
-        self.assertEqual(cand["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 11.1)
-        self.assertEqual(cand["readings"]["weekly_scope"]["weekly_cap_change_pct"], -10.0)
-        self.assertEqual(cand["windows_per_week_ratio"], 0.9)
-        # With no direct measurement the ratio is the headline and sets the state, but it
-        # certifies nothing (ADR 0001 rule 11).
-        self.assertEqual(cand["headline"]["metric"], "windows_per_week")
-        self.assertEqual(cand["state"], "measured")
-        self.assertFalse(cand["applies"])
-        self.assertIn("not measured", cand["withheld_reason"])
-        self.assertEqual(cand["method"], "direct_on_both_meters")
-
-    def test_without_a_separable_joint_fit_the_scope_is_undetermined(self):
-        cand = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
-        self.assertEqual(cand["scope"]["state"], "undetermined")
-        self.assertIsNone(cand["change_pct"])
-        self.assertIsNone(cand["interval_pct"])
-        uniform = _joint(_mixed(share=0.5))
-        self.assertFalse(uniform["separable"])
-        self.assertIn("varies too little", uniform["reason"])
-        cand = C.five_hour_on_meters(_announced(joint_fit=uniform), _max20())["candidates"][0]
-        self.assertEqual(cand["scope"]["state"], "undetermined")
-        self.assertIn("varies too little", cand["scope"]["reason"])
-
-    def test_a_known_twenty_percent_five_hour_step_is_published_as_twenty_percent(self):
-        # The new family at 0.6x its base, the five-hour limit up 20%, the weekly cap
-        # unchanged: windows per week falls from 5 to 5 / 1.2.
-        fit = _joint(_mixed(g=1.2, r=0.6))
-        self.assertTrue(fit["separable"])
-        lo, hi = fit["rate_relative_interval"]
-        self.assertLess(lo, 0.6)
-        self.assertGreater(hi, 0.6)
-        g_lo, g_hi = fit["five_hour_limit_change_interval_pct"]
-        self.assertLess(g_lo, 20.0)
-        self.assertGreater(g_hi, 20.0)
-        self.assertGreater(g_lo, 0.0)
-        m = _max20(n_before=30, n_after=30, after_wpw=5.0 / 1.2)
-        cand = C.five_hour_on_meters(_announced(joint_fit=fit), m)["candidates"][0]
-        self.assertEqual(cand["scope"]["state"], "five_hour")
-        # The fit's own g is published as reference, within its interval of the true +20%;
-        # `change_pct` is the direct window change, which this candidate does not carry.
-        self.assertEqual(cand["scope"]["five_hour_limit_change_pct"], fit["five_hour_limit_change_pct"])
-        self.assertAlmostEqual(cand["scope"]["five_hour_limit_change_pct"], 20.0, delta=5.0)
-        self.assertIsNone(cand["change_pct"])
-        self.assertFalse(cand["applies"])
-        self.assertAlmostEqual(cand["windows_per_week_change_pct"], (1 / 1.2 - 1) * 100, delta=0.1)
-        undecided = C.five_hour_on_meters(_announced(), m)["candidates"][0]
-        self.assertAlmostEqual(
-            undecided["readings"]["five_hour_scope"]["five_hour_window_change_pct"], 20.0, delta=0.1)
-        # The weekly limit (g times the ratio 1 / 1.2) is about unchanged.
-        self.assertAlmostEqual(cand["scope"]["weekly_limit_change_pct"], 0.0, delta=5.0)
-        self.assertEqual(P._announced_events(C.five_hour_on_meters(_announced(joint_fit=fit), m)), [])
-
-    def test_a_weekly_only_step_is_recovered_as_weekly(self):
-        # The five-hour limit unchanged, the weekly cap down 20%: windows per week 5 to 4.
-        fit = _joint(_mixed(g=1.0, r=0.6, seed=8))
-        self.assertTrue(fit["separable"])
-        g_lo, g_hi = fit["five_hour_limit_change_interval_pct"]
-        self.assertLess(g_lo, 0.0)
-        self.assertGreater(g_hi, 0.0)
-        m = _max20(n_before=30, n_after=30, after_wpw=4.0)
-        cand = C.five_hour_on_meters(_announced(joint_fit=fit), m)["candidates"][0]
-        self.assertEqual(cand["scope"]["state"], "weekly")
-        w_lo, w_hi = cand["scope"]["weekly_limit_change_interval_pct"]
-        self.assertLess(w_lo, -20.0)
-        self.assertGreater(w_hi, -20.0)
-        self.assertLess(w_hi, 0.0)
-        self.assertAlmostEqual(cand["scope"]["five_hour_limit_change_pct"], 0.0, delta=5.0)
-        # The joint fit is reference: it certifies nothing, so nothing is published.
-        self.assertFalse(cand["applies"])
-        self.assertEqual(P._announced_events(C.five_hour_on_meters(_announced(joint_fit=fit), m)), [])
-
-    def test_a_separable_fit_whose_interval_includes_no_change_is_withheld(self):
-        # A small, noisy +8% step: separable, but both intervals include no change. Rule 9:
-        # it is not published, and its boundary carries the window instead of scaling it.
-        fit = _joint(_mixed(g=1.08, r=0.6, sd=0.25, seed=11, n=60))
-        self.assertTrue(fit["separable"])
-        g_lo, g_hi = fit["five_hour_limit_change_interval_pct"]
-        self.assertLess(g_lo, 0.0)
-        self.assertGreater(g_hi, 0.0)
-        meters = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())
-        cand = meters["candidates"][0]
-        self.assertIsNone(cand["change_pct"])
-        self.assertTrue(cand["measurable"])
-        self.assertFalse(cand["applies"])
-        self.assertIn("not measured", cand["withheld_reason"])
-        (change,) = C.known_date_changes(meters)
-        self.assertFalse(change["window_scaled"])
-        self.assertEqual(change["ratio"], 1.0)
-        self.assertEqual(P._announced_events(meters), [])
-
-    def test_a_fit_that_cannot_separate_carries_the_window(self):
-        meters = C.five_hour_on_meters(_announced(joint_fit=_joint(_mixed(share=0.5))), _max20())
-        self.assertIsNone(meters["candidates"][0]["change_pct"])
-        (change,) = C.known_date_changes(meters)
-        self.assertFalse(change["window_scaled"])
-        self.assertEqual(change["ratio"], 1.0)
-
-    def test_states_follow_the_headline_interval_and_the_ratio_never_applies(self):
-        # `state` says how settled, read off the windows-per-week interval while nothing is
-        # measured directly; the ratio alone never makes a change apply.
-        for n, wpw, state in ((1, 4.5, "measuring"), (5, 4.5, "measuring"),
-                              (1, 3.8, "provisional"), (10, 4.5, "measured")):
-            with self.subTest(n=n, wpw=wpw):
-                cand = C.five_hour_on_meters(_announced(), _max20(n_after=n, after_wpw=wpw))["candidates"][0]
-                self.assertEqual(cand["state"], state, cand["windows_per_week_change_interval_pct"])
-                self.assertEqual(cand["state"], C.change_state(cand["windows_per_week_change_interval_pct"]))
-                self.assertTrue(cand["measurable"])
-                # The ratio certifies nothing (ADR 0001 rule 11).
-                self.assertFalse(cand["applies"], cand["withheld_reason"])
-
-    def test_no_reading_after_on_a_combined_account_does_not_apply(self):
-        cand = C.five_hour_on_meters(_announced(), _max20(n_after=0))["candidates"][0]
-        self.assertEqual(cand["accounts_combined"], [])
-        self.assertFalse(cand["applies"])
-
-    def test_a_candidate_without_an_announcement_is_measured_the_same(self):
-        with_note = C.five_hour_on_meters(_announced(), _max20())["candidates"][0]
-        without = C.five_hour_on_meters(_announced(note=None), _max20())["candidates"][0]
-        self.assertIsNone(without["announcement"])
-        self.assertEqual({k: v for k, v in with_note.items() if k != "announcement"},
-                         {k: v for k, v in without.items() if k != "announcement"})
-
-    def test_own_weekly_step_later_than_the_boundary_starts_the_before_side(self):
-        m = _max20()
-        step = C.CUT_AT + timedelta(hours=6 * 10 + 1)
-        m["by_account"]["a1"] = {"step": {"percent": -20},
-                                 "regimes": [{"start": "2026-09-01T00:00:00+00:00",
-                                              "end": C.CUT_AT.isoformat()},
-                                             {"start": step.isoformat(), "end": CAND.isoformat()}]}
-        a1 = C.five_hour_on_meters(_announced(), m)["candidates"][0]["per_account"]["a1"]
-        self.assertEqual(a1["n_before"], 10)
-        self.assertEqual(a1["before_from"], step.isoformat())
-
-    def test_own_weekly_step_after_the_candidate_ends_the_after_side(self):
-        m = _max20()
-        own_end = CAND + timedelta(hours=6 * 4 + 1)
-        m["by_account"]["a1"] = {"step": {"percent": -20},
-                                 "regimes": [{"start": "2026-09-01T00:00:00+00:00",
-                                              "end": own_end.isoformat()},
-                                             {"start": (own_end + timedelta(hours=5)).isoformat(),
-                                              "end": "2026-10-01T00:00:00+00:00"}]}
-        a1 = C.five_hour_on_meters(_announced(), m)["candidates"][0]["per_account"]["a1"]
-        self.assertEqual(a1["n_after"], 4)
-        self.assertEqual(a1["after_until"], own_end.isoformat())
-
-    def test_a_certified_change_enters_events_and_last_change(self):
-        block = _direct(weekly={"a1": 30.0, "a2": 30.0})
-        (ev,) = P._announced_events(block)
-        self.assertEqual((ev["date"], ev["direction"]), ("2026-09-22", "increased"))
-        self.assertEqual((ev["scope"], ev["metric"]), ("weekly", "weekly_limit"))
-        self.assertEqual(ev["change_pct"], ev["weekly_limit_change_pct"])
-        self.assertIsNone(ev["five_hour_limit_change_pct"])
-        self.assertTrue(ev["interval_excludes_no_change"])
-        self.assertTrue(ev["label"].startswith("Weekly limit +"))
-        self.assertTrue(ev["known_date_test"])
-        older = {"date": "2026-09-11", "percent": 26}
-        last = P._with_announced_last_change(older, block)
-        self.assertEqual((last["date"], last["method"]), ("2026-09-22", "direct_on_both_meters"))
-        self.assertNotIn("label", last)
-
-    def test_the_credits_test_no_longer_drives_events(self):
-        credits_block = C.announced_change(_fixture(step=1.6), [], CREDITS, _output_value, LABELS)
-        self.assertTrue(credits_block["candidates"][0]["interval_excludes_no_change"])
-        self.assertEqual(P._announced_events(credits_block), [])
-
-    def test_a_measuring_change_is_not_an_event_and_not_last_change(self):
-        # Two accounts agree on +5% on the five-hour window, but its interval includes no
-        # change: the candidate stays under its candidates only, and its boundary carries the
-        # window without scaling anything.
-        block = _direct(window={"a1": (5.0, 0.1), "a2": (5.0, 0.1)})
-        cand = block["candidates"][0]
-        self.assertEqual(cand["state"], "measuring")
-        self.assertFalse(cand["applies"])
-        self.assertIn("includes no change", cand["withheld_reason"])
-        self.assertEqual(P._announced_events(block), [])
-        (change,) = C.known_date_changes(block)
-        self.assertFalse(change["window_scaled"])
-        older = {"date": "2026-09-11"}
-        self.assertIs(P._with_announced_last_change(older, block), older)
-        self.assertIsNone(P._with_announced_last_change(None, block))
-        # The same change once the readings settle it is an event and the last change.
-        settled = _direct(window={"a1": (20.0, 0.03), "a2": (20.0, 0.03)})
-        (ev,) = P._announced_events(settled)
-        self.assertEqual((ev["at"], ev["state"]), (CAND.isoformat(), "measured"))
-        self.assertEqual(P._with_announced_last_change(older, settled)["date"], "2026-09-22")
-
-    def test_nothing_measurable_stays_out_of_events(self):
-        block = C.five_hour_on_meters(_announced(), _max20(n_after=0))
-        self.assertEqual(P._announced_events(block), [])
-        older = {"date": "2026-09-11"}
-        self.assertIs(P._with_announced_last_change(older, block), older)
-
-
-class DirectCertificationTests(unittest.TestCase):
-    """ADR 0001 rule 11: a change is certified on the two direct measurements, the window on
-    the five-hour meter and the weekly limit on the seven-day meter, each under rule 9."""
-
-    def test_a_weekly_change_on_every_account_is_certified_and_leaves_the_window(self):
-        cand = _direct(weekly={"a1": 30.0, "a2": 30.0, "a3": 30.0})["candidates"][0]
-        weekly = cand["weekly_change"]
-        self.assertAlmostEqual(weekly["change_pct"], 30.0, delta=5.0)
-        self.assertEqual(weekly["accounts_combined"], ["a1", "a2", "a3"])
-        self.assertEqual(weekly["plan_wide"]["state"], "passed", weekly["plan_wide"]["reason"])
-        self.assertTrue(weekly["certified"])
-        self.assertEqual(cand["certified_on"], ["weekly_limit"])
-        self.assertTrue(cand["applies"])
-        self.assertIsNone(cand["withheld_reason"])
-        self.assertEqual(cand["headline"]["metric"], "weekly_limit")
-        self.assertEqual(cand["plan_wide"], weekly["plan_wide"])
-        # It steps the week, never the window.
-        self.assertIsNone(cand["change_pct"])
-        (change,) = C.known_date_changes({"candidates": [cand]})
-        self.assertFalse(change["window_scaled"])
-
-    def test_a_window_change_on_every_account_steps_the_window_by_itself(self):
-        block = _direct(window={"a1": (20.0, 0.03), "a2": (20.0, 0.03)})
-        cand = block["candidates"][0]
-        self.assertEqual(cand["certified_on"], ["five_hour_limit"])
-        self.assertTrue(cand["applies"])
-        self.assertEqual(cand["change_pct"], 20.0)
-        self.assertEqual(cand["window_change"]["unit"], "credits per 1% of the five-hour meter")
-        (change,) = C.known_date_changes(block)
-        self.assertTrue(change["window_scaled"])
-        self.assertAlmostEqual(change["ratio"], 1.2)
-        (ev,) = P._announced_events(block)
-        self.assertEqual((ev["scope"], ev["metric"]), ("five_hour", "five_hour_limit"))
-
-    def test_a_change_on_one_account_is_withheld_naming_the_account(self):
-        # a1's meters step 40%; a2's do not, or fall a little.
-        block = _direct(window={"a1": (40.0, 0.03), "a2": (0.0, 0.03)},
-                        weekly={"a1": 40.0, "a2": -10.0})
-        cand = block["candidates"][0]
-        self.assertEqual(cand["certified_on"], [])
-        self.assertFalse(cand["applies"])
-        self.assertFalse(cand["window_change"]["plan_wide"]["without"]["a1"]["holds"])
-        self.assertFalse(cand["weekly_change"]["plan_wide"]["without"]["a1"]["holds"])
-        self.assertIn("five-hour window change", cand["withheld_reason"])
-        self.assertIn("weekly limit change", cand["withheld_reason"])
-        self.assertIn("without a1", cand["withheld_reason"])
-        self.assertEqual(P._announced_events(block), [])
-
-    def test_both_certified_headline_the_larger_and_scope_both(self):
-        cand = _direct(window={"a1": (10.0, 0.02), "a2": (10.0, 0.02)},
-                       weekly={"a1": 30.0, "a2": 30.0})["candidates"][0]
-        self.assertEqual(cand["certified_on"], ["five_hour_limit", "weekly_limit"])
-        self.assertEqual(cand["headline"]["metric"], "weekly_limit")
-        ev = P._announced_event_record(cand)
-        self.assertEqual(ev["scope"], "both")
-        self.assertEqual(ev["five_hour_limit_change_pct"], 10.0)
-
-    def test_the_joint_fit_and_the_ratio_certify_nothing(self):
-        fit = _joint(_mixed(g=1.3, r=0.6, sd=0.2, seed=11, n=60))
-        self.assertTrue(fit["separable"], fit["reason"])
-        self.assertEqual(fit["plan_wide"]["state"], "passed", fit["plan_wide"]["reason"])
-        cand = C.five_hour_on_meters(_announced(joint_fit=fit),
-                                     _max20(after_wpw=3.5))["candidates"][0]
-        self.assertTrue(cand["windows_per_week_change_excludes_no_change"])
-        self.assertFalse(cand["applies"])
-        self.assertEqual(cand["certified_on"], [])
 
 
 class JointFitTests(unittest.TestCase):
@@ -1123,6 +763,8 @@ class AnnouncementIndependenceTests(unittest.TestCase):
         return node
 
     def test_rebuild_with_announcements_emptied_is_identical(self):
+        # The four-account detector reads no announcement and no date (ADR 0001 rule 22),
+        # and nothing else on the page may either.
         from pathlib import Path
         from unittest import mock
 
@@ -1132,10 +774,6 @@ class AnnouncementIndependenceTests(unittest.TestCase):
         with_notes = rebuild(root, now)
         with mock.patch.object(C, "ANNOUNCEMENTS", []):
             without = rebuild(root, now)
-        cands = with_notes["credits"]["five_hour_on_meters"]["candidates"]
-        self.assertTrue(any(c["announcement"] for c in cands), "the fixture must carry a note")
-        self.assertFalse(any(c["announcement"]
-                             for c in without["credits"]["five_hour_on_meters"]["candidates"]))
         self.assertEqual(self._strip(with_notes), self._strip(without))
 
 
@@ -1208,14 +846,6 @@ class RateCheckTests(unittest.TestCase):
         self.assertIn("rate check (ADR 0001 rule 8)", fit["reason"])
         self.assertIn("has not separated the rate", fit["reason"])
         self.assertIsNone(fit["plan_wide"])  # an unseparated g is not refitted
-        meters = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())
-        cand = meters["candidates"][0]
-        self.assertIsNone(cand["change_pct"])
-        self.assertEqual(cand["scope"]["state"], "undetermined")
-        self.assertIn("has not separated the rate", cand["scope"]["reason"])
-        # The g it refused is not the headline: the windows-per-week change is.
-        self.assertEqual(cand["headline"]["metric"], "windows_per_week")
-        self.assertFalse(cand["applies"])
         rates, _ = C.absorb_new_family_rates(_mixed(g=1.0, r=3.0), [], CREDITS, {}, LABELS,
                                              lambda rates: _output_value)
         self.assertEqual(rates, {})  # nothing absorbed
@@ -1250,17 +880,6 @@ def _mixed_accounts(steps, r=0.6, n=24, sd=0.08, seed=5):
     return by
 
 
-def _max20_accounts(after_wpw):
-    """`_max20` with each account's own windows per week after CAND (5.0 before)."""
-    rows = []
-    for label, wpw in sorted(after_wpw.items()):
-        rows += [_window(label, C.CUT_AT + timedelta(hours=6 * (i + 1)), 50.0, 10.0)
-                 for i in range(20)]
-        rows += [_window(label, CAND + timedelta(hours=6 * (i + 1)), 50.0, 50.0 / wpw)
-                 for i in range(10)]
-    return {"by_window": rows, "by_account": {}}
-
-
 class PlanWideTests(unittest.TestCase):
     """A plan limit change moves every account at once, so it must hold with each one left out."""
 
@@ -1276,8 +895,6 @@ class PlanWideTests(unittest.TestCase):
         self.assertFalse(pw["without"]["a1"]["holds"])
         self.assertEqual(pw["without"]["a1"]["accounts_combined"], ["a2", "a3"])
         self.assertIn("without a1", pw["reason"])
-        cand = C.five_hour_on_meters(_announced(joint_fit=fit), _max20())["candidates"][0]
-        self.assertFalse(cand["applies"])
 
     def test_a_change_shared_by_every_account_passes(self):
         fit = _joint(_mixed_accounts({"acct_one": 1.2, "acct_two": 1.2, "acct_new": 1.2}))
@@ -1301,24 +918,6 @@ class PlanWideTests(unittest.TestCase):
         self.assertEqual(pw["without"]["a2"]["accounts_combined"], ["a1"])
         self.assertTrue(pw["without"]["a2"]["holds"])   # a1 alone shows it
         self.assertFalse(pw["without"]["a1"]["holds"])  # a2 alone does not
-
-    def test_an_inseparable_fit_is_tested_on_windows_per_week(self):
-        # The published figure is then the windows-per-week change, so that is what is refitted.
-        shared = C.five_hour_on_meters(_announced(), _max20_accounts({"a1": 4.0, "a2": 4.0, "a3": 4.0}))
-        pw = shared["candidates"][0]["plan_wide"]
-        self.assertEqual((pw["state"], pw["estimator"]), ("passed", "the combined windows-per-week ratio"))
-        self.assertEqual(pw["without"]["a1"]["change_pct"], -20.0)
-        one = C.five_hour_on_meters(_announced(), _max20_accounts({"a1": 3.0, "a2": 5.0, "a3": 5.0}))
-        cand = one["candidates"][0]
-        self.assertLess(cand["windows_per_week_change_interval_pct"][1], 0.0)
-        self.assertEqual(cand["plan_wide"]["state"], "failed")
-        self.assertFalse(cand["plan_wide"]["without"]["a1"]["holds"])
-
-    def test_a_change_resting_on_one_account_is_not_plan_wide(self):
-        cand = C.five_hour_on_meters(_announced(), _max20_accounts({"a1": 3.0}))["candidates"][0]
-        self.assertEqual(cand["accounts_combined"], ["a1"])
-        self.assertEqual(cand["plan_wide"]["state"], "failed")
-        self.assertIn("rests on one account", cand["plan_wide"]["reason"])
 
 
 if __name__ == "__main__":
