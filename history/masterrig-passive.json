@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-22T13:16:01.331109+00:00",
+ "generated_at": "2026-10-23T02:16:27.724801+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,23 +20,48 @@
      {
       "log": "/home/grafe/.paperclip/ops/mis-usage-ceiling-systemd.log",
       "format": "ceiling"
+     },
+     {
+      "log": "/home/grafe/.paperclip/ops/claude-usage-meter-a1.log",
+      "format": "meter"
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 4620,
+    "reset_verified_samples": 4649,
     "since": null,
-    "samples": 18998,
+    "samples": 19029,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-10-22T15:00:11.764353+02:00"
+    "last": "2026-10-23T02:14:32+00:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 6863,
-    "turns": 167023,
+    "files": 6970,
+    "turns": 167600,
     "withheld_patterns": [],
-    "own_sessions": null
+    "own_sessions": {
+     "kept": 6970,
+     "dropped": 205,
+     "subagent_files": 2372,
+     "dropped_to": {
+      ".claude-avis": 133
+     },
+     "attributed_by_record": {},
+     "unclaimed": 72,
+     "contested": 22,
+     "shared_subtrees": {
+      ".claude-avis": 1
+     }
+    },
+    "sources": [
+     {
+      "source": "live",
+      "root": "/home/grafe/.claude/projects",
+      "files": 6970,
+      "turns": 167600
+     }
+    ]
    },
    "cloud_sessions": {
     "log": "/home/grafe/private/cloud/sessions.tsv",
@@ -17692,10 +17717,10 @@
      "d5": 3,
      "tokens": {
       "claude-opus-5-5": {
-       "input": 710,
-       "output": 46696,
-       "cache_read": 54064473,
-       "cache_write": 755879,
+       "input": 706,
+       "output": 45201,
+       "cache_read": 54051219,
+       "cache_write": 731050,
        "cache_write_1h": 73312
       },
       "claude-sonnet-5-5": {
@@ -17703,16 +17728,10 @@
        "output": 366,
        "cache_read": 3615458,
        "cache_write": 165626
-      },
-      "<synthetic>": {
-       "input": 0,
-       "output": 0,
-       "cache_read": 0,
-       "cache_write": 0
       }
      },
      "unpriced_tokens": 0,
-     "turns": 379,
+     "turns": 376,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -17726,10 +17745,10 @@
      "d5": 5,
      "tokens": {
       "claude-opus-5-5": {
-       "input": 570,
-       "output": 31966,
-       "cache_read": 65141714,
-       "cache_write": 826475,
+       "input": 562,
+       "output": 29613,
+       "cache_read": 65135087,
+       "cache_write": 763304,
        "cache_write_1h": 197093
       },
       "claude-haiku-5-5": {
@@ -17746,7 +17765,7 @@
       }
      },
      "unpriced_tokens": 0,
-     "turns": 377,
+     "turns": 373,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -17760,10 +17779,10 @@
      "d5": 3,
      "tokens": {
       "claude-opus-5-5": {
-       "input": 404,
-       "output": 43558,
-       "cache_read": 45513077,
-       "cache_write": 1323191,
+       "input": 396,
+       "output": 42311,
+       "cache_read": 45496978,
+       "cache_write": 1278461,
        "cache_write_1h": 283074
       },
       "claude-sonnet-5-5": {
@@ -17781,7 +17800,7 @@
       }
      },
      "unpriced_tokens": 0,
-     "turns": 278,
+     "turns": 274,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -17795,10 +17814,10 @@
      "d5": 4,
      "tokens": {
       "claude-opus-5-5": {
-       "input": 228,
-       "output": 24737,
-       "cache_read": 17648581,
-       "cache_write": 520361,
+       "input": 222,
+       "output": 23916,
+       "cache_read": 17641184,
+       "cache_write": 479425,
        "cache_write_1h": 249720
       },
       "claude-sonnet-5-5": {
@@ -17838,7 +17857,7 @@
       }
      },
      "unpriced_tokens": 0,
-     "turns": 250,
+     "turns": 247,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -17858,10 +17877,10 @@
        "cache_write": 2322743
       },
       "claude-opus-5-5": {
-       "input": 232,
-       "output": 76082,
-       "cache_read": 25567652,
-       "cache_write": 234263,
+       "input": 222,
+       "output": 72281,
+       "cache_read": 25551817,
+       "cache_write": 172164,
        "cache_write_1h": 172164
       },
       "claude-haiku-5-5": {
@@ -17878,7 +17897,7 @@
       }
      },
      "unpriced_tokens": 0,
-     "turns": 344,
+     "turns": 339,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -17898,15 +17917,15 @@
        "cache_write": 3742547
       },
       "claude-opus-5-5": {
-       "input": 34,
-       "output": 9450,
-       "cache_read": 2102778,
-       "cache_write": 222725,
+       "input": 26,
+       "output": 7306,
+       "cache_read": 2090504,
+       "cache_write": 153636,
        "cache_write_1h": 153636
       }
      },
      "unpriced_tokens": 0,
-     "turns": 166,
+     "turns": 162,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -17920,10 +17939,10 @@
      "d5": 5,
      "tokens": {
       "claude-opus-5-5": {
-       "input": 388,
-       "output": 75357,
+       "input": 376,
+       "output": 71629,
        "cache_read": 30919339,
-       "cache_write": 362977,
+       "cache_write": 292738,
        "cache_write_1h": 292738
       },
       "claude-sonnet-5-5": {
@@ -17934,7 +17953,7 @@
       }
      },
      "unpriced_tokens": 0,
-     "turns": 433,
+     "turns": 427,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -17954,10 +17973,10 @@
        "cache_write": 2859536
       },
       "claude-opus-5-5": {
-       "input": 216,
-       "output": 63238,
-       "cache_read": 15843811,
-       "cache_write": 472513,
+       "input": 206,
+       "output": 59882,
+       "cache_read": 15830557,
+       "cache_write": 424590,
        "cache_write_1h": 234263
       },
       "<synthetic>": {
@@ -17968,7 +17987,7 @@
       }
      },
      "unpriced_tokens": 0,
-     "turns": 203,
+     "turns": 198,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -18003,7 +18022,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-18T18:11:02+02:00",
@@ -18032,7 +18052,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-18T19:00:02.725277+02:00",
@@ -18061,7 +18082,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-18T21:33:00+02:00",
@@ -18090,7 +18112,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-18T22:03:49+02:00",
@@ -18119,7 +18142,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-18T22:29:36+02:00",
@@ -18148,7 +18172,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-19T00:00:04.984382+02:00",
@@ -18177,7 +18202,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-19T15:14:18+02:00",
@@ -18206,7 +18232,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-19T21:07:57+02:00",
@@ -18252,7 +18279,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-20T13:20:09+02:00",
@@ -18298,7 +18326,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-20T14:47:52+02:00",
@@ -18344,7 +18373,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-20T19:46:09+02:00",
@@ -18413,7 +18443,8 @@
        "cache_write_1h": 54369
       }
      },
-     "headless_turns": 168
+     "headless_turns": 168,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-21T18:49:20+02:00",
@@ -18526,7 +18557,8 @@
        "cache_write_1h": 15178
       }
      },
-     "headless_turns": 1061
+     "headless_turns": 1061,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-22T19:16:45+02:00",
@@ -18581,7 +18613,8 @@
        "cache_write_1h": 1043414
       }
      },
-     "headless_turns": 346
+     "headless_turns": 346,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-22T22:30:01.775345+02:00",
@@ -18658,7 +18691,8 @@
        "cache_write_1h": 36143
       }
      },
-     "headless_turns": 159
+     "headless_turns": 159,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T03:17:35+02:00",
@@ -18720,7 +18754,8 @@
        "cache_write_1h": 425483
       }
      },
-     "headless_turns": 202
+     "headless_turns": 202,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T06:27:55+02:00",
@@ -18796,7 +18831,8 @@
        "cache_write_1h": 84455
       }
      },
-     "headless_turns": 219
+     "headless_turns": 219,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T09:03:10+02:00",
@@ -18859,7 +18895,8 @@
        "cache_write_1h": 816585
       }
      },
-     "headless_turns": 324
+     "headless_turns": 324,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T09:58:16+02:00",
@@ -18928,7 +18965,8 @@
        "cache_write_1h": 439327
       }
      },
-     "headless_turns": 168
+     "headless_turns": 168,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T12:08:30+02:00",
@@ -18983,7 +19021,8 @@
        "cache_write_1h": 720203
       }
      },
-     "headless_turns": 216
+     "headless_turns": 216,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T14:48:47+02:00",
@@ -19029,7 +19068,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T22:54:39+02:00",
@@ -19084,7 +19124,8 @@
        "cache_write_1h": 232550
       }
      },
-     "headless_turns": 91
+     "headless_turns": 91,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T23:19:43+02:00",
@@ -19139,7 +19180,8 @@
        "cache_write_1h": 855394
       }
      },
-     "headless_turns": 369
+     "headless_turns": 369,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-23T23:59:46+02:00",
@@ -19223,7 +19265,8 @@
        "cache_write_1h": 895027
       }
      },
-     "headless_turns": 415
+     "headless_turns": 415,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T00:59:53+02:00",
@@ -19292,7 +19335,8 @@
        "cache_write_1h": 76754
       }
      },
-     "headless_turns": 75
+     "headless_turns": 75,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T01:54:58+02:00",
@@ -19354,7 +19398,8 @@
        "cache_write_1h": 197580
       }
      },
-     "headless_turns": 271
+     "headless_turns": 271,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T02:20:01+02:00",
@@ -19416,7 +19461,8 @@
        "cache_write_1h": 748418
       }
      },
-     "headless_turns": 471
+     "headless_turns": 471,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T03:05:05+02:00",
@@ -19478,7 +19524,8 @@
        "cache_write_1h": 96937
       }
      },
-     "headless_turns": 405
+     "headless_turns": 405,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T04:30:02.181405+02:00",
@@ -19525,7 +19572,8 @@
        "cache_write_1h": 104384
       }
      },
-     "headless_turns": 46
+     "headless_turns": 46,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T07:35:27+02:00",
@@ -19601,7 +19649,8 @@
        "cache_write_1h": 76076
       }
      },
-     "headless_turns": 96
+     "headless_turns": 96,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T14:16:19+02:00",
@@ -19670,7 +19719,8 @@
        "cache_write_1h": 60334
       }
      },
-     "headless_turns": 19
+     "headless_turns": 19,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T17:16:40+02:00",
@@ -19737,7 +19787,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T18:51:50+02:00",
@@ -19790,7 +19841,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-24T23:37:24+02:00",
@@ -19874,7 +19926,8 @@
        "cache_write_1h": 33976
       }
      },
-     "headless_turns": 859
+     "headless_turns": 859,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-25T00:42:41+02:00",
@@ -19957,7 +20010,8 @@
        "cache_write_1h": 549857
       }
      },
-     "headless_turns": 876
+     "headless_turns": 876,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T14:35:24+02:00",
@@ -20018,7 +20072,8 @@
        "cache_write_1h": 154334
       }
      },
-     "headless_turns": 38
+     "headless_turns": 38,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T15:11:25+02:00",
@@ -20088,7 +20143,8 @@
        "cache_write_1h": 239752
       }
      },
-     "headless_turns": 81
+     "headless_turns": 81,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T15:26:28+02:00",
@@ -20158,7 +20214,8 @@
        "cache_write_1h": 31194
       }
      },
-     "headless_turns": 11
+     "headless_turns": 11,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T15:41:34+02:00",
@@ -20228,7 +20285,8 @@
        "cache_write_1h": 100889
       }
      },
-     "headless_turns": 31
+     "headless_turns": 31,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T15:56:38+02:00",
@@ -20289,7 +20347,8 @@
        "cache_write_1h": 229064
       }
      },
-     "headless_turns": 52
+     "headless_turns": 52,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T16:14:43+02:00",
@@ -20359,7 +20418,8 @@
        "cache_write_1h": 232302
       }
      },
-     "headless_turns": 103
+     "headless_turns": 103,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T16:29:50+02:00",
@@ -20428,7 +20488,8 @@
        "cache_write_1h": 71333
       }
      },
-     "headless_turns": 36
+     "headless_turns": 36,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T17:13:25+02:00",
@@ -20498,7 +20559,8 @@
        "cache_write_1h": 334529
       }
      },
-     "headless_turns": 90
+     "headless_turns": 90,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T17:31:22+02:00",
@@ -20560,7 +20622,8 @@
        "cache_write_1h": 116243
       }
      },
-     "headless_turns": 38
+     "headless_turns": 38,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T18:06:28+02:00",
@@ -20622,7 +20685,8 @@
        "cache_write_1h": 54277
       }
      },
-     "headless_turns": 3
+     "headless_turns": 3,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T18:26:32+02:00",
@@ -20691,7 +20755,8 @@
        "cache_write_1h": 126720
       }
      },
-     "headless_turns": 98
+     "headless_turns": 98,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T18:39:54+02:00",
@@ -20753,7 +20818,8 @@
        "cache_write_1h": 151599
       }
      },
-     "headless_turns": 158
+     "headless_turns": 158,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T18:54:57+02:00",
@@ -20808,7 +20874,8 @@
        "cache_write_1h": 330970
       }
      },
-     "headless_turns": 76
+     "headless_turns": 76,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T19:10:00+02:00",
@@ -20870,7 +20937,8 @@
        "cache_write_1h": 87413
       }
      },
-     "headless_turns": 288
+     "headless_turns": 288,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T19:25:05+02:00",
@@ -20925,7 +20993,8 @@
        "cache_write_1h": 383195
       }
      },
-     "headless_turns": 62
+     "headless_turns": 62,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T23:12:06+02:00",
@@ -20980,7 +21049,8 @@
        "cache_write_1h": 659839
       }
      },
-     "headless_turns": 244
+     "headless_turns": 244,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-27T23:37:12+02:00",
@@ -21035,7 +21105,8 @@
        "cache_write_1h": 722537
       }
      },
-     "headless_turns": 196
+     "headless_turns": 196,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T00:00:01.766131+02:00",
@@ -21105,7 +21176,8 @@
        "cache_write_1h": 343880
       }
      },
-     "headless_turns": 142
+     "headless_turns": 142,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T00:42:28+02:00",
@@ -21160,7 +21232,8 @@
        "cache_write_1h": 15180
       }
      },
-     "headless_turns": 15
+     "headless_turns": 15,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T01:27:39+02:00",
@@ -21215,7 +21288,8 @@
        "cache_write_1h": 462273
       }
      },
-     "headless_turns": 240
+     "headless_turns": 240,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T02:25:30+02:00",
@@ -21284,7 +21358,8 @@
        "cache_write_1h": 105022
       }
      },
-     "headless_turns": 271
+     "headless_turns": 271,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T02:49:36+02:00",
@@ -21367,7 +21442,8 @@
        "cache_write_1h": 66121
       }
      },
-     "headless_turns": 134
+     "headless_turns": 134,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T03:04:39+02:00",
@@ -21429,7 +21505,8 @@
        "cache_write_1h": 242497
       }
      },
-     "headless_turns": 81
+     "headless_turns": 81,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T03:24:44+02:00",
@@ -21499,7 +21576,8 @@
        "cache_write_1h": 83883
       }
      },
-     "headless_turns": 33
+     "headless_turns": 33,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T05:30:02.392404+02:00",
@@ -21576,7 +21654,8 @@
        "cache_write_1h": 37588
       }
      },
-     "headless_turns": 12
+     "headless_turns": 12,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T06:00:02.520861+02:00",
@@ -21681,7 +21760,8 @@
        "cache_write_1h": 22561
       }
      },
-     "headless_turns": 2
+     "headless_turns": 2,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T15:36:29+02:00",
@@ -21750,7 +21830,8 @@
        "cache_write_1h": 36790
       }
      },
-     "headless_turns": 1
+     "headless_turns": 1,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T18:00:02.211629+02:00",
@@ -21812,7 +21893,8 @@
        "cache_write_1h": 61275
       }
      },
-     "headless_turns": 2
+     "headless_turns": 2,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T18:55:39+02:00",
@@ -21872,7 +21954,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-28T23:11:35+02:00",
@@ -21957,7 +22040,8 @@
        "cache_write_1h": 14935
       }
      },
-     "headless_turns": 8
+     "headless_turns": 8,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-29T14:14:50+02:00",
@@ -22003,7 +22087,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-29T15:15:03+02:00",
@@ -22041,7 +22126,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-29T16:20:16+02:00",
@@ -22095,7 +22181,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-29T17:40:33+02:00",
@@ -22180,7 +22267,8 @@
        "cache_write_1h": 32548
       }
      },
-     "headless_turns": 15
+     "headless_turns": 15,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-30T14:09:53+02:00",
@@ -22235,7 +22323,8 @@
        "cache_write_1h": 106760
       }
      },
-     "headless_turns": 1
+     "headless_turns": 1,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-30T18:15:48+02:00",
@@ -22281,7 +22370,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-30T18:50:55+02:00",
@@ -22335,7 +22425,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-30T20:08:50+02:00",
@@ -22397,7 +22488,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-30T22:43:06+02:00",
@@ -22466,7 +22558,8 @@
        "cache_write_1h": 31857
       }
      },
-     "headless_turns": 11
+     "headless_turns": 11,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-31T00:04:07+02:00",
@@ -22528,7 +22621,8 @@
        "cache_write_1h": 76973
       }
      },
-     "headless_turns": 1
+     "headless_turns": 1,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-08-31T16:11:27+02:00",
@@ -22604,7 +22698,8 @@
        "cache_write_1h": 39637
       }
      },
-     "headless_turns": 10
+     "headless_turns": 10,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-01T01:03:47+02:00",
@@ -22658,7 +22753,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-01T17:42:16+02:00",
@@ -22728,7 +22824,8 @@
        "cache_write_1h": 32962
       }
      },
-     "headless_turns": 7
+     "headless_turns": 7,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T03:41:13+02:00",
@@ -22774,7 +22871,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T16:30:02.453167+02:00",
@@ -22813,7 +22911,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T17:27:04+02:00",
@@ -22852,7 +22951,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T18:12:40+02:00",
@@ -22881,7 +22981,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T18:22:48+02:00",
@@ -22910,7 +23011,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T18:38:02+02:00",
@@ -22949,7 +23051,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T18:53:14+02:00",
@@ -22988,7 +23091,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T22:30:02.503712+02:00",
@@ -23041,7 +23145,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T23:00:02.299295+02:00",
@@ -23080,7 +23185,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-02T23:26:54+02:00",
@@ -23133,7 +23239,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T00:00:02.507871+02:00",
@@ -23202,7 +23309,8 @@
        "cache_write_1h": 35038
       }
      },
-     "headless_turns": 11
+     "headless_turns": 11,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T00:27:39+02:00",
@@ -23241,7 +23349,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T00:52:59+02:00",
@@ -23294,7 +23403,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T01:33:46+02:00",
@@ -23347,7 +23457,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T02:30:02.034776+02:00",
@@ -23393,7 +23504,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T03:15:05+02:00",
@@ -23447,7 +23559,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T04:05:43+02:00",
@@ -23507,7 +23620,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T04:25:59+02:00",
@@ -23546,7 +23660,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T04:36:13+02:00",
@@ -23592,7 +23707,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T05:00:01.761968+02:00",
@@ -23638,7 +23754,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T06:27:47+02:00",
@@ -23677,7 +23794,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T06:58:10+02:00",
@@ -23751,7 +23869,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T08:03:59+02:00",
@@ -23780,7 +23899,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T08:24:15+02:00",
@@ -23809,7 +23929,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T08:34:22+02:00",
@@ -23838,7 +23959,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T09:30:05+02:00",
@@ -23867,7 +23989,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T10:20:43+02:00",
@@ -23920,7 +24043,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T10:36:00+02:00",
@@ -23966,7 +24090,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T10:51:15+02:00",
@@ -24019,7 +24144,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T11:06:29+02:00",
@@ -24079,7 +24205,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T11:21:40+02:00",
@@ -24132,7 +24259,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T11:41:56+02:00",
@@ -24185,7 +24313,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T11:57:07+02:00",
@@ -24238,7 +24367,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T14:24:02+02:00",
@@ -24298,7 +24428,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T15:55:16+02:00",
@@ -24365,7 +24496,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T17:11:16+02:00",
@@ -24418,7 +24550,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T17:30:02.474265+02:00",
@@ -24464,7 +24597,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T17:41:41+02:00",
@@ -24503,7 +24637,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T17:51:48+02:00",
@@ -24563,7 +24698,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T19:18:02+02:00",
@@ -24616,7 +24752,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T19:30:02.612708+02:00",
@@ -24655,7 +24792,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T19:43:36+02:00",
@@ -24694,7 +24832,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T19:58:52+02:00",
@@ -24740,7 +24879,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T20:09:06+02:00",
@@ -24793,7 +24933,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T20:29:27+02:00",
@@ -24853,7 +24994,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T20:54:52+02:00",
@@ -24913,7 +25055,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T21:10:09+02:00",
@@ -24966,7 +25109,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T23:06:58+02:00",
@@ -25019,7 +25163,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-03T23:57:49+02:00",
@@ -25095,7 +25240,8 @@
        "cache_write_1h": 43047
       }
      },
-     "headless_turns": 6
+     "headless_turns": 6,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T01:01:08+02:00",
@@ -25148,7 +25294,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T01:21:25+02:00",
@@ -25201,7 +25348,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T01:41:43+02:00",
@@ -25268,7 +25416,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T02:34:30+02:00",
@@ -25321,7 +25470,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T02:59:53+02:00",
@@ -25374,7 +25524,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T03:25:16+02:00",
@@ -25420,7 +25571,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T04:05:52+02:00",
@@ -25473,7 +25625,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T05:52:19+02:00",
@@ -25533,7 +25686,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T12:58:08+02:00",
@@ -25586,7 +25740,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T13:33:38+02:00",
@@ -25632,7 +25787,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T14:44:42+02:00",
@@ -25671,7 +25827,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T15:20:15+02:00",
@@ -25731,7 +25888,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T15:35:28+02:00",
@@ -25791,7 +25949,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T17:30:01.883825+02:00",
@@ -25837,7 +25996,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T19:38:46+02:00",
@@ -25883,7 +26043,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T20:34:34+02:00",
@@ -25936,7 +26097,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T22:30:01.908847+02:00",
@@ -25975,7 +26137,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-04T23:06:49+02:00",
@@ -26044,7 +26207,8 @@
        "cache_write_1h": 33056
       }
      },
-     "headless_turns": 9
+     "headless_turns": 9,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T00:36:28+02:00",
@@ -26083,7 +26247,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T00:51:40+02:00",
@@ -26122,7 +26287,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T01:06:52+02:00",
@@ -26161,7 +26327,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T01:17:00+02:00",
@@ -26200,7 +26367,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T01:30:01.970755+02:00",
@@ -26229,7 +26397,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T01:42:21+02:00",
@@ -26258,7 +26427,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T02:07:40+02:00",
@@ -26287,7 +26457,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T02:33:01+02:00",
@@ -26316,7 +26487,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T03:13:32+02:00",
@@ -26345,7 +26517,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T03:43:57+02:00",
@@ -26374,7 +26547,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T04:04:12+02:00",
@@ -26403,7 +26577,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T04:34:35+02:00",
@@ -26432,7 +26607,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T04:54:49+02:00",
@@ -26461,7 +26637,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T05:15:04+02:00",
@@ -26490,7 +26667,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T05:40:24+02:00",
@@ -26519,7 +26697,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T06:05:44+02:00",
@@ -26548,7 +26727,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T06:36:07+02:00",
@@ -26593,7 +26773,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T13:26:20+02:00",
@@ -26639,7 +26820,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T18:40:20+02:00",
@@ -26699,7 +26881,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-05T23:54:25+02:00",
@@ -26768,7 +26951,8 @@
        "cache_write_1h": 37507
       }
      },
-     "headless_turns": 8
+     "headless_turns": 8,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T00:24:51+02:00",
@@ -26821,7 +27005,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T01:00:02.173274+02:00",
@@ -26881,7 +27066,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T01:40:52+02:00",
@@ -26941,7 +27127,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T02:06:11+02:00",
@@ -27001,7 +27188,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T02:41:38+02:00",
@@ -27061,7 +27249,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T03:42:26+02:00",
@@ -27114,7 +27303,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T12:24:26+02:00",
@@ -27174,7 +27364,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T14:05:45+02:00",
@@ -27234,7 +27425,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T15:57:11+02:00",
@@ -27287,7 +27479,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-06T19:09:37+02:00",
@@ -27363,7 +27556,8 @@
        "cache_write_1h": 37705
       }
      },
-     "headless_turns": 6
+     "headless_turns": 6,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-07T14:49:53+02:00",
@@ -27455,7 +27649,8 @@
        "cache_write_1h": 32159
       }
      },
-     "headless_turns": 33
+     "headless_turns": 33,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-08T07:13:35+02:00",
@@ -27508,7 +27703,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-08T12:39:00+02:00",
@@ -27561,7 +27757,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-08T15:51:26+02:00",
@@ -27600,7 +27797,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-08T23:22:29+02:00",
@@ -27669,7 +27867,8 @@
        "cache_write_1h": 42507
       }
      },
-     "headless_turns": 6
+     "headless_turns": 6,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-09T12:30:03.037966+02:00",
@@ -27722,7 +27921,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-09T13:39:21+02:00",
@@ -27775,7 +27975,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-09T14:20:38+02:00",
@@ -27828,7 +28029,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-09T18:04:38+02:00",
@@ -27888,7 +28090,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-09T20:58:42+02:00",
@@ -27957,7 +28160,8 @@
        "cache_write_1h": 33109
       }
      },
-     "headless_turns": 8
+     "headless_turns": 8,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T01:17:56+02:00",
@@ -28003,7 +28207,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T02:24:20+02:00",
@@ -28049,7 +28254,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T12:30:01.943180+02:00",
@@ -28103,7 +28309,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T13:57:31+02:00",
@@ -28156,7 +28363,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T15:33:43+02:00",
@@ -28234,7 +28442,8 @@
        "cache_write_1h": 100765
       }
      },
-     "headless_turns": 21
+     "headless_turns": 21,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T20:47:56+02:00",
@@ -28304,7 +28513,8 @@
        "cache_write_1h": 116761
       }
      },
-     "headless_turns": 97
+     "headless_turns": 97,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T20:58:06+02:00",
@@ -28381,7 +28591,8 @@
        "cache_write_1h": 13149
       }
      },
-     "headless_turns": 132
+     "headless_turns": 132,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T21:08:15+02:00",
@@ -28444,7 +28655,8 @@
        "cache_write_1h": 455922
       }
      },
-     "headless_turns": 181
+     "headless_turns": 181,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T21:23:27+02:00",
@@ -28507,7 +28719,8 @@
        "cache_write_1h": 211930
       }
      },
-     "headless_turns": 121
+     "headless_turns": 121,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T22:00:01.884303+02:00",
@@ -28570,7 +28783,8 @@
        "cache_write_1h": 595942
       }
      },
-     "headless_turns": 181
+     "headless_turns": 181,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T22:25:39+02:00",
@@ -28640,7 +28854,8 @@
        "cache_write_1h": 266385
       }
      },
-     "headless_turns": 192
+     "headless_turns": 192,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T22:45:54+02:00",
@@ -28710,7 +28925,8 @@
        "cache_write_1h": 429482
       }
      },
-     "headless_turns": 128
+     "headless_turns": 128,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-10T23:19:23+02:00",
@@ -28803,7 +29019,8 @@
        "cache_write_1h": 34729
       }
      },
-     "headless_turns": 186
+     "headless_turns": 186,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-11T02:36:55+02:00",
@@ -28893,7 +29110,8 @@
        "cache_write": 0
       }
      },
-     "headless_turns": 49
+     "headless_turns": 49,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-11T18:34:22+02:00",
@@ -28962,7 +29180,8 @@
        "cache_write_1h": 32720
       }
      },
-     "headless_turns": 7
+     "headless_turns": 7,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-12T16:46:36+02:00",
@@ -29008,7 +29227,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-12T17:32:13+02:00",
@@ -29054,7 +29274,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-12T18:17:51+02:00",
@@ -29100,7 +29321,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-12T20:19:26+02:00",
@@ -29146,7 +29368,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-12T20:59:56+02:00",
@@ -29192,7 +29415,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-12T22:51:30+02:00",
@@ -29277,7 +29501,8 @@
        "cache_write_1h": 191755
       }
      },
-     "headless_turns": 42
+     "headless_turns": 42,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T02:52:20+02:00",
@@ -29338,7 +29563,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T03:07:32+02:00",
@@ -29399,7 +29625,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T03:22:44+02:00",
@@ -29467,7 +29694,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T03:43:01+02:00",
@@ -29552,7 +29780,8 @@
        "cache_write_1h": 77289
       }
      },
-     "headless_turns": 89
+     "headless_turns": 89,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T03:53:11+02:00",
@@ -29637,7 +29866,8 @@
        "cache_write_1h": 291696
       }
      },
-     "headless_turns": 170
+     "headless_turns": 170,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T04:03:20+02:00",
@@ -29722,7 +29952,8 @@
        "cache_write_1h": 170600
       }
      },
-     "headless_turns": 91
+     "headless_turns": 91,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T04:13:28+02:00",
@@ -29807,7 +30038,8 @@
        "cache_write_1h": 176341
       }
      },
-     "headless_turns": 213
+     "headless_turns": 213,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T04:30:02.231151+02:00",
@@ -29906,7 +30138,8 @@
        "cache_write_1h": 34843
       }
      },
-     "headless_turns": 74
+     "headless_turns": 74,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T04:38:48+02:00",
@@ -30005,7 +30238,8 @@
        "cache_write_1h": 192270
       }
      },
-     "headless_turns": 171
+     "headless_turns": 171,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T04:48:56+02:00",
@@ -30104,7 +30338,8 @@
        "cache_write_1h": 656170
       }
      },
-     "headless_turns": 185
+     "headless_turns": 185,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T05:12:08+02:00",
@@ -30188,7 +30423,8 @@
        "cache_write_1h": 122690
       }
      },
-     "headless_turns": 136
+     "headless_turns": 136,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T05:27:21+02:00",
@@ -30250,7 +30486,8 @@
        "cache_write_1h": 81524
       }
      },
-     "headless_turns": 31
+     "headless_turns": 31,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T05:37:32+02:00",
@@ -30312,7 +30549,8 @@
        "cache_write_1h": 221459
       }
      },
-     "headless_turns": 48
+     "headless_turns": 48,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T05:47:41+02:00",
@@ -30374,7 +30612,8 @@
        "cache_write_1h": 398094
       }
      },
-     "headless_turns": 62
+     "headless_turns": 62,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T06:00:02.012336+02:00",
@@ -30434,7 +30673,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T06:23:14+02:00",
@@ -30516,7 +30756,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T13:20:52+02:00",
@@ -30577,7 +30818,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T14:23:40+02:00",
@@ -30638,7 +30880,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T15:00:03.603067+02:00",
@@ -30692,7 +30935,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T15:30:03.584093+02:00",
@@ -30753,7 +30997,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T15:56:58+02:00",
@@ -30814,7 +31059,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T16:17:39+02:00",
@@ -30875,7 +31121,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T16:48:45+02:00",
@@ -30936,7 +31183,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T17:45:57+02:00",
@@ -30997,7 +31245,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T18:22:30+02:00",
@@ -31058,7 +31307,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T19:04:28+02:00",
@@ -31119,7 +31369,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-18T19:51:55+02:00",
@@ -31189,7 +31440,8 @@
        "cache_write_1h": 39125
       }
      },
-     "headless_turns": 6
+     "headless_turns": 6,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-19T13:21:17+02:00",
@@ -31243,7 +31495,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-19T19:31:15+02:00",
@@ -31296,7 +31549,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-19T20:52:21+02:00",
@@ -31402,7 +31656,8 @@
        "cache_write_1h": 33940
       }
      },
-     "headless_turns": 8
+     "headless_turns": 8,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T00:20:04+02:00",
@@ -31492,7 +31747,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T01:36:05+02:00",
@@ -31575,7 +31831,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T02:16:35+02:00",
@@ -31637,7 +31894,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T03:07:14+02:00",
@@ -31720,7 +31978,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T03:47:45+02:00",
@@ -31789,7 +32048,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T05:18:55+02:00",
@@ -31828,7 +32088,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T10:48:07+02:00",
@@ -31881,7 +32142,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T13:40:26+02:00",
@@ -31934,7 +32196,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T20:20:56+02:00",
@@ -32001,7 +32264,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-20T23:08:23+02:00",
@@ -32086,7 +32350,8 @@
        "cache_write_1h": 34930
       }
      },
-     "headless_turns": 7
+     "headless_turns": 7,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-21T12:54:29+02:00",
@@ -32169,7 +32434,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-21T15:26:35+02:00",
@@ -32231,7 +32497,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-21T21:26:42+02:00",
@@ -32330,7 +32597,8 @@
        "cache_write_1h": 34327
       }
      },
-     "headless_turns": 8
+     "headless_turns": 8,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-22T15:37:44+02:00",
@@ -32383,7 +32651,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-22T16:59:21+02:00",
@@ -32436,7 +32705,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-22T19:03:48+02:00",
@@ -32520,7 +32790,8 @@
        "cache_write_1h": 36992
       }
      },
-     "headless_turns": 7
+     "headless_turns": 7,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-23T10:26:32+02:00",
@@ -32594,7 +32865,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-23T11:07:06+02:00",
@@ -32692,7 +32964,8 @@
        "cache_write_1h": 120890
       }
      },
-     "headless_turns": 292
+     "headless_turns": 292,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-23T12:08:06+02:00",
@@ -32761,7 +33034,8 @@
        "cache_write_1h": 1664905
       }
      },
-     "headless_turns": 1045
+     "headless_turns": 1045,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-23T14:43:25+02:00",
@@ -32844,7 +33118,8 @@
        "cache_write_1h": 3599
       }
      },
-     "headless_turns": 2
+     "headless_turns": 2,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-23T17:43:31+02:00",
@@ -32920,7 +33195,8 @@
        "cache_write_1h": 41231
       }
      },
-     "headless_turns": 9
+     "headless_turns": 9,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-24T11:53:23+02:00",
@@ -32989,7 +33265,8 @@
        "cache_write_1h": 41505
       }
      },
-     "headless_turns": 12
+     "headless_turns": 12,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-25T23:38:21+02:00",
@@ -33065,7 +33342,8 @@
        "cache_write_1h": 113478
       }
      },
-     "headless_turns": 33
+     "headless_turns": 33,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-28T13:18:30+02:00",
@@ -33140,7 +33418,8 @@
        "cache_write_1h": 341935
       }
      },
-     "headless_turns": 7
+     "headless_turns": 7,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-28T14:29:09+02:00",
@@ -33207,7 +33486,8 @@
      "remote_sourced_turns": 191,
      "cloud_session": true,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-28T15:56:45+02:00",
@@ -33275,7 +33555,8 @@
        "cache_write_1h": 74150
       }
      },
-     "headless_turns": 1
+     "headless_turns": 1,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-28T16:53:53+02:00",
@@ -33336,7 +33617,8 @@
        "cache_write_1h": 74150
       }
      },
-     "headless_turns": 1
+     "headless_turns": 1,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-28T21:34:12+02:00",
@@ -33420,7 +33702,8 @@
        "cache_write_1h": 103445
       }
      },
-     "headless_turns": 21
+     "headless_turns": 21,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-09-30T15:06:32+02:00",
@@ -33482,7 +33765,8 @@
        "cache_write_1h": 23783
       }
      },
-     "headless_turns": 7
+     "headless_turns": 7,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-01T16:49:45+02:00",
@@ -33544,7 +33828,8 @@
        "cache_write_1h": 30564
       }
      },
-     "headless_turns": 8
+     "headless_turns": 8,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T01:14:37+02:00",
@@ -33636,7 +33921,8 @@
        "cache_write_1h": 1235318
       }
      },
-     "headless_turns": 155
+     "headless_turns": 155,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T01:50:10+02:00",
@@ -33727,7 +34013,8 @@
        "cache_write_1h": 70791
       }
      },
-     "headless_turns": 54
+     "headless_turns": 54,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T02:31:03+02:00",
@@ -33810,7 +34097,8 @@
        "cache_write_1h": 126314
       }
      },
-     "headless_turns": 42
+     "headless_turns": 42,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T02:51:24+02:00",
@@ -33877,7 +34165,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T03:11:44+02:00",
@@ -33923,7 +34212,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T03:26:56+02:00",
@@ -33983,7 +34273,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T03:57:22+02:00",
@@ -34029,7 +34320,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T04:22:46+02:00",
@@ -34097,7 +34389,8 @@
        "cache_write_1h": 524095
       }
      },
-     "headless_turns": 55
+     "headless_turns": 55,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T04:38:00+02:00",
@@ -34151,7 +34444,8 @@
        "cache_write_1h": 418692
       }
      },
-     "headless_turns": 79
+     "headless_turns": 79,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T04:48:10+02:00",
@@ -34219,7 +34513,8 @@
        "cache_write_1h": 347905
       }
      },
-     "headless_turns": 44
+     "headless_turns": 44,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T05:03:22+02:00",
@@ -34280,7 +34575,8 @@
        "cache_write_1h": 49034
       }
      },
-     "headless_turns": 29
+     "headless_turns": 29,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T05:18:35+02:00",
@@ -34334,7 +34630,8 @@
        "cache_write_1h": 2897
       }
      },
-     "headless_turns": 4
+     "headless_turns": 4,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T05:30:02.205974+02:00",
@@ -34387,7 +34684,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T05:33:50+02:00",
@@ -34433,7 +34731,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-02T15:55:43+02:00",
@@ -34525,7 +34824,8 @@
        "cache_write_1h": 22582
       }
      },
-     "headless_turns": 6
+     "headless_turns": 6,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-04T18:42:25+02:00",
@@ -34587,7 +34887,8 @@
        "cache_write_1h": 24215
       }
      },
-     "headless_turns": 8
+     "headless_turns": 8,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-05T20:38:20+02:00",
@@ -34649,7 +34950,8 @@
        "cache_write_1h": 62168
       }
      },
-     "headless_turns": 11
+     "headless_turns": 11,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-07T18:17:00+02:00",
@@ -34725,7 +35027,8 @@
        "cache_write_1h": 181909
       }
      },
-     "headless_turns": 25
+     "headless_turns": 25,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-12T18:03:29+02:00",
@@ -34809,7 +35112,8 @@
        "cache_write_1h": 38587
       }
      },
-     "headless_turns": 3
+     "headless_turns": 3,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-13T13:08:52+02:00",
@@ -34894,7 +35198,8 @@
        "cache_write_1h": 41298
       }
      },
-     "headless_turns": 5
+     "headless_turns": 5,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-14T16:48:28+02:00",
@@ -34970,7 +35275,8 @@
        "cache_write_1h": 96719
       }
      },
-     "headless_turns": 16
+     "headless_turns": 16,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T00:04:58+02:00",
@@ -35024,7 +35330,8 @@
        "cache_write_1h": 1568778
       }
      },
-     "headless_turns": 444
+     "headless_turns": 444,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T04:54:04+02:00",
@@ -35092,7 +35399,8 @@
        "cache_write_1h": 494305
       }
      },
-     "headless_turns": 235
+     "headless_turns": 235,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T05:04:15+02:00",
@@ -35154,7 +35462,8 @@
        "cache_write_1h": 4924
       }
      },
-     "headless_turns": 5
+     "headless_turns": 5,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T05:19:48+02:00",
@@ -35223,7 +35532,8 @@
        "cache_write_1h": 29423
       }
      },
-     "headless_turns": 20
+     "headless_turns": 20,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T05:29:59+02:00",
@@ -35278,7 +35588,8 @@
        "cache_write_1h": 16643
       }
      },
-     "headless_turns": 14
+     "headless_turns": 14,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T05:40:15+02:00",
@@ -35333,7 +35644,8 @@
        "cache_write_1h": 210244
       }
      },
-     "headless_turns": 44
+     "headless_turns": 44,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T05:55:32+02:00",
@@ -35401,7 +35713,8 @@
        "cache_write_1h": 35860
       }
      },
-     "headless_turns": 29
+     "headless_turns": 29,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T06:10:45+02:00",
@@ -35461,7 +35774,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T10:11:22+02:00",
@@ -35507,7 +35821,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T14:04:37+02:00",
@@ -35553,7 +35868,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T16:11:23+02:00",
@@ -35599,7 +35915,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T16:57:02+02:00",
@@ -35645,7 +35962,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T18:13:51+02:00",
@@ -35691,7 +36009,8 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-16T20:48:38+02:00",
@@ -35753,25 +36072,26 @@
        "cache_write_1h": 37644
       }
      },
-     "headless_turns": 6
+     "headless_turns": 6,
+     "unclaimed_tokens": {}
     },
     {
      "start": "2026-10-17T01:08:01+02:00",
      "end": "2026-10-17T02:59:43+02:00",
      "delta_pct": 10.0,
      "windows": 1,
-     "usd": 19.4249,
-     "usd_per_pct": 1.9425,
+     "usd": 19.0427,
+     "usd_per_pct": 1.9043,
      "bounds": [
-      1.7659,
-      2.1583
+      1.7312,
+      2.1159
      ],
      "tokens": {
       "claude-opus-5-5": {
-       "input": 1666,
-       "output": 119779,
-       "cache_read": 138724254,
-       "cache_write": 2656071,
+       "input": 1656,
+       "output": 116483,
+       "cache_read": 138704373,
+       "cache_write": 2592816,
        "cache_write_1h": 745008
       },
       "claude-sonnet-5-5": {
@@ -35785,34 +36105,20 @@
        "output": 21247,
        "cache_read": 3317126,
        "cache_write": 128295
-      },
-      "<synthetic>": {
-       "input": 0,
-       "output": 0,
-       "cache_read": 0,
-       "cache_write": 0
       }
      },
      "unpriced_tokens": 0,
-     "unpriced": {
-      "<synthetic>": {
-       "input": 0,
-       "output": 0,
-       "cache_read": 0,
-       "cache_write": 0
-      }
-     },
-     "turns": 937,
+     "unpriced": {},
+     "turns": 931,
      "reset_verified": false,
      "reset_source": "none",
      "status": "accepted",
      "capture_status": "unaccounted",
      "reference": 2.7326,
-     "capture": 0.7108,
+     "capture": 0.6969,
      "fast_session_tokens": {},
      "fast_session_turns": 0,
      "first_turns": {
-      "<synthetic>": "2026-10-17T00:10:10.798000+00:00",
       "claude-haiku-5-5": "2026-10-17T00:22:51.481000+00:00",
       "claude-opus-5-5": "2026-10-16T23:14:38.164000+00:00",
       "claude-sonnet-5-5": "2026-10-16T23:48:54.320000+00:00"
@@ -35820,25 +36126,39 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {
+      "claude-opus-5-5": {
+       "input": 10,
+       "output": 3296,
+       "cache_read": 19881,
+       "cache_write": 63255
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     }
     },
     {
      "start": "2026-10-17T02:59:43+02:00",
      "end": "2026-10-17T05:57:12+02:00",
      "delta_pct": 10.0,
      "windows": 2,
-     "usd": 22.5127,
-     "usd_per_pct": 2.2513,
+     "usd": 21.5908,
+     "usd_per_pct": 2.1591,
      "bounds": [
-      1.8761,
-      2.8141
+      1.7992,
+      2.6989
      ],
      "tokens": {
       "claude-opus-5-5": {
-       "input": 788,
-       "output": 99376,
-       "cache_read": 79759278,
-       "cache_write": 2005525,
+       "input": 764,
+       "output": 93861,
+       "cache_read": 79719947,
+       "cache_write": 1843224,
        "cache_write_1h": 593491
       },
       "claude-sonnet-5-5": {
@@ -35879,13 +36199,13 @@
      },
      "unpriced_tokens": 0,
      "unpriced": {},
-     "turns": 659,
+     "turns": 647,
      "reset_verified": false,
      "reset_source": "none",
      "status": "accepted",
      "capture_status": "accepted",
      "reference": 2.7326,
-     "capture": 0.8238,
+     "capture": 0.7901,
      "fast_session_tokens": {},
      "fast_session_turns": 0,
      "first_turns": {
@@ -35899,18 +36219,26 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {
+      "claude-opus-5-5": {
+       "input": 24,
+       "output": 5515,
+       "cache_read": 39331,
+       "cache_write": 162301
+      }
+     }
     },
     {
      "start": "2026-10-17T05:57:12+02:00",
      "end": "2026-10-17T13:14:09+02:00",
      "delta_pct": 10.0,
      "windows": 3,
-     "usd": 31.4718,
-     "usd_per_pct": 3.1472,
+     "usd": 30.8806,
+     "usd_per_pct": 3.0881,
      "bounds": [
-      2.4209,
-      4.496
+      2.3754,
+      4.4115
      ],
      "tokens": {
       "claude-sonnet-5-5": {
@@ -35920,10 +36248,10 @@
        "cache_write": 8338626
       },
       "claude-opus-5-5": {
-       "input": 236,
-       "output": 75422,
-       "cache_read": 27057858,
-       "cache_write": 415356,
+       "input": 222,
+       "output": 71297,
+       "cache_read": 27045584,
+       "cache_write": 313621,
        "cache_write_1h": 313621
       },
       "claude-haiku-5-5": {
@@ -35948,13 +36276,13 @@
        "cache_write": 0
       }
      },
-     "turns": 666,
+     "turns": 659,
      "reset_verified": false,
      "reset_source": "none",
      "status": "accepted",
      "capture_status": "accepted",
      "reference": 2.667,
-     "capture": 1.18,
+     "capture": 1.1579,
      "fast_session_tokens": {},
      "fast_session_turns": 0,
      "first_turns": {
@@ -35966,7 +36294,99 @@
      "remote_sourced_turns": 0,
      "cloud_session": false,
      "headless_tokens": {},
-     "headless_turns": 0
+     "headless_turns": 0,
+     "unclaimed_tokens": {
+      "claude-opus-5-5": {
+       "input": 14,
+       "output": 4125,
+       "cache_read": 12274,
+       "cache_write": 101735
+      }
+     }
+    },
+    {
+     "start": "2026-10-17T13:14:09+02:00",
+     "end": "2026-10-23T02:05:37+00:00",
+     "delta_pct": 11.0,
+     "windows": 5,
+     "usd": 36.9737,
+     "usd_per_pct": 3.3612,
+     "bounds": [
+      2.3109,
+      6.1623
+     ],
+     "tokens": {
+      "claude-sonnet-5-5": {
+       "input": 690,
+       "output": 224750,
+       "cache_read": 33550112,
+       "cache_write": 5675104
+      },
+      "claude-opus-5-5": {
+       "input": 1048,
+       "output": 381023,
+       "cache_read": 86838778,
+       "cache_write": 2206736,
+       "cache_write_1h": 551088
+      },
+      "claude-sonnet-4-6": {
+       "input": 10,
+       "output": 2709,
+       "cache_read": 293396,
+       "cache_write": 30804,
+       "cache_write_1h": 30804
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 856,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 2.667,
+     "capture": 1.2603,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "<synthetic>": "2026-10-17T15:58:21.785000+00:00",
+      "claude-opus-5-5": "2026-10-17T11:20:31.459000+00:00",
+      "claude-sonnet-4-6": "2026-10-17T22:00:05.115000+00:00",
+      "claude-sonnet-5-5": "2026-10-17T11:16:56.216000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 10,
+       "output": 2709,
+       "cache_read": 293396,
+       "cache_write": 30804,
+       "cache_write_1h": 30804
+      }
+     },
+     "headless_turns": 8,
+     "unclaimed_tokens": {
+      "claude-opus-5-5": {
+       "input": 26,
+       "output": 8476,
+       "cache_read": 19881,
+       "cache_write": 151287
+      }
+     }
     }
    ],
    "runs": [
@@ -36416,8 +36836,8 @@
      "kind": "unaccounted",
      "direction": "low",
      "stretches": 1,
-     "step": -0.2892,
-     "capture": 0.7108,
+     "step": -0.3031,
+     "capture": 0.6969,
      "corroborated_by": [],
      "contradicted_by": []
     }
@@ -37013,44 +37433,58 @@
     },
     {
      "date": "2026-10-17",
-     "usd_per_pct": 2.447,
+     "usd_per_pct": 2.3838,
      "delta_pct": 30.0,
      "stretches": 3,
      "rounding": 0.1333,
      "bounds": [
-      2.1591,
-      2.8234
+      2.1034,
+      2.7505
      ],
      "pieces": 4,
      "reset_verified": false,
      "capture_diagnosed": 1
+    },
+    {
+     "date": "2026-10-23",
+     "usd_per_pct": 3.3612,
+     "delta_pct": 11.0,
+     "stretches": 1,
+     "rounding": 0.4545,
+     "bounds": [
+      2.3109,
+      6.1623
+     ],
+     "pieces": 5,
+     "reset_verified": false,
+     "capture_diagnosed": 0
     }
    ],
    "split": {
     "input": 7.4e-05,
-    "output": 0.005103,
-    "cache_read": 0.965842,
-    "cache_write": 0.02898,
-    "cache_write_1h": 0.012833
+    "output": 0.005099,
+    "cache_read": 0.965593,
+    "cache_write": 0.029235,
+    "cache_write_1h": 0.012763
    },
-   "last_usable_at": "2026-10-17T13:14:09+02:00",
+   "last_usable_at": "2026-10-23T02:05:37+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 260,
-     "median": 1.543,
-     "half_range": 2.6296,
-     "mad": 0.3837,
-     "cv": 0.6392
+     "n": 261,
+     "median": 1.5432,
+     "half_range": 2.6292,
+     "mad": 0.3833,
+     "cv": 0.6384
     },
     "daily": {
-     "n": 43,
-     "median": 1.8871,
-     "half_range": 0.9137,
-     "mad": 0.4624,
-     "cv": 0.4205
+     "n": 44,
+     "median": 2.0532,
+     "half_range": 0.8398,
+     "mad": 0.4465,
+     "cv": 0.4203
     }
    },
    "weekly_by_window": [
@@ -39417,9 +39851,26 @@
      ],
      "pieces": 1,
      "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-23T03:00:00.042340+00:00",
+     "windows": 4.0,
+     "five_hour_pct": 4.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      0.9451,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": true
     }
    ]
   }
  },
- "changes": []
+ "changes": [],
+ "sources_version": 2,
+ "remote_unjoined": {
+  "extracts": 0,
+  "files": 0
+ }
 }
