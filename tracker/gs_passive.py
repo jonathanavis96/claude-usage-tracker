@@ -91,6 +91,7 @@ from statistics import mean, median, stdev
 
 from .atomic import write_text_atomic
 from . import credits as credit_model
+from . import extract as extracts
 from . import speed
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .cloud_sessions import CloudSpan, cloud_spans, overlaps
@@ -117,6 +118,21 @@ CAPTURE_GATE = False
 #: `accepted`, so nothing downstream reads `status == accepted` and then values $0 of
 #: work against real meter movement. See `publishable`.
 NO_TOKENS = "no-tokens"
+#: How transcripts are found and attributed (`_split_sources`). Bumped when that changes on purpose,
+#: so the turn-count guard (`transcript_loss`) does not mistake a deliberate recount for lost
+#: transcripts. 2: every host's extracts, the cached archive, claims keyed by account, nested
+#: workflow sub-agents and the masterrig shared-subtree filter (2026-10-23).
+SOURCES_VERSION = 2
+#: The guard's bar. An account's transcript turns only grow from run to run -- every turn since
+#: its first meter sample, which never moves -- so a fall is lost transcripts. On 2026-10-15 a
+#: gs disk cleanup took jwork from 91,131 turns to 18,209, dave from 76,690 to 39,941 and avis
+#: from 24,494 to 3,897 between two runs, and every September stretch was silently rewritten
+#: with no tokens. A fall of LOSS_FRACTION or more, and at least LOSS_MIN_TURNS turns, refuses
+#: to write (exit LOSS_EXIT) and prints LOSS_MARKER for the alerting to pick up.
+LOSS_FRACTION = 0.05
+LOSS_MIN_TURNS = 500
+LOSS_EXIT = 3
+LOSS_MARKER = "INCIDENT transcript-loss"
 
 
 @dataclass(frozen=True)
@@ -200,7 +216,9 @@ def masterrig_account(home: Path | None = None) -> Account:
     """
     home = Path(home) if home is not None else Path.home()
     ceiling = home / ".paperclip" / "ops" / "mis-usage-ceiling-systemd.log"
-    # One login on masterrig, so every `claude --cloud` it logs is this account's.
+    # Every `claude --cloud` masterrig logs is read as this account's. That held while it had one
+    # login; since 1 Oct it has four (~/.claude-avis, -jwork, -dave), and ~/bin/cloud-build does
+    # not log which it ran under. Every row so far (8, all 2026-09-28) predates the second.
     return Account("masterrig", home / ".claude", home / ".moonlighter" / "usage_log.jsonl", "moonlighter",
                    extra_meter_logs=(MeterLog(ceiling, "ceiling"),), meter_note=MASTERRIG_METER_NOTE,
                    cloud_dir=home / "private" / "cloud")
@@ -245,14 +263,6 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     return [s for s in samples if until is None or s.ts <= until]
 
 
-def _session_ids(config_dir: Path) -> set[str]:
-    """The sessions Claude Code has recorded under this config dir, by `session-env` entry."""
-    session_env = config_dir / "session-env"
-    if not session_env.is_dir():
-        return set()
-    return {p.name for p in session_env.iterdir() if p.is_dir()}
-
-
 def transcript_files(account: Account, since: datetime | None, withhold: Iterable[str] = (),
                      home: Path | None = None) -> tuple[list[Path], dict | None]:
     """This account's transcripts, and how the pooled-projects filter split them, if it applied.
@@ -291,6 +301,13 @@ def transcript_files(account: Account, since: datetime | None, withhold: Iterabl
     39.7M tokens in jwork's meter window, against 1,782 files and 8,316M tokens
     kept: 0.48%, and adding every one of them lifts no unaccounted stretch into
     the accepted band. docs/findings-2026-09-23-unaccounted.md has the working.
+
+    Since 2026-10-23 a session is claimed by an *account*, not a config dir (`_split_sources`): every
+    dir signed into the same account counts as this one, the claim records are session-env,
+    file-history, sessions/<pid>.json and history.jsonl (tracker/extract.py
+    `session_claims`), and a session two accounts claim is split turn by turn at their claim
+    times. A file kept whole here may therefore still lose some turns to another account in
+    `report`; this list is the files, `report` reads the turns.
     """
     kept, meta, _ = _split_transcripts(account, since, withhold, home)
     return kept, meta
@@ -314,51 +331,234 @@ def unclaimed_transcripts(account: Account, since: datetime | None, withhold: It
 def _split_transcripts(account: Account, since: datetime | None, withhold: Iterable[str] = (),
                        home: Path | None = None) -> tuple[list[Path], dict | None, list[Path]]:
     """(this account's transcripts, the filter's counts or None, the unclaimed transcripts)."""
+    s = _split_sources(account, since, withhold, home)
+    return s.kept, s.meta, s.unclaimed
+
+
+@dataclass(frozen=True)
+class Sources:
+    """Where an account's transcripts are read besides its own `projects/` tree (`_split_sources`).
+
+    - `archive_root`: `<dir>/transcripts-*/<subtree>/*.tar.zst`, transcripts a cleanup packed
+      away (tracker/extract.py `build_archive_cache`), read in place through `archive_cache`.
+    - `remote_root`: `<dir>/<host>/<identity>/`, other hosts' text-free extracts of this
+      account's work (tracker/extract.py `extract`, shipped by bin/ship-extracts.sh).
+
+    The defaults are fixed paths under the home directory, so bin/daily.sh needs no flag.
+    """
+    archive_root: Path
+    archive_cache: Path
+    remote_root: Path
+
+
+def default_sources(home: Path) -> Sources:
+    home = Path(home)
+    return Sources(home / extracts.ARCHIVE_ROOT, home / extracts.ARCHIVE_CACHE, home / extracts.REMOTE_ROOT)
+
+
+@dataclass(frozen=True)
+class _Resolved:
+    """`Sources` as found on disk for one run: the archive roots, the shipped extract roots and
+    which setup-token fingerprints are which account (tracker/extract.py `token_bindings`)."""
+    archives: tuple[extracts.ArchiveRoot, ...] = ()
+    remotes: tuple[tuple[str, str, Path], ...] = ()
+    bindings: tuple[tuple[str, str], ...] = ()
+
+
+def resolve_sources(home: Path, sources: Sources | None = None, build: bool = False) -> _Resolved:
+    """What `sources` holds on disk. `build` brings the archive cache up to date first (a full
+    run does, once); without it only what is already cached is read."""
+    sources = sources or default_sources(home)
+    archives = (extracts.build_archive_cache(home, sources.archive_root, sources.archive_cache) if build
+                else extracts.archive_roots(home, sources.archive_root, sources.archive_cache))
+    remotes = extracts.remote_roots(sources.remote_root)
+    # A shipped token-named identity is joined through the meter units' token; read the token
+    # only when there is one to join.
+    bindings = extracts.token_bindings(home) if any(i.startswith("tok-") for _, i, _ in remotes) else {}
+    return _Resolved(tuple(archives), tuple(remotes), tuple(sorted(bindings.items())))
+
+
+@dataclass
+class _Splitted:
+    kept: list[Path]
+    meta: dict | None
+    unclaimed: list[Path]
+    #: (label, root, kept files under it), live root first, for per-source turn counts.
+    by_source: list[tuple[str, Path, list[Path]]]
+    #: Contested files' claim segments; `keep` reads them turn by turn.
+    segments: dict[Path, extracts.Segments]
+    group: str
+    identities: set[str]
+
+    def keep(self, path: Path, turn) -> bool:
+        segs = self.segments.get(path)
+        return segs is None or extracts.owner_at(segs, turn.ts) == self.group
+
+
+def shared_subtrees(account: Account, home: Path) -> dict[Path, list[str]]:
+    """Project directories inside this account's `projects/` that another config dir links into
+    its own tree: real path -> the linking dirs' names.
+
+    `shared_with` catches a whole pooled root. This catches one project: masterrig's
+    `~/.claude-avis/projects/<a project>` has been a symlink into `~/.claude/projects` since
+    2026-10-18 11:27Z, so a1's join counted avis's work there as a1's: a1's tokens_per_pct went
+    from 10.7M on 17 Oct to 47.5M on 18 Oct, and 87% of 18-19 Oct's meter dollars in that
+    directory were avis's.
+    """
     root = account.config_dir / "projects"
     if not root.exists():
-        return [], None, []
-    patterns = list(withhold)
-    paths = [p for p in transcript_paths(root, since)
-            if not any(fnmatch(str(p.relative_to(root)), pat) for pat in patterns)]
+        return {}
+    mine = root.resolve()
+    out: dict[Path, list[str]] = {}
+    for d in sorted(Path(home).glob(".claude*")):
+        p = d / "projects"
+        if d == account.config_dir or not d.is_dir() or not p.is_dir() or p.resolve() == mine:
+            continue
+        for e in sorted(p.iterdir()):
+            if e.is_symlink() and e.is_dir() and e.resolve().is_relative_to(mine):
+                out.setdefault(e.resolve(), []).append(d.name)
+    return out
+
+
+def _split_sources(account: Account, since: datetime | None, withhold: Iterable[str] = (), home: Path | None = None,
+           resolved: _Resolved | None = None) -> _Splitted:
+    """This account's transcripts from every source, attributed by account identity.
+
+    Sources, each read the same way: the live `projects/` tree, the cached archive of that
+    same directory (`Sources.archive_root`), and every other host's extracts shipped under
+    this account's identity (`Sources.remote_root`). Turns are deduplicated by message id
+    across all of them (tracker/turns.py `iter_turns`), live first.
+
+    The pooled-projects filter (see `transcript_files`) applies to the live tree and its
+    archive, and now keys claims by account, not by config dir: gs's `~/.claude-jono` and
+    `~/.claude-javiswork` are both jwork's login, and jono's sessions were dropped as
+    "another login" (`dropped_to {'.claude-jono': 7}`, 350 turns since 1 Oct). A session
+    claimed by dirs of two different accounts is split turn by turn at their claim times
+    (tracker/extract.py `owner_at`). Shipped extracts were attributed on the host that wrote
+    them and are kept whole.
+    """
     home = Path(home) if home is not None else account.config_dir.parent
+    resolved = resolved if resolved is not None else resolve_sources(home)
+    me = extracts.login(account.config_dir, home)
+    root = account.config_dir / "projects"
+    identities = {me.identity} if me.identity else set()
+    bindings = dict(resolved.bindings)
+    identities |= {fp for fp, ident in bindings.items() if ident in identities}
+    remote = [(f"remote:{host}", r) for host, ident, r in resolved.remotes if ident in identities]
+    if not root.exists():
+        return _Splitted([], None, [], [], {}, me.group, identities)
+    patterns = list(withhold)
+
+    def listed(r: Path) -> list[Path]:
+        return [p for p in transcript_paths(r, since)
+                if not any(fnmatch(str(p.relative_to(r)), pat) for pat in patterns)]
+
+    mine = root.resolve()
+    pooled_roots = [("live", root)] + [(a.label, a.cache_root) for a in resolved.archives
+                                       if a.cache_root.exists() and a.source_projects.exists()
+                                       and a.source_projects.resolve() == mine]
+    remote_files = [(label, r, listed(r)) for label, r in remote]
     others = shared_with(account, home)
-    if not others and not root.is_symlink():
-        return paths, None, []
-    if not (account.config_dir / "session-env").is_dir():
-        return paths, None, []
-    own_ids = _session_ids(account.config_dir)
-    kept = [p for p in paths if transcript_session_id(p) in own_ids]
-    claims = {name: _session_ids(home / name) for name in others}
+    subtrees = {real.relative_to(mine): names for real, names in shared_subtrees(account, home).items()}
+    whole = bool(others) or root.is_symlink()
+    claimants_of = {}  # relative subtree (or None for the whole root) -> other dirs that may claim
+    if whole:
+        claimants_of[None] = others
+    claimants_of.update(subtrees)
+    if not claimants_of or (whole and not subtrees and not (account.config_dir / "session-env").is_dir()):
+        by_source = [(label, r, listed(r)) for label, r in pooled_roots] + remote_files
+        return _Splitted([p for _, _, fs in by_source for p in fs], None, [], by_source, {}, me.group, identities)
+
+    def contested_by(rel: Path) -> list[str] | None:
+        """The other dirs that may claim a file at `rel` under the root, or None if no one may."""
+        for sub, names in subtrees.items():
+            if rel.is_relative_to(sub):
+                return names + (others if whole else [])
+        return others if whole else None
+
+    # Each config dir's account, read once (a `.claude.json` can run to tens of kilobytes).
+    group_of = {d.name: extracts.login(d, home).group for d in sorted(home.glob(".claude*")) if d.is_dir()}
+    group_of[account.config_dir.name] = me.group
+    groups: dict[str, list[Path]] = {me.group: [account.config_dir]}
+    for n in sorted(set(others) | {n for ns in subtrees.values() for n in ns}):
+        groups.setdefault(group_of.get(n, f"dir:{n}"), []).append(home / n)
+    # Every dir of this account counts as its own, whatever its projects root (jono and javiswork).
+    for n, g in group_of.items():
+        if g == me.group and home / n not in groups[me.group]:
+            groups[me.group].append(home / n)
+    book = extracts.ClaimBook(groups)
+    listed_roots = [(label, r, listed(r)) for label, r in pooled_roots]
+    book.load({transcript_session_id(p) for _, _, fs in listed_roots for p in fs})
     dropped_to: dict[str, int] = {}
     attributed: dict[str, int] = {}
     unclaimed_paths: list[Path] = []
+    segments: dict[Path, extracts.Segments] = {}
+    contested = 0
     harness, airlock = _attribution_records(home)
-    for p in paths:
-        sid = transcript_session_id(p)
-        if sid in own_ids:
-            continue
-        claimed = [name for name, ids in claims.items() if sid in ids]
-        if claimed:
-            dropped_to[claimed[0]] = dropped_to.get(claimed[0], 0) + 1
-            continue
-        # No session-env claims it: a headless `claude -p` run. Where a launcher's own
-        # record says which config dir it ran under (tracker/unclaimed.py), it is that
-        # dir's work -- kept here if it is this account's, dropped if another's. Only the
-        # rest stays unclaimed, for `unclaimed_shares` to fit.
-        who = attribute_unclaimed(p, home, harness, airlock)
-        if who is None:
-            unclaimed_paths.append(p)
-            continue
-        attributed[who.rule] = attributed.get(who.rule, 0) + 1
-        if who.config_dir == account.config_dir.name:
-            kept.append(p)
-        else:
-            dropped_to[who.config_dir] = dropped_to.get(who.config_dir, 0) + 1
-    return sorted(kept), {"kept": len(kept), "dropped": len(paths) - len(kept),
-                          "subagent_files": sum(1 for p in kept if p.parent.name == "subagents"),
-                          "dropped_to": dict(sorted(dropped_to.items())),
-                          "attributed_by_record": dict(sorted(attributed.items())),
-                          "unclaimed": len(unclaimed_paths)}, unclaimed_paths
+    by_source = []
+    n_paths = 0
+    for label, r, paths in listed_roots:
+        kept_here = []
+        for p in paths:
+            n_paths += 1
+            who_may = contested_by(p.relative_to(r))
+            if who_may is None:
+                kept_here.append(p)
+                continue
+            sid = transcript_session_id(p)
+            allowed = {me.group} | {group_of.get(n, f"dir:{n}") for n in who_may}
+            segs = [(t, g) for t, g in book.segments(sid) if g in allowed]
+            claiming = {g for _, g in segs}
+            if claiming == {me.group}:
+                kept_here.append(p)
+            elif me.group in claiming:
+                contested += 1
+                segments[p] = segs
+                kept_here.append(p)
+            elif claiming:
+                first = next(g for _, g in segs)
+                name = next(d.name for d in groups[first])
+                dropped_to[name] = dropped_to.get(name, 0) + 1
+            else:
+                # No login claims it: a headless `claude -p` run. Where a launcher's own
+                # record says which config dir it ran under (tracker/unclaimed.py), it is that
+                # dir's work -- kept here if it is this account's, dropped if another's. Only the
+                # rest stays unclaimed, for `unclaimed_shares` to fit.
+                who = attribute_unclaimed(p, home, harness, airlock)
+                if who is None:
+                    unclaimed_paths.append(p)
+                    continue
+                attributed[who.rule] = attributed.get(who.rule, 0) + 1
+                if group_of.get(who.config_dir, f"dir:{who.config_dir}") == me.group:
+                    kept_here.append(p)
+                else:
+                    dropped_to[who.config_dir] = dropped_to.get(who.config_dir, 0) + 1
+        by_source.append((label, r, sorted(kept_here)))
+    by_source += remote_files
+    kept = [p for _, _, fs in by_source for p in fs]
+    pooled_kept = [p for _, _, fs in by_source[:len(listed_roots)] for p in fs]
+    meta = {"kept": len(pooled_kept), "dropped": n_paths - len(pooled_kept),
+            "subagent_files": sum(1 for p in pooled_kept if "subagents" in p.parts),
+            "dropped_to": dict(sorted(dropped_to.items())),
+            "attributed_by_record": dict(sorted(attributed.items())),
+            "unclaimed": len(unclaimed_paths)}
+    same = sorted(d.name for d in groups.get(me.group, []) if d != account.config_dir)
+    if same:
+        meta["same_account"] = same
+    if contested:
+        meta["contested"] = contested
+    if subtrees:
+        # Counted per linking config dir, never named: this meta is stored as the account's
+        # `own_sessions`, and masterrig's passive.sh commits history/masterrig-passive.json to the
+        # public repo. Project directory names leave a host only in the extracts shipped to gs's
+        # private directory (bin/ship-extracts.sh); the 2026-10-23 review found the first cut of
+        # this record publishing a masterrig project directory by name.
+        linked: dict[str, int] = {}
+        for names in subtrees.values():
+            for n in names:
+                linked[n] = linked.get(n, 0) + 1
+        meta["shared_subtrees"] = dict(sorted(linked.items()))
+    return _Splitted(kept, meta, unclaimed_paths, by_source, segments, me.group, identities)
 
 
 def _attribution_records(home: Path) -> tuple[list[tuple[str, datetime, datetime]], tuple[str, datetime] | None]:
@@ -610,15 +810,34 @@ def fast_session_ids(files: Iterable[Path]) -> set[str]:
     return speed.fast_sessions(speed.requests_from_files(files), every=True)
 
 
+def account_turns(split: _Splitted, until: datetime | None = None) -> tuple[list, list[dict]]:
+    """A split's turns, each message id once across its sources, and what each source added.
+
+    Sources are read in `split.by_source` order (live, archive, other hosts) through one
+    `seen` set, so a turn two sources both hold is credited to the first. Contested files
+    keep only this account's turns (`_Splitted.keep`).
+    """
+    seen: set[str] = set()
+    turns, per_source = [], []
+    for label, root, files in split.by_source:
+        before = len(turns)
+        turns += [t for t in iter_turns(files, keep=split.keep, seen=seen) if until is None or t.ts <= until]
+        per_source.append({"source": label, "root": str(root), "files": len(files), "turns": len(turns) - before})
+    return turns, per_source
+
+
 def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict] = (), now: datetime | None = None,
            withhold: dict[str, list[str]] | None = None, until: datetime | None = None,
-           home: Path | None = None) -> dict:
+           home: Path | None = None, sources: Sources | None = None) -> dict:
     """Join, judge and summarise every account; the JSON tracker.gs_passive writes."""
     now = now or datetime.now(timezone.utc)
     withhold = withhold or {}
     stretches, meta, weekly, reset_sources = {}, {}, {}, {}
     unclaimed: dict[str, dict[datetime, dict]] = {}
     cloud: dict[str, list[CloudSpan]] = {}
+    base = Path(home) if home is not None else next(iter(accounts.values())).config_dir.parent if accounts else None
+    resolved = resolve_sources(base, sources, build=True) if base is not None else _Resolved()
+    joined_remote: set[tuple[str, str]] = set()
     for name, account in accounts.items():
         samples = load_samples(account, until)
         # Until inferred resets are certified, nothing is computed from them: the join,
@@ -627,9 +846,11 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         joined = samples if INFERRED_RESET_VERIFIED else [
             replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in samples]
         since = samples[0].ts if samples else None
-        files, own_sessions, unclaimed_files = (_split_transcripts(account, since, withhold.get(name, ()), home)
-                                                if samples else ([], None, []))
-        turns = [t for t in iter_turns(files) if until is None or t.ts <= until]
+        split = (_split_sources(account, since, withhold.get(name, ()), home, resolved) if samples
+                 else _Splitted([], None, [], [], {}, "", set()))
+        files, own_sessions, unclaimed_files = split.kept, split.meta, split.unclaimed
+        turns, per_source = account_turns(split, until)
+        joined_remote |= {(host, ident) for host, ident, _ in resolved.remotes if ident in split.identities}
         fast = fast_session_ids(files)
         stretches[name] = build_stretches(joined, turns, prices, fast=fast)
         if own_sessions is not None:
@@ -657,13 +878,45 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
             "transcripts": {"root": str(root), "resolves_to": str(root.resolve()),
                             "shared_with": shared_with(account, home or account.config_dir.parent),
                             "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
-                            "own_sessions": own_sessions},
+                            "own_sessions": own_sessions,
+                            # How many files and turns each source gave: the guard in `main`
+                            # compares these run to run (`transcript_loss`). Never the account's
+                            # identity hash or token fingerprint, nor another host's name: this
+                            # record is committed to the public repo (`public_sources`).
+                            "sources": public_sources(per_source)},
             "cloud_sessions": {"log": str(account.cloud_dir / "sessions.tsv") if account.cloud_dir else None,
                                "spans": [c.record() for c in cloud[name]],
                                "launches_unattributed": unattributed},
             "weekly_steps": steps,
         }
-    return summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until, unclaimed, cloud)
+    out = summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until, unclaimed, cloud)
+    out["sources_version"] = SOURCES_VERSION
+    # Shipped extracts that joined no account here: never dropped silently. The public record
+    # carries only counts; the host and identity of each go to stderr, which lands in the
+    # host's private cron log, never in this repo.
+    unjoined = [(host, ident, len(transcript_paths(r, None)))
+                for host, ident, r in resolved.remotes if (host, ident) not in joined_remote]
+    out["remote_unjoined"] = {"extracts": len(unjoined), "files": sum(n for _, _, n in unjoined)}
+    for host, ident, n in unjoined:
+        print(f"gs_passive: shipped extracts from {host} under {ident} ({n} files) joined no account",
+              file=sys.stderr)
+    return out
+
+
+def public_sources(per_source: list[dict]) -> list[dict]:
+    """`account_turns`' per-source counts as the public record may carry them.
+
+    A shipped source's label is `remote:<host>` and its root `<dir>/<host>/<identity>/`, so
+    every other host's shipment is summed into one `remote` entry with a host count and no
+    root. Live and archive sources are kept as they are: their roots are this host's config
+    and cache directories.
+    """
+    out = [dict(s) for s in per_source if not str(s.get("source", "")).startswith("remote:")]
+    remote = [s for s in per_source if str(s.get("source", "")).startswith("remote:")]
+    if remote:
+        out.append({"source": "remote", "hosts": len(remote), "files": sum(s["files"] for s in remote),
+                    "turns": sum(s["turns"] for s in remote)})
+    return out
 
 
 def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict[datetime, str]], meta: dict,
@@ -1058,7 +1311,39 @@ def _summary(name: str, a: dict) -> str:
             f"daily median ${sp.get('median')}/1% cv {sp.get('cv')} (n={sp['n']})")
 
 
-def _speed_history(out: Path, accounts: dict[str, Account], home: Path, refresh: bool) -> dict | None:
+def transcript_loss(previous: dict | None, current: dict) -> list[str]:
+    """One line per account whose transcripts fell sharply since `previous` (LOSS_FRACTION).
+
+    Empty when there is nothing comparable: no previous record, or one counted another way
+    (`sources_version` differs, as the first run after a deliberate recount does). Each line
+    names the account, the fall, and every source whose files or turns fell, so the reader
+    sees whether a live tree, an archive or a host's shipment went missing.
+    """
+    if not isinstance(previous, dict) or previous.get("sources_version") != current.get("sources_version"):
+        return []
+    out = []
+    for name, acct in current.get("accounts", {}).items():
+        before = ((previous.get("accounts") or {}).get(name) or {}).get("transcripts") or {}
+        now = acct.get("transcripts") or {}
+        was, has = before.get("turns"), now.get("turns")
+        if not isinstance(was, int) or not isinstance(has, int):
+            continue
+        if was - has < max(LOSS_MIN_TURNS, LOSS_FRACTION * was):
+            continue
+        prev_src = {s.get("source"): s for s in before.get("sources") or [] if isinstance(s, dict)}
+        cur_src = {s.get("source"): s for s in now.get("sources") or [] if isinstance(s, dict)}
+        fell = [f"{label} {s.get('files')}->{(cur_src.get(label) or {}).get('files', 0)} files, "
+                f"{s.get('turns')}->{(cur_src.get(label) or {}).get('turns', 0)} turns"
+                for label, s in prev_src.items()
+                if (cur_src.get(label) or {}).get("turns", 0) < (s.get("turns") or 0)]
+        out.append(f"{LOSS_MARKER} gs_passive: {name} transcript turns fell {was} -> {has} "
+                   f"({(was - has) / was:.0%}) since {previous.get('generated_at')}"
+                   + (f"; {'; '.join(fell)}" if fell else ""))
+    return out
+
+
+def _speed_history(out: Path, accounts: dict[str, Account], home: Path, refresh: bool,
+                   sources: Sources | None = None) -> dict | None:
     """The gs accounts' model speed rows (tracker/speed.py): what `out` already holds under
     `speed`, with the recent days recomputed from the transcripts when `refresh`. Only the
     full gs run refreshes, so a replay or a one-account run carries the stored history
@@ -1073,7 +1358,8 @@ def _speed_history(out: Path, accounts: dict[str, Account], home: Path, refresh:
     try:
         since_day, mtime_since = speed.recompute_from(stored, now)
         labels = dict(ACCOUNT_LABELS)
-        rows = speed.scan_accounts([(labels[name], transcript_files(acct, mtime_since, home=home)[0])
+        resolved = resolve_sources(home, sources)
+        rows = speed.scan_accounts([(labels[name], _split_sources(acct, mtime_since, (), home, resolved).kept)
                                     for name, acct in accounts.items()], since_day)
         return speed.update(stored, rows, since_day or date.min.isoformat(), now)
     except (OSError, ValueError, KeyError) as e:
@@ -1102,6 +1388,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fit-output-weight", action="store_true",
                     help="print the least-squares class_weight.output over the published stretches as JSON and exit")
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--accept-loss", action="store_true",
+                    help=f"write --out even when an account's transcript turns fell sharply ({LOSS_MARKER}); "
+                         "for a loss a person has looked at and accepted")
+    ap.add_argument("--archive-root", type=Path,
+                    help=f"transcript archives, <dir>/{extracts.ARCHIVE_GLOB}/<subtree>/*.tar.zst "
+                         f"(default ~/{extracts.ARCHIVE_ROOT})")
+    ap.add_argument("--archive-cache", type=Path, help=f"their text-free cache (default ~/{extracts.ARCHIVE_CACHE})")
+    ap.add_argument("--remote-root", type=Path,
+                    help=f"other hosts' shipped extracts, <dir>/<host>/<identity>/ (default ~/{extracts.REMOTE_ROOT})")
     a = ap.parse_args(argv)
     if a.calibrate and (a.since is None or a.until is None):
         ap.error("--calibrate requires --since and --until")
@@ -1123,7 +1418,10 @@ def main(argv: list[str] | None = None) -> int:
     prices = {k: v for k, v in json.loads(a.prices.read_text()).items() if not k.startswith("_")}
     rows = ([json.loads(line) for line in a.probes.read_text(encoding="utf-8").splitlines() if line.strip()]
             if a.probes.exists() else [])
-    r = report(accounts, prices, rows, withhold=withhold, until=a.until, home=a.home)
+    defaults = default_sources(a.home)
+    sources = Sources(a.archive_root or defaults.archive_root, a.archive_cache or defaults.archive_cache,
+                      a.remote_root or defaults.remote_root)
+    r = report(accounts, prices, rows, withhold=withhold, until=a.until, home=a.home, sources=sources)
     if a.calibrate:
         print(json.dumps(calibrate(r, rows, prices, a.since, a.until)))
         return 0
@@ -1134,9 +1432,24 @@ def main(argv: list[str] | None = None) -> int:
         print(_summary(name, acct))
     for c in r["changes"]:
         print(f"change: {c['account']} at {c['at']}, step {c['step']:+.1%}, corroborated by {', '.join(c['corroborated_by'])}")
+    if a.out and not (a.account or a.until or a.withhold):
+        # Only a full run is comparable with the record it would replace.
+        try:
+            previous = json.loads(a.out.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = None
+        if (lost := transcript_loss(previous, r)):
+            for line in lost:
+                print(line, file=sys.stderr)
+            if not a.accept_loss:
+                print(f"error: not writing {a.out}: transcripts went missing, and rewriting the record from "
+                      "what is left would rewrite its history. Restore them, or rerun with --accept-loss once "
+                      "the loss is understood (docs/OPERATIONS.md).", file=sys.stderr)
+                return LOSS_EXIT
+            print(f"warning: --accept-loss: writing {a.out} without the lost transcripts", file=sys.stderr)
     if a.out:
         speed_rows = _speed_history(a.out, accounts, a.home,
-                                    refresh=not (a.masterrig or a.account or a.until or a.withhold))
+                                    refresh=not (a.masterrig or a.account or a.until or a.withhold), sources=sources)
         if speed_rows is not None:
             r["speed"] = speed_rows
     if a.out:
