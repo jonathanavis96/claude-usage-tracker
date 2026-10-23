@@ -2,30 +2,17 @@
 from __future__ import annotations
 
 import json
-import math
 import sys
-from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
-from itertools import pairwise
 from pathlib import Path
 from statistics import median
 
 from .atomic import write_text_atomic
 from . import credits as credit_model
+from . import four_accounts
 from .capture import ACCEPTED
-from .detect import (
-    CREDIT_STRETCHES,
-    MIN_POOL_D7,
-    MIN_STRETCH_PCT,
-    ChangeEvent,
-    current_regime_points,
-    detect_credit_changes,
-    detect_weighted_changes,
-    pooled_interval,
-    weighted_regimes,
-)
-from .gs_passive import (credit_rate_sources, passive_credit_points, passive_dollar_readings,
-                         unpriced_credit_models)
+from .detect import MIN_POOL_D7, pooled_interval, pooled_windows, weighted_regimes
+from .gs_passive import credit_rate_sources, passive_dollar_readings, unpriced_credit_models
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
@@ -94,11 +81,10 @@ GS_FEED_MAX_AGE = timedelta(hours=6)
 #: A fresh feed whose newest clean stretch is older than this (or absent) is `idle`: the
 #: collector ran, the owner did not use Claude enough to close a stretch.
 IDLE_AFTER = timedelta(hours=72)
-#: How far apart two accounts' onsets may sit and still be read as one dollar-series
-#: change (_agreeing_credit_events). A limit change reaches each account on its own
-#: cadence of use, and a stretch is dated at the reading that closed it.
-DOLLAR_AGREEMENT_DAYS = timedelta(days=3)
 WEEKLY_CURRENT_DAYS = 14
+#: The four-account detector's committed state (tracker/four_accounts.py), read when a
+#: rebuild names none: the publish states the changes its newest daily run holds.
+FOUR_ACCOUNTS_STATE = Path(__file__).resolve().parent.parent / "history" / "four-accounts.json"
 FIVE_HOURS = timedelta(hours=5)
 PLAN_SOURCE_URL = "https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan"
 REFERENCE_MIX = json.loads((Path(__file__).resolve().parent.parent / "data" / "reference_mix.json").read_text())
@@ -265,138 +251,28 @@ def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_u
     return out
 
 
-def _account_credit_points(gs_passive: dict | None, prices: dict, credits: dict,
-                           model_rates: dict | None) -> dict[str, list[tuple]]:
-    """Each watched account's own verified stretches as credit points, keyed by account name.
+def _chained_levels(regime_values: dict[int, list[float]], changes: list[dict]) -> dict[int, float]:
+    """Each regime's held level, every step the five-hour size the detector measured there.
 
-    Per account, because one pooled series cannot tell a change from two accounts moving
-    in opposite directions: on 20 September 2026 one account's readings rose and the
-    other's fell, and the pooled medians read -23%. `passive_credit_points` is asked for
-    one account at a time so the acceptance rule stays in one place.
-
-    Per stretch and in credits, because a day is not a unit of evidence and list dollars
-    are not what the meter charges. A UTC day pooled a 10% and a 60% stretch into one
-    equal vote, and list dollars moved the reading with the model mix -- the ratio of
-    credits to list dollars over a stretch has an IQR of 19% of its median on jwork and
-    24% on dave (measured on history/gs-passive.json as committed 2026-09-23), which is
-    the same mechanism that produced the withdrawn 20 September event.
+    The newest regime with readings is held at their median; every other regime, before or
+    after it, is that level carried through the detector's five-hour size at each measured
+    change between them (unchanged across a change whose size holds no change). So the
+    legacy dollar history steps exactly where, and by exactly what, the detector says.
     """
-    accounts = ((gs_passive or {}).get("accounts") or {})
-    return {name: passive_credit_points({"accounts": {name: account}}, prices, credits, model_rates)
-            for name, account in accounts.items()}
+    if not regime_values:
+        return {}
+    newest = max(regime_values)
+    held = {newest: median(regime_values[newest])}
 
-
-def _merged_dollar_event(cluster: list[tuple]) -> ChangeEvent:
-    """One change from the agreeing accounts' own events, dated at the earliest onset.
-
-    Like _rule_dated on the weekly series, a change reaches each account at
-    its own pace: so the bounds are the earliest and the latest onset the agreeing
-    accounts saw and the date is the earliest of them; it is confirmed only once the last
-    of them confirmed, and it carries every account's readings as its evidence count. The
-    percent here is the detector's own -- _percent_from_held_levels restates it as the
-    step the published history draws (so the headline and the chart read one number).
-    """
-    events = [e for _, _, e in cluster]
-    onsets = sorted(e.date for e in events)
-    earliest = [e.onset_earliest for e in events if e.onset_earliest]
-    confirmed = [e.confirmed_at for e in events if e.confirmed_at]
-    return ChangeEvent(
-        date=onsets[0], direction=events[0].direction,
-        percent=round(median([e.percent for e in events])),
-        onset_earliest=min(earliest) if earliest else onsets[0],
-        onset_latest=onsets[-1],
-        confirmed_at=max(confirmed) if confirmed else None,
-        evidence_points=sum(e.evidence_points or 0 for e in events),
-        denominator_pct=round(sum(e.denominator_pct or 0 for e in events), 1) or None,
-        before_interval=_widest([e.before_interval for e in events]),
-        after_interval=_widest([e.after_interval for e in events]),
-    )
-
-
-def _widest(intervals: list) -> tuple[float | None, float | None] | None:
-    """The union of the agreeing accounts' own credit intervals, in their own units.
-
-    Each account's level is its own -- the accounts do not share a scale -- so a merged
-    event cannot state one interval that bounds both. The union is published so the
-    reader sees the loosest bound behind the merged event rather than one account's,
-    and `_event_record` still calls the event provisional either way.
-    """
-    have = [i for i in intervals if i]
-    if not have:
-        return None
-    lows = [i[0] for i in have if i[0] is not None]
-    highs = [i[1] for i in have if i[1] is not None]
-    return (min(lows) if lows else None,
-            None if len(highs) < len(have) else max(highs))
-
-
-def _agreeing_credit_events(account_points: dict[str, list[tuple]],
-                            min_pct: float = MIN_STRETCH_PCT,
-                            within: timedelta = DOLLAR_AGREEMENT_DAYS) -> list[ChangeEvent]:
-    """Credit-series changes two accounts saw in the same direction within days of each other.
-
-    The detector (`detect_credit_changes`) runs on each account's own verified stretches,
-    never on the pooled series. A pooled series is not a measurement of a shared limit: it
-    mixes accounts whose levels differ by more than any step in either of them, so a busy
-    stretch on one account and a quiet one on the other move the pooled level on their
-    own. That is what the published 20 September -23% was -- one account's readings went
-    up across it and the other's went down (and the one that went down spent those days on
-    a model the list price values low), and neither account's own series steps there.
-
-    A change is published only when at least two accounts each detect a step in the same
-    direction with onsets no more than `within` apart. The minimum evidence is meter
-    movement, not a count of readings: an account needs 2 x `min_pct` points of five-hour
-    meter movement in its accepted stretches before the detector can split it at all, so
-    an account with less is not testable, and with fewer than two testable accounts
-    nothing is published: one account stepping alone is that account's own workload until
-    a second one agrees. The events stay provisional (_provisional): capture completeness
-    is not proven from one host's transcripts, whatever the intervals say.
-    """
-    testable = {name: sorted(points, key=lambda p: p[0]) for name, points in account_points.items()
-                if sum(p[2] for p in points) >= 2 * min_pct}
-    if len(testable) < 2:
-        return []
-    found = [(e.date, name, e) for name, points in testable.items()
-             for e in detect_credit_changes(points)]
-    clusters: list[list[tuple]] = []
-    for candidate in sorted(found, key=lambda f: (f[0], f[1])):
-        day, _name, event = candidate
-        for cluster in clusters:
-            if cluster[0][2].direction == event.direction and day - cluster[0][0] <= within:
-                cluster.append(candidate)
-                break
-        else:
-            clusters.append([candidate])
-    return sorted((_merged_dollar_event(c) for c in clusters
-                   if len({name for _, name, _ in c}) >= 2),
-                  key=lambda e: e.date)
-
-
-def _percent_from_held_levels(events: list[ChangeEvent], regime_starts: list[date],
-                              regime_values: dict[int, list[float]]) -> list[ChangeEvent]:
-    """Each dollar event's percent restated as the step between the held levels around it.
-
-    `history` holds every regime flat at the median of the readings inside it, and the
-    page draws that step. The detector's own percent is taken over a different pool -- the
-    verified series alone, where the history pools a measured day's legacy readings in too
-    -- so the headline said 23% beside a chart that stepped 18.6%. The percent and the
-    direction are taken from the two held values the history publishes either side of the
-    event, so there is one number. An event with no readings on one side keeps the
-    detector's own percent, which cannot happen on a series the events came from.
-    """
-    out = []
-    for e in events:
-        idx = regime_starts.index(e.date) + 1
-        before, after = regime_values.get(idx - 1), regime_values.get(idx)
-        if not before or not after or not median(before):
-            out.append(e)
-            continue
-        ratio = median(after) / median(before) - 1
-        # Rounded as the page labels the step it draws (_page_round on the signed figure):
-        # round(abs(x)) rounds halves to even, and check 7 then withholds the page.
-        out.append(replace(e, direction="increased" if ratio > 0 else "decreased",
-                           percent=abs(_page_round(ratio * 100))))
-    return out
+    def ratio(k: int) -> float:
+        """The five-hour ratio at the change that opens regime k."""
+        c = changes[k - 1]
+        return c["ratio"] if c.get("window_scaled") else 1.0
+    for k in range(newest - 1, -1, -1):
+        held[k] = held[k + 1] / ratio(k + 1)
+    for k in range(newest + 1, len(changes) + 1):
+        held[k] = held[k - 1] * ratio(k)
+    return held
 
 
 def _reference_tokens(budget: float | None, meter_usd_per_token: float) -> int | None:
@@ -408,8 +284,15 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                       effort_usd: dict | None = None, gs_passive: dict | None = None,
                       reference_mix: dict | None = None, *, masterrig_passive: dict | None = None,
                       effort_meta: dict | None = None, credits: dict | None = None,
-                      model_rates: dict | None = None, masterrig_speed: dict | None = None) -> dict:
+                      model_rates: dict | None = None, masterrig_speed: dict | None = None,
+                      four_accounts_run: dict | None = None) -> dict:
     """The public JSON, schema_version 2 (the 2026-09-16 audit's implementation contract).
+
+    Limit changes (ADR 0001 rule 22). `four_accounts_run` is the four-account detector's
+    newest daily run (tracker/four_accounts.py, the `latest` of history/four-accounts.json):
+    its measured changes are the only source of `last_change`, `events` and every regime
+    boundary below, and the whole run is published as `four_accounts` for the page's chart.
+    Without one, nothing is called a change: one regime, no `last_change`, no `events`.
 
     Rates. The measured quantity is the meter budget: the meter dollars (list
     price x class_weight x meter_weight, tracker/join.py bundle_meter_usd) one
@@ -430,9 +313,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
 
     Instruments. Only passive readings are published, and only from stretches
     whose meter log carried reset ids (`reset_verified`); those are "measured"
-    and the only ones change detection runs on. With none, stretches from a
-    reset-less log are used as a "conditional" reference with no change events
-    (finding 10). With neither, every rate field is null and `availability`
+    and the only ones the published level is read from. With none, stretches from a
+    reset-less log are used as a "conditional" reference (finding 10). With neither, every rate field is null and `availability`
     says why. Probe rows never stand in for missing passive readings (finding
     13): they read the same meter on another scale. Capture completeness cannot
     be proven from one host's transcripts, so every passive rate is `quality.status`
@@ -446,9 +328,11 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     `history` is a step function of the measured limit, not the raw daily series:
     Jonathan's own passive account is noisy 2x-5x day to day (the rolling meter
     decays), and the public chart must show only what change detection actually
-    found, not that noise. detect_credit_changes splits each account's own
-    credit-valued stretches into regimes and _agreeing_credit_events keeps the splits
-    two accounts agree on; the dollar series is bucketed into those regimes; each regime is held flat at the median of the readings inside it,
+    found, not that noise. The regimes open at the four-account detector's measured
+    changes (since 2026-10-23; until then at the splits two accounts' own credit
+    series agreed on); the dollar series is bucketed into those regimes; each regime is
+    held at the median of the readings inside it, chained so each step is the detector's
+    five-hour size there (`_chained_levels`),
     and every model's tokens_per_window for that regime is that same median divided
     by the model's own blended price times its own meter_weight -- so every model
     steps on the same dates, just at different levels. Days before the first
@@ -471,7 +355,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     Freshness is per metric (`freshness.stale` once the newest reading is older
     than MAX_SAMPLE_AGE_DAYS), not a refusal to publish (finding 16).
 
-    Weekly windows, events and plan limits: see _weekly_block, _event_record and
+    Weekly windows, events and plan limits: see _weekly_block, four_accounts.events and
     _model_plan_limits.
     """
     if not prices:
@@ -509,20 +393,15 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # Every new family's rate is fitted at its first use jointly with any five-hour limit
     # change there, and absorbed into the rates everything below values stretches at, so no
     # figure prices a new model at a rate the limit change is confounded with.
-    model_rates, joint_fits = credit_model.absorb_new_family_rates(
+    model_rates, _joint_fits = credit_model.absorb_new_family_rates(
         credit_model.stretches_by_account(gs_five, mr_five),
         credit_model.harness_runs(), credits, model_rates, dict(ACCOUNT_LABELS),
         lambda rates: credit_model.comparison_value(credits, rates))
-    # Detection runs per account, on that account's own stretches valued in meter
-    # credits and weighted by the meter movement each one carries, and publishes only
-    # what two accounts agree on (_agreeing_credit_events). The list-dollar daily
-    # series above is untouched: it is still what the published levels are held at and
-    # what every other rate field is derived from. Credits decide WHERE the series
-    # steps; the held dollar levels decide how big the step the page draws is, so the
-    # headline and the chart still read one number (_percent_from_held_levels).
-    account_points = _account_credit_points(gs_passive, prices, credits, model_rates)
-    events = _agreeing_credit_events(account_points) if evidence_status == "measured" else []
-    regime_start = max((e.date for e in events), default=None)
+    # The changes: the four-account detector's measured ones, and nothing else (ADR 0001
+    # rule 22). Each opens a regime in every series below, and each series steps there by
+    # the detector's own size on its line.
+    changes = four_accounts.regime_changes(four_accounts_run)
+    regime_start = changes[-1]["at"].date() if changes else None
 
     measured_at = series[-1][0] if series else None
     current = [(ts, v) for ts, v in series
@@ -553,18 +432,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 "window_pieces": pieces,
                 "rounding_relative": round(pieces / movement, 4) if movement else None,
                 "capture_diagnosed": sum(1 for st in stretches if st.get("capture_status") not in (None, ACCEPTED)),
-                # What change detection itself ran on, which is not what the rate above is
-                # derived from: the rate is list-price meter dollars pooled per day, the
-                # detector reads meter credits per stretch. Published so a reader can see
-                # which per-family rate source the events rested on, and how much meter
-                # movement a side of a split has to carry before one is possible at all.
+                # Where the changes come from (`four_accounts`, ADR 0001 rule 22), and which
+                # per-family rate source each priced stretch rests on.
                 "credit_detection": {
-                    "series": CREDIT_STRETCHES.name,
-                    "points": sum(len(pts) for pts in account_points.values()),
-                    "meter_pct": round(sum(p[2] for pts in account_points.values() for p in pts), 1),
-                    "min_meter_pct_per_side": MIN_STRETCH_PCT,
-                    "testable_accounts": sum(1 for pts in account_points.values()
-                                             if sum(p[2] for p in pts) >= 2 * MIN_STRETCH_PCT),
+                    "changes_from": "four_accounts",
                     "rate_sources": credit_rate_sources(gs_passive, prices, credits, model_rates)
                     if gs_passive else {},
                     # Model ids no rate can value, so every stretch carrying them is left
@@ -600,12 +471,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     for ts, v in day_readings:
         by_day.setdefault(ts.date(), []).append(v)
 
-    # The step function (restored 2026-09-17, findings 11/12): every event
-    # _agreeing_credit_events found over the whole series, not just the newest one,
-    # bounds a regime. `day_readings` (broader than `series`: it fills a measured
-    # day's gap with a legacy reading, see above) is bucketed into those regimes so
-    # a regime's held value pools everything published for its span.
-    regime_starts = sorted({e.date for e in events})
+    # The step function (restored 2026-09-17, findings 11/12): every measured change of the
+    # four-account detector bounds a regime. `day_readings` (broader than `series`: it fills
+    # a measured day's gap with a legacy reading, see above) is bucketed into those regimes,
+    # and every level is held so each step is the detector's five-hour size there
+    # (`_chained_levels`).
+    regime_starts = [c["at"].date() for c in changes]
 
     def regime_index(d: date) -> int:
         idx = 0
@@ -624,9 +495,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         regime_dates.setdefault(idx, []).append(ts.date())
     regime_quality = {idx: ("measured" if any(dd in verified_days for dd in dates) else "legacy_reset_unverified")
                       for idx, dates in regime_dates.items()}
-    # The event's percent is the step between the levels the history holds either side of
-    # it, so the headline and the chart cannot state two different numbers for one step.
-    events = _percent_from_held_levels(events, regime_starts, regime_values)
+    held = _chained_levels(regime_values, changes)
 
     last_day = now.date()
     # Days before the first reading are held at the first regime's value: passive.json's
@@ -645,13 +514,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         if legacy_history_days:
             first_day = min(first_reading_day, min(legacy_history_days))
 
-    current_regime_idx = None
-    if day_readings:
-        # `now` may fall before the newest reading's own day (a test fixture, or a
-        # publish run against stale readings): hold at the newest regime that
-        # actually has evidence, which is what the history's own newest row shows.
-        current_regime_idx = _regime_with_evidence(regime_index(last_day), regime_values)
-    regime_current_value = median(regime_values[current_regime_idx]) if current_regime_idx is not None else None
+    # Every regime holds a level (`_chained_levels`), the newest with readings at their median
+    # and every other one carried through the detector's changes, so `now` reads its own.
+    current_regime_idx = regime_index(last_day) if held else None
+    regime_current_value = held[current_regime_idx] if current_regime_idx is not None else None
 
     rates, history = {}, {}
     for model, price in prices.items():
@@ -699,8 +565,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         if first_day is not None:
             d = first_day
             while d <= last_day:
-                idx = _regime_with_evidence(regime_index(d), regime_values)
-                budget = median(regime_values[idx])
+                idx = regime_index(d)
+                budget = held[idx]
                 day_tokens = _reference_tokens(budget, per_token)
                 day_api = round(day_tokens * api_per_token, 2) if day_tokens is not None else None
                 if d in by_day:
@@ -716,10 +582,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 d += timedelta(days=1)
         history[model] = hist
 
-    weekly_windows, weekly_events = _weekly_block(passive.get("weekly_windows"), probe_weekly, now,
-                                                  gs_passive=gs_passive,
-                                                  masterrig_passive=masterrig_passive,
-                                                  five_hour=(factor, five_hour_value))
+    weekly_windows = _weekly_block(passive.get("weekly_windows"), probe_weekly, now,
+                                   gs_passive=gs_passive, masterrig_passive=masterrig_passive,
+                                   five_hour=(factor, five_hour_value), changes=changes)
     # The cache split the session figures assume is the watched accounts' own, from
     # history/passive.json. An archive or a fixture without one falls back to the frozen
     # reference mix and says which it used, rather than publishing a session count whose
@@ -732,15 +597,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # The measured per-model rates. `None` means "read the checkout's own
     # history/model-rates.json"; an empty dict means there is no measurement to publish, and
     # every per-model row then carries a status sentence instead of a number.
-    credits_block, across_cut = _credits_block(
+    credits_block = _credits_block(
         gs_five, mr_five, all_probe_rows, effort_meta, credits, prices,
         session_split, session_split_source, passive.get("session_tokens", {}),
-        weekly_windows, weekly_events,
-        model_rates, joint_fits)
-    # ADR 0001 rule 17: the windows-per-week event states the step its chart draws, and
-    # every boundary for it is drawn at the event's own instant.
-    weekly_events = _chart_figure(weekly_events, credits_block)
-    _align_markers(credits_block, weekly_events)
+        weekly_windows, changes, model_rates)
     # Accounts behind the passive evidence: those with an accepted stretch (the rates)
     # plus those with Max 20x window points (the weekly series), by name, never published.
     weekly_accounts = {name for name, label in ACCOUNT_LABELS
@@ -781,12 +641,10 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "credits": credits_block,
         "five_hour_meter": five_hour_meter,
         "reference": _reference_block(weekly_windows),
-        "last_change": _with_announced_last_change(
-            _latest_change_with_scope(events, weekly_events, across_cut, weekly_windows),
-            credits_block["five_hour_on_meters"]),
-        "events": sorted(_build_events(events, weekly_events, across_cut, weekly_windows)
-                         + _announced_events(credits_block["five_hour_on_meters"]),
-                         key=lambda ev: ev["date"]),
+        # The changes: only the four-account detector's measured ones (ADR 0001 rule 22).
+        "last_change": four_accounts.last_change(four_accounts_run),
+        "events": four_accounts.events(four_accounts_run),
+        "four_accounts": four_accounts.public_block(four_accounts_run),
         # Restored 2026-09-17 (reverses finding 11 by Jonathan's decision): the median
         # session token total per model, from passive.py's own transcript-derived
         # daily_rates (tracker/turns.py session_tokens_by_model), unrelated to the
@@ -1185,68 +1043,37 @@ def _measured_rates_block(model_rates: dict | None, labels: dict[str, str]) -> d
     return block
 
 
-def _window_credits_from_weekly(weekly: dict, weekly_events: list) -> dict:
-    """The window in credits anchored the other way: announced weekly cap over measured weeks.
-
-    A cross-check, not the measurement. The announced weekly cap is policy (the
-    January baseline times the multiplier in force), and how many five-hour windows a
-    week holds is ours -- the pooled ratio of five-hour to seven-day meter movement, on
-    either side over the accounts with readings on both sides of their own step
-    (`_paired_step`), so an account that joined after the cut does not move it.
-    Dividing one by the other gives a window in credits that shares no input with the
-    pure-Opus cluster, which is the only reason it is worth publishing beside it.
-
-    Only published when the weekly series has certified a change, because that is
-    what separates the two regimes the two multipliers belong to.
-    """
-    regimes = weekly["max20"]["regimes"]
-    baseline = CREDITS_PER_WEEK["max20"]
-    empty = {"before": None, "after": None, "kind": "cross_check", "derivation": "credits",
-             "status": "no certified weekly change, so no before and after regime to anchor",
-             "weekly_cap_baseline_credits": baseline}
-    if not weekly_events or len(regimes) < 2:
-        return empty
-    sides = {}
-    for side, regime, multiplier in (("before", regimes[-2], credit_model.WEEKLY_CAP_MULTIPLIER["before"]),
-                                     ("after", regimes[-1], credit_model.WEEKLY_CAP_MULTIPLIER["after"])):
-        windows = regime.get("windows")
-        cap = baseline * multiplier
-        sides[side] = {
-            "value": round(cap / windows) if windows else None,
-            "announced_weekly_cap_credits": round(cap),
-            "weekly_cap_multiplier": multiplier,
-            "windows_per_week_measured": windows,
-            "windows_per_week_rounding_interval": regime.get("rounding_interval"),
-            "from": regime.get("start"), "to": regime.get("end"),
-        }
-    return {
-        **sides, "kind": "cross_check", "derivation": "credits", "status": None,
-        "weekly_cap_baseline_credits": baseline,
-        "weekly_cap_baseline_source": {"url": CREDITS_TABLE_URL, "as_of": CREDITS_TABLE_AS_OF},
-        "method": ("the announced weekly cap -- the January baseline times the multiplier in force "
-                   "(x1.5 from May, x1.25 from 14 September) -- divided by this tracker's own "
-                   "measured windows per week for the regime either side of the certified change, "
-                   "each taken over the accounts with readings on both sides of their own step. "
-                   "It shares no input with window_credits, which is why it is a cross-check."),
-    }
+def _window_credits_from_weekly() -> dict:
+    """The retired cross-check: the announced 14 September weekly caps over the windows per
+    week either side of the hand-dated cut. Regimes open only at the four-account detector's
+    measured changes now (ADR 0001 rule 22), and an announced cap is never paired with a
+    measured regime by date, so it publishes its nulls and says why."""
+    return {"before": None, "after": None, "kind": "cross_check", "derivation": "credits",
+            "status": ("retired 2026-10-23: it paired the announced 14 September weekly caps with "
+                       "the windows-per-week regimes either side of a hand-dated cut; regimes now "
+                       "open only at the four-account detector's measured changes (ADR 0001 rule 22)"),
+            "weekly_cap_baseline_credits": CREDITS_PER_WEEK["max20"]}
 
 
 def _pre_cut_regime(plan_block: dict) -> dict | None:
-    """The newest weekly-window regime of one plan that ended before the 14 September cut.
+    """The newest weekly-window regime of one plan that closed before the 14 September cut's
+    period: it started before the cut and either ended before it or was closed by a measured
+    change (another regime follows it).
 
     The shortfall is a pre-cut quantity: the reference table's windows per week describe a
     week whose cap carried the +50% promotion, and the 14 September change replaced it. A
-    regime still running across the cut is not a pre-cut reading, so the test is on the
-    regime's own end stamp rather than on its position in the list.
+    regime still running is not a pre-cut reading. Regimes open only at the four-account
+    detector's measured changes, so the regime closed by the first of them is the pre-cut one
+    even when its last window ended a few hours after the announced instant.
     """
+    regimes = plan_block.get("regimes") or []
     pre = []
-    for regime in plan_block.get("regimes") or []:
-        end = regime.get("end")
-        if not end:
+    for i, regime in enumerate(regimes):
+        start, end = regime.get("start"), regime.get("end")
+        if not start or not end or datetime.fromisoformat(start) >= credit_model.CUT_AT:
             continue
-        ended = datetime.fromisoformat(end)
-        if ended <= credit_model.CUT_AT:
-            pre.append((ended, regime))
+        if datetime.fromisoformat(end) <= credit_model.CUT_AT or i + 1 < len(regimes):
+            pre.append((datetime.fromisoformat(end), regime))
     return max(pre, key=lambda p: p[0])[1] if pre else None
 
 
@@ -1272,7 +1099,8 @@ def _shortfall(weekly: dict) -> dict:
     for plan, documented in DOCUMENTED_WINDOWS_PER_WEEK.items():
         block = weekly.get(plan) or {}
         regime = _pre_cut_regime(block)
-        measured = regime.get("windows") if regime else None
+        # The regime's own measured level, not the level restated through the changes after it.
+        measured = regime.get("own_windows", regime.get("windows")) if regime else None
         expected = ((CREDITS_PER_WEEK[plan] * PRE_CUT_MULTIPLIERS["weekly"])
                     / (CREDITS_PER_WINDOW[plan] * PRE_CUT_MULTIPLIERS["five_hour_window"]))
         ratio = round(measured / documented, 4) if measured is not None else None
@@ -1335,31 +1163,47 @@ def _reference_block(weekly: dict) -> dict:
     }
 
 
+def _iso_weeks(steps: dict[str, list[dict]]) -> list[datetime]:
+    """Every ISO week's start (Monday 00:00 UTC) over the steps' span: regime edges with no
+    date chosen by anyone."""
+    stamps = [datetime.fromisoformat(st["start"]) for rows in steps.values() for st in rows
+              if st.get("start")]
+    if not stamps:
+        return []
+    first = min(stamps).astimezone(timezone.utc)
+    monday = datetime(first.year, first.month, first.day, tzinfo=timezone.utc) - timedelta(days=first.weekday())
+    out, last = [], max(stamps)
+    while monday <= last:
+        out.append(monday)
+        monday += timedelta(days=7)
+    return out[1:]
+
+
 def _five_hour_meter(gs_passive: dict | None, masterrig_passive: dict | None, credits: dict,
                      model_rates: dict | None) -> dict:
     """The published `five_hour_meter` block: the headless factor fitted on the clean seven-day
-    steps, valued as the change tests value them, with regimes at the 14 September cut and
-    every family's first use (`credits.change_candidates`, which no valuation moves)."""
+    steps, valued as the change tests value them, with a level per ISO week (`_iso_weeks`) in
+    place of dated regimes, as the four-account detector fits it (ADR 0001 rules 12, 22)."""
     runs = credit_model.harness_runs()
     by_account = credit_model.stretches_by_account(gs_passive, masterrig_passive)
     steps = weekly_meter.clean_steps(weekly_meter.steps_by_account(gs_passive, masterrig_passive),
                                      runs, by_account)
-    bounds = [credit_model.CUT_AT] + [c["at"] for c in credit_model.change_candidates(by_account, credits)]
     return five_hour_weight.headless_factor(
-        steps, credit_model.comparison_value(credits, model_rates), dict(ACCOUNT_LABELS), bounds)
+        steps, credit_model.comparison_value(credits, model_rates), dict(ACCOUNT_LABELS),
+        _iso_weeks(steps))
 
 
 def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, probe_rows: list[dict],
                    effort_meta: dict | None, credits: dict, prices: dict, split: dict,
                    split_source: str, session_tokens: dict, weekly: dict,
-                   weekly_events: list, model_rates: dict | None = None,
-                   joint_fits: dict | None = None) -> tuple[dict, dict]:
-    """(the published `credits` block, the across-the-cut figures the event row carries).
+                   changes: list[dict], model_rates: dict | None = None) -> dict:
+    """The published `credits` block.
 
     Everything here is computed from the history files at publish time. Nothing is
     typed in: a figure that cannot be computed is published as null with a `status`
     saying why, which is what a missing history/masterrig-passive.json or a fixture
-    with no pure-Opus stretch produces.
+    with no pure-Opus stretch produces. Its regimes open at the four-account detector's
+    measured changes (`changes`) and nowhere else (ADR 0001 rule 22).
     """
     labels = dict(ACCOUNT_LABELS)
     # history/harness-runs.jsonl is the single record of the tracker's own runs: the
@@ -1372,75 +1216,18 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
     # Two selections, for two different questions. Both gate on capture_status, never
     # on status: 42 stretches read status "accepted" with capture_status "unaccounted",
     # and letting those price the window is the error PR #64's gate caught. The
-    # window's level must be a reading of this host's own work, so it exempts nobody --
-    # which is what leaves the phantom-inflated pure-Opus cluster (1,917 to 24,546
-    # credits per 1% against 175,934 to 208,197 on the account with a usable capture
-    # column) out of a median that claims to be a measurement. The before-and-after
-    # comparison and Fable's rate use the rate fits' own selection (capture test on every
-    # account, masterrig from 6 September, no stretch spanning the cut) and the pooled fit's
-    # rates, so the comparison is measured on the stretches its prices were measured on
-    # (docs/findings-2026-09-23-pooled-rates.md).
-    # The window's selection reads each account over the span its seven-day steps are read
-    # over (masterrig from MASTERRIG_FROM), since a per-week row's windows per week is its
-    # week over its window (ADR 0001 rule 18).
+    # window's level must be a reading of this host's own work, so it exempts nobody.
+    # Fable's rate uses the rate fits' own selection and the pooled fit's rates, so it is
+    # measured on the stretches its prices were measured on
+    # (docs/findings-2026-09-23-pooled-rates.md). The window's selection reads each account
+    # over the span its seven-day steps are read over (ADR 0001 rule 18).
     clean = credit_model.window_stretches(by_account, runs)
     priceable = credit_model.rate_fit_stretches(by_account, runs)
-    # The known-date test of every change candidate (each family's first-seen stretch),
-    # beside the unknown-date detector. Stretches are valued at the pooled fit's point
-    # estimates (credit_model.comparison_value), the same valuation the joint fit above
-    # used, so a family's rate crossing the publish limit moves no change figure. It is
-    # read before the window too: a change it has measured after the cut opens a new
-    # window regime, and the current window is the newest one (credits.window_regimes).
-    announced = credit_model.announced_change(
-        by_account, runs, credits,
-        credit_model.comparison_value(credits, model_rates), labels,
-        joint_fits=joint_fits)
-    # The same candidates measured on the two meters, with no model rate in the figure: the
-    # windows per week either side, and the scope decided from data (the credits test on work
-    # the candidate did not reprice), never from an announcement. This, not the credits test
-    # above, is the change the window regimes, `events` and `last_change` use; the credits
-    # test stays published as a cross-check.
     # The seven-day steps (tracker/weekly_meter.py): the weekly limit measured directly, by
-    # the same selection as the stretches. The change test values them as it values a
-    # stretch; the per-week figures below as the regimes do.
+    # the same selection as the stretches, valued per regime as the regimes are.
     steps = weekly_meter.clean_steps(weekly_meter.steps_by_account(gs_passive, masterrig_passive),
                                      runs, by_account)
-    compare = credit_model.comparison_value(credits, model_rates)
-    # The steps' five-hour points in the unit windows per week is in (ADR 0001 rule 16).
-    factor = weekly["max20"].get("headless_factor")
-    step_rows = {labels.get(name, name): weekly_meter.valued(rows, compare, factor)
-                 for name, rows in steps.items()}
-    meters = credit_model.five_hour_on_meters(announced, weekly["max20"], step_rows)
-    # The five-hour change across the cut, its after side ending at the first measured
-    # change after it (`credit_model.side_between`): a later change opens its own regime, so
-    # its stretches are not this one's. The pure-family cluster is mostly pre-cut, so the
-    # current window is the after cluster where there is one and the before cluster scaled
-    # by this change where there is not (credits.current_cluster_rule).
-    cut = credit_model.across_cut(priceable, credits, labels, model_rates=model_rates,
-                                  changes=[c["at"] for c in credit_model.known_date_changes(meters)])
-    # The 14 September weekly change tested on the direct measurements as every candidate
-    # is; published on the event (`five_hour_window_credits.direct_tests`).
-    after_cut = [datetime.fromisoformat(c["at"]) for c in announced["candidates"]
-                 if datetime.fromisoformat(c["at"]) > credit_model.CUT_AT]
-    if cut is not None:
-        # Its before side reads each account's whole clean history back to the account's
-        # last certified boundary (`credit_model.cut_before_start`, ADR 0001 rule 13).
-        raw_steps = weekly_meter.steps_by_account(gs_passive, masterrig_passive)
-        whole = weekly_meter.clean_steps(raw_steps, runs, by_account, whole_history=True)
-        whole_rows = {labels.get(name, name): weekly_meter.valued(rows, compare, factor)
-                      for name, rows in whole.items()}
-        cut["direct_tests"] = credit_model.cut_direct_tests(
-            by_account, runs, compare, labels, whole_rows,
-            weekly["max20"], min(after_cut, default=None))
-        # The same change with its two factors, windows per week and the window, read on the
-        # direct test's own steps, so the three agree by identity per account (ADR 0001 rules
-        # 15 and 20); the event's `tokens_per_week_change` is this route.
-        cut["ratio_route"] = credit_model.cut_ratio_route(
-            whole_rows, weekly["max20"], min(after_cut, default=None))
-    five_hour = credit_model.five_hour_window_change(cut)
-    five_hour_pct = five_hour["pct"] if five_hour else None
-    window = credit_model.window_credits(clean, credits, labels, five_hour_pct=five_hour_pct,
-                                         meters=meters)
+    window = credit_model.window_credits(clean, credits, labels, changes=changes)
     fable = credit_model.fable_interval(priceable, credits, window["credits_per_pct"], labels,
                                         model_rates=model_rates)
     windows_per_week = weekly["max20"]["current"]
@@ -1455,13 +1242,12 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         windows_per_week=windows_per_week,
         windows_per_week_interval=(weekly["max20"].get("current_estimate")
                                    or {}).get("rounding_interval"),
-        fam=window["pure_family"], five_hour_pct=five_hour_pct, meters=meters)
+        fam=window["pure_family"], changes=changes)
     # Every figure per regime, so no chart holds one window across a boundary.
     tokens.update(credit_model.regime_figures(
         window, tokens, weekly["max20"], priceable, labels,
-        credit_model.across_cut_value(credits, model_rates=model_rates), meters=meters,
-        credits=credits, steps=steps,
-        cut_weekly=((cut or {}).get("direct_tests") or {}).get("weekly_change")))
+        credit_model.across_cut_value(credits, model_rates=model_rates), changes=changes,
+        credits=credits, steps=steps))
     return {
         "as_of": credit_model.newest(window_as_of, fits_as_of),
         "as_of_source": {
@@ -1478,7 +1264,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         # and the page stated it as if it were this one
         # (docs/findings-2026-09-20-window-tokens.md).
         "window_tokens": tokens,
-        "window_credits_from_weekly": _window_credits_from_weekly(weekly, weekly_events),
+        "window_credits_from_weekly": _window_credits_from_weekly(),
         "per_model": _credits_per_model(window, credits, prices, model_rates, labels,
                                         window_as_of, fits_as_of),
         "sessions": _credits_sessions(window, credits, split, split_source, session_tokens,
@@ -1486,9 +1272,6 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
         "measured_rates": _measured_rates_block(model_rates, labels),
         "effort_cache_mix": _effort_cache_mix(effort_meta),
         "effort_credits": _effort_credits(effort_meta, credits, window, model_rates),
-        "five_hour_window_across_cut": cut,
-        "announced_change": announced,
-        "five_hour_on_meters": meters,
         "fable_interval": fable,
         "rates": {"per_family": {fam: (dict(row, interval=fable) if fam == "fable" else row)
                                  for fam, row in credits["per_family"].items()},
@@ -1511,7 +1294,7 @@ def _credits_block(gs_passive: dict | None, masterrig_passive: dict | None, prob
                                    "start": r.start.isoformat(), "end": r.end.isoformat(),
                                    "reason": r.reason} for r in runs],
         "derivation": "credits",
-    }, cut
+    }
 
 
 def _plan_for_week(week_ending: str) -> str | None:
@@ -1627,28 +1410,92 @@ def _interactive_windows(account_dicts: dict[str, list[dict]], gs_passive: dict 
             for label, pts in account_dicts.items()}
 
 
-def _account_block(points: list[tuple], now: datetime) -> dict:
-    """One account's own count, current, regimes and step, from its own points alone.
+def _span_of(t: datetime, changes: list[dict]) -> int:
+    """Which span between the detector's measured changes a window ending at `t` is in."""
+    return sum(1 for c in changes if t > c["at"])
 
-    The step is dated per account because the weekly cut lands on each account at
-    its own seven-day reset, and pooling the accounts into one series dates the
-    event at whichever of them stepped first. `percent` is signed (negative for a
-    cut), `before`/`after` are the pooled levels of the regimes the step separates.
+
+def _segment_regimes(points: list[tuple], changes: list[dict], chain: bool = True) -> list[dict]:
+    """The window points as one regime per span between the detector's measured changes.
+
+    Each regime has `detect.weighted_regimes`' shape -- {start, end, windows, seven_day_pct,
+    points, pieces, rounding_interval, quality[, raw_windows]} -- pooled over the points
+    whose window ends in the span, plus `opened_by`, the measured change the span starts at.
+    A span with no points has no regime. With `chain`, every regime but the newest is
+    restated so each step is the detector's ratio size at the changes between them (carried
+    where that size holds no change): windows per week is the ratio line (ADR 0001 rules 16
+    and 22). The regime's own pooled level stays as `own_windows`.
     """
-    estimate = _regime_current(points, now) if points else None
-    regimes = _regimes(points)
-    events = detect_weighted_changes(points)
-    step = None
-    if events:
-        e = events[-1]
-        after = next((i for i, r in enumerate(regimes)
-                      if r["start"][:10] == e.date.isoformat()), None)
-        step = {"onset": e.date.isoformat(),
-                "before": regimes[after - 1]["windows"] if after else None,
-                "after": regimes[after]["windows"] if after is not None else None,
-                "percent": -e.percent if e.direction == "decreased" else e.percent}
-    return {"n": len(points), "current": estimate["value"] if estimate else None,
-            "regimes": regimes, "step": step}
+    spans: dict[int, list[tuple]] = {}
+    for p in sorted(points, key=lambda p: p[0]):
+        spans.setdefault(_span_of(p[0], changes), []).append(p)
+    regimes = []
+    for k in sorted(spans):
+        span = spans[k]
+        level = pooled_windows(span)
+        if level is None:
+            continue
+        lo, hi = pooled_interval(span)
+        row = {"start": span[0][0].isoformat(), "end": span[-1][0].isoformat(),
+               "windows": round(level, 2), "seven_day_pct": round(sum(p[2] for p in span), 1),
+               "points": len(span), "pieces": sum(int(p[3]) if len(p) > 3 and p[3] else 1 for p in span),
+               "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
+               "quality": "bounded" if hi is not None else "insufficient_precision",
+               "opened_by": changes[k - 1]["at"].isoformat() if k else None, "_span": k,
+               "source": "passive_paired_deltas", "assumed": False}
+        if any(len(p) > 5 for p in span):
+            raw = sum(p[5] if len(p) > 5 and p[5] is not None else p[1] for p in span)
+            row["raw_windows"] = round(raw / sum(p[2] for p in span), 2)
+        regimes.append(row)
+    if chain:
+        for i in range(len(regimes) - 2, -1, -1):
+            cur, nxt = regimes[i], regimes[i + 1]
+            factor = 1.0
+            for k in range(cur["_span"] + 1, nxt["_span"] + 1):
+                size = changes[k - 1].get("windows_per_week") or {}
+                if size.get("drawn"):
+                    factor *= 1 + size["change_pct"] / 100
+            value = nxt["windows"] / factor
+            scale = value / cur["windows"] if cur["windows"] else 1.0
+            cur["own_windows"] = cur["windows"]
+            cur["own_rounding_interval"] = cur["rounding_interval"]
+            cur["windows"] = round(value, 4)
+            cur["rounding_interval"] = [round(x * scale, 4) if x is not None else None
+                                        for x in cur["rounding_interval"]]
+            cur["chained"] = {"at": nxt["opened_by"], "step_pct": round((factor - 1) * 100, 4)}
+    for r in regimes:
+        r.pop("_span")
+    return regimes
+
+
+def _regime_current(points: list[tuple], now: datetime, changes: list[dict]) -> dict | None:
+    """max20's current estimate: the newest WEEKLY_CURRENT_DAYS of window points after the
+    detector's newest measured change, pooled.
+
+    Pooled (total d5 over total d7) and bounded by the change, so once a change is measured
+    `current` is the level after it instead of a blend of both. None when that fortnight holds
+    less than MIN_POOL_D7 of seven-day movement. `stale` is judged against the publish time,
+    not against the newest point, so a weekly log that has stopped arriving is visible as
+    such (audit finding 16). Each point publishes its own `reset_verified` flag under
+    `max20.by_window`, so a consumer can see how much of the pool carries one.
+    """
+    newest = len(changes)
+    regime = [p for p in sorted(points, key=lambda p: p[0]) if _span_of(p[0], changes) == newest]
+    if not regime:
+        return None
+    since = regime[-1][0] - timedelta(days=WEEKLY_CURRENT_DAYS)
+    recent = [p for p in regime if p[0] >= since]
+    d5, d7 = sum(p[1] for p in recent), sum(p[2] for p in recent)
+    if d7 < MIN_POOL_D7:
+        return None
+    lo, hi = pooled_interval(recent)
+    last = recent[-1][0]
+    stale = last < now - timedelta(days=WEEKLY_CURRENT_DAYS)
+    return {"value": round(d5 / d7, 2), "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
+            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1), "points": len(recent),
+            "pieces": sum(p[3] for p in recent), "from": recent[0][0].isoformat(), "as_of": last.isoformat(),
+            "stale": stale, "source": "passive_paired_deltas", "assumed": False,
+            "quality": "measured", "reasons": ["evidence_stale"] if stale else []}
 
 
 def _pooled_weeks(points: list[tuple], now: datetime) -> list[dict]:
@@ -1681,236 +1528,6 @@ def _pooled_weeks(points: list[tuple], now: datetime) -> list[dict]:
     return rows
 
 
-@dataclass(frozen=True)
-class _RuleDatedEvent(ChangeEvent):
-    """A pooled weekly event dated by ADR 0001 rule 17, and the figure its chart states.
-
-    The detector's own bounds -- the last pooled window at the old level and the
-    first at the new one -- are kept in `window_onset_*` and published under
-    `onset.from_windows`, so re-dating never loses them. `at` is the event instant
-    (`event_instant`) and `evidence` what dated it and each certifying account's own step.
-    `change_pct`, `interval_pct` and `chart` are the windows-per-week step the chart draws
-    at the event's marker (`_chart_figure`), None until it is read.
-    """
-    window_onset_earliest: date | None = None
-    window_onset_latest: date | None = None
-    account_dated: bool = False
-    at: datetime | None = None
-    evidence: dict | None = None
-    change_pct: float | None = None
-    interval_pct: list | None = None
-    chart: dict | None = None
-
-
-def event_instant(intervals: dict[str, tuple[datetime, datetime]],
-                  pooled: list[datetime]) -> tuple[datetime, str] | None:
-    """(the event instant, which branch of ADR 0001 rule 17 gave it), or None.
-
-    `intervals` are the certifying accounts' own step intervals (end of the last window at
-    the old level, end of the first at the new one), `pooled` the pooled detector's
-    boundaries (end of its last window at each old level). With no certifying account
-    there is no instant here: the caller keeps the pooled detector's own boundary.
-    """
-    if not intervals:
-        return None
-    starts = [e for e, _ in intervals.values()]
-    ends = [last for _, last in intervals.values()]
-    inside = sorted(b for b in pooled if max(starts) <= b <= min(ends))
-    if inside:
-        return inside[0], "pooled_boundary"
-    if len(intervals) == 1:
-        return starts[0], "single_account"
-    if max(starts) <= min(ends):
-        return max(starts), "earliest_common"
-    return min(starts), "earliest_account"
-
-
-def _signed_pct(e) -> int:
-    return -e.percent if e.direction == "decreased" else e.percent
-
-
-def _rule_dated(events: list, note: dict | None, pooled_regimes: list[dict]) -> list:
-    """The pooled weekly events with the newest one dated by ADR 0001 rule 17.
-
-    The certifying accounts are those with readings on both sides of their own certified
-    step (`note.per_account`, `credit_model.windows_per_week_ratio_note`); their step
-    intervals and the pooled detector's boundaries give the instant (`event_instant`).
-    With no certifying account it is the pooled detector's own boundary for the step. Only
-    the newest pooled event is re-dated: an older one predates the accounts being watched
-    together. Each certifying account's own step, the paired accounts' combined figure and
-    the pooled boundaries travel with it as `evidence`.
-    """
-    if not events:
-        return events
-    e = events[-1]
-    per_account = (note or {}).get("per_account") or {}
-    intervals = {label: (datetime.fromisoformat(a["before"]["end"]),
-                         datetime.fromisoformat(a["after"]["start"]))
-                 for label, a in per_account.items()}
-    boundaries = [datetime.fromisoformat(r["end"]) for r in pooled_regimes[:-1]]
-    found = event_instant(intervals, boundaries)
-    if found is None:
-        own = next((datetime.fromisoformat(prev["end"])
-                    for prev, cur in pairwise(pooled_regimes)
-                    if cur["start"][:10] == e.date.isoformat()), None)
-        if own is None:
-            return events
-        at, branch = own, "no_certifying_account"
-        earliest, latest = e.onset_earliest, e.onset_latest
-    else:
-        at, branch = found
-        earliest = min(lo for lo, _ in intervals.values()).date()
-        latest = max(hi for _, hi in intervals.values()).date()
-    evidence = {
-        "date_rule": branch, "rule": "ADR 0001 rule 17",
-        "certifying_accounts": sorted(intervals),
-        "single_account": len(intervals) == 1,
-        "per_account_steps": {label: {
-            "interval": [lo.isoformat(), hi.isoformat()],
-            "before": per_account[label]["before"]["ratio"],
-            "after": per_account[label]["after"]["ratio"],
-            "change_pct": per_account[label].get("change_pct"),
-            "change_interval_pct": per_account[label].get("change_interval_pct")}
-            for label, (lo, hi) in sorted(intervals.items())},
-        "excluded_accounts": (note or {}).get("excluded") or {},
-        "paired_accounts_change_pct": (-note["ratio_fell_pct"]
-                                       if (note or {}).get("ratio_fell_pct") is not None else None),
-        "paired_accounts_change_interval_pct": (
-            [-x for x in reversed(note["ratio_fell_interval_pct"])]
-            if (note or {}).get("ratio_fell_interval_pct") else None),
-        "pooled_detector": {"date": e.date.isoformat(),
-                            "boundaries": [b.isoformat() for b in boundaries]},
-    }
-    if len(intervals) == 1:
-        label = next(iter(intervals))
-        evidence["note"] = (f"Only {label} has readings on both sides of its own certified step, "
-                            f"so the date is {label}'s own step interval.")
-    dated = _RuleDatedEvent(
-        date=at.date(), direction=e.direction, percent=e.percent, model=e.model,
-        onset_earliest=earliest, onset_latest=latest, confirmed_at=e.confirmed_at,
-        evidence_points=e.evidence_points, denominator_pct=e.denominator_pct,
-        before_interval=e.before_interval, after_interval=e.after_interval,
-        window_onset_earliest=getattr(e, "window_onset_earliest", None) or e.onset_earliest,
-        window_onset_latest=getattr(e, "window_onset_latest", None) or e.onset_latest,
-        account_dated=at.date() != e.date, at=at, evidence=evidence)
-    return sorted([*events[:-1], dated], key=lambda ev: ev.date)
-
-
-#: How far an event may sit from the boundary its chart draws for it: the page matches a
-#: change to a step within three days (`NEAR_MS`, tracker/invariants.py NEAR_DAYS).
-MARKER_NEAR = timedelta(days=3)
-
-
-def _marker_index(rows: list[dict], split: str | None, at: datetime | None) -> int | None:
-    """The row the chart opens for an event at `at`: the one starting at `split`, near `at`."""
-    if not split or at is None or abs(datetime.fromisoformat(split) - at) > MARKER_NEAR:
-        return None
-    return next((i for i, r in enumerate(rows) if i and r.get("from")
-                 and datetime.fromisoformat(r["from"]) == datetime.fromisoformat(split)), None)
-
-
-def _page_round(x: float) -> int:
-    """Whole percent as the page rounds it (JavaScript `Math.round`), as tracker/invariants.py."""
-    return math.floor(x + 0.5)
-
-
-def _chart_figure(events: list, credits_block: dict | None) -> list:
-    """The rule-dated weekly event with the windows-per-week step its chart draws (rule 17).
-
-    The windows-per-week chart steps between the `per_week_regimes` rows either side of the
-    boundary it draws for the change (the row opened at `window_tokens.cut_at`), so that
-    step, with the after row's interval ends over the before row's opposite ends, is the
-    event's figure. The figure it carried -- the paired accounts' detector step -- stays in
-    `evidence`. Unchanged without both rows' windows per week.
-    """
-    wt = (credits_block or {}).get("window_tokens") or {}
-    rows = wt.get("per_week_regimes") or []
-    out = []
-    for e in events:
-        i = _marker_index(rows, wt.get("cut_at"), getattr(e, "at", None))
-        before, after = (rows[i - 1], rows[i]) if i else ({}, {})
-        b, a = before.get("windows_per_week"), after.get("windows_per_week")
-        if not b or a is None:
-            out.append(e)
-            continue
-        step = (a / b - 1) * 100
-        b_iv, a_iv = before.get("windows_per_week_interval"), after.get("windows_per_week_interval")
-        interval = ([round((a_iv[0] / b_iv[1] - 1) * 100, 1), round((a_iv[1] / b_iv[0] - 1) * 100, 1)]
-                    if a_iv and b_iv and b_iv[0] and b_iv[1] else None)
-        out.append(replace(
-            e, percent=abs(_page_round(step)), change_pct=round(step, 1), interval_pct=interval,
-            direction="decreased" if step < 0 else "increased",
-            evidence={**(e.evidence or {}), "detector_percent": _signed_pct(e)},
-            chart={"chart": "windows_per_week", "source": "per_week_regimes",
-                   "before": b, "after": a, "before_interval": b_iv, "after_interval": a_iv}))
-    return out
-
-
-def _align_markers(credits_block: dict | None, events: list) -> None:
-    """Draw the boundary for a rule-dated event at the event's own instant (rule 17).
-
-    `window_tokens.regimes`, `per_week_regimes` and every `account_regimes` row opened at
-    `cut_at` start at the event's `at` instead, the rows before them end there, and
-    `cut_at` is that instant; `split_at` keeps the instant the readings without an own
-    step were split at. No figure moves. Edits `credits_block` in place.
-    """
-    wt = (credits_block or {}).get("window_tokens") or {}
-    split = wt.get("cut_at")
-    for e in events:
-        at = getattr(e, "at", None)
-        if _marker_index(wt.get("per_week_regimes") or [], split, at) is None:
-            continue
-        old, new = datetime.fromisoformat(split), at.isoformat()
-        for rows in (wt.get("regimes") or [], wt.get("per_week_regimes") or [],
-                     *(wt.get("account_regimes") or {}).values()):
-            for r in rows:
-                for key in ("from", "until"):
-                    if r.get(key) and datetime.fromisoformat(r[key]) == old:
-                        r[key] = new
-                # A week bridged at the boundary (rule 20) names the boundary as drawn.
-                bridge = r.get("week_bridge") or {}
-                if bridge.get("at"):
-                    bridge["at"] = [new if datetime.fromisoformat(x) == old else x
-                                    for x in bridge["at"]]
-        wt["cut_at"], wt["split_at"] = new, split
-        return
-
-
-def _paired_step(pooled_regimes: list[dict], by_window: list[dict], by_account: dict,
-                 events: list) -> tuple[list[dict], list]:
-    """(the max20 regimes the chart draws, the weekly events), stated on the paired accounts.
-
-    The pooled regimes put every account's windows either side of one pooled split: an
-    account whose log starts after the cut (a3, a4) lands on the after side only and
-    moves that level through account mix, and an account that stepped before the split
-    (a1, on 11 September) puts post-step windows on the before side. So the last two
-    regimes are replaced by the levels of the accounts with readings on both sides of
-    their own step, each on its own sides (`credit_model.paired_levels`), and the newest
-    event states the paired accounts' combined change (`windows_per_week_ratio_note`)
-    as its percent, with the paired levels' rounding intervals. The pooled regimes stay
-    published as `regimes_pooled_all_accounts`, the record. `current` is not touched: a
-    current level belongs to every account measuring now, a3 and a4 included.
-
-    Unchanged when fewer than two regimes exist or no account pairs.
-    """
-    weekly = {"max20": {"regimes": pooled_regimes, "by_window": by_window, "by_account": by_account}}
-    note = credit_model.windows_per_week_ratio_note(weekly)
-    levels = credit_model.paired_levels(note, by_window)
-    if levels is None or note["ratio_fell_pct"] is None:
-        return pooled_regimes, events
-    before, after = levels
-    regimes = [*pooled_regimes[:-2], before, after]
-    if events:
-        fall = note["ratio_fell_pct"]
-        # `fall` is positive for a decrease; the page labels the signed step -fall.
-        e = replace(events[-1], percent=abs(_page_round(-fall)),
-                    direction="decreased" if fall > 0 else "increased",
-                    before_interval=tuple(before["rounding_interval"]),
-                    after_interval=tuple(after["rounding_interval"]))
-        events = [*events[:-1], e]
-    return regimes, events
-
-
 def _week_open_now(h: dict, now: datetime) -> dict:
     """A passive weekly row with `partial` recomputed for `now`, and its reset instant dropped.
 
@@ -1931,22 +1548,21 @@ def _week_open_now(h: dict, now: datetime) -> dict:
 
 def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime,
                   gs_passive: dict | None = None, masterrig_passive: dict | None = None,
-                  five_hour: tuple | None = None) -> tuple[dict, list]:
-    """(`weekly_windows`, weekly change events): per plan, each with its own evidence.
+                  five_hour: tuple | None = None, changes: list[dict] | None = None) -> dict:
+    """`weekly_windows`: per plan, each with its own evidence.
 
     `max20` is the live plan, and since 2026-09-20 it is measured over every
     watched Max 20x account rather than masterrig alone (_account_window_dicts):
-    `by_window` is the three accounts' per-window points, each tagged `a1`/`a2`/
-    `a3`, `weekly` pools them into calendar weeks for the chart, and `current`
-    (_regime_current), `regimes` and the weekly events are computed over the
-    pooled points. `by_account` carries each account's own count, current,
-    regimes and step, because the weekly cut reaches each account at its own
-    seven-day reset and the pooled series dates it at whichever stepped first;
-    the pooled event is dated by ADR 0001 rule 17 (_rule_dated). Every max20 window
-    point is in interactive-equivalent units (`_interactive_windows`, ADR 0001 rule 16): its
+    `by_window` is the accounts' per-window points, each tagged `a1`...`a4`, `weekly`
+    pools them into calendar weeks for the chart, and `current` (_regime_current) and
+    `regimes` (_segment_regimes) are computed over the pooled points, split only at the
+    four-account detector's measured changes (`changes`, ADR 0001 rule 22), each step the
+    ratio's size there. `by_account` carries each account's own count, current and
+    regimes, its own levels between the same changes. Every max20 window point is in
+    interactive-equivalent units (`_interactive_windows`, ADR 0001 rule 16): its
     five-hour movement over its headless inflation, the meter's own kept as `raw_*`, so
-    everything computed from them -- the detector, the regimes, the paired step and the
-    account blocks -- reads windows per week in the unit the window and the week are in.
+    everything computed from them reads windows per week in the unit the window and the
+    week are in.
 
     `max5` is measured history: its weekly rows and regimes are the account's own
     Jun-Aug Max 5x era, and its last regime begins before PLAN_CHANGE, a date
@@ -1982,8 +1598,13 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
     factor = five_hour[0] if five_hour else None
     if five_hour:
         account_dicts = _interactive_windows(account_dicts, gs_passive, masterrig_passive, *five_hour)
-    by_account = {label: _account_block(_point_tuples(account_dicts[label], label), now)
-                  for _name, label in ACCOUNT_LABELS}
+    changes = changes or []
+    by_account = {}
+    for _name, label in ACCOUNT_LABELS:
+        own = _point_tuples(account_dicts[label], label)
+        estimate = _regime_current(own, now, changes) if own else None
+        by_account[label] = {"n": len(own), "current": estimate["value"] if estimate else None,
+                             "regimes": _segment_regimes(own, changes, chain=False)}
     max20_points = sorted((p for label in by_account
                            for p in _point_tuples(account_dicts[label], label)),
                           key=lambda p: p[0])
@@ -1991,15 +1612,8 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                               for label, pts in account_dicts.items() for p in pts),
                              key=lambda p: p["window_ending"])
     max5_points = _max5_window_points(points)
-    events = detect_weighted_changes(max20_points)
-    estimate = _regime_current(max20_points, now)
-    pooled_regimes = _regimes(max20_points)
-    regimes, events = _paired_step(pooled_regimes, max20_by_window, by_account, events)
-    # Dated by ADR 0001 rule 17 from the certifying accounts' own steps and the pooled
-    # detector's boundaries; its figure is the chart's, read once the credits are built.
-    events = _rule_dated(events, credit_model.windows_per_week_ratio_note(
-        {"max20": {"regimes": pooled_regimes, "by_window": max20_by_window,
-                   "by_account": by_account}}), pooled_regimes)
+    estimate = _regime_current(max20_points, now, changes)
+    regimes = _segment_regimes(max20_points, changes)
 
     if estimate is not None:
         max20_availability = {"status": "measured", "reason": "evidence_stale" if estimate["stale"] else None}
@@ -2031,7 +1645,11 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
                   "history": [h for h in rows if _plan_for_week(h["week_ending"]) == "max20"],
                   "weekly": _pooled_weeks(max20_points, now), "by_window": max20_by_window,
                   "by_account": by_account,
-                  "regimes": regimes, "regimes_pooled_all_accounts": pooled_regimes,
+                  "regimes": regimes,
+                  "regimes_method": ("one regime per span between the four-account detector's "
+                                     "measured changes, pooled over every account's windows "
+                                     "ending in it; every step the ratio's size at the change "
+                                     "(own level in `own_windows`)"),
                   "unit": "interactive_equivalent" if five_hour else "meter",
                   "headless_factor": factor,
                   "unit_method": five_hour_weight.WINDOWS_METHOD if five_hour else None,
@@ -2044,7 +1662,7 @@ def _weekly_block(passive_weekly: dict | None, probe_weekly: dict, now: datetime
         "passive": passive_weekly,
         "probe": probe,
     }
-    return block, events
+    return block
 
 
 def _window_points(passive_points: list[dict], keep) -> list[tuple[datetime, float, float, int]]:
@@ -2052,21 +1670,6 @@ def _window_points(passive_points: list[dict], keep) -> list[tuple[datetime, flo
               for p in passive_points
               if _repaired(p) and p.get("reset_verified") is True and keep(datetime.fromisoformat(p["window_ending"]))]
     return sorted(points, key=lambda p: p[0])
-
-
-def _regime_with_evidence(idx: int, regime_values: dict) -> int:
-    """The regime index to hold a day at: `idx` itself when readings landed in it,
-    else the newest earlier regime with readings, else the oldest one there is.
-
-    A day can index a regime with no readings when the publish time precedes
-    the newest reading's day, or when held days before the first reading fall
-    in a bucket the detector opened on that same day. Holding at the nearest
-    evidenced regime keeps the history a step function of measured levels.
-    """
-    if idx in regime_values:
-        return idx
-    earlier = [k for k in regime_values if k < idx]
-    return max(earlier) if earlier else min(regime_values)
 
 
 def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, float, float, int]]:
@@ -2078,39 +1681,6 @@ def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, floa
     _plan_for_week applies to weeks.
     """
     return _window_points(passive_points, lambda ending: ending <= PLAN_CHANGE_AT)
-
-
-def _regime_current(points: list[tuple], now: datetime) -> dict | None:
-    """max20's current estimate: the current regime's newest WEEKLY_CURRENT_DAYS of window points, pooled.
-
-    Pooled (total d5 over total d7) and bounded by the regime, so once a change is
-    certified `current` is the post-change level instead of a blend of both.
-    None when that fortnight holds less than MIN_POOL_D7 of seven-day movement.
-    `stale` is judged against the publish time, not against the newest point, so
-    a weekly log that has stopped arriving is visible as such (audit finding 16).
-
-    Since the series became three accounts wide the pool can hold points whose
-    meter log did not name the window's reset (_account_window_dicts): masterrig's
-    names every one, the gs accounts' name only the newest few. `quality` stays
-    "measured" and each point publishes its own `reset_verified` flag under
-    `max20.by_window`, so a consumer can see how much of the pool carries one.
-    """
-    regime = current_regime_points(points)
-    if not regime:
-        return None
-    since = regime[-1][0] - timedelta(days=WEEKLY_CURRENT_DAYS)
-    recent = [p for p in regime if p[0] >= since]
-    d5, d7 = sum(p[1] for p in recent), sum(p[2] for p in recent)
-    if d7 < MIN_POOL_D7:
-        return None
-    lo, hi = pooled_interval(recent)
-    newest = recent[-1][0]
-    stale = newest < now - timedelta(days=WEEKLY_CURRENT_DAYS)
-    return {"value": round(d5 / d7, 2), "rounding_interval": [round(x, 4) if x is not None else None for x in (lo, hi)],
-            "five_hour_pct": round(d5, 1), "seven_day_pct": round(d7, 1), "points": len(recent),
-            "pieces": sum(p[3] for p in recent), "from": recent[0][0].isoformat(), "as_of": newest.isoformat(),
-            "stale": stale, "source": "passive_paired_deltas", "assumed": False,
-            "quality": "measured", "reasons": ["evidence_stale"] if stale else []}
 
 
 def _utc(stamp) -> str | None:
@@ -2189,335 +1759,6 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
     return max(usable) if usable else None
 
 
-def _latest_change_with_scope(window_events: list, weekly_events: list,
-                              across_cut: dict | None = None,
-                              weekly_windows: dict | None = None) -> dict | None:
-    """The most recent change across both event series, as its full event record.
-
-    Recency is judged on the evidence's own newest window, not on the published
-    date: a pooled weekly event dated from the accounts' own steps
-    (_rule_dated) carries a date earlier than the windows it was certified on,
-    and a staggered cut can certify more than one pooled split inside that span.
-    Without this the account-dated event lost `last_change` to an older split of
-    the same transition.
-
-    A provisional change is never taken (_provisional): the page states `last_change`
-    as "Anthropic last decreased Claude's limits by N%", and a window-scope event has
-    no uncertainty model behind it at all. With no certified change there is no
-    `last_change` -- the provisional ones stay in `events`, where their own
-    `evidence_quality` travels with them.
-    """
-    candidates = [(e, scope) for events, scope in ((window_events, "window"), (weekly_events, "weekly"))
-                  for e in events if not _provisional(scope)]
-    if not candidates:
-        return None
-    e, scope = max(candidates,
-                   key=lambda c: getattr(c[0], "window_onset_latest", None) or c[0].date)
-    return _event_record(e, scope, across_cut, weekly_windows)
-
-
-def _provisional(scope: str) -> bool:
-    """Which scopes publish as provisional: the smoothed dollar series, whose readings
-    carry no rounding bounds. The weekly series certifies against both levels' intervals
-    (tracker/detect.py), so its events are not provisional."""
-    return scope == "window"
-
-
-def _tokens_per_week_change(across_cut: dict | None) -> dict | None:
-    """How much the tokens a week holds moved across the cut, with its two factors.
-
-    The figure is the direct weekly change: credits per 1% of the seven-day meter, each
-    account against itself (`direct_tests.weekly_change`), read here off the ratio route
-    (`credit_model.cut_ratio_route`, carried on the across-the-cut block as `ratio_route`),
-    which reads windows per week and the window on the same seven-day steps, so on those
-    steps the week is the window times windows per week exactly, per account and combined
-    (ADR 0001 rule 20). The week is never built from the two: they are its factors.
-
-    Before rule 20 the route read windows per week on five-hour meter windows and the window on
-    stretches, and on 2026-10-08 it stated -14.6% against the direct -9.9%; before rule 15 it
-    multiplied a headless-weighted median into the raw meter ratio and stated -28%
-    (docs/findings-2026-10-08-14sep-reconcile.md, docs/findings-2026-10-06-14-sep-routes.md).
-
-    `windows_per_week_pct` and `five_hour_window_pct` are the combined factors at the weekly
-    figure's weights, so compounding them reproduces `signed_pct` up to their rounding. The
-    interval is the weekly figure's own (a whole-day bootstrap t interval, combined by inverse
-    variance).
-
-    None when no account has the route: the change is then not measured, and no number is
-    published in its place.
-    """
-    route = (across_cut or {}).get("ratio_route") or {}
-    per = route.get("per_account") or {}
-    combined = route.get("combined") or {}
-    accounts = sorted(per)
-    if not accounts or not combined.get("weekly"):
-        return None
-    weekly = combined["weekly"]
-    signed = weekly["change_pct"]
-    per_account = {
-        label: {"windows_per_week_pct": per[label]["windows_per_week"]["change_pct"],
-                "five_hour_window_pct": per[label]["window"]["change_pct"] + 0.0,
-                "signed_pct": per[label]["weekly"]["change_pct"],
-                "signed_interval_pct": per[label]["weekly"]["interval_pct"],
-                "weight": per[label].get("weight")}
-        for label in accounts}
-    return {
-        # The page's own rounding (JavaScript Math.round on the signed figure), as the chart
-        # labels and tracker/invariants.py check 7 read it: round(abs(x)) rounds halves to even.
-        "percent": abs(_page_round(signed)),
-        "direction": "decreased" if signed < 0 else "increased",
-        "signed_pct": signed,
-        "signed_interval_pct": weekly["interval_pct"],
-        "windows_per_week_pct": combined["windows_per_week"]["change_pct"],
-        "five_hour_window_pct": combined["window"]["change_pct"] + 0.0,  # -0.0 publishes as 0.0
-        "five_hour_unit": "interactive_equivalent",
-        "five_hour_accounts": accounts,
-        "accounts": accounts,
-        "per_account": per_account,
-        "method": ("each account against itself: its own change in credits per 1% of the "
-                   "seven-day meter, measured directly on its clean seven-day steps either "
-                   "side (the direct weekly test's readings), with its two factors read on the "
-                   "same steps: the window (credits per 1% of the five-hour meter, five-hour "
-                   "points over their headless inflation) and windows per week (five-hour over "
-                   "seven-day points, the quotient). Combined at the weekly figure's "
-                   "inverse-variance weights (`five_hour_window_credits.ratio_route`, ADR 0001 "
-                   "rule 20). signed_pct is the direct weekly change; (1 + windows_per_week_pct "
-                   "/ 100) x (1 + five_hour_window_pct / 100) - 1 reproduces it up to rounding. "
-                   "The interval is the weekly figure's own."),
-    }
-
-
-def _event_record(e, scope: str, across_cut: dict | None = None,
-                  weekly_windows: dict | None = None) -> dict:
-    """One published change: an observed change in this account's metric, not a dated policy change.
-
-    `onset` bounds when it happened (the last reading at the old level and the
-    first at the new one), `confirmation` says by when the evidence after it
-    alone was enough and how much there was. Weekly events are certified against
-    both levels' rounding intervals (tracker/detect.py); window events have no
-    uncertainty model behind them, so they are `provisional`, and bin/daily.sh
-    announces neither a provisional nor a legacy-uncertain change.
-
-    `meter_attribution` on a weekly event is `unresolved`: the measured quantity
-    is the ratio of five-hour to seven-day movement, and a fall in it can come
-    from a smaller weekly cap, a bigger five-hour window, or both. It is not
-    resolved here and the record never claims which meter moved (see
-    _weekly_label for the evidence that both did). `windows_per_week_ratio` carries
-    that measured fall plus example splits that reproduce it exactly
-    (`credit_model.windows_per_week_ratio_note`); none of the splits is a claim.
-
-    A weekly event also carries a fact the 2026-09-20 reconciliation established
-    beside it. `announced` is Anthropic's own figure for 14 September, quoted --
-    policy, not a measurement, and not derived from anything here.
-    `five_hour_window_credits` is this tracker's own reading of the five-hour window
-    in credits either side of that date, per account, kept as data; it carries
-    `resolved: false` for an algebraic reason stated in its own `unresolved` field
-    (`credit_model.ACROSS_CUT_UNRESOLVED`), not a cross-account comparison -- an
-    earlier version compared the accounts' post-change levels to each other and
-    that comparison was retracted (Codex review of commit 447b926, 2026-09-20: a
-    stable account-specific scale cancels out of a within-account ratio regardless
-    of the cross-account spread, so the spread was never evidence). `meter_attribution`
-    stays "unresolved" for the same reason. Neither fact is folded into `percent`,
-    which stays the measured quantity alone.
-
-    `tokens_per_week_change` compounds the two measured changes -- windows per week and
-    the five-hour window -- into what a week's tokens did across the cut, which is the
-    figure the page states in the headline; `percent` and the windows-per-week chart keep
-    the ratio's own fall. It is null where either measurement is missing.
-
-    A weekly event dated by ADR 0001 rule 17 (_rule_dated) carries its instant as `at`
-    and what dated it as `evidence`. Once its chart's step is read (_chart_figure) its
-    `percent` is that step's whole percent, `change_pct` and `interval_pct` the step and
-    its interval, `windows_per_week_step` the two per-week rows, and `metric`
-    `windows_per_week`, the quantity the chart draws.
-    """
-    provisional = _provisional(scope)
-    ratio_note = (credit_model.windows_per_week_ratio_note(weekly_windows)
-                  if weekly_windows and not provisional else None)
-    # A pooled weekly event dated from the accounts' own steps (_rule_dated)
-    # says so in `attribution`, and keeps the detector's own window bounds under
-    # `onset.from_windows` so the re-dating never loses them.
-    window_onset = (getattr(e, "window_onset_earliest", None),
-                    getattr(e, "window_onset_latest", None))
-    onset = {"earliest": e.onset_earliest.isoformat() if e.onset_earliest else None,
-             "latest": (e.onset_latest or e.date).isoformat()}
-    if any(window_onset):
-        onset["from_windows"] = {
-            "earliest": window_onset[0].isoformat() if window_onset[0] else None,
-            "latest": window_onset[1].isoformat() if window_onset[1] else None}
-    return {
-        "date": e.date.isoformat(), "direction": e.direction, "percent": e.percent, "model": e.model,
-        "scope": scope, "metric": "meter_budget_per_window" if scope == "window" else "weekly_to_five_hour_ratio",
-        "observation_scope": "account",
-        "attribution": ("observed_account_metric_change_dated_from_per_account_onsets"
-                        if getattr(e, "account_dated", False)
-                        else "observed_account_metric_change"),
-        "onset": onset,
-        "confirmation": {"at": e.confirmed_at.isoformat() if e.confirmed_at else None,
-                         "evidence_points": e.evidence_points, "seven_day_pct": e.denominator_pct},
-        "rounding_interval_before": _rounded(e.before_interval),
-        "rounding_interval_after": _rounded(e.after_interval),
-        "evidence_quality": "provisional" if provisional else "certified",
-        "provisional": provisional, "legacy_uncertain": False,
-        **({} if provisional else {"meter_attribution": "unresolved",
-                                   "announced": dict(credit_model.ANNOUNCEMENT),
-                                   "five_hour_window_credits": across_cut,
-                                   "windows_per_week_ratio": ratio_note,
-                                   # What the same two measurements say about the tokens a
-                                   # week holds, which is not what its windows did
-                                   # (_tokens_per_week_change).
-                                   "tokens_per_week_change": _tokens_per_week_change(
-                                       across_cut)}),
-        **_rule_17_fields(e),
-    }
-
-
-def _rule_17_fields(e) -> dict:
-    """The fields a rule-17 event adds to its record (_event_record), or none."""
-    at = getattr(e, "at", None)
-    if at is None:
-        return {}
-    fields = {"at": at.isoformat(), "evidence": e.evidence}
-    chart = getattr(e, "chart", None)
-    if chart:
-        fields.update(metric="windows_per_week", change_pct=e.change_pct,
-                      interval_pct=e.interval_pct, windows_per_week_step=chart)
-    return fields
-
-
-def _rounded(interval: tuple | None) -> list | None:
-    return [round(x, 4) if x is not None else None for x in interval] if interval else None
-
-
-def _weekly_label(e) -> str:
-    """One weekly event's row, stating the measured quantity and nothing else.
-
-    What is measured is how many five-hour windows a week's cap holds: five-hour
-    meter movement over seven-day meter movement. A fall in it does NOT say the
-    weekly cap fell by that much, and the row must not read as though it does --
-    a smaller five-hour window moves the same ratio, and any split between the two
-    reproduces the same fall. `meter_attribution` carries that as a field
-    (_event_record), and `windows_per_week_ratio` carries the exact fall plus three
-    of the splits that are consistent with it, none of them a claim. An earlier
-    version of this note tried to bound the split from one account's own before/after
-    change in five-hour credits; the Codex review of commit 447b926 (2026-09-20)
-    retracted that (see `credit_model.ACROSS_CUT_UNRESOLVED`), so this row no longer
-    implies a range.
-
-    The percent and the dates are the event's own measured ones, so the row can
-    never say something the rest of the record does not.
-    """
-    moved = "rose" if e.direction == "increased" else "fell"
-    earliest = (e.onset_earliest or e.date).isoformat()
-    latest = (e.onset_latest or e.date).isoformat()
-    span = earliest if earliest == latest else f"{earliest} to {latest}"
-    return f"Observed windows per week {moved} about {e.percent}% around {span}"
-
-
-def _build_events(window_events: list, weekly_events: list,
-                  across_cut: dict | None = None,
-                  weekly_windows: dict | None = None) -> list[dict]:
-    events = [{**_event_record(e, "window"), "kind": "change",
-               "label": f"Observed window budget changed {'+' if e.direction == 'increased' else '-'}{e.percent}%"}
-              for e in window_events]
-    events += [{**_event_record(e, "weekly", across_cut, weekly_windows), "kind": "change",
-               "label": _weekly_label(e)}
-               for e in weekly_events]
-    return sorted(events, key=lambda ev: ev["date"])
-
-
-#: An event's `scope` from the direct measurements its change was certified on.
-CERTIFIED_SCOPES = {("five_hour_limit",): "five_hour", ("weekly_limit",): "weekly",
-                    ("five_hour_limit", "weekly_limit"): "both"}
-HEADLINE_NAMES = {"five_hour_limit": "Five-hour limit", "weekly_limit": "Weekly limit",
-                  "windows_per_week": "Windows per week"}
-
-
-def _announced_event_record(cand: dict) -> dict:
-    """One meter-measured change candidate as a change event, in the event record's shape.
-
-    Only candidates `credit_model.five_hour_meter_events` passes reach here: those certified
-    on a direct measurement (ADR 0001 rule 9), the five-hour window change on the five-hour
-    meter or the weekly limit change on the seven-day meter. It enters at once and is
-    recomputed every publish; `state` (measuring, provisional, measured) says how settled it
-    is, and `at` is the candidate instant the notify step times its 24 and 48 hour rules
-    from. The date is that instant's day, so onset earliest and latest are that same day.
-    The headline (`change_pct`, `metric`) is the measurement the change was certified on,
-    the larger where both are; `scope` names which were (`certified_on`). Both direct
-    changes are published beside it, each with its interval, and windows per week, its
-    meter ratio and `readings` stay as secondary figures.
-    """
-    headline = cand["headline"]
-    pct, interval, metric = headline["change_pct"], headline["interval_pct"], headline["metric"]
-    window = cand.get("window_change") or {}
-    weekly = cand.get("weekly_change") or {}
-    certified = tuple(m for m in ("five_hour_limit", "weekly_limit")
-                      if m in (cand.get("certified_on") or []))
-    scope = CERTIFIED_SCOPES.get(certified, "undetermined")
-    excludes = bool(interval and not interval[0] <= 0 <= interval[1])
-    others = [f"{HEADLINE_NAMES[m].lower()} {t['change_pct']:+g}%"
-              for m, t in (("five_hour_limit", window), ("weekly_limit", weekly))
-              if m != metric and t.get("change_pct") is not None]
-    label = (f"{HEADLINE_NAMES.get(metric, 'Change')} {pct:+g}%"
-             + "".join(f", {o}" for o in others) + f" ({cand['state']})")
-    direction = "increased" if pct > 0 else "decreased"
-    day = cand["at"][:10]
-    combined = sorted(set(window.get("accounts_combined") or [])
-                      | set(weekly.get("accounts_combined") or []))
-    n_after = 0
-    for t in (window, weekly):
-        for k in t.get("accounts_combined") or []:
-            n_after += (t["per_account"][k].get("n_after") or 0)
-    return {
-        "date": day, "at": cand["at"], "state": cand["state"],
-        # Rounded as the page rounds the signed figure (_page_round), so check 7 agrees.
-        "direction": direction, "percent": abs(_page_round(pct)), "model": None,
-        "scope": scope, "metric": metric,
-        "method": cand.get("method") or "direct_on_both_meters",
-        "observation_scope": "account",
-        "attribution": f"certified_on_{scope}",
-        "certified_on": list(certified),
-        "known_date_test": True,
-        "family": cand["family"],
-        "onset": {"earliest": day, "latest": day},
-        "confirmation": {"at": None, "evidence_points": n_after, "seven_day_pct": None,
-                         "accounts": combined},
-        "change_pct": pct, "interval_pct": interval,
-        "five_hour_limit_change_pct": window.get("change_pct"),
-        "five_hour_limit_change_interval_pct": window.get("interval_pct"),
-        "weekly_limit_change_pct": weekly.get("change_pct"),
-        "weekly_limit_change_interval_pct": weekly.get("interval_pct"),
-        "interval_excludes_no_change": excludes,
-        "windows_per_week_change_pct": cand["windows_per_week_change_pct"],
-        "windows_per_week_change_interval_pct": cand["windows_per_week_change_interval_pct"],
-        "windows_per_week_ratio": cand["windows_per_week_ratio"],
-        "windows_per_week_ratio_interval": cand["windows_per_week_ratio_interval"],
-        "readings": cand["readings"],
-        "scope_test": cand.get("scope"),
-        "rounding_interval_before": None, "rounding_interval_after": None,
-        "evidence_quality": cand["state"], "provisional": False, "legacy_uncertain": False,
-        # Reference metadata only: nothing above is computed from it.
-        "announced": cand.get("announcement"),
-        "kind": "change",
-        "label": label,
-    }
-
-
-def _announced_events(block: dict | None) -> list[dict]:
-    return [_announced_event_record(c) for c in credit_model.five_hour_meter_events(block)]
-
-
-def _with_announced_last_change(last: dict | None, block: dict | None) -> dict | None:
-    """`last_change`, or a meter-measured five-hour change dated later than it."""
-    found = _announced_events(block)
-    if not found:
-        return last
-    newest = max(found, key=lambda ev: ev["date"])
-    if last is None or newest["date"] > last["date"]:
-        return {k: v for k, v in newest.items() if k not in ("kind", "label")}
-    return last
-
-
 def load_contributed(path: Path | None) -> dict | None:
     """data/contributed.json (tracker/contributed.py) as-is, or None when no path is
     given or the file is absent. An unreadable file is a warning and None: the
@@ -2553,18 +1794,34 @@ def load_gs_passive(path: Path | None) -> dict | None:
     return block
 
 
+def load_four_accounts(path: Path | None) -> dict | None:
+    """The newest daily run in the four-account detector's state (history/four-accounts.json),
+    or None when there is none: the publish then calls nothing a change. An unreadable file is
+    a warning, like --gs-passive."""
+    if path is None or not Path(path).exists():
+        return None
+    state = four_accounts.load_state(Path(path))
+    if state is None:
+        print(f"warning: four-account state not published, {path} unreadable or another schema",
+              file=sys.stderr)
+        return None
+    return state.get("latest")
+
+
 def rebuild_public_json(now: datetime, *, probes: Path, passive: Path, effort: Path, prices: Path,
                         gs_passive: Path | None = None, masterrig_passive: Path | None = None,
                         model_rates: Path | None = None, contributed: Path | None = None,
-                        masterrig_speed: Path | None = None) -> dict:
+                        masterrig_speed: Path | None = None,
+                        four_accounts_state: Path | None = None) -> dict:
     """The whole public JSON, read off the files on disk and built at `now`.
 
     The one place the publish's inputs are turned into the published document, so that
     `main` below and `tools/credits_report.py --publish-check` cannot drift apart: a check
     that rebuilds the file its own way proves its own arithmetic, not the publisher's.
-    Everything the document states is derived here, from the six files named in the
-    arguments plus the two the publisher imports from the checkout (data/reference_mix.json
-    and the measured rates); `now` is the only thing that does not come off disk, and the
+    Everything the document states is derived here, from the files named in the arguments
+    plus those the publisher reads from the checkout when an argument names none
+    (data/reference_mix.json, the measured rates, and the four-account detector's state,
+    FOUR_ACCOUNTS_STATE); `now` is the only thing that does not come off disk, and the
     check takes it from the published `generated_at` rather than from the clock.
 
     `main` runs `update_output_weight` against data/prices.json before calling this, so a
@@ -2593,7 +1850,9 @@ def rebuild_public_json(now: datetime, *, probes: Path, passive: Path, effort: P
         effort_meta=effort_raw.get("_meta"),
         credits=credit_model.load_credits(prices_raw, default=CREDITS),
         model_rates=None if model_rates is None else credit_model.load_model_rates(model_rates),
-        masterrig_speed=load_speed_history(masterrig_speed))
+        masterrig_speed=load_speed_history(masterrig_speed),
+        four_accounts_run=load_four_accounts(four_accounts_state if four_accounts_state is not None
+                                             else FOUR_ACCOUNTS_STATE))
     # Contributed figures sit beside the probe and passive ones; nothing above reads
     # them, so no existing field changes whether or not the block is present.
     block = load_contributed(contributed)
@@ -2631,6 +1890,9 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
                     dest="masterrig_speed",
                     help="history/masterrig-speed.json (bin/passive.sh), masterrig's daily model speed rows; "
                          "missing or unreadable is a warning, like --gs-passive")
+    ap.add_argument("--four-accounts", type=Path, default=FOUR_ACCOUNTS_STATE, dest="four_accounts",
+                    help="history/four-accounts.json, the four-account detector's state (tracker.four_accounts); "
+                         "its newest run's measured changes are the only changes published")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     now = now or datetime.now(timezone.utc)
@@ -2650,7 +1912,8 @@ def main(argv: list[str] | None = None, *, post=None, environ=None, now: datetim
         j = rebuild_public_json(now, probes=a.probes, passive=a.passive, effort=a.effort,
                                 prices=a.prices, gs_passive=a.gs_passive,
                                 masterrig_passive=a.masterrig_passive, contributed=a.contributed,
-                                masterrig_speed=a.masterrig_speed)
+                                masterrig_speed=a.masterrig_speed,
+                                four_accounts_state=a.four_accounts)
     except (OSError, ValueError, KeyError) as e:
         print(f"publish failed, previous output left in place: {e}", file=sys.stderr)
         return 1

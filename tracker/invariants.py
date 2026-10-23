@@ -2,61 +2,45 @@
 
     python3 -m tracker.invariants --json PATH   # exit 0 all pass, 1 any fail; one line each
 
-On 2026-10-04 the page published a five-hour window chained through two joint-fit factors
-(+48% at 22 September, +33% at 29 September) that the fits could not separate: a headline
-above every account's own level, scaled by steps the meters did not show. Nothing noticed.
-These checks would have: each reads only the public JSON and returns plain-sentence
-failures, an empty list when it holds.
+Each check reads only the public JSON and returns plain-sentence failures, an empty list when
+it holds. The changes the page states come from one place, the four-account detector
+(`four_accounts`, tracker/four_accounts.py, ADR 0001 rule 22); the blocking checks hold every
+other figure on the page to it.
 
 1. `headline_inside_accounts`: in the newest regime, with two or more accounts with a
    window, the headline family's figure lies between the lowest and highest account level,
    scaled the way the page scales them, within HEADLINE_TOLERANCE for rounding.
-2. `no_unproven_step`: a regime whose `source` scales by a change points at a change whose
-   direct window change is certified (ADR 0001 rule 9), or, on a record without one, whose
-   joint fit is separable and passes rules 8 and 9.
-3. `direct_means_direct`: a headline family measured directly publishes exactly the newest
+2. `direct_means_direct`: a headline family measured directly publishes exactly the newest
    regime's `measured_value`.
-4. `account_units`: each account's anchor-unit `window` times its regime's scale agrees with
+3. `account_units`: each account's anchor-unit `window` times its regime's scale agrees with
    its direct `measured_window` within ACCOUNT_UNITS_TOLERANCE.
-5. `steps_agree_with_meters`: a published five-hour step (certified on its window change)
-   whose windows-per-week ratio interval includes no change points the same way as the
-   ratio's own five-hour reading.
-6. `no_withheld_boundary`: no `per_week_regimes` row and no `account_regimes` row opens at a
-   five-hour change the tracker withholds (ADR 0001 rule 9); such a change opens no regime.
-7. `headline_matches_chart`: the headline percent (`last_change.percent`, which
-   `change_pct` rounds to) is the label the chart drawing its metric gives the same change.
-8. `windows_per_week_implied`: a windows-per-week step is (1 + weekly step) / (1 + window
-   step) - 1, and none is drawn by dividing by a window carried across a withheld change.
-9. `one_figure_per_change`: no two charts or published changes label one dated change with
-   different percents for the same metric.
-10. `weekly_routes_agree`: on each certified weekly event, the direct weekly change
-   (`five_hour_window_credits.direct_tests.weekly_change`) and the ratio route
-   (`tokens_per_week_change`, windows per week times the window) agree, per account and
-   combined, within their combined interval: their log difference is no more than the root
-   sum of squares of their two log half-widths. On identical readings the two are one
-   quantity (ADR 0001 rule 15); on 2026-10-06 the page put 14 September at -9.9% one way and
-   -28.0% the other. The tokens-per-week chart's step at the event's marker
-   (`per_week_regimes` `value`) must also be the direct combined change to its one decimal,
-   each account against itself (rule 20); on 2026-10-08 it drew -10.75%, a level ratio with
-   Max account 3 on the after side only, beside a direct -9.9%.
-11. `detected_windows_per_week_agree`: the windows-per-week levels the detector finds on the
-   meters (`weekly_windows.max20.regimes`, interactive-equivalent, ADR 0001 rule 16) agree
-   with the week over the window (`per_week_regimes` `windows_per_week`, rule 11): each
-   per-week row, read against the detected level it overlaps longest, within the root sum of
-   squares of their two log half-widths. Before rule 16 the detector read the raw meter
-   ratio, which moves with an account's headless share and not only with a limit.
-12. `fourteen_sep_weekly_frozen`: the 14 September weekly step is the figure ADR 0001 rule 21
-   froze it at (`FROZEN_14SEP_WEEKLY_PCT`), to its one decimal, wherever the page states it:
-   the direct weekly change, `tokens_per_week_change` and the tokens-per-week chart's step at
-   the event's marker. The live figure is recomputed on every publish, and its credit
-   valuation moves with each refit of the rates; this check says when that moves the size.
-   The size is reopened only for a counting error shown with evidence, and then the ADR and
-   this constant change together (tests/test_invariants.py reads the ADR for it).
+4. `headline_is_last_measured_change`: `last_change` is the detector's newest measured change
+   (its instant, its line's metric, its size and the page's whole percent of it), and there
+   is none when the detector has measured none.
+5. `every_change_drawn`: every change the detector publishes, of any state, is drawn on the
+   line that found it: the step line (`four_accounts.levels`) opens a segment at its instant
+   and steps there by its size. Every published event is one of the detector's measured
+   changes.
+6. `one_figure_per_change`: every figure the page states for one measured change on one line
+   is the same whole percent: the event and the headline, the step line, and each chart that
+   draws the line (the window chart for the five-hour line, the tokens-per-week chart for the
+   seven-day line, the windows-per-week chart and `weekly_windows` for the ratio, the dollar
+   history for the five-hour line). A line the detector does not draw at a change
+   (`four_accounts.drawn`) steps 0 there everywhere.
+7. `regimes_open_at_measured_changes`: every regime boundary on the page is a measured
+   change, and every measured change opens one: no chart steps anywhere the detector did not
+   measure a change.
+8. `accounts_named_by_label`: the detector's block and the change records name accounts only
+   by their page labels ("Max account N"): never a login name and never a bare `aN` key.
+9. `measured_changes_still_found`: every measured change was found again by today's run
+   (`found_today`). A measured change is never withdrawn; this is the alert that says one
+   stopped being found.
+10. `detector_ran`: the detector's newest run is no more than a day older than the publish.
 
-Checks 7-9 read the steps the page draws the way it draws them (`chart_steps`); on
-2026-10-05 the page said "+30%" in its headline and "+32%" on two charts for 22 September.
+Checks 4-8 read the page's own figures the way it draws them (`chart_steps`); on 2026-10-05
+the page said "+30%" in its headline and "+32%" on two charts for 22 September.
 
-A failure of checks 1-6 or 10-12 does NOT block the publish (exit 1). A failure of checks 7-9
+A failure of checks 1-3, 9 or 10 does NOT block the publish (exit 1). A failure of checks 4-8
 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change, and exits 9, a
 failed run. bin/daily.sh runs this after the publish, beside tracker.publish_gate, with the
@@ -66,43 +50,47 @@ all pass again. A withheld page is said on its own: when an incident open on che
 not block starts blocking, and every 24 hours while it blocks (from 2026-10-13 the page was
 withheld nine days inside an incident opened on 5 October by two advisory checks, and
 nothing was sent). The last line printed says what was sent. State lives in --state.
+
+Superseded 2026-10-23 (ADR 0001 rule 22): the checks on the known-date candidates
+(`no_unproven_step`, `steps_agree_with_meters`, `no_withheld_boundary`), the windows-per-week
+identity (`windows_per_week_implied`: the three lines are measured each on its own), the two
+weekly routes (`weekly_routes_agree`), the detected windows per week (`detected_windows_per_week_agree`)
+and the frozen 14 September weekly size (`fourteen_sep_weekly_frozen`, rule 21).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import re
 import sys
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
-from itertools import pairwise
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from tracker import credits as credit_model
+from tracker import four_accounts as detector
 from tracker import health, publish_gate, supervise
+from tracker.publish import ACCOUNT_LABELS
 
 #: Check 1's allowance either side of the account range, for the rounding of published figures.
 HEADLINE_TOLERANCE = 0.05
-#: How much of a withheld reason check 6 quotes.
-REASON_CHARS = 160
-#: Check 4's bound. One figure is relative to the pool and one is direct, so this is a
+#: Check 3's bound. One figure is relative to the pool and one is direct, so this is a
 #: sanity bound on units, not an equality.
 ACCOUNT_UNITS_TOLERANCE = 0.25
-#: The 14 September weekly step in percent, frozen by ADR 0001 rule 21 (check 12), and how far
-#: from its own instant (`credits.CUT_AT`) a weekly event may be marked and still be that change
-#: (rule 17 marks it at Max account 1's own step, 13 Sep 16:30Z).
-FROZEN_14SEP_WEEKLY_PCT = -9.9
-FROZEN_14SEP_REACH_DAYS = 2
+#: Check 5's allowance in percentage points between a change's one-decimal size and the step
+#: its step line draws, whose levels are published to four decimals.
+DRAWN_TOLERANCE_PP = 0.06
+#: Check 10: how many days the detector's newest run may trail the publish.
+DETECTOR_MAX_AGE_DAYS = 1
 STATE = health.GS_OPS / "claude-usage-invariants.json"
+#: The account names behind the labels, which no published change record may carry.
+ACCOUNT_NAMES = tuple(name for name, _ in ACCOUNT_LABELS)
+BARE_LABEL = re.compile(r"^a\d+$")
 
 
 def _wt(doc: dict) -> dict:
     return (doc.get("credits") or {}).get("window_tokens") or {}
-
-
-def _candidates(doc: dict) -> list[dict]:
-    return ((doc.get("credits") or {}).get("five_hour_on_meters") or {}).get("candidates") or []
 
 
 def _label(fam: str) -> str:
@@ -159,103 +147,6 @@ def headline_inside_accounts(doc: dict) -> list[str]:
              f"more than {HEADLINE_TOLERANCE:.0%} away.")]
 
 
-def _candidate_at(doc: dict, at: str) -> dict | None:
-    return next((c for c in _candidates(doc) if _same_instant(c.get("at"), at)), None)
-
-
-def _proof_gaps(cand: dict, credits: dict | None = None) -> list[str]:
-    """What a candidate lacks to scale a window: separable, rule 8, rule 9.
-
-    A candidate that records its direct window change (`window_change`) scales a window by
-    that change, so it is proved by that change's own certificate: plan-wide, its interval
-    excluding no change, certified, and the candidate applying. An older record is read as
-    before, against its joint fit:
-
-    Besides the candidate's own records, its published rate interval is read again: against
-    the span test (`credits.JOINT_SEPARABLE_SPAN`) and against the rate check on
-    data/prices.json (`credits.joint_rate_check`), so a record written by older code, or
-    none, cannot vouch for a fit today's rules refuse.
-    """
-    window = cand.get("window_change")
-    if window is not None:
-        # The step is the direct window change itself (`credits.known_date_changes`), so its
-        # proof is that measurement's own rule 9, and that the candidate applies.
-        gaps = []
-        pw = window.get("plan_wide") or {}
-        if pw.get("state") != "passed":
-            gaps.append("its window change failed the plan-wide test (ADR 0001 rule 9)")
-        iv = window.get("interval_pct")
-        if not iv or iv[0] <= 0 <= iv[1]:
-            gaps.append("its window change's interval includes no change (ADR 0001 rule 9)")
-        if not window.get("certified"):
-            gaps.append("its window change is not certified")
-        if "withheld_reason" not in cand:
-            gaps.append("it carries no record of whether it was withheld (ADR 0001 rule 9)")
-        elif not cand.get("applies"):
-            gaps.append("it is withheld")
-        return gaps
-    fit = cand.get("joint_fit") or {}
-    gaps = []
-    if not fit.get("separable"):
-        gaps.append("its joint fit is not separable")
-    r_iv = fit.get("rate_relative_interval")
-    if r_iv and r_iv[0] > 0:
-        span = r_iv[1] / r_iv[0]
-        if span > credit_model.JOINT_SEPARABLE_SPAN:
-            gaps.append(f"its rate interval [{r_iv[0]:g}, {r_iv[1]:g}] spans {span:.2f}x, wider than "
-                        f"the span test's {credit_model.JOINT_SEPARABLE_SPAN:g}x")
-        if cand.get("family") and fit.get("base_family"):
-            again = credit_model.joint_rate_check(
-                cand["family"], fit["base_family"],
-                credits if credits is not None else credit_model.load_credits(), r_iv)
-            if again["state"] == "failed":
-                gaps.append(f"read against data/prices.json, its rate fails the rate check "
-                            f"(ADR 0001 rule 8): {again['reason']}")
-    check = fit.get("rate_check")
-    if check is None:
-        gaps.append("it carries no record that it passed the rate check (ADR 0001 rule 8)")
-    elif check.get("state") == "failed":
-        gaps.append("it failed the rate check (ADR 0001 rule 8)")
-    pw = cand.get("plan_wide")
-    if pw is None:
-        gaps.append("it carries no record that it passed the plan-wide test (ADR 0001 rule 9)")
-    elif pw.get("state") != "passed":
-        gaps.append("it failed the plan-wide test (ADR 0001 rule 9)")
-    iv = cand.get("interval_pct")
-    if not iv or iv[0] <= 0 <= iv[1]:
-        gaps.append("its interval includes no change (ADR 0001 rule 9)")
-    if "withheld_reason" not in cand:
-        gaps.append("it carries no record of whether it was withheld (ADR 0001 rule 9)")
-    elif not cand.get("applies"):
-        gaps.append("it is withheld")
-    return gaps
-
-
-def no_unproven_step(doc: dict) -> list[str]:
-    """Check 2: every regime scaled by a change points at a change that passed rules 8 and 9.
-
-    The regime opened at the 14 September cut is scaled by the certified weekly change across
-    it, not by a five-hour candidate, so it is not one of these. A carried or directly
-    measured regime passes.
-    """
-    wt = _wt(doc)
-    cut = wt.get("cut_at") or credit_model.CUT_AT.isoformat()
-    out = []
-    for reg in wt["regimes"]:
-        if "scaled_by" not in (reg.get("source") or "") or _same_instant(reg.get("from"), cut):
-            continue
-        cand = _candidate_at(doc, reg.get("from"))
-        if cand is None:
-            out.append(f"The regime from {reg.get('from')} is scaled by a change "
-                       f"({reg['source']}), but no five-hour change candidate is at that instant.")
-            continue
-        gaps = _proof_gaps(cand)
-        if gaps:
-            out.append(f"The regime from {reg['from']} is scaled by the {cand.get('family')} change "
-                       f"({reg['source']}), but {'; '.join(gaps)}.")
-    return out
-
-
 def direct_means_direct(doc: dict) -> list[str]:
     """Check 3: a headline family measured directly is the newest regime's direct figure."""
     wt = _wt(doc)
@@ -296,95 +187,12 @@ def account_units(doc: dict) -> list[str]:
     return out
 
 
-def _publishes_five_hour_step(cand: dict) -> bool:
-    """Whether a candidate publishes a five-hour step: it applies, and where it records its
-    direct window change, that is what it was certified on. A candidate certified on the
-    weekly limit alone applies and steps the week, not the window."""
-    window = cand.get("window_change")
-    return bool(cand.get("applies")) and (window is None or bool(window.get("certified")))
+def _fa(doc: dict) -> dict:
+    return doc.get("four_accounts") or {}
 
 
-def steps_agree_with_meters(doc: dict) -> list[str]:
-    """Check 5: a published five-hour step agrees in sign with the meters where they are mute.
-
-    A published step is a candidate that `applies` with a five-hour change, certified on its
-    direct window change where it records one (`_publishes_five_hour_step`). Where its
-    windows-per-week ratio interval includes no change, the weekly cap is not shown to have
-    moved, so a larger window means fewer windows per week: the ratio's own five-hour reading
-    (1 / ratio - 1) must point the same way as the step.
-    """
-    out = []
-    for cand in _candidates(doc):
-        pct, ratio = cand.get("change_pct"), cand.get("windows_per_week_ratio")
-        iv = cand.get("windows_per_week_ratio_interval")
-        if not _publishes_five_hour_step(cand) or not pct or not ratio or not iv \
-                or not iv[0] <= 1 <= iv[1]:
-            continue
-        reading = 1 / ratio - 1
-        if reading * pct < 0:
-            out.append(f"The {cand.get('family')} step at {cand.get('at')} is {pct:+g}% on the "
-                       f"five-hour limit, but the windows-per-week ratio is {ratio:g} "
-                       f"[{iv[0]:g}, {iv[1]:g}], a five-hour reading of {reading * 100:+.1f}% the "
-                       f"other way, with an interval that includes no change.")
-    return out
-
-
-def _short(text: str, limit: int = REASON_CHARS) -> str:
-    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
-
-
-def no_withheld_boundary(doc: dict) -> list[str]:
-    """Check 6: no per-week or account row opens at a withheld five-hour change.
-
-    A withheld change (`applies` false) is no reading of the limit, so the regime it would
-    open is pooled with the one before; a row starting at its instant draws it as a step.
-    """
-    wt = _wt(doc)
-    out = []
-    for cand in _candidates(doc):
-        if cand.get("applies") or not cand.get("at"):
-            continue
-        blocks = []
-        if any(_same_instant(r.get("from"), cand["at"]) for r in wt.get("per_week_regimes") or []):
-            blocks.append("per_week_regimes")
-        labels = [label for label, rows in sorted((wt.get("account_regimes") or {}).items())
-                  if any(_same_instant(r.get("from"), cand["at"]) for r in rows)]
-        if labels:
-            blocks.append(f"account_regimes for {', '.join(labels)}")
-        if not blocks:
-            continue
-        day = datetime.fromisoformat(cand["at"])
-        out.append(f"{' and '.join(blocks)} open a "
-                   f"row at {day.day} {day:%B} ({cand['at']}), where the {cand.get('family')} "
-                   f"five-hour change is withheld: "
-                   f"{_short(cand.get('withheld_reason') or 'no reason recorded')}.")
-    return out
-
-
-# ---------------------------------------------------------------------------------------
-# Checks 7-9: every figure the page states for one change agrees. They read the steps the
-# page draws exactly as it draws them (website lib/claudeUsage.ts and
-# pages/ClaudeUsageTracker.tsx, `realSteps` on Max 20x's own levels): the window chart steps
-# at `window_tokens.regimes` values, the tokens-per-week chart at `per_week_regimes` values,
-# the windows-per-week chart at `per_week_regimes` windows per week (rows without one are not
-# drawn), and a step is marked by its whole-percent label, none where that rounds to 0%.
-# Every other plan draws Max 20x's levels scaled once per-week regimes are published, so its
-# steps are the same percents.
-
-#: The chart each published change metric is drawn on.
-#: Five-hour over seven-day movement (`weekly_to_five_hour_ratio`) is windows per week, so an
-#: event stating it is read on that chart too (ADR 0001 rule 17).
-CHART_OF_METRIC = {"weekly_limit": "tokens_per_week", "five_hour_limit": "window",
-                   "windows_per_week": "windows_per_week",
-                   "weekly_to_five_hour_ratio": "windows_per_week"}
-#: What each chart is called in a failure.
-CHART_NAMES = {"window": "window-size", "tokens_per_week": "tokens-per-week",
-               "windows_per_week": "windows-per-week"}
-#: How far apart a published change's date and the step that marks it may be: the page
-#: matches a change to a step within three days (`NEAR_MS`).
-NEAR_DAYS = 3
-#: Check 8's allowance, in percentage points, for the rounding of the published levels.
-DERIVED_TOLERANCE_PP = 0.5
+def _measured(doc: dict) -> list[dict]:
+    return [c for c in _fa(doc).get("changes") or [] if c.get("state") == "measured"]
 
 
 def _page_round(x: float) -> int:
@@ -393,38 +201,8 @@ def _page_round(x: float) -> int:
     return math.floor(x + 0.5)
 
 
-def _level_steps(rows: list[dict], key: str) -> list[dict]:
-    """Every step between adjacent drawn levels: `{"at", "pct"}`, oldest first."""
-    drawn = [r for r in rows if isinstance(r.get(key), (int, float)) and r[key] == r[key]]
-    return [{"at": cur.get("from"), "pct": (cur[key] - prev[key]) / prev[key] * 100}
-            for prev, cur in zip(drawn, drawn[1:])
-            if prev[key] and cur[key] != prev[key] and cur.get("from")]
-
-
-def chart_steps(doc: dict) -> dict[str, list[dict]]:
-    """The steps each of the three plan charts draws, by chart, as the page draws them.
-
-    Only files that publish two or more per-week regimes: the page draws its charts another
-    way without them, and these checks then have nothing to read.
-    """
-    wt = _wt(doc)
-    weeks = wt.get("per_week_regimes") or []
-    if len(weeks) < 2:
-        return {}
-    windows = wt.get("regimes") or []
-    return {"window": _level_steps(windows, "value") if len(windows) >= 2 else [],
-            "tokens_per_week": _level_steps(weeks, "value"),
-            "windows_per_week": _level_steps(weeks, "windows_per_week")}
-
-
-def _day(stamp: str) -> datetime:
-    return datetime.fromisoformat(stamp if len(stamp) > 10 else stamp + "T00:00:00+00:00")
-
-
-def _marked(steps: list[dict], date: str) -> dict | None:
-    """The drawn step nearest `date` within NEAR_DAYS, the one the page marks the change with."""
-    near = [s for s in steps if abs((_day(s["at"]) - _day(date)).total_seconds()) <= NEAR_DAYS * 86400]
-    return min(near, key=lambda s: abs((_day(s["at"]) - _day(date)).total_seconds())) if near else None
+def _same_instant(a: str | None, b: str | None) -> bool:
+    return bool(a and b) and datetime.fromisoformat(a) == datetime.fromisoformat(b)
 
 
 def _signed(change: dict) -> int | None:
@@ -434,333 +212,257 @@ def _signed(change: dict) -> int | None:
     return -_page_round(pct) if change.get("direction") == "decreased" else _page_round(pct)
 
 
-def _rounds_to(change_pct: float, said: int) -> bool:
-    """`said` is the page's whole percent of some figure that rounds to `change_pct` at 1 dp.
-
-    `change_pct` is published to one decimal and the headline is the page's label of the
-    unrounded step (the one its chart draws), so the two are rounded separately: a step of
-    -29.52 is change_pct -29.5 beside a -30% chart and headline, and a step of +29.47 is
-    change_pct 29.5 beside +29%. Comparing `_page_round(change_pct)` with the headline
-    failed both and withheld the page; publishing the percent from the 1-dp figure instead
-    would put -29% beside the chart's -30%. A headline outside that 0.1-wide span (-30%
-    beside -31.8) still fails."""
-    return _page_round(change_pct - 0.05) <= said <= _page_round(change_pct + 0.05)
+def _expected(change: dict, line: str) -> float:
+    """The percent every chart draws on `line` at `change`: its size where the detector draws
+    the line there (`four_accounts.drawn`), else 0."""
+    size = ((change.get("sizes") or {}).get(line) or {}).get("change_pct")
+    drawn = change.get("found_on") == line or bool(
+        ((change.get("sizes") or {}).get(line) or {}).get("excludes_no_change"))
+    return size if drawn and size is not None else 0.0
 
 
-def _label_text(pct: float) -> str:
-    return f"{_page_round(pct):+d}%"
+def _level_step(segments: list[dict], at: str) -> float | None:
+    """The step line's percent at the segment opening at `at`, or None without one."""
+    for prev, seg in zip(segments, segments[1:]):
+        if _same_instant(seg.get("from"), at) and prev.get("index"):
+            return (seg["index"] / prev["index"] - 1) * 100
+    return None
 
 
-def headline_matches_chart(doc: dict) -> list[str]:
-    """Check 7: the headline percent is the label its own chart gives the same change.
+def _row_step(rows: list[dict], at: str, key: str, frm: str = "from") -> float | None:
+    """A chart's percent step at the row opening at `at`, or None without one or a value."""
+    for prev, row in zip(rows, rows[1:]):
+        if _same_instant(row.get(frm), at) and row.get(key) and prev.get(key):
+            return (row[key] / prev[key] - 1) * 100
+    return None
 
-    The headline states `last_change.percent` (its `tokens_per_week_change` where a weekly
-    change publishes one); `change_pct` must round to it, and the chart that draws
-    `last_change.metric` must mark a step within NEAR_DAYS of its date with the same whole
-    percent.
-    """
-    c = doc.get("last_change") or {}
-    chart = CHART_OF_METRIC.get(c.get("metric") or "")
-    steps = chart_steps(doc)
-    if not c or not chart or not steps or not c.get("date"):
-        return []
-    tpw = c.get("tokens_per_week_change") if c.get("scope") == "weekly" else None
-    said = _signed(tpw or c)
-    if said is None:
-        return []
+
+def chart_steps(doc: dict, at: str) -> dict[str, float | None]:
+    """Each chart's step at one instant, as the page draws it: the window chart on
+    `window_tokens.regimes`, the tokens-per-week and windows-per-week charts on
+    `per_week_regimes`, the pooled windows per week on `weekly_windows.max20.regimes`."""
+    wt = _wt(doc)
+    weeks = wt.get("per_week_regimes") or []
+    return {"window": _row_step(wt.get("regimes") or [], at, "value"),
+            "tokens_per_week": _row_step(weeks, at, "value"),
+            "windows_per_week": _row_step(weeks, at, "windows_per_week"),
+            "weekly_windows": _row_step(((doc.get("weekly_windows") or {}).get("max20") or {})
+                                        .get("regimes") or [], at, "windows", "opened_by")}
+
+
+#: The line each chart draws, and what the page calls it.
+CHART_LINE = {"window": "five_hour", "tokens_per_week": "seven_day",
+              "windows_per_week": "ratio", "weekly_windows": "ratio"}
+CHART_NAMES = {"window": "window-size chart", "tokens_per_week": "tokens-per-week chart",
+               "windows_per_week": "windows-per-week chart",
+               "weekly_windows": "pooled windows per week (weekly_windows)"}
+
+
+def headline_is_last_measured_change(doc: dict) -> list[str]:
+    """Check 4: the headline is the detector's newest measured change, or there is none."""
+    measured = _measured(doc)
+    c = doc.get("last_change")
+    if not measured:
+        return ([f"The headline states a change on {c.get('date')} but the four-account detector "
+                 f"has measured none."] if c else [])
+    newest = max(measured, key=lambda m: datetime.fromisoformat(m["at"]))
+    if not c:
+        return [f"The detector measured a change at {newest['at']} but the page has no headline."]
     out = []
-    # Signed against signed: `said` carries the direction. Until 2026-10-22 this compared
-    # the signed page-rounded change_pct with abs(said), so every decrease failed whatever
-    # its chart drew ("The headline says -45% but last_change.change_pct is -44.8").
-    if isinstance(c.get("change_pct"), (int, float)) and not tpw and not _rounds_to(c["change_pct"], said):
-        out.append(f"The headline says {said:+d}% but last_change.change_pct is {c['change_pct']:g}.")
-    step = _marked(steps[chart], c["date"])
-    if step is None or _page_round(step["pct"]) == 0:
-        out.append(f"The headline says {said:+d}% on {c['date']} ({c['metric']}), but the "
-                   f"{CHART_NAMES[chart]} chart draws no step there.")
-    elif _page_round(step["pct"]) != said:
-        out.append(f"The headline says {said:+d}% on {c['date']} ({c['metric']}), but the "
-                   f"{CHART_NAMES[chart]} chart labels the same change {_label_text(step['pct'])} "
-                   f"(its step at {step['at']} is {step['pct']:+.1f}%).")
+    metric = detector.LINE_METRIC[newest["found_on"]]
+    if not _same_instant(c.get("at"), newest["at"]):
+        out.append(f"The headline is dated {c.get('at')} but the detector's newest measured change "
+                   f"is at {newest['at']}.")
+    if c.get("metric") != metric:
+        out.append(f"The headline states {c.get('metric')} but the change was found on the "
+                   f"{newest['found_on']} line ({metric}).")
+    if c.get("change_pct") != newest.get("change_pct"):
+        out.append(f"The headline says {c.get('change_pct')}% but the detector measured "
+                   f"{newest.get('change_pct')}%.")
+    said = _signed(c)
+    if newest.get("change_pct") is not None and said != _page_round(newest["change_pct"]):
+        out.append(f"The headline's whole percent is {said:+d}% but the detector's "
+                   f"{newest['change_pct']:+g}% reads {_page_round(newest['change_pct']):+d}%.")
+    if c.get("state") != "measured":
+        out.append(f"The headline's state is {c.get('state')}, not measured.")
     return out
 
 
-def _withheld_window_at(doc: dict, at: str, window_steps: list[dict]) -> dict | None:
-    """The candidate at `at` whose measured window change is withheld while the window does
-    not step there, or None: a window carried across it, not known to be unchanged. A record
-    without `window_change` (a joint-fit candidate) is withheld when it does not apply."""
-    cand = _candidate_at(doc, at)
-    if cand is None or not cand.get("measurable", True):
-        return None
-    window = cand.get("window_change")
-    if (window.get("certified") if window is not None else cand.get("applies")):
-        return None
-    if any(_same_instant(w["at"], at) and _page_round(w["pct"]) != 0 for w in window_steps):
-        return None
-    return cand
-
-
-def windows_per_week_implied(doc: dict) -> list[str]:
-    """Check 8: a windows-per-week step is the one the weekly and window steps imply.
-
-    Windows per week is the week over the window (ADR 0001 rule 11), so a step in it at an
-    instant must equal (1 + weekly step) / (1 + window step) - 1 there, each 0 where its
-    chart does not step, within DERIVED_TOLERANCE_PP. And where the five-hour change at that
-    instant was measured and withheld, the window is carried, not known to be unchanged:
-    dividing by it must not create a windows-per-week step, on the plan line or on any
-    account's line (`account_regimes`).
-    """
-    steps = chart_steps(doc)
-    if not steps:
-        return []
+def every_change_drawn(doc: dict) -> list[str]:
+    """Check 5: every detector change is drawn on its line, and every event is one of them."""
+    fa = _fa(doc)
+    levels = fa.get("levels") or {}
     out = []
-    for s in steps["windows_per_week"]:
-        if _page_round(s["pct"]) == 0:
+    for c in fa.get("changes") or []:
+        step = _level_step(levels.get(c["found_on"]) or [], c["at"])
+        if step is None:
+            out.append(f"The {c['state']} change at {c['at']} ({c['found_on']}) opens no segment "
+                       f"on its line's step line.")
+        elif c.get("change_pct") is not None and abs(step - c["change_pct"]) > DRAWN_TOLERANCE_PP:
+            out.append(f"The {c['state']} change at {c['at']} is {c['change_pct']:+g}% on the "
+                       f"{c['found_on']} line, but its step line steps {step:+.2f}% there.")
+    measured = {(m["at"], m["found_on"]) for m in _measured(doc)}
+    for e in doc.get("events") or []:
+        if e.get("kind") != "change":
             continue
-        week = next((w["pct"] for w in steps["tokens_per_week"] if _same_instant(w["at"], s["at"])), 0.0)
-        window = next((w["pct"] for w in steps["window"] if _same_instant(w["at"], s["at"])), 0.0)
-        implied = ((1 + week / 100) / (1 + window / 100) - 1) * 100
-        if abs(s["pct"] - implied) > DERIVED_TOLERANCE_PP:
-            out.append(f"The windows-per-week chart steps {s['pct']:+.1f}% at {s['at']}, but the "
-                       f"weekly step there ({week:+.1f}%) over the window step ({window:+.1f}%) "
-                       f"implies {implied:+.1f}%.")
-        cand = _withheld_window_at(doc, s["at"], steps["window"])
-        if cand is not None:
-            out.append(f"The windows-per-week chart steps {s['pct']:+.1f}% at {s['at']}, where the "
-                       f"{cand.get('family')} five-hour window change is withheld: the step is the "
-                       f"weekly change divided by a carried window, not a measured change.")
-    for label, rows in sorted((_wt(doc).get("account_regimes") or {}).items()):
-        for s in _level_steps(rows, "windows_per_week"):
-            cand = _withheld_window_at(doc, s["at"], _level_steps(rows, "window"))
-            if _page_round(s["pct"]) != 0 and cand is not None:
-                out.append(f"{label}'s windows-per-week line steps {s['pct']:+.1f}% at {s['at']}, "
-                           f"where the {cand.get('family')} five-hour window change is withheld.")
+        if not any(_same_instant(e.get("at"), at) and e.get("found_on") == line
+                   for at, line in measured):
+            out.append(f"An event dated {e.get('at') or e.get('date')} ({e.get('metric')}) is not a "
+                       f"measured change of the four-account detector.")
     return out
 
 
 def one_figure_per_change(doc: dict) -> list[str]:
-    """Check 9: no two places label one dated change with different percents for one metric.
-
-    For each chart, its drawn step labels; for each published change (`events` of kind
-    `change` and `last_change`) whose metric a chart draws, its own whole percent. Every
-    figure for the same metric within NEAR_DAYS of one date must be the same whole percent.
-    The meter ratio (`weekly_to_five_hour_ratio`) is windows per week and is read on that
-    chart: on 2026-10-06 the 14 September event said -25% (one account's detector step)
-    beside a -10% step.
-
-    And each published change event sits at its marker (ADR 0001 rule 17): its chart draws
-    a step within NEAR_DAYS of it, and the event's instant (`at`, else its `date`) is that
-    step's own, so the event, the per-week and account boundaries and the chart markers
-    carry one date.
-    """
-    steps = chart_steps(doc)
-    if not steps:
-        return []
-    figures: dict[str, list[tuple[str, str, int]]] = {chart: [] for chart in steps}
-    for chart, rows in steps.items():
-        for s in rows:
-            if _page_round(s["pct"]) != 0:
-                figures[chart].append((s["at"], f"the {CHART_NAMES[chart]} chart", _page_round(s["pct"])))
+    """Check 6: one measured change, one line, one whole percent everywhere the page states it."""
+    fa = _fa(doc)
+    levels = fa.get("levels") or {}
     records = [("an event", e) for e in doc.get("events") or [] if e.get("kind") == "change"]
     if doc.get("last_change"):
         records.append(("the headline", doc["last_change"]))
     out = []
-    for where, rec in records:
-        chart = CHART_OF_METRIC.get(rec.get("metric"))
-        said = _signed(rec)
-        if chart and said is not None and rec.get("date"):
-            figures[chart].append((rec["date"], where, said))
-            if where == "an event":
-                out += _event_off_its_marker(rec, chart, steps[chart])
-    for chart, figs in figures.items():
-        seen: set[tuple] = set()
-        for i, (at, where, pct) in enumerate(figs):
-            for at2, where2, pct2 in figs[i + 1:]:
-                if pct == pct2 or abs((_day(at) - _day(at2)).total_seconds()) > NEAR_DAYS * 86400:
-                    continue
-                key = (at[:10], at2[:10], pct, pct2)
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append(f"{where.capitalize()} says {pct:+d}% on {at[:10]} and {where2} says "
-                           f"{pct2:+d}% on {at2[:10]}, both for the {CHART_NAMES[chart]} chart's "
-                           f"quantity.")
-    return out
-
-
-def _event_off_its_marker(event: dict, chart: str, steps: list[dict]) -> list[str]:
-    """Check 9's marker test: the event's chart steps at the event's own instant."""
-    step = _marked(steps, event["date"])
-    name = CHART_NAMES[chart]
-    if step is None or _page_round(step["pct"]) == 0:
-        return [(f"An event says {_signed(event):+d}% on {event['date']} ({event.get('metric')}), "
-                 f"but the {name} chart draws no step there.")]
-    same = (_same_instant(event["at"], step["at"]) if event.get("at")
-            else step["at"][:10] == event["date"])
-    if same:
-        return []
-    return [(f"An event is dated {event.get('at') or event['date']}, but its marker on the "
-             f"{name} chart is at {step['at']}: one change carries one date everywhere.")]
-
-
-def _log_reach(pct: float, interval: list | None) -> tuple[float, float] | None:
-    """(log ratio, log half-width) of a change in percent with its percent interval."""
-    if pct is None or not interval or None in interval or min(interval) <= -100:
-        return None
-    lo, hi = (math.log(1 + x / 100) for x in interval)
-    return math.log(1 + pct / 100), (hi - lo) / 2
-
-
-def weekly_routes_agree(doc: dict) -> list[str]:
-    """Check 10: a certified weekly event's two routes to the weekly change agree.
-
-    The direct route is credits per 1% of the seven-day meter either side
-    (`direct_tests.weekly_change`); the ratio route is windows per week times the window
-    (`tokens_per_week_change`). Per account (where the direct test combined it) and for the
-    combined figures, the gap in log terms must be within the root sum of squares of the two
-    log half-widths. An event without both routes is not read.
-    """
-    out = []
-    for e in doc.get("events") or []:
-        if e.get("scope") != "weekly" or e.get("evidence_quality") != "certified":
-            continue
-        direct = (((e.get("five_hour_window_credits") or {}).get("direct_tests") or {})
-                  .get("weekly_change") or {})
-        ratio = e.get("tokens_per_week_change") or {}
-        if not direct or not ratio:
-            continue
-        pairs = [("combined", (direct.get("change_pct"), direct.get("interval_pct")),
-                  (ratio.get("signed_pct"), ratio.get("signed_interval_pct")))]
-        for label, r in sorted((ratio.get("per_account") or {}).items()):
-            d = (direct.get("per_account") or {}).get(label) or {}
-            if d.get("combined"):
-                pairs.append((label, (d.get("change_pct"), d.get("interval_pct")),
-                              (r.get("signed_pct"), r.get("signed_interval_pct"))))
-        for who, (dp, di), (rp, ri) in pairs:
-            a, b = _log_reach(dp, di), _log_reach(rp, ri)
-            if a is None or b is None:
+    for c in _measured(doc):
+        at = c["at"]
+        for line in detector.LINES:
+            want = _page_round(_expected(c, line))
+            step = _level_step(levels.get(line) or [], at)
+            if step is not None and _page_round(step) != want:
+                out.append(f"At {at} the {line} step line steps {step:+.1f}% but the detector's "
+                           f"figure there is {want:+d}%.")
+        for chart, step in chart_steps(doc, at).items():
+            want = _page_round(_expected(c, CHART_LINE[chart]))
+            if step is not None and _page_round(step) != want:
+                out.append(f"At {at} the {CHART_NAMES[chart]} steps {step:+.1f}% but the detector's "
+                           f"{CHART_LINE[chart]} figure there is {want:+d}%.")
+        hist = doc.get("history") or {}
+        rows = next(iter(hist.values()), []) if hist else []
+        day = at[:10]
+        for prev, row in zip(rows, rows[1:]):
+            if row.get("date") == day and prev.get("meter_budget_per_window"):
+                step = (row["meter_budget_per_window"] / prev["meter_budget_per_window"] - 1) * 100
+                want = _page_round(_expected(c, "five_hour"))
+                if _page_round(step) != want:
+                    out.append(f"On {day} the dollar history steps {step:+.1f}% but the detector's "
+                               f"five_hour figure there is {want:+d}%.")
+        for where, rec in records:
+            if not _same_instant(rec.get("at"), at):
                 continue
-            gap, reach = abs(a[0] - b[0]), math.hypot(a[1], b[1])
-            if gap > reach:
-                out.append(f"The {e.get('date')} weekly change ({who}) is {dp:+.1f}% {list(di)} on the "
-                           f"seven-day meter directly but {rp:+.1f}% {list(ri)} as windows per week "
-                           f"times the window: {gap:.3f} apart in log terms, beyond their combined "
-                           f"interval of {reach:.3f}.")
-        drawn = _week_step_at(doc, e.get("at"))
-        if drawn is not None and direct.get("change_pct") is not None \
-                and abs(drawn - direct["change_pct"]) > 0.05 + 1e-9:
-            out.append(f"The tokens-per-week chart steps {drawn:+.2f}% at the {e.get('date')} weekly "
-                       f"change, but the same accounts' direct change there is "
-                       f"{direct['change_pct']:+.1f}% (ADR 0001 rule 20).")
+            size = c.get("change_pct")
+            if size is not None and (_signed(rec) != _page_round(size) or rec.get("change_pct") != size):
+                out.append(f"{where.capitalize()} says {_signed(rec):+d}% ({rec.get('change_pct')}) at "
+                           f"{at}, but the detector measured {size:+g}% on the {c['found_on']} line.")
+            for line, key in (("five_hour", "five_hour_limit_change_pct"),
+                              ("seven_day", "weekly_limit_change_pct"),
+                              ("ratio", "windows_per_week_change_pct")):
+                mine = ((c.get("sizes") or {}).get(line) or {}).get("change_pct")
+                if rec.get(key) != mine:
+                    out.append(f"{where.capitalize()} at {at} states {key} {rec.get(key)} but the "
+                               f"detector's {line} size is {mine}.")
     return out
 
 
-def _week_step_at(doc: dict, at: str | None) -> float | None:
-    """The tokens-per-week chart's step in percent at the `per_week_regimes` row opening at
-    `at`, or None without one or without both values."""
-    rows = _wt(doc).get("per_week_regimes") or []
-    for prev, row in pairwise(rows):
-        if _same_instant(row.get("from"), at) and row.get("value") and prev.get("value"):
-            return (row["value"] / prev["value"] - 1) * 100
-    return None
-
-
-def fourteen_sep_weekly_frozen(doc: dict) -> list[str]:
-    """Check 12: the 14 September weekly step is still the size ADR 0001 rule 21 froze.
-
-    Reads the weekly event marked within FROZEN_14SEP_REACH_DAYS of `credits.CUT_AT`: its direct
-    weekly change, its `tokens_per_week_change` and the tokens-per-week chart's step at its
-    marker must each round to FROZEN_14SEP_WEEKLY_PCT at one decimal. A page without that event
-    is not read.
-    """
+def regimes_open_at_measured_changes(doc: dict) -> list[str]:
+    """Check 7: every regime boundary is a measured change, and every measured change is one."""
+    instants = {datetime.fromisoformat(c["at"]) for c in _measured(doc)}
+    wt = _wt(doc)
+    credits = doc.get("credits") or {}
+    max20 = (doc.get("weekly_windows") or {}).get("max20") or {}
+    rows = [("window_tokens.regimes", r.get("from")) for r in (wt.get("regimes") or [])[1:]]
+    rows += [("per_week_regimes", r.get("from")) for r in (wt.get("per_week_regimes") or [])[1:]]
+    rows += [("window_credits.regimes", r.get("from"))
+             for r in ((credits.get("window_credits") or {}).get("regimes") or [])[1:]]
+    for label, account_rows in sorted((wt.get("account_regimes") or {}).items()):
+        rows += [(f"account_regimes for {label}", r.get("from")) for r in account_rows if r.get("from")]
+    rows += [("weekly_windows.max20.regimes", r.get("opened_by"))
+             for r in max20.get("regimes") or [] if r.get("opened_by")]
+    for label, block in sorted((max20.get("by_account") or {}).items()):
+        rows += [(f"weekly_windows.max20.by_account.{label}", r.get("opened_by"))
+                 for r in block.get("regimes") or [] if r.get("opened_by")]
     out = []
-    for e in doc.get("events") or []:
-        if e.get("scope") != "weekly" or not e.get("at"):
-            continue
-        if abs((datetime.fromisoformat(e["at"]) - credit_model.CUT_AT).total_seconds()) \
-                > FROZEN_14SEP_REACH_DAYS * 86400:
-            continue
-        direct = (((e.get("five_hour_window_credits") or {}).get("direct_tests") or {})
-                  .get("weekly_change") or {})
-        stated = [("the direct weekly change", direct.get("change_pct")),
-                  ("tokens_per_week_change", (e.get("tokens_per_week_change") or {}).get("signed_pct")),
-                  ("the tokens-per-week chart's step", _week_step_at(doc, e["at"]))]
-        for where, pct in stated:
-            if pct is not None and round(pct, 1) != FROZEN_14SEP_WEEKLY_PCT:
-                out.append(f"The 14 September weekly step reads {pct:+.2f}% in {where}, but ADR 0001 "
-                           f"rule 21 froze it at {FROZEN_14SEP_WEEKLY_PCT:+.1f}%. Only a counting "
-                           f"error shown with evidence reopens it.")
+    for where, frm in rows:
+        if not frm or datetime.fromisoformat(frm) not in instants:
+            out.append(f"{where} opens a row at {frm}, which is not a measured change of the "
+                       f"four-account detector.")
+    opened = {datetime.fromisoformat(r["from"]) for r in (wt.get("regimes") or [])[1:] if r.get("from")}
+    if wt.get("regimes"):
+        for at in sorted(instants - opened):
+            out.append(f"The measured change at {at.isoformat()} opens no regime on the window chart.")
     return out
 
 
-def _span(start: str | None, end: str | None, lo: datetime, hi: datetime) -> tuple[datetime, datetime]:
-    """A row's span with its open ends clamped to (lo, hi)."""
-    return (datetime.fromisoformat(start) if start else lo, datetime.fromisoformat(end) if end else hi)
-
-
-def detected_windows_per_week_agree(doc: dict) -> list[str]:
-    """Check 11: the detector's windows-per-week levels agree with the week over the window.
-
-    Both are windows per week in interactive-equivalent units (ADR 0001 rules 11 and 16): one
-    read on the meters (`weekly_windows.max20.regimes`), one derived from the weekly limit on
-    the seven-day meter and the window on the five-hour meter (`per_week_regimes`). Each
-    per-week row with an interval is read against the detected level whose span overlaps it
-    longest; their log gap must be within the root sum of squares of their log half-widths.
-    A level or a row without a bounded interval is not read.
-    """
-    detected = [r for r in ((doc.get("weekly_windows") or {}).get("max20") or {}).get("regimes") or []
-                if r.get("windows") and r.get("start") and r.get("end")]
-    weeks = [r for r in _wt(doc).get("per_week_regimes") or []
-             if r.get("windows_per_week") and r.get("windows_per_week_interval")]
-    if not detected or not weeks:
-        return []
-    lo = min(datetime.fromisoformat(r["start"]) for r in detected)
-    hi = max(datetime.fromisoformat(r["end"]) for r in detected)
+def _labels_in(value, path: str = "") -> list[str]:
+    """Every dict key and string in `value` that names an account other than by label."""
     out = []
-    for row in weeks:
-        a, b = _span(row.get("from"), row.get("until"), lo, hi)
-        overlap = [(min(b, e) - max(a, s), r) for r in detected
-                   for s, e in [_span(r["start"], r["end"], lo, hi)]]
-        span, level = max(overlap, key=lambda x: x[0])
-        if span.total_seconds() <= 0:
-            continue
-        d = _log_reach((level["windows"] - 1) * 100,
-                       [(x - 1) * 100 if x is not None else None
-                        for x in level.get("rounding_interval") or []])
-        w = _log_reach((row["windows_per_week"] - 1) * 100,
-                       [(x - 1) * 100 if x is not None else None
-                        for x in row["windows_per_week_interval"]])
-        if d is None or w is None:
-            continue
-        gap, reach = abs(d[0] - w[0]), math.hypot(d[1], w[1])
-        if gap > reach:
-            iv = level["rounding_interval"]
-            out.append(f"The detector's windows per week from {level['start'][:10]} is "
-                       f"{level['windows']:g} [{iv[0]:g}, {iv[1]:g}], but the week over the window "
-                       f"from {(row.get('from') or 'the start')[:10]} is "
-                       f"{row['windows_per_week']:g} {list(row['windows_per_week_interval'])}: "
-                       f"{gap:.3f} apart in log terms, beyond their combined interval of "
-                       f"{reach:.3f}.")
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k in ACCOUNT_NAMES or BARE_LABEL.match(k):
+                out.append(f"{path}.{k}" if path else k)
+            out += _labels_in(v, f"{path}.{k}" if path else k)
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            if isinstance(v, str) and (v in ACCOUNT_NAMES or BARE_LABEL.match(v)):
+                out.append(f"{path}[{i}]")
+            else:
+                out += _labels_in(v, f"{path}[{i}]")
     return out
+
+
+def accounts_named_by_label(doc: dict) -> list[str]:
+    """Check 8: the detector's block and the change records name accounts only by label."""
+    out = []
+    fa = _fa(doc)
+    for name in fa.get("accounts") or []:
+        if not re.fullmatch(r"Max account \d+", str(name)):
+            out.append(f"four_accounts.accounts names an account {name!r}, not by its page label.")
+    blocks = [("four_accounts", fa), ("last_change", doc.get("last_change") or {})]
+    blocks += [(f"events[{i}]", e) for i, e in enumerate(doc.get("events") or [])]
+    for where, block in blocks:
+        bad = _labels_in(block)
+        if bad:
+            out.append(f"{where} names an account other than by its page label at "
+                       f"{', '.join(bad[:5])}{' and more' if len(bad) > 5 else ''}.")
+    return out
+
+
+def measured_changes_still_found(doc: dict) -> list[str]:
+    """Check 9: today's run found every measured change again."""
+    return [f"The measured change at {c['at']} ({c['found_on']}, {c.get('change_pct')}%) was not found "
+            f"by the detector's run of {_fa(doc).get('day')}; it stays published (never withdrawn), "
+            f"and its figure is re-measured at its own instant."
+            for c in _measured(doc) if c.get("found_today") is False]
+
+
+def detector_ran(doc: dict) -> list[str]:
+    """Check 10: the detector's newest run is no more than DETECTOR_MAX_AGE_DAYS old."""
+    fa = _fa(doc)
+    if not fa or not doc.get("generated_at"):
+        return ["The page carries no four_accounts block: no limit change can be stated."] if not fa else []
+    published = datetime.fromisoformat(doc["generated_at"]).astimezone(timezone.utc).date()
+    day = datetime.fromisoformat(fa["day"]).date() if fa.get("day") else None
+    if day is None or published - day > timedelta(days=DETECTOR_MAX_AGE_DAYS):
+        return [f"The four-account detector's newest run is from {fa.get('day')}, more than "
+                f"{DETECTOR_MAX_AGE_DAYS} day before this publish ({published}): "
+                f"python3 -m tracker.four_accounts did not run."]
+    return []
 
 
 CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_inside_accounts", headline_inside_accounts),
-    ("no_unproven_step", no_unproven_step),
     ("direct_means_direct", direct_means_direct),
     ("account_units", account_units),
-    ("steps_agree_with_meters", steps_agree_with_meters),
-    ("no_withheld_boundary", no_withheld_boundary),
-    ("headline_matches_chart", headline_matches_chart),
-    ("windows_per_week_implied", windows_per_week_implied),
+    ("headline_is_last_measured_change", headline_is_last_measured_change),
+    ("every_change_drawn", every_change_drawn),
     ("one_figure_per_change", one_figure_per_change),
-    ("weekly_routes_agree", weekly_routes_agree),
-    ("detected_windows_per_week_agree", detected_windows_per_week_agree),
-    ("fourteen_sep_weekly_frozen", fourteen_sep_weekly_frozen),
+    ("regimes_open_at_measured_changes", regimes_open_at_measured_changes),
+    ("accounts_named_by_label", accounts_named_by_label),
+    ("measured_changes_still_found", measured_changes_still_found),
+    ("detector_ran", detector_ran),
 ]
 #: The checks whose failure stops the page being published (exit 2): figures that contradict
-#: each other on the page itself. The rest alert and publish anyway (exit 1).
-BLOCKING = frozenset({"headline_matches_chart", "windows_per_week_implied", "one_figure_per_change"})
+#: each other on the page itself, a step the detector did not measure, or an account named by
+#: anything but its label. The rest alert and publish anyway (exit 1).
+BLOCKING = frozenset({"headline_is_last_measured_change", "every_change_drawn",
+                      "one_figure_per_change", "regimes_open_at_measured_changes",
+                      "accounts_named_by_label"})
 
 
 def run_checks(doc: dict) -> dict[str, list[str]]:
