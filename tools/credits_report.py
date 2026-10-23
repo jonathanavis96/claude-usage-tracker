@@ -486,7 +486,8 @@ def window_tokens_block(a: argparse.Namespace) -> dict | None:
             datetime.now(timezone.utc), probes=a.probes, passive=a.passive,
             effort=a.effort_matrix, prices=a.prices, gs_passive=a.gs,
             masterrig_passive=a.masterrig,
-            model_rates=getattr(a, "model_rates", MODEL_RATES))["credits"]["window_tokens"]
+            model_rates=getattr(a, "model_rates", MODEL_RATES),
+            four_accounts_state=getattr(a, "four_accounts", FOUR_ACCOUNTS))["credits"]["window_tokens"]
     except (OSError, ValueError, KeyError):
         return None
 
@@ -557,6 +558,7 @@ CONTRIBUTED = Path("data/contributed.json")
 #: The measured per-model rates the publisher divides by, written by tools/model_rates.py.
 MODEL_RATES = Path("history/model-rates.json")
 MASTERRIG_SPEED = Path("history/masterrig-speed.json")
+FOUR_ACCOUNTS = Path("history/four-accounts.json")
 
 #: What each top-level block of the published document is, for the coverage summary the
 #: check prints. Every block is compared the same way -- leaf by leaf against a rebuild --
@@ -614,7 +616,8 @@ def recompute_published(published: dict, gs: Path, masterrig: Path, probes: Path
                         effort_matrix: Path, passive: Path, prices: Path,
                         model_rates: Path = MODEL_RATES,
                         contributed: Path = CONTRIBUTED,
-                        masterrig_speed: Path | None = None) -> dict:
+                        masterrig_speed: Path | None = None,
+                        four_accounts: Path = FOUR_ACCOUNTS) -> dict:
     """The whole published document rebuilt from the files, at the publish's own instant.
 
     Every block is read again from disk -- the stretches, the probe rows, the effort-matrix
@@ -632,21 +635,29 @@ def recompute_published(published: dict, gs: Path, masterrig: Path, probes: Path
     `contributed` is pass-through data and is read only when the published file carries the
     block: the daily publish passes `--contributed` and an offline one does not, and a
     rebuild must not invent a block the publish under check never wrote.
+
+    The limit changes come from the four-account detector's state named by `four_accounts`,
+    the file the publish read (--four-accounts), and never from the checkout's copy behind
+    the caller's back: until 2026-10-23 this passed none, so the rebuild read the checkout's
+    history/four-accounts.json whatever files the check was given, and the first state the
+    detector committed failed five publish checks over fixtures that state no change.
     """
     return publisher.rebuild_public_json(
         datetime.fromisoformat(published["generated_at"]),
         probes=probes, passive=passive, effort=effort_matrix, prices=prices,
         gs_passive=gs, masterrig_passive=masterrig, model_rates=model_rates,
         contributed=contributed if "contributed" in published else None,
-        masterrig_speed=masterrig_speed)
+        masterrig_speed=masterrig_speed, four_accounts_state=four_accounts)
 
 
 def recompute_credits_block(published: dict, gs: Path, masterrig: Path, probes: Path,
                             effort_matrix: Path, passive: Path, prices: Path,
-                            model_rates: Path = MODEL_RATES) -> dict:
+                            model_rates: Path = MODEL_RATES,
+                            four_accounts: Path = FOUR_ACCOUNTS) -> dict:
     """Just the `credits` block of the rebuild, for a caller that wants only that."""
     return recompute_published(published, gs, masterrig, probes, effort_matrix, passive,
-                               prices, model_rates)["credits"]
+                               prices, model_rates,
+                               four_accounts=four_accounts)["credits"]
 
 
 def _leaves(obj, path: str = "") -> dict[str, object]:
@@ -782,7 +793,8 @@ def publish_check(a: argparse.Namespace) -> int:
                                      a.effort_matrix, a.passive, a.prices,
                                      getattr(a, "model_rates", MODEL_RATES),
                                      getattr(a, "contributed", CONTRIBUTED),
-                                     getattr(a, "masterrig_speed", None))
+                                     getattr(a, "masterrig_speed", None),
+                                     getattr(a, "four_accounts", FOUR_ACCOUNTS))
     rows = compare_published(published, recomputed, a.tolerance)
     print(render_publish_check(rows, a.publish_check, a.tolerance), end="")
     return 1 if any(not r["ok"] for r in rows) else 0
@@ -829,6 +841,9 @@ def main(argv: list[str] | None = None) -> int:
                          f"(default {MODEL_RATES}), written by tools/model_rates.py --json")
     ap.add_argument("--masterrig-speed", type=Path, default=MASTERRIG_SPEED, dest="masterrig_speed",
                     help="history/masterrig-speed.json, for --publish-check's speed block")
+    ap.add_argument("--four-accounts", type=Path, default=FOUR_ACCOUNTS, dest="four_accounts",
+                    help="history/four-accounts.json, the four-account detector's state, for "
+                         "--publish-check's limit changes (the file the publish read)")
     ap.add_argument("--tolerance", type=float, default=PUBLISH_CHECK_TOLERANCE,
                     help="how far a recomputed figure may sit from the published one")
     a = ap.parse_args(argv)

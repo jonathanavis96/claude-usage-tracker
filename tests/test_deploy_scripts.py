@@ -136,6 +136,80 @@ class TestDeployScriptsSyntax(unittest.TestCase):
         self.assertIn("history/contributed.jsonl data/contributed.json", text[publish:commit])
 
 
+class TestDailyRestartsOnAChangedScript(unittest.TestCase):
+    """A pull that changes bin/daily.sh restarts the run on the new script.
+
+    On 2026-10-23 the 13:30Z run pulled PR #142, which added the four-account detector's
+    step to daily.sh, and bash went on reading the script it had open: the detector never
+    ran and the publish went out with no four_accounts block. These run daily.sh's own
+    restart_if_changed in a scratch clone whose pull brings a new version of the script.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        match = re.search(r"^restart_if_changed\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
+        assert match, "restart_if_changed not found in bin/daily.sh"
+        cls.func = match.group(0)
+        cls.text = text
+
+    def script(self, version: str, restart: bool) -> str:
+        return "\n".join([
+            "#!/usr/bin/env bash",
+            'SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"',
+            'cd "$(dirname "$0")" || exit 1',
+            self.func,
+            'SELF_BEFORE_PULL="$(cksum < "$SELF")"',
+            "git pull -q origin main",
+            'restart_if_changed "$SELF_BEFORE_PULL"' if restart else ': "$SELF_BEFORE_PULL"',
+            f'echo "ran {version} restarted=${{CUT_DAILY_RESTARTED:-}}"',
+            ""])
+
+    def run_pulling_a_new_version(self, restart: bool = True, env: dict | None = None):
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+               "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null"]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            origin, work, live = tmp_path / "origin.git", tmp_path / "work", tmp_path / "live"
+            subprocess.run([*git, "init", "-q", "--bare", str(origin)], check=True)
+            subprocess.run([*git, "clone", "-q", str(origin), str(work)], check=True)
+            (work / "daily.sh").write_text(self.script("old", restart))
+            subprocess.run([*git, "-C", str(work), "add", "daily.sh"], check=True)
+            subprocess.run([*git, "-C", str(work), "commit", "-qm", "old"], check=True)
+            subprocess.run([*git, "-C", str(work), "push", "-q", "origin", "HEAD:main"], check=True)
+            subprocess.run([*git, "clone", "-q", "-b", "main", str(origin), str(live)], check=True)
+            (work / "daily.sh").write_text(self.script("new", restart))
+            subprocess.run([*git, "-C", str(work), "commit", "-qam", "new"], check=True)
+            subprocess.run([*git, "-C", str(work), "push", "-q", "origin", "HEAD:main"], check=True)
+            run_env = {k: v for k, v in os.environ.items() if k != "CUT_DAILY_RESTARTED"}
+            return subprocess.run(["bash", str(live / "daily.sh")], capture_output=True, text=True,
+                                  env={**run_env, **(env or {})}, check=False, timeout=60)
+
+    def test_without_the_restart_the_run_is_the_old_script(self) -> None:
+        """The failure itself: the pull brings the new file, the run goes on as the old one."""
+        r = self.run_pulling_a_new_version(restart=False)
+        self.assertIn("ran old", r.stdout)
+
+    def test_a_pull_that_changes_the_script_restarts_on_the_new_one(self) -> None:
+        r = self.run_pulling_a_new_version()
+        self.assertEqual(r.stdout.strip(), "ran new restarted=1", r.stderr)
+        self.assertIn("the pull changed bin/daily.sh, restarting this run on the new one", r.stderr)
+
+    def test_it_restarts_at_most_once(self) -> None:
+        r = self.run_pulling_a_new_version(env={"CUT_DAILY_RESTARTED": "1"})
+        self.assertIn("ran old", r.stdout)
+        self.assertNotIn("restarting", r.stderr)
+
+    def test_daily_sh_checks_right_after_its_pull_and_before_any_step(self) -> None:
+        before = self.text.index('SELF_BEFORE_PULL="$(cksum < "$SELF")"')
+        pull = self.text.index('if ! git pull -q --rebase --autostash origin "$BRANCH"')
+        restart = self.text.index('restart_if_changed "$SELF_BEFORE_PULL"')
+        first_step = self.text.index("python3 -m tracker.")
+        self.assertLess(before, pull)
+        self.assertLess(pull, restart)
+        self.assertLess(restart, first_step)
+
+
 class TestDailyNotifyChange(unittest.TestCase):
     """Run bin/daily.sh's notify_change function in isolation, over a run of publishes."""
 

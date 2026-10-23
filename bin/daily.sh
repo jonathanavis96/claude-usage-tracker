@@ -24,7 +24,21 @@
 # page sat at 2026-10-13T10:31Z for nine days while every run read as a success.
 set -uo pipefail
 export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/.." || exit 1
+
+# The pull below can change this script while it runs. git replaces the file rather than
+# rewriting it, so bash goes on reading the old one, and the rest of the run is the script
+# as it was before the pull: on 2026-10-23 the 13:30Z run pulled PR #142 and never ran the
+# four-account detector the new script calls, so it published with no four_accounts block.
+# A run whose pull changed this file starts again on the new one, once (CUT_DAILY_RESTARTED).
+restart_if_changed() {
+  [ -n "${CUT_DAILY_RESTARTED:-}" ] && return 0
+  [ "$(cksum < "$SELF")" = "$1" ] && return 0
+  echo "daily.sh: the pull changed bin/daily.sh, restarting this run on the new one" >&2
+  export CUT_DAILY_RESTARTED=1
+  exec bash "$SELF"
+}
 
 # One tracker job at a time: a probe and the daily publisher share this checkout.
 # The publisher waits for a probe to finish rather than skipping the day.
@@ -53,6 +67,7 @@ done
 # against a PR that changed the same file). The rebase is aborted, which also restores an
 # autostash, so the checkout is back on main as it was; a person resolves the conflict.
 # Any other pull failure (offline) is advisory.
+SELF_BEFORE_PULL="$(cksum < "$SELF")"
 if ! git pull -q --rebase --autostash origin "$BRANCH"; then
   if [ -e "$GD/rebase-merge" ] || [ -e "$GD/rebase-apply" ]; then
     git rebase --abort >/dev/null 2>&1
@@ -62,6 +77,7 @@ if ! git pull -q --rebase --autostash origin "$BRANCH"; then
   fi
   echo "warning: git pull --rebase failed, continuing with local state" >&2
 fi
+restart_if_changed "$SELF_BEFORE_PULL"
 
 SITE="$HOME/all-done-sites-platform"
 
@@ -211,7 +227,9 @@ fi
 # midnight (the gs-passive rebuild above, masterrig's pushed history), under nice: it finds the
 # steps every Max account takes together, holds each one 7 daily runs before it is measured,
 # and writes history/four-accounts.json, which the publish below copies into the page and the
-# state commit carries. Every later tick that day is a no-op (exit 0). Advisory: a failed run
+# state commit carries. With no usable state (missing, unreadable, another schema) the run
+# rebuilds it from every day since the first possible one (--replay, about two minutes) and
+# logs that it did. Every later tick that day is a no-op (exit 0). Advisory: a failed run
 # publishes with the previous state, and the invariants check `detector_ran` alerts once the
 # newest run is more than a day old.
 nice python3 -m tracker.four_accounts --state history/four-accounts.json

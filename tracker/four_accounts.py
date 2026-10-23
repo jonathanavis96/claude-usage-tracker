@@ -1439,6 +1439,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"four_accounts: readings known at {until.isoformat()} written to {a.snapshot}")
         return 0
     state = load_state(a.state)
+    if state is None and not a.replay:
+        # The first run, or a state file that cannot be read: the hold is rebuilt from scratch
+        # (the same as --replay), never skipped. A run that wrote nothing here would publish
+        # with no four_accounts block, and so with no limit change at all.
+        why = "unreadable or another schema" if a.state.exists() else "missing"
+        print(f"four_accounts: state {a.state} {why}, rebuilding it from every daily run "
+              f"since the first possible day (--replay)", file=sys.stderr, flush=True)
     if a.replay or state is None:
         start = first_day(readings)
         if start is None:

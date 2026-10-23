@@ -17,12 +17,14 @@ Three kinds of test:
 from __future__ import annotations
 
 import functools
+import io
 import json
 import math
 import tempfile
 import time
 import unittest
 from unittest import mock
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -392,12 +394,67 @@ class StateTest(unittest.TestCase):
             path.write_text("not json")
             self.assertIsNone(F.load_state(path))
 
+    def test_a_state_with_no_newest_run_is_no_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "four-accounts.json"
+            path.write_text(json.dumps({"schema": F.SCHEMA, "runs": []}))
+            self.assertIsNone(F.load_state(path))
+            self.assertIsNone(F.load_state(Path(tmp)))  # a directory: unreadable, not a crash
+
     def test_the_readings_snapshot_round_trips(self):
         readings = {"a1": {"steps": [F.Reading(1.0, 2.0, 100.0, 5.0, 3.0, 1.0)], "stretches": []}}
         back = F.readings_from_json(json.loads(json.dumps(F.readings_to_json(readings))))
         self.assertEqual(back, readings)
         cut = F.known_at(readings, F.from_hours(1.5))
         self.assertEqual(cut, {})
+
+
+class FirstRunTest(unittest.TestCase):
+    """The daily command with no usable state rebuilds the hold (--replay), and says so.
+
+    On 2026-10-23 the first live publish after PR #142 went out with no four_accounts block:
+    nothing had written history/four-accounts.json, so the page could state no limit change.
+    """
+
+    PRICES = Path(__file__).resolve().parent.parent / "data" / "prices.json"
+
+    def daily(self, tmp: Path, state: Path) -> tuple[int, str, mock.MagicMock]:
+        rebuilt = F.advance(None, dict(block_with([]), day="2026-10-23", replayed=True))
+        argv = ["--state", str(state), "--now", "2026-10-23T13:30:00+00:00",
+                "--prices", str(self.PRICES), "--gs-passive", str(tmp / "none.json"),
+                "--masterrig-passive", str(tmp / "none.json"),
+                "--model-rates", str(tmp / "none.json")]
+        err = io.StringIO()
+        with mock.patch.object(F, "first_day", return_value=date(2026, 9, 1)), \
+                mock.patch.object(F, "replay", return_value=rebuilt) as replay, \
+                mock.patch.object(F, "run") as run, redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = F.main(argv)
+        run.assert_not_called()
+        return code, err.getvalue(), replay
+
+    def test_a_missing_state_is_rebuilt_from_scratch_and_the_log_says_so(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            state = tmp / "four-accounts.json"
+            code, err, replay = self.daily(tmp, state)
+            self.assertEqual(code, 0)
+            replay.assert_called_once()
+            self.assertEqual(replay.call_args.args[1:3], (date(2026, 9, 1), date(2026, 10, 23)))
+            self.assertIn(f"state {state} missing, rebuilding", err)
+            self.assertIn("--replay", err)
+            self.assertEqual(F.load_state(state)["latest"]["day"], "2026-10-23")
+
+    def test_an_unreadable_state_is_rebuilt_and_replaced(self):
+        for body in ("not json", json.dumps({"schema": "another"}), json.dumps({"schema": F.SCHEMA})):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as d:
+                tmp = Path(d)
+                state = tmp / "four-accounts.json"
+                state.write_text(body)
+                code, err, replay = self.daily(tmp, state)
+                self.assertEqual(code, 0)
+                replay.assert_called_once()
+                self.assertIn(f"state {state} unreadable or another schema, rebuilding", err)
+                self.assertEqual(F.load_state(state)["latest"]["day"], "2026-10-23")
 
 
 # ------------------------------------------------------------------------------- recovery
