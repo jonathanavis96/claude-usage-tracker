@@ -6,7 +6,9 @@ regimes) and `credits.five_hour_on_meters.candidates`.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import re
 import tempfile
@@ -390,6 +392,95 @@ class AlertTest(unittest.TestCase):
         self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 1)
         self.assertIn("cannot read", self.sent[0])
 
+    # The 2026-10 incident: opened on 5 October by checks that only warn ("Published anyway"),
+    # then from 13 October blocking checks withheld the page for nine days, and nothing more
+    # was sent, while the failing set changed 19 times.
+    ADVISORY = staticmethod(lambda: _headline(copy.deepcopy(_good()), 990))   # check 1: exit 1
+    BLOCKING = staticmethod(lambda: _live_2026_10_05())                       # checks 7-9: exit 2
+    DAY = 24 * 3600
+
+    def test_an_incident_that_starts_withholding_says_so_once(self):
+        self.assertEqual(self.check(self.ADVISORY(), 0), 1)
+        self.assertIn("Published anyway", self.sent[0])
+        self.assertEqual(self.check(self.BLOCKING(), 1800), 2)
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("the public JSON is WITHHELD", self.sent[1])
+        self.assertIn("withheld since 1970-01-01T00:30Z", self.sent[1])
+        self.assertIn("headline_matches_chart", self.sent[1])
+        self.assertNotIn("headline_inside_accounts", self.sent[1], "the withheld message names what blocks")
+        for t in range(3600, 6 * 3600, 1800):
+            self.check(self.BLOCKING(), t)
+        self.assertEqual(len(self.sent), 2, "nothing more while it keeps withholding")
+
+    def test_a_change_in_which_checks_fail_is_not_a_new_alert(self):
+        units = _good()
+        _wt(units)["account_regimes"]["a3"][1]["window"] = 300          # check 4 instead of check 1
+        only7 = _frozen(_fixed(_live_2026_10_05()))
+        only7["last_change"]["metric"] = "five_hour_limit"                # check 7 alone, not 7-9
+        self.assertEqual([k for k, v in I.run_checks(units).items() if v], ["account_units"])
+        self.assertEqual([k for k, v in I.run_checks(only7).items() if v], ["headline_matches_chart"])
+        t = 0
+        for doc in [self.ADVISORY(), units] * 4:                          # warn-only sets flapping
+            self.assertEqual(self.check(doc, t), 1)
+            t += 1800
+        self.assertEqual(len(self.sent), 1, self.sent)
+        for doc in [self.BLOCKING(), only7] * 4:                          # blocking sets flapping
+            self.assertEqual(self.check(doc, t), 2)
+            t += 1800
+        self.assertEqual(len(self.sent), 2, self.sent)
+        self.assertIn("WITHHELD", self.sent[1])
+
+    def test_a_withheld_page_is_said_again_every_24_hours(self):
+        self.check(self.BLOCKING(), 0)
+        self.assertIn("Not published", self.sent[0])
+        for t in range(1800, 3 * self.DAY + 1, 1800):
+            self.check(self.BLOCKING(), t)
+        self.assertEqual(len(self.sent), 4, [s[:80] for s in self.sent])
+        self.assertTrue(all("WITHHELD" in s for s in self.sent[1:]))
+        self.assertIn("(withheld since 1970-01-01T00:00Z, 72 h)", self.sent[3])
+
+    def test_a_withhold_that_flaps_waits_for_the_reminder(self):
+        self.check(self.ADVISORY(), 0)
+        self.check(self.BLOCKING(), 1800)            # withheld: said
+        self.check(self.ADVISORY(), 3600)            # published again: nothing
+        self.check(self.BLOCKING(), 5400)            # withheld again within a day: nothing
+        self.assertEqual(len(self.sent), 2)
+        self.check(self.BLOCKING(), 1800 + self.DAY)
+        self.assertEqual(len(self.sent), 3)
+        self.assertIn("WITHHELD", self.sent[2])
+
+    def test_recovery_closes_everything_and_a_new_withhold_alerts_at_once(self):
+        self.check(self.BLOCKING(), 0)
+        self.check(_good(), 1800)
+        self.assertIn("pass again after 30 min", self.sent[-1])
+        self.assertEqual(json.loads(self.state.read_text()).get("withheld_alerted_at"), None)
+        self.check(self.BLOCKING(), 3600)
+        self.assertEqual(len(self.sent), 3)
+        self.assertIn("Not published", self.sent[2])
+
+    def test_a_failed_withheld_send_is_tried_again_next_run(self):
+        self.check(self.ADVISORY(), 0)
+        ok = [False]
+        sent = self.sent
+
+        def flaky(text):
+            sent.append(text)
+            return ok[0]
+        self.doc.write_text(json.dumps(self.BLOCKING()))
+        I.check_file(self.doc, self.state, flaky, now=lambda: 1800)
+        ok[0] = True
+        I.check_file(self.doc, self.state, flaky, now=lambda: 3600)
+        self.assertEqual([("WITHHELD" in s) for s in sent], [False, True, True])
+
+    def test_the_log_line_says_what_was_sent(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.check(self.BLOCKING(), 0)
+            self.check(self.BLOCKING(), 1800)
+        lines = [ln for ln in out.getvalue().splitlines() if ln.startswith("invariants alert:")]
+        self.assertEqual(lines[0], "invariants alert: alert sent")
+        self.assertEqual(lines[1], "invariants alert: incident open 30 min, withheld 30 min, last said 30 min ago")
+
 
 def _live_2026_10_05() -> dict:
     """The page as published on 2026-10-05 15:01Z, cut to what checks 7-9 read: a +30%
@@ -454,6 +545,17 @@ def _fixed(doc: dict) -> dict:
 SEP29 = "2026-09-29T18:25:18.212000+00:00"
 
 
+def _decrease_page() -> dict:
+    """The frozen, fixed 2026-10-05 page (every check passes) with the 22 September change
+    turned into a -29.6% weekly-limit decrease that its tokens-per-week chart draws as -30%."""
+    doc = _frozen(_fixed(_live_2026_10_05()))
+    weeks = _wt(doc)["per_week_regimes"]
+    weeks[2]["value"] = round(weeks[1]["value"] * (1 - 0.296))
+    for rec in (doc["last_change"], doc["events"][1]):
+        rec.update(direction="decreased", percent=30, change_pct=-29.6)
+    return doc
+
+
 class ChartStepsTest(unittest.TestCase):
     def test_reads_the_steps_the_page_draws(self):
         steps = I.chart_steps(_live_2026_10_05())
@@ -499,6 +601,54 @@ class HeadlineMatchesChartTest(unittest.TestCase):
         doc = _fixed(_live_2026_10_05())
         doc["last_change"]["change_pct"] = 31.8
         self.assertIn("change_pct is 31.8", I.headline_matches_chart(doc)[0])
+
+    def test_a_decrease_its_chart_agrees_with_passes(self):
+        # Until 2026-10-22 the signed change_pct was compared with the unsigned percent, so
+        # every decrease failed: "The headline says -45% but last_change.change_pct is -44.8".
+        doc = _decrease_page()
+        self.assertEqual(I.headline_matches_chart(doc), [])
+        self.assertEqual(I.run_checks(doc)["headline_matches_chart"], [])
+
+    def test_a_decrease_whose_change_pct_rounds_elsewhere_still_fails(self):
+        doc = _decrease_page()
+        doc["last_change"]["change_pct"] = -31.8
+        out = I.headline_matches_chart(doc)
+        self.assertEqual(len(out), 1)
+        self.assertIn("The headline says -30% but last_change.change_pct is -31.8.", out[0])
+
+    def test_a_half_rounds_the_way_the_page_does(self):
+        # The page rounds with JavaScript Math.round: -29.5 is -29. The publisher's old
+        # round(abs(-29.5)) is 30 (half to even), a headline the check must refuse.
+        doc = _decrease_page()
+        weeks = _wt(doc)["per_week_regimes"]
+        weeks[2]["value"] = round(weeks[1]["value"] * (1 - 0.294))   # the chart labels it -29%
+        doc["last_change"].update(change_pct=-29.5, percent=abs(I._page_round(-29.5)))
+        self.assertEqual(doc["last_change"]["percent"], 29)
+        self.assertEqual(I.headline_matches_chart(doc), [])
+        doc["last_change"]["percent"] = round(abs(-29.5))
+        out = I.headline_matches_chart(doc)
+        # change_pct -29.5 is a 1-dp figure a -30% step can round to, so only the chart refuses it.
+        self.assertEqual(len(out), 1, out)
+        self.assertIn("chart labels the same change -29%", out[0])
+
+    def test_a_step_near_a_half_is_not_refused_over_its_1_dp_change_pct(self):
+        # The publisher writes percent=abs(_page_round(step)) (the chart's label) and
+        # change_pct=round(step, 1). A step within 0.05 of a half rounds the two apart:
+        # -29.52 is change_pct -29.5 beside -30%, +29.47 is 29.5 beside +29%. Comparing
+        # _page_round(change_pct) with the headline withheld both pages (review of 359b7c1).
+        for step, percent, direction in ((-29.52, 30, "decreased"), (29.47, 29, "increased")):
+            with self.subTest(step=step):
+                doc = _decrease_page()
+                weeks = _wt(doc)["per_week_regimes"]
+                weeks[2]["value"] = weeks[1]["value"] * (1 + step / 100)
+                drawn = I._marked(I.chart_steps(doc)["tokens_per_week"], doc["last_change"]["date"])
+                self.assertAlmostEqual(drawn["pct"], step, places=6)
+                doc["last_change"].update(direction=direction, percent=percent, change_pct=round(step, 1))
+                self.assertEqual(I.headline_matches_chart(doc), [])
+                # The 1-dp figure's own page rounding is the other whole percent: the
+                # reviewer's alternative (percent from change_pct) puts it beside the chart's.
+                doc["last_change"]["percent"] = abs(I._page_round(round(step, 1)))
+                self.assertIn("chart labels the same change", " ".join(I.headline_matches_chart(doc)))
 
 
 class WindowsPerWeekImpliedTest(unittest.TestCase):

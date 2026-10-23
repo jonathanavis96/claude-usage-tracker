@@ -13,6 +13,7 @@ from tracker.gs_passive import (credit_rate_sources, passive_credit_points, pass
 from tracker.publish import (
     _align_markers,
     _chart_figure,
+    _page_round,
     _regime_with_evidence,
     _RuleDatedEvent,
     ACCOUNT_LABELS,
@@ -1811,7 +1812,7 @@ class DollarSeriesAgreementTests(unittest.TestCase):
         before = [h["meter_budget_per_window"] for h in hist if h["date"] < event["date"]][-1]
         after = [h["meter_budget_per_window"] for h in hist if h["date"] >= event["date"]][0]
         self.assertEqual((before, after), (17.5, 11.25))
-        self.assertEqual(event["percent"], round(abs(after / before - 1) * 100))
+        self.assertEqual(event["percent"], abs(_page_round((after / before - 1) * 100)))
         self.assertEqual(event["percent"], 36)
 
     def test_onsets_more_than_three_days_apart_are_not_one_change(self):
@@ -2004,7 +2005,7 @@ class TokensPerWeekChangeTests(unittest.TestCase):
                 expected = ((1 + out["windows_per_week_pct"] / 100)
                             * (1 + out["five_hour_window_pct"] / 100) - 1) * 100
                 self.assertAlmostEqual(out["signed_pct"], expected, delta=0.15)
-                self.assertEqual(out["percent"], round(abs(out["signed_pct"])))
+                self.assertEqual(out["percent"], abs(_page_round(out["signed_pct"])))
 
     def test_two_accounts_are_the_routes_combined_figures(self):
         out = self.change(across=self.BOTH)

@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from tracker import health
 
@@ -170,10 +171,75 @@ class HealthTest(unittest.TestCase):
         self.state.write_text(json.dumps({"last_ok": now - 60}))
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((now + 3600) * 1000)}}))
         args = ["--usage-log", str(self.log), "--state", str(self.state), "--repo", str(self.repo),
-                "--credentials", str(self.creds), "--pidfile", str(self.c.lock_pidfile), "--skip", "publisher"]
+                "--credentials", str(self.creds), "--pidfile", str(self.c.lock_pidfile), "--skip", "publisher",
+                "--page-url", ""]
         self.assertEqual(health.main(args), 0)
         self.log.unlink()
         self.assertEqual(health.main(args), 1)
+
+    def test_the_masterrig_cli_checks_the_live_page_by_default(self):
+        c = health.config_from_args(health.build_parser().parse_args([]))
+        self.assertEqual(c.page_url, health.LIVE_PAGE_URL)
+        c = health.config_from_args(health.build_parser().parse_args(["--page-url", ""]))
+        self.assertIsNone(c.page_url)
+
+    def test_a_withheld_publish_fails_the_run_check_at_once(self):
+        # bin/daily.sh exit 9: the run finished 30 min ago, so the age rule read it as healthy.
+        self.state.write_text(json.dumps({"last_ok": NOW - 1800, "last_fail": NOW - 60, "last_exit": 9}))
+        self.assertIn("run: bin/daily.sh withheld the public JSON (exit 9), last successful run 30m ago",
+                      self.reasons()["run"])
+        self.state.write_text(json.dumps({"last_ok": NOW - 30, "last_fail": NOW - 60, "last_exit": 0}))
+        self.assertIsNone(self.reasons()["run"])
+
+    def test_masterrig_reads_no_ceiling_feed(self):
+        # The ceiling log stopped on 2026-10-18 (mis-usage-ceiling.service: not-found) and
+        # a1's meter log replaces it (fix/a1-meter-feed's `meters` check). A collection
+        # check on the dead log failed forever and, first in the order, hid every other
+        # masterrig check (review of 359b7c1).
+        self.assertFalse(hasattr(health, "CEILING_LOG"))
+        self.assertNotIn("--ceiling-log", health.build_parser().format_help())
+        self.assertIsNone(health.check_collection(self.c, NOW))
+
+    # -- the page readers get (masterrig: the live URL) ----------------------------------
+
+    def page(self, body=None, error=None):
+        def fetch(url, timeout):
+            if error:
+                raise error
+            return json.dumps(body).encode()
+        p = mock.patch.object(health, "fetch_page", fetch)
+        p.start()
+        self.addCleanup(p.stop)
+        self.c.page_url = "https://example.invalid/data/claude-usage.json"
+        self.c.page_fetch_state = self.tmp / "page-fetch.json"
+
+    def test_a_fresh_live_page_passes_and_a_stale_one_fails(self):
+        self.page({"generated_at": iso(NOW - 1800)})
+        self.assertIsNone(self.reasons()["page"])
+        mock.patch.stopall()
+        # The live page on 2026-10-22: 2026-10-13T10:31:29Z, nine days old.
+        self.page({"generated_at": "2026-10-13T10:31:29.045996Z"})
+        reason = health.check_page(self.c, datetime(2026, 10, 22, 20, 0, tzinfo=timezone.utc).timestamp())
+        self.assertIn("was generated 225h28m ago (limit 2h00m): the page is not updating", reason)
+
+    def test_a_failing_fetch_waits_out_its_grace_then_is_its_own_reason(self):
+        import urllib.error
+        self.page(error=urllib.error.URLError("no route"))
+        self.assertIsNone(health.check_page(self.c, NOW), "the first failure is inside the grace")
+        self.assertIsNone(health.check_page(self.c, NOW + 3600))
+        reason = health.check_page(self.c, NOW + 2 * 3600 + 60)
+        self.assertIn("page: cannot fetch https://example.invalid/data/claude-usage.json for 2h01m", reason)
+        mock.patch.stopall()
+        # One good fetch clears the stamp: the next failure starts a new grace.
+        self.page({"generated_at": iso(NOW + 3 * 3600)})
+        self.assertIsNone(health.check_page(self.c, NOW + 3 * 3600))
+        self.assertFalse(self.c.page_fetch_state.exists())
+        mock.patch.stopall()
+        self.page(error=urllib.error.URLError("no route"))
+        self.assertIsNone(health.check_page(self.c, NOW + 4 * 3600))
+
+    def test_a_bare_config_reads_no_page(self):
+        self.assertIsNone(health.check_page(health.Config(), NOW))
 
 
 if __name__ == "__main__":
@@ -191,7 +257,22 @@ class GsProfileTest(unittest.TestCase):
         self.state.write_text(json.dumps({"last_ok": NOW - 120}))
         for a in health.GS_METER_ACCOUNTS:
             self.write_meter(a, NOW - 60)
-        self.c = health.gs_config(state=self.state, pidfile=self.ops / "x.pid", ops=self.ops, repo=self.tmp)
+        self.site = self.tmp / "site"
+        self.publish(NOW - 600)
+        self.c = health.gs_config(state=self.state, pidfile=self.ops / "x.pid", ops=self.ops, repo=self.tmp,
+                                  site=self.site)
+
+    def publish(self, generated_at):
+        page = self.site / health.SITE_JSON
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text(json.dumps({"generated_at": iso(generated_at)}))
+
+    def uses(self, *accounts):
+        """The publisher's stretch record holds these accounts (history/gs-passive.json)."""
+        (self.tmp / "history").mkdir(exist_ok=True)
+        (self.tmp / "history" / "gs-passive.json").write_text(json.dumps({"accounts": {
+            a: {"account": a, "meter": {"log": f"/home/x/.paperclip/ops/claude-usage-meter-{a}.log"}}
+            for a in accounts}}))
 
     def write_meter(self, account, ts, gap_after=0):
         rows = [{"ts": iso(ts), "account": account, "five_hour": {"utilization": 1.0}}]
@@ -201,11 +282,138 @@ class GsProfileTest(unittest.TestCase):
 
     def test_fresh_gs_is_healthy_and_skips_masterrig_checks(self):
         names = [n for n, _ in health.run_checks(self.c, NOW)]
-        self.assertEqual(names, ["run", "lock", "sizes", "meters"])
+        self.assertEqual(names, ["run", "page", "lock", "sizes", "meters", "advisory"])
         self.assertIsNone(health.first_failure(self.c, NOW))
 
     def test_masterrig_default_does_not_run_meters(self):
-        self.assertNotIn("meters", [n for n, _ in health.run_checks(health.Config(), NOW)])
+        names = [n for n, _ in health.run_checks(health.Config(), NOW)]
+        self.assertNotIn("meters", names)
+        self.assertNotIn("advisory", names)
+
+    # -- the published JSON's age --------------------------------------------------------
+
+    def test_a_page_withheld_past_two_hours_fails(self):
+        # The withheld page put back the 2026-10-13T10:31Z JSON on every run for nine days.
+        self.publish(NOW - 2 * 3600 - 60)
+        self.assertIn("page: the published JSON in the site checkout (claude-usage.json) was generated "
+                      "2h01m ago (limit 2h00m)", health.first_failure(self.c, NOW))
+        self.publish(NOW - 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_an_unreadable_page_fails(self):
+        (self.site / health.SITE_JSON).write_text("{not json")
+        self.assertIn("page: cannot read the published JSON", health.first_failure(self.c, NOW))
+
+    def test_a_withheld_run_is_named_before_the_page_it_left_stale(self):
+        self.publish(NOW - 5 * 3600)
+        self.state.write_text(json.dumps({"last_ok": NOW - 5 * 3600, "last_fail": NOW - 60, "last_exit": 9}))
+        self.assertTrue(health.first_failure(self.c, NOW).startswith("run: bin/daily.sh withheld the public JSON"))
+
+    # -- a blind meter on an account the publisher uses ------------------------------------
+
+    def test_a_used_accounts_idle_lapse_is_blind_after_an_hour(self):
+        # An idle lapse (only auth_expired lines after the last reading) passed for 24 h; jwork
+        # read nothing for 41.7 h on 19-20 Oct.
+        self.uses("dave", "jwork", "avis")
+        self._idle("dave", 20 * 86400, 50 * 60)
+        self.assertIsNone(health.first_failure(self.c, NOW), "inside the hour")
+        self._idle("dave", 20 * 86400, 3 * 3600)
+        reason = health.first_failure(self.c, NOW)
+        self.assertIn("meters: dave is blind, no reading in claude-usage-meter-dave.log for 3h00m (limit 1h00m; "
+                      "token lapsed (idle)", reason)
+        self.assertIn("the publisher uses this account", reason)
+
+    def test_an_account_the_publisher_does_not_use_keeps_the_idle_grace(self):
+        self.uses("jwork", "avis")
+        self._idle("dave", 20 * 86400, 3 * 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_a_used_accounts_held_header_probe_is_blind_after_an_hour(self):
+        # dave, 2026-10-22 01:09-06:34Z: the probe held while masterrig used dave for 3,238 messages.
+        self.uses("dave")
+        self.write_header_meter(NOW - 50 * 60, five_reset=NOW - 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+        self.write_header_meter(NOW - 5 * 3600 - 25 * 60, five_reset=NOW - 3600)
+        self.assertIn("meters: dave is blind, no reading in claude-usage-meter-dave.log for 5h25m "
+                      "(limit 1h00m; header probe held", health.first_failure(self.c, NOW))
+
+    def test_a_used_account_honouring_a_long_retry_after_is_blind_after_an_hour(self):
+        self.uses("jwork")
+        rows = [{"ts": iso(NOW - 3700), "account": "jwork", "five_hour": {"utilization": 1.0}},
+                {"ts": iso(NOW - 3690), "account": "jwork", "error": "HTTP 429", "reason": "rate_limited",
+                 "retry_after_s": 7200}]
+        (self.ops / "claude-usage-meter-jwork.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.assertIn("jwork is blind", health.first_failure(self.c, NOW))
+
+    def test_the_used_accounts_come_from_the_record_by_label_or_meter_log(self):
+        self.uses("a2")   # a label the log name does not carry: matched by its meter log path
+        (self.tmp / "history" / "gs-passive.json").write_text(json.dumps({"accounts": {
+            "a2": {"meter": {"log": "/srv/ops/claude-usage-meter-dave.log"}}}}))
+        self.assertEqual(health._publisher_accounts(self.c, self.ops / "claude-usage-meter-dave.log"),
+                         {"a2", "dave"})
+        (self.tmp / "history" / "gs-passive.json").write_text("{not json")
+        self.assertEqual(health._publisher_accounts(self.c, self.ops / "claude-usage-meter-dave.log"), set())
+
+    # -- advisory steps of bin/daily.sh --------------------------------------------------------
+
+    def test_an_advisory_step_failing_past_its_grace_fails_by_name(self):
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        advisory.record(state, "tracker.list_prices", 0, NOW - 5 * 3600)
+        # The refit crashed on every run from 2026-10-13T19:30Z.
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.assertIn("advisory: tools.model_rates has failed on every run for 5h00m (limit 3h00m, last exit 1)",
+                      health.first_failure(self.c, NOW))
+        advisory.record(state, "tools.model_rates", 0, NOW)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_all_failures_names_the_advisory_step_behind_a_withheld_run(self):
+        # The supervisor read first_failure: while `run` failed (the page withheld), the
+        # refit crashing for days behind it never reached an alert.
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.state.write_text(json.dumps({"last_ok": NOW - 5 * 3600, "last_fail": NOW - 60, "last_exit": 9}))
+        self.publish(NOW - 5 * 3600)
+        first = health.first_failure(self.c, NOW)
+        every = health.all_failures(self.c, NOW, skip=("lock",))
+        self.assertNotIn("advisory", first)
+        parts = every.split(" | ")
+        self.assertEqual([p.split(":")[0] for p in parts], ["run", "page", "advisory"])
+        self.assertTrue(parts[2].startswith("advisory: tools.model_rates has failed on every run"))
+        advisory.record(state, "tools.model_rates", 0, NOW)
+        self.state.write_text(json.dumps({"last_ok": NOW - 60}))
+        self.publish(NOW - 60)
+        self.assertIsNone(health.all_failures(self.c, NOW))
+
+    def test_a_held_refit_is_not_an_advisory_failure(self):
+        # tools.model_rates exits 3 on a new hold and 4 while it stands: the refit ran and kept
+        # the rates in force, which bin/daily.sh alerts once. It must not become an incident.
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.assertIn("advisory: tools.model_rates", health.first_failure(self.c, NOW))
+        rec = advisory.record(state, "tools.model_rates", 3, NOW)
+        self.assertNotIn("failing_since", rec)
+        self.assertEqual(rec["last_exit"], 3)
+        for k in range(1, 12):
+            advisory.record(state, "tools.model_rates", 4, NOW + k * 1800)
+        self.assertIsNone(health.check_advisory(self.c, NOW + 11 * 1800))
+        # A 3 or 4 from any other step is still a failure.
+        for k in range(10, -1, -1):
+            advisory.record(state, "tracker.gs_passive", 3, NOW - k * 1800)
+        self.assertIn("advisory: tracker.gs_passive has failed on every run", health.check_advisory(self.c, NOW))
+
+    def test_an_advisory_step_inside_its_grace_or_no_longer_run_passes(self):
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        advisory.record(state, "tracker.gs_passive", 2, NOW - 2 * 3600)
+        advisory.record(state, "tracker.gs_passive", 2, NOW)
+        self.assertIsNone(health.first_failure(self.c, NOW), "two hours is inside the grace")
+        self.assertIsNone(health.check_advisory(self.c, NOW + 27 * 3600), "not run for a day: not failing")
 
     def test_gap_lines_do_not_count_as_a_reading(self):
         # dave's last usable read is 20 min old though 429 gaps were logged since.

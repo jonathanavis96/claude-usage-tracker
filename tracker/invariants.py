@@ -58,10 +58,14 @@ Checks 7-9 read the steps the page draws the way it draws them (`chart_steps`); 
 
 A failure of checks 1-6 or 10-12 does NOT block the publish (exit 1). A failure of checks 7-9
 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
-nothing to the site, so the page never states two figures for one change. bin/daily.sh runs
-this after the publish, beside tracker.publish_gate, with the same incident semantics
-(`publish_gate.track_incident`): one alert when a check starts failing, nothing while it
-keeps failing, one recovery when they all pass again. State lives in --state.
+nothing to the site, so the page never states two figures for one change, and exits 9, a
+failed run. bin/daily.sh runs this after the publish, beside tracker.publish_gate, with the
+same incident semantics (`publish_gate.track_incident`): one alert when a check starts
+failing, nothing while it keeps failing or the failing set changes, one recovery when they
+all pass again. A withheld page is said on its own: when an incident open on checks that do
+not block starts blocking, and every 24 hours while it blocks (from 2026-10-13 the page was
+withheld nine days inside an incident opened on 5 October by two advisory checks, and
+nothing was sent). The last line printed says what was sent. State lives in --state.
 """
 from __future__ import annotations
 
@@ -71,7 +75,7 @@ import math
 import sys
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import pairwise
 from pathlib import Path
 
@@ -430,6 +434,19 @@ def _signed(change: dict) -> int | None:
     return -_page_round(pct) if change.get("direction") == "decreased" else _page_round(pct)
 
 
+def _rounds_to(change_pct: float, said: int) -> bool:
+    """`said` is the page's whole percent of some figure that rounds to `change_pct` at 1 dp.
+
+    `change_pct` is published to one decimal and the headline is the page's label of the
+    unrounded step (the one its chart draws), so the two are rounded separately: a step of
+    -29.52 is change_pct -29.5 beside a -30% chart and headline, and a step of +29.47 is
+    change_pct 29.5 beside +29%. Comparing `_page_round(change_pct)` with the headline
+    failed both and withheld the page; publishing the percent from the 1-dp figure instead
+    would put -29% beside the chart's -30%. A headline outside that 0.1-wide span (-30%
+    beside -31.8) still fails."""
+    return _page_round(change_pct - 0.05) <= said <= _page_round(change_pct + 0.05)
+
+
 def _label_text(pct: float) -> str:
     return f"{_page_round(pct):+d}%"
 
@@ -452,7 +469,10 @@ def headline_matches_chart(doc: dict) -> list[str]:
     if said is None:
         return []
     out = []
-    if isinstance(c.get("change_pct"), (int, float)) and not tpw and _page_round(c["change_pct"]) != abs(said):
+    # Signed against signed: `said` carries the direction. Until 2026-10-22 this compared
+    # the signed page-rounded change_pct with abs(said), so every decrease failed whatever
+    # its chart drew ("The headline says -45% but last_change.change_pct is -44.8").
+    if isinstance(c.get("change_pct"), (int, float)) and not tpw and not _rounds_to(c["change_pct"], said):
         out.append(f"The headline says {said:+d}% but last_change.change_pct is {c['change_pct']:g}.")
     step = _marked(steps[chart], c["date"])
     if step is None or _page_round(step["pct"]) == 0:
@@ -766,19 +786,29 @@ def check_file(path: Path, state_path: Path, send: supervise.Sender,
         print(f"invariant {name}: {'FAIL' if msgs else 'pass'}")
         for m in msgs:
             print(f"  {m}")
-    blocked = ("Not published: the last published JSON stays." if BLOCKING & set(failing)
-               else "Published anyway.")
+    blocking = bool(BLOCKING & set(failing))
+    blocked = ("Not published: the last published JSON stays." if blocking else "Published anyway.")
     summary = ("; ".join(f"{k}: {' '.join(v)}" for k, v in failing.items()) if failing
                else f"all {len(results)} pass")
-    publish_gate.track_incident(
+    rerun = (f"Run: cd ~/claude-usage-tracker && python3 -m tracker.invariants "
+             f"--json {path} --dry-run --state /tmp/claude-usage-invariants-check.json")
+    held = "; ".join(f"{k}: {' '.join(v)}" for k, v in failing.items() if k in BLOCKING)
+
+    def withheld(since: float) -> str:
+        stamp = datetime.fromtimestamp(since, timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+        return (f"Claude usage tracker (gs publisher): the public JSON is WITHHELD, the page keeps "
+                f"its last published JSON (withheld since {stamp}, "
+                f"{publish_gate._ago(now() - since)}). Blocking: {held} {rerun}")
+
+    did = publish_gate.track_incident(
         state_path, send, not failing, summary,
         f"Claude usage tracker (gs publisher) public JSON invariants failed: {summary} "
-        f"{blocked} Run: cd ~/claude-usage-tracker && python3 -m tracker.invariants "
-        f"--json {path} --dry-run --state /tmp/claude-usage-invariants-check.json",
+        f"{blocked} {rerun}",
         lambda mins, was: (f"Claude usage tracker (gs publisher) public JSON invariants pass "
                            f"again after {mins} min (was: {was})"),
-        now)
-    return 2 if BLOCKING & set(failing) else 1 if failing else 0
+        now, blocking=blocking, withheld_text=withheld)
+    print(f"invariants alert: {did}")
+    return 2 if blocking else 1 if failing else 0
 
 
 def main(argv: list[str] | None = None) -> int:
