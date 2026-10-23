@@ -341,14 +341,20 @@ def public_block(block: dict | None) -> dict | None:
 
 # ------------------------------------------------------------------------------- state
 def load_state(path: Path) -> dict | None:
+    """The detector's state, or None when the file is missing, unreadable, another schema or
+    carries no newest run: the daily run then rebuilds it (`four_accounts.main`), and the
+    publish states no change."""
     p = Path(path)
     if not p.exists():
         return None
     try:
         body = json.loads(p.read_text(encoding="utf-8"))
-    except ValueError:
+    except (OSError, ValueError):
         return None
-    return body if isinstance(body, dict) and body.get("schema") == SCHEMA else None
+    if not (isinstance(body, dict) and body.get("schema") == SCHEMA
+            and isinstance(body.get("latest"), dict)):
+        return None
+    return body
 
 
 def write_state(path: Path, state: dict) -> None:

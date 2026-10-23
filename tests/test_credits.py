@@ -921,13 +921,17 @@ def _files(root: Path, gs: dict, masterrig: dict, passive: dict, matrix: dict,
     # check notice.
     rates = json.loads(C.MODEL_RATES_PATH.read_text()) if model_rates is None else model_rates
     (root / "history/model-rates.json").write_text(json.dumps(rates))
+    # The four-account detector's state is named too, and left absent: these fixtures state
+    # no limit change. Unnamed, the publish and the check would both read the checkout's
+    # committed history/four-accounts.json, whose changes the planted files know nothing of.
     return {"gs": root / "history/gs-passive.json",
             "masterrig": root / "history/masterrig-passive.json",
             "probes": root / "history/probes.jsonl",
             "effort_matrix": root / "data/effort_matrix.json",
             "passive": root / "history/passive.json",
             "prices": root / "data/prices.json",
-            "model_rates": root / "history/model-rates.json"}
+            "model_rates": root / "history/model-rates.json",
+            "four_accounts": root / "history/four-accounts.json"}
 
 
 def _publish(paths: dict, now: datetime = NOW) -> dict:
@@ -940,7 +944,8 @@ def _publish(paths: dict, now: datetime = NOW) -> dict:
     return rebuild_public_json(now, probes=paths["probes"], passive=paths["passive"],
                                effort=paths["effort_matrix"], prices=paths["prices"],
                                gs_passive=paths["gs"], masterrig_passive=paths["masterrig"],
-                               model_rates=paths["model_rates"])
+                               model_rates=paths["model_rates"],
+                               four_accounts_state=paths["four_accounts"])
 
 
 class PublishCheckTests(unittest.TestCase):
@@ -1360,7 +1365,8 @@ class RecomputeTests(unittest.TestCase):
             block = recompute_credits_block({"generated_at": NOW.isoformat(),
                                              "credits": {"window_credits": {"value": 1}}},
                                             paths["gs"], paths["masterrig"], paths["probes"],
-                                            paths["effort_matrix"], paths["passive"], paths["prices"])
+                                            paths["effort_matrix"], paths["passive"], paths["prices"],
+                                            four_accounts=paths["four_accounts"])
         self.assertEqual(block["window_credits"]["value"], 20_000_000)
 
     def test_the_recompute_uses_the_publishs_own_instant(self):
@@ -1373,7 +1379,8 @@ class RecomputeTests(unittest.TestCase):
             paths = _files(Path(d), gs, {}, passive, {})
             block = recompute_credits_block({"generated_at": later}, paths["gs"], paths["masterrig"],
                                             paths["probes"], paths["effort_matrix"],
-                                            paths["passive"], paths["prices"])
+                                            paths["passive"], paths["prices"],
+                                            four_accounts=paths["four_accounts"])
         self.assertEqual(block["window_credits"]["value"], 20_000_000)
 
 
@@ -2119,6 +2126,34 @@ class CurrentWindowDownstreamTests(unittest.TestCase):
         window = _published(gs=report("jwork", [*self.BEFORE, *self.AFTER]))["credits"]["window_credits"]
         self.assertEqual((window["current_source"], window["value"]), ("whole_cluster", 20_000_000))
         self.assertEqual([(r["from"], r["until"]) for r in window["regimes"]], [(None, None)])
+
+    def test_the_publish_check_reads_the_detector_state_it_is_given(self):
+        """--publish-check takes the limit changes from the --four-accounts file, as the
+        publish did: the same state reproduces the publish, a state that differs does not,
+        and neither reads the checkout's history/four-accounts.json."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            paths = _files(root, report("jwork", [*self.BEFORE, *self.AFTER]), {},
+                           PublishCheckTests.PASSIVE, {})
+            F.write_state(paths["four_accounts"], F.advance(None, self.RUN))
+            published = _publish(paths)
+            self.assertEqual(published["credits"]["window_credits"]["value"], 22_000_000)
+            out = root / "claude-usage.json"
+            out.write_text(json.dumps(published))
+
+            def check(four_accounts: Path) -> tuple[int, str]:
+                args = argparse.Namespace(**{**paths, "four_accounts": four_accounts},
+                                          publish_check=out, tolerance=0.005,
+                                          contributed=root / "data/contributed.json")
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    return publish_check(args), buf.getvalue()
+
+            code, text = check(paths["four_accounts"])
+            self.assertEqual(code, 0, text)
+            code, text = check(root / "history/no-four-accounts.json")
+            self.assertEqual(code, 1)
+            self.assertIn("window_credits.value", text)
 
     def test_every_per_model_row_divides_the_current_window(self):
         opus = self.credits["per_model"]["opus"]["tokens_per_window"]

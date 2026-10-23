@@ -560,7 +560,12 @@ These are the acceptance rules. Each names where it lives.
       leave-one-out test.
     - Replays. A run with no state replays every day from the first possible one and marks
       each run `replayed`, each change it holds `hold_replayed`, and the state
-      `replayed_through`: their dates were found after the fact, not seen live. On the records
+      `replayed_through`: their dates were found after the fact, not seen live. A state file
+      that is missing, unreadable, of another schema or without a newest run is no state: the
+      daily command rebuilds it this way on its own and logs that it did, never exits with
+      nothing written. (The first live run after PR #142, 2026-10-23T13:30Z, wrote nothing
+      because bash was still reading the bin/daily.sh from before that run's pull, which had
+      no detector step; a pull that changes bin/daily.sh now restarts the run on the new one.) On the records
       of 2026-10-23 a replay takes about two minutes; one day's run about 4 seconds. The state
       is history/four-accounts.json, committed by the daily run: one row per run of what it
       found and held, and the newest run in full.
