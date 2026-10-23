@@ -473,28 +473,40 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIn("Observed change: decreased 43% on 2026-10-17", alerts[2])
         self.assertEqual(self.state, ["2026-10-17"])
 
-    def test_a_change_with_no_state_is_held(self) -> None:
+    def test_a_change_with_no_state_is_emailed(self) -> None:
+        # Director's ruling (2026-10-23): a change with no `state` is not held. Only a stated
+        # state other than "measured" (the 17 Oct "provisional" record) keeps the email back.
         stateless = {k: v for k, v in self.CHANGE.items() if k != "state"}
         _procs, requests, alerts = self._publishes((stateless, self.W1), (stateless, self.W2))
-        self.assertEqual(requests, ["", ""])
-        self.assertIn("not emailed (unstated)", alerts[1])
-        self.assertIsNone(self.state)
+        self.assertEqual(requests[0], "")
+        self.assertIn("https://alldonesites.com/api/notify/send", requests[1])
+        self.assertNotIn("not emailed", alerts[1])
+        self.assertIn("Observed change: increased 7% on 2026-09-11", alerts[1])
+        self.assertEqual(self.state, ["2026-09-11"])
 
-    def test_a_weekly_detector_change_with_no_state_is_held_too(self) -> None:
-        # PINNED, and Jonathan's call (critic step 6): the weekly detector's events carry no
-        # `state` (the live 2026-09-13 windows_per_week event: state None, provisional False),
-        # and the 2026-09-14 weekly cut was emailed under the old rule (.notified-change on gs).
-        # Under state == "measured" such a change is never emailed; Jonathan alone hears of it.
-        # The dating and once-only tests above give their weekly fixtures state "measured" to
-        # reach the send; this one keeps the record as the detector writes it.
+    def test_a_weekly_detector_change_with_no_state_is_emailed(self) -> None:
+        # PINNED (director's ruling 2026-10-23): the weekly detector's events carry no `state`
+        # (the live 2026-09-13 windows_per_week event: state None, provisional False), and the
+        # 2026-09-14 weekly cut was emailed (.notified-change on gs). It is still emailed, once,
+        # exactly as the detector writes it.
         weekly = {"date": "2026-09-14", "direction": "decreased", "percent": 29, "scope": "weekly",
                   "metric": "windows_per_week", "provisional": False}
         _procs, requests, alerts = self._publishes((weekly, self.W1), (weekly, self.W2), (weekly, self.W3))
-        self.assertEqual(requests, ["", "", ""], "a state-less weekly change reached the subscriber endpoint")
-        self.assertIsNone(self.state)
+        self.assertEqual(requests[0], "")
+        self.assertIn("https://alldonesites.com/api/notify/send", requests[1])
+        self.assertEqual(self._payload(requests[1])["date"], "2026-09-14")
+        self.assertEqual(requests[2], "", "a weekly change is emailed once")
+        self.assertEqual(self.state, ["2026-09-14"])
         told = [a for a in alerts if a]
         self.assertEqual(len(told), 1, alerts)
-        self.assertIn("Observed change, not emailed (unstated): decreased 29% on 2026-09-14", told[0])
+        self.assertIn("Observed change: decreased 29% on 2026-09-14", told[0])
+        self.assertNotIn("not emailed", told[0])
+
+    def test_a_provisional_flagged_change_is_never_emailed_whatever_its_state(self) -> None:
+        flagged = {**self.CHANGE, "provisional": True}
+        _procs, requests, _alerts = self._publishes((flagged, self.W1), (flagged, self.W2))
+        self.assertEqual(requests, ["", ""])
+        self.assertIsNone(self.state)
 
     def test_between_24_and_48_hours_an_unsettled_interval_waits(self) -> None:
         procs, requests, _alerts = self._timed(self.MEASURED, 30)
@@ -552,6 +564,80 @@ SONNET_1433 = {"ts": "2026-09-06T14:33:05.254749+00:00", "model": "claude-sonnet
                "prompts": 63, "tick_from": 5, "tick_to": 8, "elapsed_s": 1569.897585, "payload": "prose",
                "payload_words": 12000, "ticks": 3, "skip": 1, "settle_s": 60, "expect_tokens_per_pct": 468000.0,
                "early_tick": False, "reset_start": False, "account": "dave"}
+
+
+class TestDailyRatesRefitExits(unittest.TestCase):
+    """Run bin/daily.sh's refit step with a stub python3 whose tools.model_rates exits a chosen
+    code: 3 (a new hold) alerts once with the moves, 4 (the hold already reported) stays
+    quiet, and neither reads as a crash or opens an advisory incident."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        moves = re.search(r"^rates_held_moves\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
+        advisory = re.search(r"^advisory\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
+        step = re.search(r"^if rates_due; then\n.*?^fi$", text, re.DOTALL | re.MULTILINE)
+        assert moves and advisory and step, "the refit step is not where the test looks in bin/daily.sh"
+        cls.script = f"{advisory.group(0)}\n{moves.group(0)}\nrates_due() {{ return 0; }}\n{step.group(0)}\n"
+
+    def _run(self, rates_rc: int, moves=("Opus 5.5 0.780x measured -> 0.358x provisional",)):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "history").mkdir()
+            if moves is not None:
+                (root / "history" / "model-rates.candidate.json").write_text(
+                    json.dumps({"_meta": {"held": {"moves": list(moves)}}}), encoding="utf-8")
+            stub = root / "bin"
+            stub.mkdir()
+            log = root / "calls.log"
+            python = stub / "python3"
+            python.write_text(
+                "#!/usr/bin/env bash\n"
+                'if [ "$1 $2" = "-m tools.model_rates" ]; then exit "$RATES_RC"; fi\n'
+                'if [ "$1 $2" = "-m tracker.advisory" ]; then echo "advisory $*" >> "$CALLS"; exit 0; fi\n'
+                f'exec {sys.executable} "$@"\n', encoding="utf-8")
+            python.chmod(0o755)
+            env = dict(os.environ)
+            env.update(PATH=f"{stub}{os.pathsep}{env['PATH']}", RATES_RC=str(rates_rc), CALLS=str(log))
+            stub_alert = 'alert_jonathan() { printf \'alert %s\\n%s\\n\' "$1" "$2" >> "$CALLS"; }'
+            proc = subprocess.run(["bash", "-c", f"set -uo pipefail\n{stub_alert}\n{self.script}"],
+                                  check=False, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            calls = log.read_text(encoding="utf-8") if log.exists() else ""
+            return proc, calls
+
+    def test_a_new_hold_alerts_once_with_its_moves_and_is_no_crash(self) -> None:
+        proc, calls = self._run(3)
+        self.assertEqual(calls.count("alert "), 1, calls)
+        self.assertIn("alert Model rates refit held", calls)
+        self.assertIn("  - Opus 5.5 0.780x measured -> 0.358x provisional", calls)
+        self.assertIn("advisory -m tracker.advisory --step tools.model_rates --exit 3", calls)
+        self.assertIn("refit held (exit 3)", proc.stderr)
+        self.assertNotIn("failed", proc.stderr)
+
+    def test_a_hold_already_reported_is_quiet(self) -> None:
+        proc, calls = self._run(4)
+        self.assertNotIn("alert ", calls)
+        self.assertIn("advisory -m tracker.advisory --step tools.model_rates --exit 4", calls)
+        self.assertIn("still held (exit 4)", proc.stderr)
+        self.assertNotIn("failed", proc.stderr)
+
+    def test_a_hold_whose_candidate_cannot_be_read_still_alerts(self) -> None:
+        _proc, calls = self._run(3, moves=None)
+        self.assertIn("alert Model rates refit held", calls)
+        self.assertIn("could not read history/model-rates.candidate.json", calls)
+
+    def test_a_crash_is_still_a_warning_and_no_alert(self) -> None:
+        proc, calls = self._run(1)
+        self.assertNotIn("alert ", calls)
+        self.assertIn("advisory -m tracker.advisory --step tools.model_rates --exit 1", calls)
+        self.assertIn("warning: tools.model_rates failed with exit 1", proc.stderr)
+
+    def test_a_clean_refit_says_nothing(self) -> None:
+        proc, calls = self._run(0)
+        self.assertNotIn("alert ", calls)
+        self.assertIn("--exit 0", calls)
+        self.assertEqual(proc.stderr, "")
 
 
 class TestDailyInvariantsGate(unittest.TestCase):

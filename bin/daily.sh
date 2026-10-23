@@ -92,6 +92,17 @@ else
     || { echo "error: could not clone site repo" >&2; exit 1; }
 fi
 
+# One email to Jonathan through the same send endpoint, via tracker/alert.py
+# (which reads NOTIFY_ALERT_TO and the bearer secret from
+# ~/.claude-usage-notify.env, and skips with a note when either is missing).
+# Defined before the advisory steps, which use it for a held refit. It can never
+# change this script's exit status. The weekly weight guard (tracker/weight.py, run inside
+# tracker.publish below) raises its refused-weight alert in-process through the
+# same helper's send_alert.
+alert_jonathan() {
+  python3 -m tracker.alert --subject "$1" --text "$2" || true
+}
+
 # The advisory steps below never stop the publish: a failure is one warning line and the
 # publish carries on with the step's previous output. Every outcome is also recorded
 # (tracker/advisory.py), so a step that fails on every run becomes its own incident after a
@@ -150,6 +161,26 @@ advisory tracker.gs_passive $? "publishing with the previous gs-passive.json"
 # kept pricing at the 00:01Z fit (docs/findings-2026-09-29-fit-gap.md). Main's
 # first-parent history dates a merged change by its merge, not its branch commit.
 # Advisory: a failed refit publishes with the previous rates.
+#
+# A refit that would move a published rate outside its own interval is held, not
+# written: the new fit goes to history/model-rates.candidate.json (untracked) and
+# the rates in force stay. That is not a crash, and the advisory record counts it as
+# a run that worked (tracker/advisory.py HELD_EXITS). Exit 3 is a new hold, or one
+# that moves different rates: one alert listing the moves. Exit 4 is the hold
+# already reported, which is every later tick until someone adopts or the moves
+# change: a log line, no alert. Exit 1 is a crash, a warning line and the advisory
+# incident after its grace. docs/OPERATIONS.md has the command that adopts a hold.
+rates_held_moves() {
+  python3 - <<'PYEOF'
+import json
+try:
+    with open("history/model-rates.candidate.json", encoding="utf-8") as fh:
+        held = json.load(fh)["_meta"]["held"]
+    print("\n".join(f"  - {m}" for m in held.get("moves") or []) or "  (no moves recorded)")
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    print(f"  (could not read history/model-rates.candidate.json: {exc})")
+PYEOF
+}
 rates_due() {
   local gen changed
   gen="$(python3 -c 'import datetime, json; g = json.load(open("history/model-rates.json"))["_meta"]["generated_at"]; print(g[:10], int(datetime.datetime.fromisoformat(g).timestamp()))' 2>/dev/null)" || return 0
@@ -160,7 +191,19 @@ rates_due() {
 if rates_due; then
   PYTHONPATH=. nice python3 -m tools.model_rates history/masterrig-passive.json \
     --json history/model-rates.json > /dev/null
-  advisory tools.model_rates $? "publishing with the previous model-rates.json"
+  rates_rc=$?
+  case "$rates_rc" in
+    3)
+      echo "tools.model_rates: refit held (exit 3), publishing with the rates in force; candidate in history/model-rates.candidate.json" >&2
+      alert_jonathan "Model rates refit held, rates in force kept" \
+        "$(printf 'The daily refit (tools/model_rates.py) moved published rates beyond their intervals, so it was held: history/model-rates.json is unchanged and the page keeps pricing at it. The new fit is in history/model-rates.candidate.json on gs. It moves:\n\n%s\n\nThis is reported once; later ticks of the same hold stay quiet (exit 4). To adopt it after reading the moves, see docs/OPERATIONS.md (--accept-moves).\n' "$(rates_held_moves)")"
+      python3 -m tracker.advisory --step tools.model_rates --exit "$rates_rc" || true ;;
+    4)
+      echo "tools.model_rates: refit still held (exit 4), already reported; publishing with the rates in force" >&2
+      python3 -m tracker.advisory --step tools.model_rates --exit "$rates_rc" || true ;;
+    *)
+      advisory tools.model_rates "$rates_rc" "publishing with the previous model-rates.json" ;;
+  esac
 fi
 
 python3 -m tracker.publish \
@@ -262,17 +305,6 @@ if [ "$publish_rc" -ne 0 ] || [ "$site_was_ok" -eq 0 ]; then
   git -c user.name=publisher -c user.email=publisher@gs commit -q --only -m "Site push status $now_utc" -- "$SITE_STATUS" \
     && { git push -q origin "$BRANCH" || echo "warning: git push of the site push status failed" >&2; }
 fi
-
-# One email to Jonathan through the same send endpoint, via tracker/alert.py
-# (which reads NOTIFY_ALERT_TO and the bearer secret from
-# ~/.claude-usage-notify.env, and skips with a note when either is missing).
-# Advisory, like everything after the publish: it can never change this
-# script's exit status. The weekly weight guard (tracker/weight.py, run inside
-# tracker.publish above) raises its refused-weight alert in-process through the
-# same helper's send_alert.
-alert_jonathan() {
-  python3 -m tracker.alert --subject "$1" --text "$2" || true
-}
 
 # Tell alldonesites.com to email its subscribers, but only about a change we have
 # not already announced. Everything below is advisory: a missing env file, no
@@ -445,16 +477,17 @@ print(f"{c['direction']} {c['percent']}% on {c['date']}{model}{figure}{state}")
 PYEOF
 )"
 
-  # Subscribers are emailed only a change whose `state` is "measured". `provisional: false`
-  # is not enough: the 2026-10-17 opus-4-6 "-43%" record carries it while its state is
-  # "provisional", and the email would have gone out once its interval excluded no change,
-  # though its figures point to a counting error on the accounts used on masterrig. A
-  # record with no state (a detector event) is held too. Jonathan still hears about a held
-  # change, once per change and state (a line in .notify-attempts), and it is emailed if it
-  # later reads "measured".
+  # Subscribers are emailed a change that is not provisional (checked above) and whose
+  # `state`, when it has one, is "measured". `provisional: false` is not enough: the
+  # 2026-10-17 opus-4-6 "-43%" record carries it while its state is "provisional", and the
+  # email would have gone out once its interval excluded no change, though its figures point
+  # to a counting error on the accounts used on masterrig. A record with no state at all is
+  # a weekly detector event (the 2026-09-14 weekly cut was one), certified by the detector,
+  # and is emailed as before. Jonathan still hears about a held change, once per change and
+  # state (a line in .notify-attempts), and it is emailed if it later reads "measured".
   local change_state
-  change_state="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state") or "unstated")')"
-  if [ "$change_state" != "measured" ]; then
+  change_state="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state") or "")')"
+  if [ -n "$change_state" ] && [ "$change_state" != "measured" ]; then
     echo "notify: change on $date is $change_state, not measured: subscribers are not emailed" >&2
     if ! { [ -f "$attempts" ] && grep -qxF "$date held:$change_state" "$attempts"; }; then
       printf '%s held:%s\n' "$date" "$change_state" >> "$attempts"

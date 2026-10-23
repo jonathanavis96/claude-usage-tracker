@@ -27,13 +27,21 @@ from tracker import health
 from tracker.atomic import write_text_atomic
 
 
+#: Exit codes a step uses for an outcome that is not a failure. tools.model_rates exits 3 when
+#: it holds a refit that would move a published rate outside its interval (the new fit goes to
+#: history/model-rates.candidate.json and the rates in force stay) and 4 while that hold
+#: stands. The refit ran and did its job; counting it a failure would open an "advisory"
+#: incident three hours into every hold, on top of the one alert bin/daily.sh sends for it.
+HELD_EXITS: dict[str, frozenset[int]] = {"tools.model_rates": frozenset({3, 4})}
+
+
 def record(state_path: Path, step: str, code: int, now: float) -> dict:
     """Record one run of `step` that exited `code`; returns that step's record."""
     state = health.read_state(state_path)
     steps = state.get("steps") if isinstance(state.get("steps"), dict) else {}
     rec = steps.get(step) if isinstance(steps.get(step), dict) else {}
     rec.update(last_run=now, last_exit=code)
-    if code == 0:
+    if code == 0 or code in HELD_EXITS.get(step, frozenset()):
         rec["last_ok"] = now
         rec.pop("failing_since", None)
     else:

@@ -388,6 +388,25 @@ class GsProfileTest(unittest.TestCase):
         self.publish(NOW - 60)
         self.assertIsNone(health.all_failures(self.c, NOW))
 
+    def test_a_held_refit_is_not_an_advisory_failure(self):
+        # tools.model_rates exits 3 on a new hold and 4 while it stands: the refit ran and kept
+        # the rates in force, which bin/daily.sh alerts once. It must not become an incident.
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.assertIn("advisory: tools.model_rates", health.first_failure(self.c, NOW))
+        rec = advisory.record(state, "tools.model_rates", 3, NOW)
+        self.assertNotIn("failing_since", rec)
+        self.assertEqual(rec["last_exit"], 3)
+        for k in range(1, 12):
+            advisory.record(state, "tools.model_rates", 4, NOW + k * 1800)
+        self.assertIsNone(health.check_advisory(self.c, NOW + 11 * 1800))
+        # A 3 or 4 from any other step is still a failure.
+        for k in range(10, -1, -1):
+            advisory.record(state, "tracker.gs_passive", 3, NOW - k * 1800)
+        self.assertIn("advisory: tracker.gs_passive has failed on every run", health.check_advisory(self.c, NOW))
+
     def test_an_advisory_step_inside_its_grace_or_no_longer_run_passes(self):
         from tracker import advisory
         state = self.ops / health.GS_ADVISORY.name
