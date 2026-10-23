@@ -118,7 +118,7 @@ from .four_accounts_page import (  # noqa: F401
     change_markers, change_record, chart_step, drawn, drawn_step, events, from_hours, headline,
     hours, last_change, levels, line_moved, load_state, measured_changes, moved, p_value,
     page_round, parse, pct, public_block, public_label, reading, regime_changes, stamp,
-    stated_limit, stated_quantity, write_state,
+    stated_limit, stated_quantity, stated_record, write_state,
 )
 
 UTC = timezone.utc

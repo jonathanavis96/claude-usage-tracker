@@ -53,12 +53,17 @@ other figure on the page to it.
 11. `last_change_is_newest_measured`: `last_change`, the record the subscriber email reads, is
    the detector's newest measured change (its instant, its line's metric, its size and the
    page's whole percent of it), and there is none when the detector has measured none.
+12. `email_leads_with_hero_rule`: `last_change.hero`, the sentence the subscriber email leads
+   with, is the hero's rule (check 4's `_stated`) applied to that measured change: the same
+   limit, its words, direction, size, interval and whole percent; and there is none when that
+   change has no limit to state (then the email keeps its older wording). Jonathan's decision,
+   2026-10-23: the email says what the hero said.
 
 Checks 4-8 and 11 read the page's own figures the way it draws them (`chart_steps`); on 2026-10-05
 the page said "+30%" in its headline and "+32%" on two charts for 22 September.
 
-A failure of checks 1-3, 9 or 10 does NOT block the publish (exit 1). A failure of checks 4-8
-or 11 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
+A failure of checks 1-3, 9 or 10 does NOT block the publish (exit 1). A failure of checks 4-8,
+11 or 12 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change, and exits 9, a
 failed run. bin/daily.sh runs this after the publish, beside tracker.publish_gate, with the
 same incident semantics (`publish_gate.track_incident`): one alert when a check starts
@@ -391,6 +396,32 @@ def last_change_is_newest_measured(doc: dict) -> list[str]:
     return [m.replace("The headline", "last_change", 1) for m in out]
 
 
+def email_leads_with_hero_rule(doc: dict) -> list[str]:
+    """Check 12: the email's lead (`last_change.hero`) is the hero's rule for that change."""
+    c = doc.get("last_change")
+    if not c:
+        return []
+    change = next((m for m in _measured(doc) if _same_instant(m.get("at"), c.get("at"))), None)
+    if change is None:
+        return []   # check 11 says last_change is not a measured change
+    hero = c.get("hero")
+    quantity = _stated(change)
+    if quantity is None:
+        return ([f"The email leads with the {hero.get('limit')} for {change['at']}, but the hero "
+                 f"has no limit to state for that change."] if hero else [])
+    if not hero:
+        return [f"The hero states the {detector.LIMIT_WORDS[quantity]} for the measured change at "
+                f"{change['at']}, but last_change carries no hero sentence for the email."]
+    size = change["sizes"][detector.LIMIT_LINES[quantity]]
+    want = {"quantity": quantity, "limit": detector.LIMIT_WORDS[quantity],
+            "line": detector.LIMIT_LINES[quantity], "date": change["at"][:10],
+            "direction": "increased" if size["change_pct"] > 0 else "decreased",
+            "percent": abs(_page_round(size["change_pct"])), "change_pct": size["change_pct"],
+            "interval_pct": size.get("interval_pct"), "state": "measured"}
+    return [f"The email's lead {key} is {hero.get(key)!r} but the hero's rule for the change at "
+            f"{change['at']} reads {v!r}." for key, v in want.items() if hero.get(key) != v]
+
+
 def _markers_at(doc: dict, at: str) -> dict[str, list[dict]]:
     """The chart markers (`four_accounts.change_markers`) at one instant, by quantity."""
     marks = _fa(doc).get("change_markers") or {}
@@ -643,13 +674,15 @@ CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("measured_changes_still_found", measured_changes_still_found),
     ("detector_ran", detector_ran),
     ("last_change_is_newest_measured", last_change_is_newest_measured),
+    ("email_leads_with_hero_rule", email_leads_with_hero_rule),
 ]
 #: The checks whose failure stops the page being published (exit 2): figures that contradict
 #: each other on the page itself, a step the detector did not measure, or an account named by
 #: anything but its label. The rest alert and publish anyway (exit 1).
 BLOCKING = frozenset({"headline_is_newest_stated_change", "every_change_drawn",
                       "one_figure_per_change", "regimes_open_at_measured_changes",
-                      "accounts_named_by_label", "last_change_is_newest_measured"})
+                      "accounts_named_by_label", "last_change_is_newest_measured",
+                      "email_leads_with_hero_rule"})
 
 
 def run_checks(doc: dict) -> dict[str, list[str]]:
