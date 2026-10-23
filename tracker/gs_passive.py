@@ -548,7 +548,16 @@ def _split_sources(account: Account, since: datetime | None, withhold: Iterable[
     if contested:
         meta["contested"] = contested
     if subtrees:
-        meta["shared_subtrees"] = {str(k): v for k, v in sorted(subtrees.items())}
+        # Counted per linking config dir, never named: this meta is stored as the account's
+        # `own_sessions`, and masterrig's passive.sh commits history/masterrig-passive.json to the
+        # public repo. Project directory names leave a host only in the extracts shipped to gs's
+        # private directory (bin/ship-extracts.sh); the 2026-10-23 review found the first cut of
+        # this record publishing masterrig's bob-ross-skin directory by name.
+        linked: dict[str, int] = {}
+        for names in subtrees.values():
+            for n in names:
+                linked[n] = linked.get(n, 0) + 1
+        meta["shared_subtrees"] = dict(sorted(linked.items()))
     return _Splitted(kept, meta, unclaimed_paths, by_source, segments, me.group, identities)
 
 

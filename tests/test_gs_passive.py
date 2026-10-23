@@ -806,11 +806,28 @@ class SharedSubtreeTests(unittest.TestCase):
             self.assertEqual(sorted(p.stem for p in split.kept), ["both", "mine"])
             self.assertEqual(split.meta["dropped_to"], {".claude-avis": 1})
             self.assertEqual((split.meta["unclaimed"], split.meta["contested"]), (1, 1))
+            self.assertEqual(split.meta["shared_subtrees"], {".claude-avis": 1})
             turns, per_source = account_turns(split)
             # b0 and b1 are avis's (its claim at T0), b2 and b3 a1's (its claim at +1h30).
             self.assertEqual(sorted(t.id for t in turns), ["b2", "b3", "own"])
             self.assertEqual(per_source, [{"source": "live", "root": str(home / ".claude" / "projects"),
                                            "files": 2, "turns": 3}])
+
+    def test_the_published_record_never_names_a_project_directory(self):
+        # history/masterrig-passive.json and gs-passive.json are committed to the public repo, and
+        # `own_sessions` is this split's meta verbatim: the 2026-10-23 review found
+        # {"-mnt-d-...-bob-ross-skin": [".claude-avis"]} in it. Only counts may leave the host.
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            _signed_in(home / ".claude-avis", "uuid-avis")
+            (home / ".claude-avis" / "projects").mkdir()
+            (home / ".claude-avis" / "projects" / "-proj-a").symlink_to(home / ".claude-dave" / "projects" / "-proj-a")
+            out = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1), home=home)
+            own = out["accounts"]["dave"]["transcripts"]["own_sessions"]
+            self.assertEqual(own["shared_subtrees"], {".claude-avis": 1})
+            text = json.dumps(out)
+            for name in ("-proj-a", "-proj-b"):
+                self.assertNotIn(name, text)
 
     def test_a_tree_nobody_links_into_is_read_whole_as_before(self):
         with tempfile.TemporaryDirectory() as d:
