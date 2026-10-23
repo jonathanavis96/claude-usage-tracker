@@ -463,5 +463,24 @@ class MoveSignatureTests(unittest.TestCase):
                             move_signature(["Sonnet no longer has a published rate (was 0.497x Opus)"]))
 
 
+class ExitWiringTests(unittest.TestCase):
+    """bin/daily.sh alerts on HELD_EXIT, stays quiet on STILL_HELD_EXIT, and tracker/advisory.py
+    counts both as runs that worked. A renumbered exit here must not turn a hold into a crash
+    there, or a crash into a quiet hold."""
+
+    def test_daily_sh_and_advisory_use_the_refits_exit_codes(self):
+        from tracker.advisory import HELD_EXITS
+        self.assertEqual(HELD_EXITS["tools.model_rates"], frozenset({HELD_EXIT, STILL_HELD_EXIT}))
+        daily = (Path(__file__).resolve().parents[1] / "bin" / "daily.sh").read_text(encoding="utf-8")
+        block = daily[daily.index('case "$rates_rc" in'):]
+        block = block[:block.index("esac")]
+        self.assertIn(f"\n    {HELD_EXIT})\n", block)
+        self.assertIn(f"\n    {STILL_HELD_EXIT})\n", block)
+        held, still = (block.split(f"\n    {code})\n", 1)[1].split(";;", 1)[0]
+                       for code in (HELD_EXIT, STILL_HELD_EXIT))
+        self.assertIn("alert_jonathan", held)
+        self.assertNotIn("alert_jonathan", still)
+
+
 if __name__ == "__main__":
     unittest.main()
