@@ -285,7 +285,7 @@ def transcript_paths(root: Path, since: datetime | None) -> list[Path]:
     """Every `*.jsonl` under `root`, following directory symlinks, with mtime at or after `since`.
 
     Symlinked directories are followed because a login's projects tree can link a project
-    in from another (masterrig's `~/.claude-avis/projects/<bob-ross-skin>` points into
+    in from another (masterrig's `~/.claude-avis/projects/<a project>` points into
     `~/.claude/projects` since 2026-10-18): `Path.rglob` does not follow them, and saw 13M of
     the 2,499M tokens os.walk(followlinks=True) finds under ~/.claude-avis. A directory is
     entered once by its real path, so a link back up the tree cannot loop.

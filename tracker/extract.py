@@ -138,7 +138,7 @@ def login(config_dir: Path, home: Path | None = None) -> Login:
     Order: a token in the dir's settings `env` (every session gets it); the dir's own
     `oauthAccount`; for the default `~/.claude`, whose login Claude Code keeps in
     `~/.claude.json` when CLAUDE_CONFIG_DIR is unset (gs's `~/.claude` has no `.claude.json`
-    of its own, and reads as a1 that way, 3e05a16188da); then a `.oauth-token` file. A
+    of its own, and reads as a1 that way); then a `.oauth-token` file. A
     CLAUDE_CODE_OAUTH_TOKEN set by whoever launches a session cannot be seen from the dir
     at all: Mission Control seats have run on account 3 from masterrig's `~/.claude` that way
     (~/.claude-account2-rollback/README.md). Such work stays counted as the dir's login.
@@ -183,7 +183,7 @@ def token_bindings(home: Path) -> dict[str, str]:
 
     The same token is the account: gs's dave meter is read with `--token-env
     GS_DAVE_CLAUDE_OAUTH_TOKEN` against `--config-dir ~/.claude-dave`, whose `oauthAccount`
-    is Dave's (b64d8ea4794c). masterrig's ~/.claude-dave holds a copy of that token and no
+    is Dave's. masterrig's ~/.claude-dave holds a copy of that token and no
     login, so its extracts arrive as `tok-<fp>` and this is what joins them to dave. The token
     is read in-process (tracker/header_usage.py `load_token`) and only its fingerprint kept.
     """

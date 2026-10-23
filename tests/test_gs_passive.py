@@ -743,7 +743,7 @@ class AccountIdentityTests(unittest.TestCase):
     """Claims keyed by account, not config dir (2026-10-23 capture fix)."""
 
     def test_a_second_dir_signed_into_the_same_account_is_this_account_not_another_login(self):
-        # gs: ~/.claude-jono and ~/.claude-javiswork both carry jwork's identity 5bb57a97fb8b,
+        # gs: ~/.claude-jono and ~/.claude-javiswork both carry jwork's identity,
         # and jono's sessions were dropped as another login's (`dropped_to {'.claude-jono': 7}`).
         with tempfile.TemporaryDirectory() as d:
             home = jwork_home(Path(d))
@@ -773,7 +773,7 @@ class AccountIdentityTests(unittest.TestCase):
 
 
 class SharedSubtreeTests(unittest.TestCase):
-    """masterrig: ~/.claude-avis/projects/<bob-ross-skin> links into ~/.claude/projects, and a1's
+    """masterrig: ~/.claude-avis/projects/<a project> links into ~/.claude/projects, and a1's
     own join counted avis's work there (tokens_per_pct 10.7M on 17 Oct, 47.5M on 18 Oct)."""
 
     def test_a_project_another_login_links_in_is_split_between_them_by_claim_time(self):
@@ -816,7 +816,7 @@ class SharedSubtreeTests(unittest.TestCase):
     def test_the_published_record_never_names_a_project_directory(self):
         # history/masterrig-passive.json and gs-passive.json are committed to the public repo, and
         # `own_sessions` is this split's meta verbatim: the 2026-10-23 review found
-        # {"-mnt-d-...-bob-ross-skin": [".claude-avis"]} in it. Only counts may leave the host.
+        # a project directory name, keyed to [".claude-avis"], in it. Only counts may leave the host.
         with tempfile.TemporaryDirectory() as d:
             home = dave_home(Path(d))
             _signed_in(home / ".claude-avis", "uuid-avis")
@@ -868,10 +868,60 @@ class OtherSourcesTests(unittest.TestCase):
             r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1), home=home)
         dave = r["accounts"]["dave"]
         self.assertEqual([(s["source"], s["files"], s["turns"]) for s in dave["transcripts"]["sources"]],
-                         [("live", 2, 40), ("remote:rig", 1, 1)])
+                         [("live", 2, 40), ("remote", 1, 1)])
+        self.assertEqual(dave["transcripts"]["sources"][1]["hosts"], 1)
         self.assertAlmostEqual(dave["stretches"][0]["usd_per_pct"], 0.6)  # $6 for 10%
-        self.assertEqual(r["remote_unjoined"], [{"host": "rig", "identity": "tok-000000000000", "files": 0}])
+        self.assertEqual(r["remote_unjoined"], {"extracts": 1, "files": 0})
         self.assertEqual(r["sources_version"], 2)
+
+    def test_the_public_record_carries_no_identity_token_fingerprint_or_host_name(self):
+        # history/gs-passive.json, masterrig-passive.json and passive.json are committed to the
+        # public repo by cron. A security review (2026-10-23) found each account's identity hash
+        # under `transcripts.identity` and every unjoined shipment's host and identity under
+        # `remote_unjoined`. Only counts and the public account labels may be published.
+        import contextlib
+        import io
+        import re
+
+        from tracker.extract import token_fingerprint
+        from tracker.meter_log import account_identity
+        with tempfile.TemporaryDirectory() as d:
+            home = self._dave(Path(d))
+            _signed_in(home / ".claude-avis", "uuid-avis")
+            hosts = ("workstation-east", "laptop-west")
+            # A joined shipment, by the setup token gs's dave meter unit reads.
+            joined = home / ".paperclip" / "ops" / "remote-transcripts" / hosts[0]
+            ship = joined / token_fingerprint("fake-setup-token-dave") / "-q" / "r.jsonl"
+            ship.parent.mkdir(parents=True)
+            ship.write_text(turn_line(T0 + timedelta(minutes=2), "rig1") + "\n")
+            # Shipments that join nothing here: a token and an oauthAccount identity.
+            stray = home / ".paperclip" / "ops" / "remote-transcripts" / hosts[1]
+            other_ident = account_identity(home / ".claude-avis")
+            for ident in (token_fingerprint("someone-elses-token"), other_ident):
+                (stray / ident / "-z").mkdir(parents=True)
+                (stray / ident / "-z" / "x.jsonl").write_text(turn_line(T0, f"x-{ident}") + "\n")
+            units = home / ".config" / "systemd" / "user"
+            units.mkdir(parents=True)
+            (units / "claude-usage-meter-dave.service").write_text(
+                "ExecStart=/usr/bin/python3 -m tracker.meter_log --config-dir %h/.claude-dave --token-env GS_T_DAVE\n")
+            env = home / ".config" / "greenscape" / "env"
+            env.parent.mkdir(parents=True)
+            env.write_text("GS_T_DAVE=fake-setup-token-dave\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1), home=home)
+            secrets_ = [account_identity(home / ".claude-dave"), other_ident,
+                        token_fingerprint("fake-setup-token-dave"), token_fingerprint("someone-elses-token")]
+        text = json.dumps(r)
+        self.assertEqual(r["remote_unjoined"], {"extracts": 2, "files": 2})
+        self.assertEqual([s["source"] for s in r["accounts"]["dave"]["transcripts"]["sources"]], ["live", "remote"])
+        self.assertNotIn("tok-", text)
+        self.assertEqual(re.findall(r"(?<![0-9a-f])[0-9a-f]{12}(?![0-9a-f])", text), [])
+        for value in (*secrets_, *hosts, "remote-transcripts"):
+            self.assertNotIn(value, text)
+        # The unjoined shipments are still named, in the host's private log.
+        self.assertIn(hosts[1], err.getvalue())
+        self.assertIn(other_ident, err.getvalue())
 
     def test_the_archive_of_an_accounts_directory_is_read_in_place(self):
         import io

@@ -98,7 +98,7 @@ class TurnTests(unittest.TestCase):
 
 
     def test_paths_follow_a_symlinked_project_once_and_never_loop(self):
-        # masterrig: ~/.claude-avis/projects/<bob-ross-skin> links into ~/.claude/projects.
+        # masterrig: ~/.claude-avis/projects/<a project> links into ~/.claude/projects.
         # Path.rglob does not follow it and saw 13M of avis's 2,499M tokens.
         with tempfile.TemporaryDirectory() as d:
             elsewhere = Path(d, "elsewhere", "-skin")

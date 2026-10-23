@@ -400,7 +400,7 @@ def shared_subtrees(account: Account, home: Path) -> dict[Path, list[str]]:
     its own tree: real path -> the linking dirs' names.
 
     `shared_with` catches a whole pooled root. This catches one project: masterrig's
-    `~/.claude-avis/projects/<bob-ross-skin>` has been a symlink into `~/.claude/projects` since
+    `~/.claude-avis/projects/<a project>` has been a symlink into `~/.claude/projects` since
     2026-10-18 11:27Z, so a1's join counted avis's work there as a1's: a1's tokens_per_pct went
     from 10.7M on 17 Oct to 47.5M on 18 Oct, and 87% of 18-19 Oct's meter dollars in that
     directory were avis's.
@@ -431,7 +431,7 @@ def _split_sources(account: Account, since: datetime | None, withhold: Iterable[
 
     The pooled-projects filter (see `transcript_files`) applies to the live tree and its
     archive, and now keys claims by account, not by config dir: gs's `~/.claude-jono` and
-    `~/.claude-javiswork` are both jwork (5bb57a97fb8b), and jono's sessions were dropped as
+    `~/.claude-javiswork` are both jwork's login, and jono's sessions were dropped as
     "another login" (`dropped_to {'.claude-jono': 7}`, 350 turns since 1 Oct). A session
     claimed by dirs of two different accounts is split turn by turn at their claim times
     (tracker/extract.py `owner_at`). Shipped extracts were attributed on the host that wrote
@@ -552,7 +552,7 @@ def _split_sources(account: Account, since: datetime | None, withhold: Iterable[
         # `own_sessions`, and masterrig's passive.sh commits history/masterrig-passive.json to the
         # public repo. Project directory names leave a host only in the extracts shipped to gs's
         # private directory (bin/ship-extracts.sh); the 2026-10-23 review found the first cut of
-        # this record publishing masterrig's bob-ross-skin directory by name.
+        # this record publishing a masterrig project directory by name.
         linked: dict[str, int] = {}
         for names in subtrees.values():
             for n in names:
@@ -879,10 +879,11 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                             "shared_with": shared_with(account, home or account.config_dir.parent),
                             "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
                             "own_sessions": own_sessions,
-                            # Which account this is (tracker/extract.py `login`), and how many
-                            # files and turns each source gave: the guard in `main` compares
-                            # these run to run (`transcript_loss`).
-                            "identity": split.group or None, "sources": per_source},
+                            # How many files and turns each source gave: the guard in `main`
+                            # compares these run to run (`transcript_loss`). Never the account's
+                            # identity hash or token fingerprint, nor another host's name: this
+                            # record is committed to the public repo (`public_sources`).
+                            "sources": public_sources(per_source)},
             "cloud_sessions": {"log": str(account.cloud_dir / "sessions.tsv") if account.cloud_dir else None,
                                "spans": [c.record() for c in cloud[name]],
                                "launches_unattributed": unattributed},
@@ -890,9 +891,31 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         }
     out = summarise(stretches, reset_sources, meta, weekly, probe_rows, prices, now, until, unclaimed, cloud)
     out["sources_version"] = SOURCES_VERSION
-    # Shipped extracts that joined no account here: named, never dropped silently.
-    out["remote_unjoined"] = [{"host": host, "identity": ident, "files": len(transcript_paths(r, None))}
-                              for host, ident, r in resolved.remotes if (host, ident) not in joined_remote]
+    # Shipped extracts that joined no account here: never dropped silently. The public record
+    # carries only counts; the host and identity of each go to stderr, which lands in the
+    # host's private cron log, never in this repo.
+    unjoined = [(host, ident, len(transcript_paths(r, None)))
+                for host, ident, r in resolved.remotes if (host, ident) not in joined_remote]
+    out["remote_unjoined"] = {"extracts": len(unjoined), "files": sum(n for _, _, n in unjoined)}
+    for host, ident, n in unjoined:
+        print(f"gs_passive: shipped extracts from {host} under {ident} ({n} files) joined no account",
+              file=sys.stderr)
+    return out
+
+
+def public_sources(per_source: list[dict]) -> list[dict]:
+    """`account_turns`' per-source counts as the public record may carry them.
+
+    A shipped source's label is `remote:<host>` and its root `<dir>/<host>/<identity>/`, so
+    every other host's shipment is summed into one `remote` entry with a host count and no
+    root. Live and archive sources are kept as they are: their roots are this host's config
+    and cache directories.
+    """
+    out = [dict(s) for s in per_source if not str(s.get("source", "")).startswith("remote:")]
+    remote = [s for s in per_source if str(s.get("source", "")).startswith("remote:")]
+    if remote:
+        out.append({"source": "remote", "hosts": len(remote), "files": sum(s["files"] for s in remote),
+                    "turns": sum(s["turns"] for s in remote)})
     return out
 
 
