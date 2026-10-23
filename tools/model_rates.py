@@ -22,7 +22,8 @@ a comparison with nothing to value reads as not measurable, and one that fails o
 recorded as failed (`diagnostic`), so neither can stop the rates in section 6 being written.
 
 A refit that moves a published rate outside its own interval, or takes a measured rate back
-to provisional or to no value, is not written over the rates in force: it goes to
+to provisional or to no value, is not written over the rates in force (a rate whose interval
+in force is `collapsed` at zero moves only where the refit's own interval excludes it): it goes to
 `model-rates.candidate.json` beside them and the run exits HELD_EXIT (`rate_moves`), until
 someone reads the move and reruns with --accept-moves.
 
@@ -888,6 +889,38 @@ def weight_pool(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
 #: high end over its low end is under this ratio. Wider than that, the fit is not pinning
 #: the family down and the page publishes a status sentence instead of a number.
 MAX_INTERVAL_RATIO = 1.5
+#: A fitted rate under this many times Opus is a rate at zero. The fit works in log space,
+#: so a column the meter does not respond to drifts toward minus infinity until the loss
+#: stops moving, and the bootstrap, started from that point, stays there: on 2026-10-23 Haiku
+#: 5.5 sat at 8.4e-14x Opus with an "interval" [5.9e-14, 1.1e-13] and Haiku at 4.6e-72x
+#: [3.5e-72, 6.2e-72]. Those intervals are under 3x wide end to end, so the ratio test alone
+#: published Haiku 5.5 as provisional at 0.000x Opus. The cheapest family's list ratio is
+#: Haiku 5.5's 0.02x; this is two hundred times under it, and twenty orders above the
+#: collapsed values.
+RATE_FLOOR = 1e-4
+
+
+def x3(v: float | None) -> str:
+    """A rate or interval end with at least three significant figures: three decimals where
+    those show three (0.1 and up, so every figure the page has carried reads as before), and
+    three significant figures below, so 8.4e-14 and 0.018 do not both read 0.000."""
+    if v is None:
+        return "none"
+    if v == 0 or not np.isfinite(v) or abs(v) >= 0.1:
+        return f"{v:.3f}"
+    return f"{v:.3g}"
+
+
+def collapsed(iv: list[float] | None) -> bool:
+    """An interval that says nothing about a rate: missing, not finite, or wholly under
+    RATE_FLOOR (a rate the fit has driven to zero in every resample). A refit landing outside
+    such an interval has not moved anything the interval measured. A narrow interval away from
+    zero is not collapsed: stretches that fit a rate exactly give every resample the same
+    value, and that rate is measured, not unidentified."""
+    if not iv:
+        return True
+    lo, hi = iv
+    return not (np.isfinite(lo) and np.isfinite(hi)) or hi < RATE_FLOOR
 #: The output multiplier the pooled fit counts input-equivalent tokens at. Its cache-read
 #: column counts millions of tokens, like the family columns, and the fitted weight
 #: multiplies the Opus input rate, so it reads directly as data/prices.json's
@@ -1131,11 +1164,12 @@ def pooled_section(data: dict[str, list[dict]], seed: int, resamples: int) -> di
 
 
 def measurable(iv: list[float] | None, limit: float = MAX_INTERVAL_RATIO) -> bool:
-    """A bootstrap interval that pins a rate down: finite, above zero, and narrow enough."""
-    if not iv:
+    """A bootstrap interval that pins a rate down: finite, above zero (RATE_FLOOR), and
+    narrow enough."""
+    if not iv or collapsed(iv):
         return False
     lo, hi = iv
-    return bool(np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi / lo < limit)
+    return bool(lo >= RATE_FLOOR and hi / lo < limit)
 
 
 #: A family newer than the January reference table -- Opus 5.5, and any family of its own a
@@ -1166,8 +1200,12 @@ NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
 #: value (tracker/gs_passive.py) -- and both stay on the record in `pooled`.
 NOT_PINNED = ("not measurable, the pooled fit cannot pin {family} down: its 80% interval is "
               "{ratio} wide end to end, and a published rate needs under {limit:g}x")
+#: The same, where every resample puts the family at zero (`collapsed`): the meter shows no
+#: response to its tokens that the fit can find, which is no rate at all.
+NOT_PINNED_ZERO = ("not measurable, the pooled fit cannot pin {family} down: it puts {family} at "
+                   "zero in every resample")
 #: The status of a provisional rate (PROVISIONAL_MAX_RATIO): figures only.
-PROVISIONAL = ("provisional: {family} {point:.3f}x Opus, 80% interval [{lo:.3f}x, {hi:.3f}x], "
+PROVISIONAL = ("provisional: {family} {point}x Opus, 80% interval [{lo}x, {hi}x], "
                "{ratio:.2f}x wide end to end; a rate is final when its interval is under {limit:g}x")
 
 
@@ -1206,10 +1244,12 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
         if ok:
             status = None
         elif provisional:
-            status = PROVISIONAL.format(family=name(f), point=point, lo=iv[0], hi=iv[1],
+            status = PROVISIONAL.format(family=name(f), point=x3(point), lo=x3(iv[0]), hi=x3(iv[1]),
                                         ratio=iv[1] / iv[0], limit=MAX_INTERVAL_RATIO)
+        elif f in free and collapsed(iv):
+            status = NOT_PINNED_ZERO.format(family=name(f))
         elif f in free:
-            wide = None if not iv or iv[0] <= 0 else iv[1] / iv[0]
+            wide = None if not iv or iv[0] < RATE_FLOOR else iv[1] / iv[0]
             ratio = "over 100x" if wide is None or wide >= 100 else f"{wide:.2f}x"
             status = NOT_PINNED.format(family=name(f), ratio=ratio, limit=MAX_INTERVAL_RATIO)
         else:
@@ -1263,8 +1303,8 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             iv = pooled_row["interval"]
             row["why"] = (("provisional, " if row["provisional"] else "") +
                 f"one fit pooled over {groups}: rates shared by every group, one credits-per-1% "
-                f"scale per group. {name(f)} {pooled_row['times_opus']:.3f}x Opus, 80% bootstrap "
-                f"interval [{iv[0]:.3f}, {iv[1]:.3f}] from {pooled.get('resamples')} resamples "
+                f"scale per group. {name(f)} {x3(pooled_row['times_opus'])}x Opus, 80% bootstrap "
+                f"interval [{x3(iv[0])}, {x3(iv[1])}] from {pooled.get('resamples')} resamples "
                 f"stratified by group; {pooled_row['n_stretches_carrying']} of the fit's "
                 f"{pooled.get('n')} stretches carry its tokens. The per-group fits are on this "
                 "record as diagnostics and enter no rate.")
@@ -1273,8 +1313,8 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             row["why"] = (
                 f"the highest {name(f)} share of any clean stretch on a fitted account is "
                 f"{max_share[f]:.3f}. The pooled fit carries it and puts it at "
-                f"{pooled_row['times_opus']:.3f}x Opus, but its 80% interval runs "
-                f"[{iv[0]:.3f}x, {iv[1]:.3f}x], so the data do not pin it down, and neither the "
+                f"{x3(pooled_row['times_opus'])}x Opus, but its 80% interval runs "
+                f"[{x3(iv[0])}x, {x3(iv[1])}x], so the data do not pin it down, and neither the "
                 "value nor the interval is published: an interval is priced at its midpoint where "
                 "a family has no value (tracker/gs_passive.py), and this one's midpoint is not a "
                 "rate anything measured. The fit's point estimate still prices this family's "
@@ -1594,7 +1634,7 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
           f"{', '.join(mr['fits_pooled']) or 'nothing'}, output {mr['output_multiplier']}x")
     if pf:
         print(f"   n={pf['n']} stretches, SSE={pf['sse']:.3f}, {pf['resamples']} resamples "
-              f"stratified by group; held: " + (", ".join(f"{f} at {v:.3f}x" for f, v in
+              f"stratified by group; held: " + (", ".join(f"{f} at {x3(v)}x" for f, v in
                                                           pf["held_rate"].items()) or "none"))
         print("   credits per 1% per group: " + ", ".join(
             f"{g} {v:,.0f}" for g, v in pf["credits_per_pct"].items()))
@@ -1602,18 +1642,18 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
         ref = f"reference={row['reference_input']:.3f}" if row["reference_input"] else "reference=absent"
         if row["input"] is not None and row["interval"]:
             lo, hi = row["times_opus_interval"]
-            what = f"input={row['input']:.4f} ({row['times_opus']:.3f}x Opus [{lo:.3f}, {hi:.3f}])"
+            what = f"input={row['input']:.4g} ({x3(row['times_opus'])}x Opus [{x3(lo)}, {x3(hi)}])"
         elif row["input"] is not None:
             what = f"input={row['input']:.4f} (the anchor)"
         else:
             what = row["status"]
             if row.get("inferred"):
-                what += (f"; shown INFERRED at {row['inferred']['times_opus']:.3f}x Opus "
+                what += (f"; shown INFERRED at {x3(row['inferred']['times_opus'])}x Opus "
                          f"({row['inferred']['inferred_from']})")
             if row.get("pooled"):
                 iv = row["pooled"]["interval"]
-                what += (f" (fit point {row['pooled']['times_opus']:.3f}x Opus "
-                         f"[{iv[0]:.3f}, {iv[1]:.3f}])")
+                what += (f" (fit point {x3(row['pooled']['times_opus'])}x Opus "
+                         f"[{x3(iv[0])}, {x3(iv[1])}])")
         print(f"   {f:8} {row['rate_source']:9} {ref:18} {what}")
     w = mr["cache_read_weight"]
     if w.get("interval"):
@@ -1736,19 +1776,43 @@ def previous_hold(candidate: Path) -> dict | None:
     return held if isinstance(held, dict) else None
 
 
+def _moved(old_value: float | None, old_iv: list[float] | None, new_value: float | None,
+           new_iv: list[float] | None) -> bool:
+    """Whether a refit moved a rate: the new point lies outside the interval in force -- or,
+    where the interval in force says nothing (`collapsed`), the new fit's own interval says
+    something and excludes the point in force. Two intervals that both say nothing are no
+    move, whatever their points: a rate the fit drove to zero that a refit puts anywhere its
+    own interval still reaches zero has not moved anything that was measured."""
+    if new_value is None or not old_iv:
+        return False
+    if not collapsed(old_iv):
+        return _outside(new_value, old_iv)
+    if old_value is None or not new_iv or collapsed(new_iv) or new_iv[0] < RATE_FLOOR:
+        return False
+    return _outside(old_value, new_iv)
+
+
 def rate_moves(old: dict, new: dict) -> list[str]:
     """Why a refit must not replace the rates in force, one sentence each; empty when it may.
 
     `old` and `new` are `measured_rates` blocks. A refit is held when, against the block in
     force:
 
-    - a published rate's new value lies outside the old rate's own interval;
-    - a rate that had a value has none, or a measured rate drops back to provisional;
+    - a published rate moves (`_moved`): its new value lies outside the old rate's own
+      interval;
+    - a measured rate has no value any more, or drops back to provisional;
     - a family the pooled fit carried without publishing it, the cache-read weight or the
       headless factor moves outside its own interval -- all three price stretches in the
       before-and-after comparison (tracker/credits.py `pooled_fit`), published or not;
     - fewer than MIN_NONZERO of the new fit's stretches carry the anchor, so nothing ties the
       fitted rates to the unit.
+
+    Not held: a provisional rate that loses its value. A provisional rate values no stretch
+    (tracker/gs_passive.py `stretch_credits`), and the page falls back to the family's
+    `inferred` rate, marked as inferred, as for every family the fit cannot measure. Nor is a
+    rate whose interval in force says nothing (`collapsed`, as Haiku 5.5's 0.000x [0.000,
+    0.000] provisional and the pooled Haiku's did on 2026-10-23) held for moving, unless the
+    refit's own interval measures it away from that point.
 
     The first refit after the crash of 2026-10-13 to 2026-10-22, on a history that had lost
     gs's pre-October transcripts, moved Opus 5.5 from 0.780x measured to 0.367x provisional,
@@ -1764,29 +1828,32 @@ def rate_moves(old: dict, new: dict) -> list[str]:
             continue
         shown.add(f)
         n = new_rows.get(f) or {}
-        was = f"{o['times_opus']:.3f}x Opus" + (" provisional" if o.get("provisional") else "")
+        iv = o.get("times_opus_interval")
+        was = f"{x3(o['times_opus'])}x Opus" + (" provisional" if o.get("provisional") else "")
         if n.get("input") is None:
-            out.append(f"{name(f)} no longer has a published rate (was {was})")
+            if not o.get("provisional") and not collapsed(iv):
+                out.append(f"{name(f)} no longer has a published rate (was {was})")
             continue
         if n.get("provisional") and not o.get("provisional"):
             out.append(f"{name(f)} drops from measured to provisional ({was} -> "
-                       f"{n['times_opus']:.3f}x provisional)")
-        iv = o.get("times_opus_interval")
-        if _outside(n.get("times_opus"), iv):
-            out.append(f"{name(f)} moves from {was} [{iv[0]:.3f}, {iv[1]:.3f}] to "
-                       f"{n['times_opus']:.3f}x, outside its interval")
+                       f"{x3(n['times_opus'])}x provisional)")
+        if _moved(o.get("times_opus"), iv, n.get("times_opus"), n.get("times_opus_interval")):
+            span = "" if collapsed(iv) else f" [{x3(iv[0])}, {x3(iv[1])}]"
+            out.append(f"{name(f)} moves from {was}{span} to {x3(n['times_opus'])}x, outside its "
+                       "interval")
     old_fit, new_fit = old.get("pooled_fit") or {}, new.get("pooled_fit") or {}
     for f, iv in sorted((old_fit.get("interval") or {}).items()):
         v = (new_fit.get("times_opus") or {}).get(f)
-        if f not in shown and _outside(v, iv):
+        was_v = (old_fit.get("times_opus") or {}).get(f)
+        if f not in shown and _moved(was_v, iv, v, (new_fit.get("interval") or {}).get(f)):
             out.append(f"the pooled fit's {name(f)} (not published, priced in the before-and-after "
-                       f"comparison) moves from {old_fit['times_opus'][f]:.3f}x "
-                       f"[{iv[0]:.3f}, {iv[1]:.3f}] to {v:.3f}x, outside its interval")
+                       f"comparison) moves from {x3(was_v)}x [{x3(iv[0])}, {x3(iv[1])}] to "
+                       f"{x3(v)}x, outside its interval")
     iv = old_fit.get("cache_read_weight_interval")
     v = new_fit.get("cache_read_weight")
     if _outside(v, iv):
-        out.append(f"the cache-read weight moves from {old_fit['cache_read_weight']:.4f} "
-                   f"[{iv[0]:.4f}, {iv[1]:.4f}] to {v:.4f}, outside its interval")
+        out.append(f"the cache-read weight moves from {old_fit['cache_read_weight']:.4g} "
+                   f"[{iv[0]:.4g}, {iv[1]:.4g}] to {v:.4g}, outside its interval")
     o_unit, n_unit = old.get("five_hour_unit") or {}, new.get("five_hour_unit") or {}
     iv = o_unit.get("interval")
     if o_unit.get("headless_factor") is not None and n_unit.get("headless_factor") is None:

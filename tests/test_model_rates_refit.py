@@ -23,6 +23,7 @@ from tools.model_rates import (HELD_EXIT, MIN_N, MIN_NONZERO, SHELLAC, STILL_HEL
                                account_pairs, candidate_path, compare, move_signature, prepare,
                                priceable, rate_moves, ratio_bootstrap, section4, section5, tables)
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 POST = "2026-09-16T00:00:00+00:00"
 IDS = {"opus": "claude-opus-5", "sonnet": "claude-sonnet-5", "fable": "claude-fable-5-1",
        "opus_5_5": "claude-opus-5-5"}
@@ -297,6 +298,54 @@ class MoveGuardTests(unittest.TestCase):
     def test_a_headless_factor_that_stops_being_measured_is_held(self):
         moves = rate_moves(_block(), _block(five_hour_unit__headless_factor=None))
         self.assertEqual(moves, ["the headless factor is no longer measured (was 1.490)"])
+
+    def test_the_haiku_hold_of_2026_10_23_is_not_a_move(self):
+        # gs's rates in force and the refit held at 17:34Z: Haiku 5.5 published provisional at
+        # 8.4e-14x Opus [5.9e-14, 1.1e-13] and the pooled Haiku at 4.6e-72x, both a rate the
+        # log-space fit drove to zero. The refit's own intervals reach zero too, so nothing
+        # measured moved, and Haiku 5.5 falling back to its inferred rate holds nothing.
+        real = json.loads((FIXTURES / "model_rates_haiku_hold_2026-10-23.json").read_text())
+        self.assertEqual(rate_moves(real["in_force"], real["candidate_17_34"]), [])
+        # The 16:33Z hold: Haiku 5.5 refitted at another zero, still provisional.
+        new = json.loads(json.dumps(real["in_force"]))
+        new["per_family"]["haiku-5-5"].update(times_opus=3e-15, times_opus_interval=[1e-15, 6e-15])
+        new["pooled_fit"]["times_opus"]["haiku"] = 2e-60
+        new["pooled_fit"]["interval"]["haiku"] = [1e-61, 4e-60]
+        self.assertEqual(rate_moves(real["in_force"], new), [])
+
+    def test_a_real_move_on_the_real_rates_is_still_held(self):
+        real = json.loads((FIXTURES / "model_rates_haiku_hold_2026-10-23.json").read_text())
+        new = json.loads(json.dumps(real["candidate_17_34"]))
+        new["per_family"]["sonnet"]["times_opus"] = 0.70
+        moves = rate_moves(real["in_force"], new)
+        self.assertEqual(moves, ["Sonnet moves from 0.517x Opus [0.458, 0.594] to 0.700x, outside "
+                                 "its interval"])
+        # A rate collapsed at zero that a refit measures away from zero is a move, with its
+        # figures in three significant figures rather than 0.000.
+        new = json.loads(json.dumps(real["candidate_17_34"]))
+        new["pooled_fit"]["interval"]["haiku"] = [0.05, 0.07]
+        new["pooled_fit"]["times_opus"]["haiku"] = 0.06
+        self.assertEqual(rate_moves(real["in_force"], new),
+                         ["the pooled fit's Haiku (not published, priced in the before-and-after "
+                          "comparison) moves from 4.63e-72x [3.53e-72, 6.2e-72] to 0.06x, outside "
+                          "its interval"])
+
+    def test_a_provisional_rate_that_loses_its_value_is_not_held(self):
+        old = _block()
+        old["per_family"]["sonnet-5-5"] = {"input": 0.6 * SHELLAC["opus"], "times_opus": 0.6,
+                                           "times_opus_interval": [0.5, 0.9], "provisional": True}
+        new = _block()
+        new["per_family"]["sonnet-5-5"] = {"input": None, "times_opus": None, "provisional": False}
+        self.assertEqual(rate_moves(old, new), [])
+
+    def test_a_rate_at_zero_is_not_measurable_or_provisional(self):
+        self.assertFalse(M.measurable([5.85e-14, 1.1e-13], M.PROVISIONAL_MAX_RATIO))
+        self.assertTrue(M.measurable([0.5, 0.5]))
+        self.assertTrue(M.measurable([0.567, 0.849], M.PROVISIONAL_MAX_RATIO))
+        self.assertTrue(M.collapsed([3.5e-72, 6.2e-72]))
+        self.assertFalse(M.collapsed([0.0, 1.04]))
+        self.assertEqual([M.x3(v) for v in (8.37e-14, 0.0183, 0.517, 3.033, 0.0)],
+                         ["8.37e-14", "0.0183", "0.517", "3.033", "0.000"])
 
     def test_the_candidate_sits_beside_the_file_in_force(self):
         self.assertEqual(candidate_path(Path("history/model-rates.json")),
