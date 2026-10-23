@@ -283,6 +283,43 @@ class HeadlineIsNewestStatedChangeTest(unittest.TestCase):
             msgs = I.headline_is_newest_stated_change(doc)
             self.assertTrue(any(says in m for m in msgs), (key, msgs))
 
+    def test_another_limit_line_date_or_interval_fails(self):
+        # The review's mutation: the site renders `limit` and `date`, so each is held to the change.
+        for key, value in (("limit", "weekly limit"), ("date", "2026-10-08"), ("line", "seven_day"),
+                           ("interval_pct", [-2.7, 11.3]), ("direction", "decreased"),
+                           ("holds_needed", 8), ("found_on", "seven_day")):
+            doc = _good()
+            doc["headline"][key] = value
+            msgs = I.headline_is_newest_stated_change(doc)
+            self.assertTrue(any(f"hero's {key}" in m or "whole percent" in m for m in msgs), (key, msgs))
+        doc = _good()
+        doc["headline"].update(limit="weekly limit", date="2026-10-08", line="seven_day",
+                               interval_pct=[-2.7, 11.3])
+        self.assertGreaterEqual(len(I.headline_is_newest_stated_change(doc)), 4)
+        doc = _good()
+        doc["headline"]["passed_over"] = [{"at": SEP24, "state": "measured", "found_on": "seven_day",
+                                           "reason": "no_limit_interval_excludes_no_change"}]
+        msgs = I.headline_is_newest_stated_change(doc)
+        self.assertTrue(any("passes over" in m for m in msgs), msgs)
+
+    def test_a_measured_changes_limit_is_the_one_decided_when_it_was_measured(self):
+        # 24 Sep, both clear, weekly +34.4 the larger today; decided the 5-hour limit the day it
+        # was measured, so the hero still names the 5-hour limit (+31.4).
+        doc = _good()
+        doc["four_accounts"]["changes"] = doc["four_accounts"]["changes"][:2]
+        doc["four_accounts"]["changes"][1]["decided"] = {"on": "2026-09-25", "moved": {},
+                                                        "stated": "five_hour_limit",
+                                                        "stated_on": "2026-09-25"}
+        doc["four_accounts"]["change_markers"] = F.change_markers(doc["four_accounts"])
+        doc["headline"] = F.headline(doc["four_accounts"])
+        self.assertEqual((doc["headline"]["quantity"], doc["headline"]["change_pct"]), ("five_hour_limit", 31.4))
+        self.assertEqual(I.headline_is_newest_stated_change(doc), [])
+        doc["headline"] = dict(doc["headline"], quantity="weekly_limit", line="seven_day",
+                               limit="weekly limit", change_pct=34.4, percent=34,
+                               interval_pct=[25.7, 43.7])
+        msgs = I.headline_is_newest_stated_change(doc)
+        self.assertTrue(any("five_hour_limit" in m for m in msgs), msgs)
+
     def test_no_headline_beside_a_stated_change_fails(self):
         doc = _good()
         doc["headline"] = None
@@ -372,6 +409,31 @@ class EveryChangeDrawnTest(unittest.TestCase):
         doc["four_accounts"]["change_markers"]["windows_per_week"][1]["style"] = "step"
         msgs = I.every_change_drawn(doc)
         self.assertTrue(any(OCT09 in m and "(step)" in m for m in msgs), msgs)
+
+    def test_a_missing_chart_quantity_fails(self):
+        # The review's mutation: with no five_hour_limit markers at all, the hero names a limit
+        # no chart marks.
+        doc = _good()
+        del doc["four_accounts"]["change_markers"]["five_hour_limit"]
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any("change_markers has the charts" in m for m in msgs), msgs)
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("five_hour_limit charts carry no marker" in m for m in msgs), msgs)
+        self.assertTrue(any("The hero names the five_hour_limit" in m and "no chart marks" in m
+                            for m in msgs), msgs)
+
+    def test_a_provisional_change_with_no_sizes_blocks_nothing(self):
+        # The 7 October replay: the 22 Sep change provisional with no sizes. No figure, so no
+        # marker and no hero; the page publishes, stating the newest change that has one.
+        run = _run()
+        run["changes"][2].update(sizes={}, change_pct=None, interval_pct=None)
+        doc = _good()
+        doc["four_accounts"] = F.public_block(run)
+        doc["headline"] = F.headline(run)
+        self.assertEqual((doc["headline"]["at"], doc["headline"]["passed_over"][0]["reason"]),
+                         (SEP24, "no_limit_sizes"))
+        failed = {name for name, msgs in I.run_checks(doc).items() if msgs}
+        self.assertFalse(failed & I.BLOCKING, {n: I.run_checks(doc)[n] for n in failed})
 
     def test_a_candidate_is_marked_nowhere(self):
         doc = _good()

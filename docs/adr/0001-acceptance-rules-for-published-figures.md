@@ -674,11 +674,18 @@ These are the acceptance rules. Each names where it lives.
         interval (widened by the line's coverage factor, at the rates in force) excludes no
         change; of those, the larger absolute size, stated as the 5-hour limit or the weekly
         limit (`four_accounts_page.stated_quantity`; an exact tie goes to the weekly limit).
-        It is read on the sizes as published that run, not frozen at measurement. A change
+        Until the change is measured it is read on that run's sizes; the run it is measured
+        the limit is decided (`decided.stated`, with `stated_on`) and never re-decided, as
+        `decided.moved` is, so two clear sizes that cross later, or an interval that comes to
+        touch zero, never flip the limit the hero names or what the charts draw (a change
+        measured before 2026-10-23 has it decided on the first run that reads it). A change
         where neither interval excludes no change cannot be stated as a limit change: the
         hero uses the newest provisional-or-measured change that can, listing the ones it
-        passed over (`passed_over`), and when none can, the page says the limits have not
-        changed. The sentence keeps Jonathan's shape: "Anthropic last <increased|decreased>
+        passed over (`passed_over`, each with its reason), and when none can, the page says
+        the limits have not changed. A provisional change with no sizes at all (the replay's
+        run of 7 October: the 22 September change, with a candidate inside its gap) has no
+        figure to state or mark: it is passed over (`no_limit_sizes`), marked nowhere, and
+        does not stop the publish. The sentence keeps Jonathan's shape: "Anthropic last <increased|decreased>
         Claude's <5-hour|weekly> limit by N% on <date>."
       - The record. The tracker decides and publishes it; the site only renders it. `headline`
         in the public JSON: `date`, `at`, `state`, `provisional`, `held_days`, `holds_needed`
@@ -692,7 +699,9 @@ These are the acceptance rules. Each names where it lives.
         the line that found it, a line that moved, and now also the line of the limit the hero
         names for it, so the page never names a limit its chart does not show (9 October's
         five-hour size is clear, but its voting accounts do not agree, so without this it
-        would not be drawn). A measured change is the level's step, as before. A provisional
+        would not be drawn). Once such a change is measured its step is drawn on that line
+        like any other, so the window history before it is rescaled by its 5-hour size. A
+        measured change is the level's step, as before. A provisional
         one is a dashed marker with its figure and the word provisional and moves no level:
         only measured changes open a segment of the step lines (`four_accounts.levels`), and
         the publisher re-reads them from the published sizes. `four_accounts.change_markers`
@@ -703,20 +712,23 @@ These are the acceptance rules. Each names where it lives.
       - Invariants. Check 4 is now `headline_is_newest_stated_change`: the hero is the newest
         provisional-or-measured change with a clear limit size, stated as the larger one, and
         its figure is that change's published size for that limit (size, whole percent,
-        direction), with the change's state, provisional tag and days held. The old check 4 is
+        direction, interval), with the limit's words, its line and date, the change's state,
+        provisional tag and days held, and the newer changes it passed over. The old check 4 is
         check 11, `last_change_is_newest_measured`, the email's record; both block. Check 5
         now also requires that a change not yet measured opens no segment on any step line,
-        that a provisional one has a dashed marker on the line that found it, that a
+        that a provisional one with a size has a dashed marker on the line that found it,
+        that `change_markers` lists all three chart quantities, that a
         candidate is marked nowhere and that every marker is a provisional or measured
         change styled by its state. Check 6 now also holds every marker and the hero to the
-        detector's size for that line, and the hero to a line a chart shows.
+        detector's size, interval, date and days held for that line, and the hero's limit to
+        a chart that marks it.
       - On the records of 2026-10-23 (the detector replayed from no state, then published):
         the hero is 9 October 16:00Z, the 5-hour limit +15% (+15.3% [+3.2, +28.8]),
         provisional, held 4 of 7 runs; the weekly size there, +5.3% [-0.7, +11.8], is not
         clear. Dashed markers sit at 9 October on the windows-per-week charts (-9.2%) and the
         5-hour charts (+15.3%), and no level steps there. Run forward on the same records to
-        27 October, 9 October is measured on 26 October; the hero is the 5-hour limit +15%
-        (+15.1% [+7.2, +23.6]) with no tag, and the five-hour, ratio, window, windows-per-week
+        27 October, 9 October is measured on 26 October, its limit decided as the 5-hour
+        limit that day; the hero is the 5-hour limit +16% (+16.0% [+7.7, +24.8]) with no tag, and the five-hour, ratio, window, windows-per-week
         and pooled weekly-windows levels open at 9 October. With the records cut at 9 October
         12:00Z, the run of 24 October withdraws the 9 October find and the hero falls back to
         23 September, the weekly limit +20% (+20.4% [+13.5, +27.7]; both limits clear there,

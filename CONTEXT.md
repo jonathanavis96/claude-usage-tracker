@@ -174,7 +174,7 @@ A step every Max account takes at the same instant, found by the **Four-account 
 _Avoid_: shift, event
 
 **Hero**:
-The page's headline sentence, "Anthropic last <increased|decreased> Claude's <5-hour|weekly> limit by N% on <date>.", published as `headline` (ADR 0001 rule 22, amended 2026-10-23). It states the newest provisional-or-measured **Change** (never a candidate or a withdrawn find) as the 5-hour or the weekly limit: of the two sizes whose 95% interval excludes no change, the larger. A change with neither is passed over (`passed_over`). Tagged "provisional" until the change is measured. Never windows per week, never the generic "limits".
+The page's headline sentence, "Anthropic last <increased|decreased> Claude's <5-hour|weekly> limit by N% on <date>.", published as `headline` (ADR 0001 rule 22, amended 2026-10-23). It states the newest provisional-or-measured **Change** (never a candidate or a withdrawn find) as the 5-hour or the weekly limit: of the two sizes whose 95% interval excludes no change, the larger; decided the run the change is measured and never re-decided (`decided.stated`). A change with neither, or with no sizes, is passed over (`passed_over`). Tagged "provisional" until the change is measured. Never windows per week, never the generic "limits".
 _Avoid_: headline change, last change (that is `last_change`, the newest measured change, which the email reads)
 
 **Four-account detector**:

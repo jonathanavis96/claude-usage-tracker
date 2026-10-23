@@ -16,6 +16,7 @@ Three kinds of test:
 """
 from __future__ import annotations
 
+import copy
 import functools
 import io
 import json
@@ -409,6 +410,44 @@ class PublishTest(unittest.TestCase):
         self.assertTrue(F.drawn(split, "five_hour"))
         self.assertFalse(F.drawn(split, "seven_day"))
 
+    def test_a_measured_changes_limit_is_decided_once(self):
+        # Measured with the five-hour size clear and the accounts split on it: the hero's limit
+        # (`decided["stated"]`) is fixed that day. A later run whose five-hour interval reaches
+        # zero, or whose weekly size overtakes it, names and draws the same limit as before.
+        split = dict(OCT09, state="measured", held_days=7,
+                     sizes=dict(OCT09["sizes"], five_hour=dict(size(15.3, 3.2, 28.8), agree=False)),
+                     decided={"on": "2026-10-26", "moved": {"five_hour": False, "seven_day": False,
+                                                            "ratio": True},
+                              "stated": "five_hour_limit", "stated_on": "2026-10-26"})
+        later = dict(split, sizes=dict(split["sizes"], five_hour=dict(size(11.0, -0.4, 23.6), agree=False),
+                                       seven_day=size(14.0, 2.0, 27.0)))
+        self.assertEqual(F.stated_limit(later), "weekly_limit")
+        self.assertEqual(F.stated_quantity(later), "five_hour_limit")
+        self.assertTrue(F.drawn(later, "five_hour"))
+        self.assertFalse(F.drawn(later, "seven_day"))
+        h = F.headline(block_with([SEP23, later]))
+        self.assertEqual((h["at"], h["quantity"], h["change_pct"], h["interval_pct"]),
+                         (OCT09["at"], "five_hour_limit", 11.0, [-0.4, 23.6]))
+        self.assertTrue(F.regime_changes(block_with([SEP23, later]))[-1]["window_scaled"])
+        # Decided with no limit to state, it is passed over for good.
+        none = dict(later, decided=dict(later["decided"], stated=None))
+        h = F.headline(block_with([SEP23, none]))
+        self.assertEqual(h["at"], SEP23["at"])
+        self.assertEqual(h["passed_over"][0]["reason"], "no_limit_interval_excluded_no_change_when_measured")
+
+    def test_a_provisional_change_with_no_sizes_is_passed_over_and_marks_nothing(self):
+        # 7 October's replay: the 22 September change, provisional, had no sizes (a candidate
+        # sat inside its gap). It has no figure, so no hero and no marker; the page is not
+        # withheld for it (every_change_drawn).
+        bare = dict(OCT09, sizes={}, change_pct=None, interval_pct=None)
+        self.assertIsNone(F.stated_quantity(bare))
+        h = F.headline(block_with([SEP23, bare]))
+        self.assertEqual(h["at"], SEP23["at"])
+        self.assertEqual(h["passed_over"], [{"at": OCT09["at"], "state": "provisional", "found_on": "ratio",
+                                             "reason": "no_limit_sizes"}])
+        marks = F.change_markers(block_with([SEP23, bare]))
+        self.assertFalse(any(m["at"] == OCT09["at"] for rows in marks.values() for m in rows))
+
     def test_a_provisional_change_moves_no_level_and_is_a_dashed_marker(self):
         ratio = F.levels([SEP14, SEP23, OCT09], "ratio")
         self.assertEqual([s["from"] for s in ratio], [None, SEP14["at"], SEP23["at"]])
@@ -668,6 +707,7 @@ class RecoveryTest(unittest.TestCase):
             self.assertEqual({json.dumps(x["decided"], sort_keys=True) for x in later},
                              {json.dumps(c["decided"], sort_keys=True)})
             self.assertEqual(c["decided"]["on"], c["measured_on"])
+            self.assertEqual(c["decided"]["stated_on"], c["measured_on"])
 
     def test_every_run_and_hold_is_marked_replayed(self):
         self.assertTrue(all(b["replayed"] for b in self.blocks))
@@ -989,6 +1029,28 @@ class WholeRunTest(unittest.TestCase):
         self.assertEqual((c["state"], c["held_by_capture"]), ("measured", None))
         self.assertEqual(c["capture_audit"]["failing"], [])
         self.assertEqual(c["decided"]["on"], clean["day"])
+
+    def test_the_heros_limit_is_decided_the_day_a_change_is_measured(self):
+        readings = synth_readings(["a1", "a2", "a3", "a4"])
+        first = F.run(readings, self.UNTIL, held_six_days(self.AT), synth_valued())
+        c = [c for c in first["changes"] if c["found_on"] == "seven_day"][0]
+        self.assertEqual(c["state"], "measured")
+        self.assertEqual((c["decided"]["stated"], c["decided"]["stated_on"]),
+                         (F.stated_limit(c), first["day"]))
+        self.assertIn(c["decided"]["stated"], F.LIMIT_LINES)
+        nxt = F.run(readings, self.UNTIL + timedelta(days=1), first, synth_valued())
+        again = [x for x in nxt["changes"] if x["at"] == c["at"]][0]
+        self.assertEqual(again["decided"], c["decided"])
+        # Measured before the hero named a limit: the first run that reads it decides it, once.
+        old = copy.deepcopy(first)
+        for x in old["changes"]:
+            if x.get("decided"):
+                x["decided"] = {k: v for k, v in x["decided"].items() if k not in ("stated", "stated_on")}
+        nxt = F.run(readings, self.UNTIL + timedelta(days=1), old, synth_valued())
+        again = [x for x in nxt["changes"] if x["at"] == c["at"]][0]
+        self.assertEqual((again["decided"]["stated"], again["decided"]["stated_on"]),
+                         (F.stated_limit(again), nxt["day"]))
+        self.assertEqual(again["decided"]["moved"], c["decided"]["moved"])
 
     def test_a_step_that_comes_with_a_new_model_is_limited_by_its_rate(self):
         readings = synth_readings(["a1", "a2", "a3", "a4"], new_family="newmodel")

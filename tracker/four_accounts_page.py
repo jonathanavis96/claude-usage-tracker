@@ -149,14 +149,12 @@ def reading(change: dict) -> str:
     return "figures_only"
 
 
-def stated_quantity(change: dict) -> str | None:
-    """The limit the hero names for `change` (Jonathan's decision, 2026-10-23): of the 5-hour
-    and the weekly limit, those whose size's 95% interval (widened by the line's coverage
-    factor, at the rates in force) excludes no change, the one with the larger absolute size;
-    `five_hour_limit` or `weekly_limit`, or None when neither interval excludes no change (the
-    change cannot be stated as a limit change). Read on the change's sizes as published today,
-    so it is the same answer the invariants recompute from the public JSON. An exact tie goes
-    to the weekly limit."""
+def stated_limit(change: dict) -> str | None:
+    """Of the 5-hour and the weekly limit, those whose size's 95% interval (widened by the
+    line's coverage factor, at the rates in force) excludes no change, the one with the larger
+    absolute size, read on the change's sizes as published today: `five_hour_limit` or
+    `weekly_limit`, or None when neither interval excludes no change. An exact tie goes to the
+    weekly limit."""
     sizes = change.get("sizes") or {}
     clear = []
     for quantity in ("weekly_limit", "five_hour_limit"):
@@ -166,6 +164,19 @@ def stated_quantity(change: dict) -> str | None:
     if not clear:
         return None
     return max(clear, key=lambda c: c[0])[1]
+
+
+def stated_quantity(change: dict) -> str | None:
+    """The limit the hero names for `change` (Jonathan's decision, 2026-10-23): `stated_limit`,
+    or None when the change cannot be stated as a limit change. A measured change's answer is
+    the one decided on the day it was measured (`decided["stated"]`) and never re-decided, as
+    `line_moved` is: the sizes are re-estimated every run, and two clear sizes that cross, or
+    an interval near zero, would otherwise flip the limit the hero names and the line the
+    charts draw from one day to the next. Before it is measured, today's sizes."""
+    decided = change.get("decided") or {}
+    if "stated" in decided:
+        return decided["stated"] if decided["stated"] in LIMIT_LINES else None
+    return stated_limit(change)
 
 
 def drawn(change: dict, line: str) -> bool:
@@ -338,11 +349,11 @@ def headline(block: dict | None) -> dict | None:
     passed = []
     for c in changes:
         quantity = stated_quantity(c)
-        if quantity is None:
+        size = ((c.get("sizes") or {}).get(LIMIT_LINES[quantity]) or {}) if quantity else {}
+        if quantity is None or not isinstance(size.get("change_pct"), (int, float)):
             passed.append({"at": c["at"], "state": c["state"], "found_on": c["found_on"],
-                           "reason": "no_limit_interval_excludes_no_change"})
+                           "reason": _passed_reason(c, quantity)})
             continue
-        size = c["sizes"][LIMIT_LINES[quantity]]
         pct_ = size["change_pct"]
         return {
             "date": c["at"][:10], "at": c["at"], "state": c["state"],
@@ -356,6 +367,20 @@ def headline(block: dict | None) -> dict | None:
             "measured_on": c.get("measured_on"), "passed_over": passed,
         }
     return None
+
+
+def _passed_reason(change: dict, quantity: str | None) -> str:
+    """Why `headline` passes over a provisional-or-measured change."""
+    if quantity is not None:
+        # Its limit was decided the day it was measured, but no size is published for it today.
+        return "no_size_for_the_stated_limit"
+    sizes = change.get("sizes") or {}
+    if not any(isinstance((sizes.get(line) or {}).get("change_pct"), (int, float))
+               for line in LIMIT_LINES.values()):
+        return "no_limit_sizes"
+    if "stated" in (change.get("decided") or {}):
+        return "no_limit_interval_excluded_no_change_when_measured"
+    return "no_limit_interval_excludes_no_change"
 
 
 def change_markers(block: dict | None) -> dict[str, list[dict]]:
