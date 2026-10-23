@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-23T22:30:06.346779+00:00",
+ "generated_at": "2026-10-23T23:00:05.596121+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13283,
+    "reset_verified_samples": 13291,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 17995,
+    "samples": 18003,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-23T22:28:05+00:00"
+    "last": "2026-10-23T22:59:12+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,7 +33,7 @@
      ".claude-jono"
     ],
     "files": 5675,
-    "turns": 136953,
+    "turns": 136966,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 4536,
@@ -59,7 +59,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
       "files": 1434,
-      "turns": 39364
+      "turns": 39377
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -33730,6 +33730,18 @@
      ],
      "pieces": 1,
      "reset_verified": true
+    },
+    {
+     "window_ending": "2026-10-23T22:59:12+00:00",
+     "windows": null,
+     "five_hour_pct": 1.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.0,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
     }
    ]
   },
@@ -33741,26 +33753,26 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12589,
+    "reset_verified_samples": 12595,
     "since": null,
-    "samples": 15641,
+    "samples": 15647,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-23T22:28:06+00:00"
+    "last": "2026-10-23T23:00:13+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 3023,
-    "turns": 109942,
+    "files": 3024,
+    "turns": 109943,
     "withheld_patterns": [],
     "own_sessions": null,
     "sources": [
      {
       "source": "live",
       "root": "/home/jonathan/.claude-dave/projects",
-      "files": 1512,
-      "turns": 59663
+      "files": 1513,
+      "turns": 59664
      },
      {
       "source": "archive:transcripts-20261015/claude-dave",
@@ -60391,11 +60403,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 15397,
+    "reset_verified_samples": 15409,
     "since": null,
-    "samples": 17572,
+    "samples": 17584,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-23T22:30:06+00:00"
+    "last": "2026-10-23T22:59:12+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -60406,7 +60418,7 @@
      ".claude-jono"
     ],
     "files": 1708,
-    "turns": 48539,
+    "turns": 48541,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1438,
@@ -60426,7 +60438,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 466,
-      "turns": 15845
+      "turns": 15847
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -68803,7 +68815,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-23T22:31:16.200175+00:00",
+  "generated_at": "2026-10-23T23:01:14.139605+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -126935,23 +126947,23 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 652,
+    "n": 657,
     "fast_session_requests": 0,
     "output_hist": {
-     "230": 39,
+     "230": 40,
      "231": 30,
-     "233": 30,
+     "233": 31,
      "245": 4,
      "234": 25,
-     "232": 20,
+     "232": 21,
      "225": 28,
      "237": 19,
      "227": 35,
-     "238": 21,
+     "238": 22,
      "226": 33,
      "236": 20,
      "235": 17,
-     "229": 22,
+     "229": 23,
      "214": 8,
      "199": 2,
      "240": 8,
@@ -127002,7 +127014,7 @@
     "ttfb_hist": {
      "123": 4,
      "146": 4,
-     "55": 10,
+     "55": 11,
      "29": 3,
      "131": 3,
      "60": 7,
@@ -127034,7 +127046,7 @@
      "54": 6,
      "59": 8,
      "4": 1,
-     "62": 6,
+     "62": 7,
      "69": 7,
      "114": 2,
      "79": 8,
@@ -127067,7 +127079,7 @@
      "100": 5,
      "42": 1,
      "70": 9,
-     "73": 10,
+     "73": 11,
      "33": 3,
      "99": 6,
      "86": 8,
@@ -127091,13 +127103,14 @@
      "1": 1,
      "15": 1,
      "96": 4,
+     "10": 1,
+     "65": 10,
      "67": 9,
      "138": 1,
      "148": 3,
      "119": 1,
      "157": 2,
      "102": 6,
-     "65": 9,
      "89": 11,
      "151": 2,
      "81": 6,
