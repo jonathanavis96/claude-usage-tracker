@@ -23,7 +23,7 @@ Checks, in order (the first failure is the one-line reason):
   lock         no lock pid file whose process is dead, and none older than --lock-max-age.
   sizes        each log under --max-log-bytes and the history/ directory under
                --max-history-bytes.
-  meters       (gs profile) each per-account meter log's newest usable reading (a line
+  meters       (gs, masterrig) each per-account meter log's newest usable reading (a line
                with `five_hour`, not a logged gap) is younger than --meter-max-age. The
                timers read every minute and 429s are routine, so 15 min is a stopped
                timer or an account whose reads all fail, never one slow tick. It is far
@@ -46,9 +46,15 @@ Checks, in order (the first failure is the one-line reason):
   advisory     (gs profile) no advisory step of bin/daily.sh (list_prices, contributed,
                gs_passive, the model_rates refit) has failed on every run for 3 h.
 
-Profiles pick which checks run. `masterrig` (default) is collection, run, publisher, page,
-token, lock, sizes. `gs` is run (the supervised bin/daily.sh, every 30 min), page, meters,
-lock, sizes and advisory: gs has no moonlighter log, and its publisher is the job itself.
+Profiles pick which checks run. `masterrig` (default, masterrig_config) is collection,
+run, publisher, page, token, lock, sizes and meters, the last on a1's own meter log
+(deploy/systemd-masterrig/claude-usage-meter-a1.timer): moonlighter's 30-minute log is
+too sparse for the passive join (MAX_PAIR_GAP is 15 min), so a1 forms stretches only
+while that timer reads, and the 5-minute reader before it went blind for two days
+(2026-10-18) while every check here said ok. `gs` is run (the supervised bin/daily.sh,
+every 30 min), page, meters, lock, sizes and advisory: gs has no moonlighter log, and its
+publisher is the job itself. A bare Config() keeps every check but meters and advisory,
+with no meter logs and no live page.
 
 Each check reads its file fresh on every call; nothing is cached between runs, except when
 the live page's fetches started failing (~/.cache/claude-usage-tracker/page-fetch.json).
@@ -67,6 +73,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+
+from .meter_log import MASTERRIG_METER_LOG
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(os.environ.get("HOME", str(Path.home())))
@@ -135,15 +143,28 @@ def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path
                   checks=("run", "page", "meters", "lock", "sizes", "advisory"))
 
 
-def masterrig_config(**kw) -> Config:
-    """Health on masterrig as the supervisor and the CLI run it: every masterrig check, with
-    the live page, which a bare Config (as tests build one) leaves out. Keyword arguments are
-    Config's, so a caller can set any of them, page_url=None among them.
+#: masterrig's own account and its config dir under HOME: the default ~/.claude, which
+#: deploy/systemd-masterrig/claude-usage-meter-a1.service samples into MASTERRIG_METER_LOG.
+MASTERRIG_METER_CONFIG_DIRS = {"a1": ".claude"}
+MASTERRIG_CHECKS = ("collection", "run", "publisher", "page", "token", "lock", "sizes", "meters")
 
-    a1's own meter feed is not checked here: the ceiling log it came from stopped on
-    2026-10-18 and its successor, claude-usage-meter-a1.log, is the a1 slice's `meters`
-    check (fix/a1-meter-feed); a check on the dead log would fail forever."""
-    return Config(**{"page_url": LIVE_PAGE_URL, **kw})
+
+def masterrig_config(*, ops: Path = GS_OPS, home: Path = HOME, meter_logs: tuple[Path, ...] = (),
+                     checks: tuple[str, ...] = MASTERRIG_CHECKS, **kw) -> Config:
+    """Health on masterrig as the supervisor and the CLI run it: every masterrig check, with
+    the live page (which a bare Config, as tests build one, leaves out) and `meters` on a1's
+    own log (or the given ones). Other keyword arguments are Config's, so a caller can set
+    any of them, page_url=None among them.
+
+    The a1 log is the only reading of that account close enough together to pair, and
+    the same failures that stop a gs timer stop it -- a stopped timer, a refusal (exit 2:
+    signed out, or the log names another account), a run of 429s -- so it gets the same
+    check, 15 min by default against its ~130 s reads. A lapsed token on an idle a1 is
+    told from a dead feed by ~/.claude's refresh-token expiry, as on gs."""
+    kw.setdefault("page_url", LIVE_PAGE_URL)
+    return Config(meter_logs=meter_logs or (ops / MASTERRIG_METER_LOG,),
+                  meter_config_dirs={a: home / d for a, d in MASTERRIG_METER_CONFIG_DIRS.items()},
+                  checks=checks, **kw)
 
 
 #: A stamp further in the future than this is clock skew, which would otherwise hide
@@ -638,7 +659,7 @@ CHECKS: dict[str, Callable[[Config, float], str | None]] = {
     "meters": check_meters,
     "advisory": check_advisory,
 }
-#: Checks only the gs profile runs.
+#: Checks a bare Config leaves out: gs runs both, masterrig_config runs meters.
 GS_ONLY = ("meters", "advisory")
 
 
@@ -696,7 +717,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-log-bytes", type=int, default=d.max_log_bytes)
     p.add_argument("--max-history-bytes", type=int, default=d.max_history_bytes)
     p.add_argument("--meter-log", type=Path, action="append", default=[],
-                   help="a per-account meter log (tracker.meter_log) to check for freshness (repeatable)")
+                   help="a per-account meter log (tracker.meter_log) to check for freshness (repeatable); "
+                        "masterrig default: ~/.paperclip/ops/" + MASTERRIG_METER_LOG)
     p.add_argument("--meter-max-age", type=int, default=d.meter_max_age_s)
     p.add_argument("--page-url", default=LIVE_PAGE_URL,
                    help="the live JSON whose age `page` checks on masterrig ('' to leave it out)")

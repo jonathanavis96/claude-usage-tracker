@@ -170,10 +170,15 @@ class HealthTest(unittest.TestCase):
         self.log.write_text(json.dumps({"ts": iso(now - 60), "five_hour": {"utilization": 1}}) + "\n")
         self.state.write_text(json.dumps({"last_ok": now - 60}))
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((now + 3600) * 1000)}}))
+        meter = self.tmp / "claude-usage-meter-a1.log"
+        meter.write_text(json.dumps({"ts": iso(now - 60), "five_hour": {"utilization": 1}}) + "\n")
         args = ["--usage-log", str(self.log), "--state", str(self.state), "--repo", str(self.repo),
                 "--credentials", str(self.creds), "--pidfile", str(self.c.lock_pidfile), "--skip", "publisher",
-                "--page-url", ""]
+                "--page-url", "", "--meter-log", str(meter)]
         self.assertEqual(health.main(args), 0)
+        meter.unlink()
+        self.assertEqual(health.main(args), 1, "the masterrig profile checks a1's meter log")
+        meter.write_text(json.dumps({"ts": iso(now - 60), "five_hour": {"utilization": 1}}) + "\n")
         self.log.unlink()
         self.assertEqual(health.main(args), 1)
 
@@ -285,7 +290,7 @@ class GsProfileTest(unittest.TestCase):
         self.assertEqual(names, ["run", "page", "lock", "sizes", "meters", "advisory"])
         self.assertIsNone(health.first_failure(self.c, NOW))
 
-    def test_masterrig_default_does_not_run_meters(self):
+    def test_a_bare_config_does_not_run_meters(self):
         names = [n for n, _ in health.run_checks(health.Config(), NOW)]
         self.assertNotIn("meters", names)
         self.assertNotIn("advisory", names)
@@ -525,3 +530,54 @@ class GsProfileTest(unittest.TestCase):
     def test_publisher_run_is_held_to_thirty_minutes(self):
         self.state.write_text(json.dumps({"last_ok": NOW - 3700, "last_reason": "exit 1 after 1 attempts"}))
         self.assertIn("run: last successful run 1h01m ago", health.first_failure(self.c, NOW))
+
+
+class MasterrigProfileTest(unittest.TestCase):
+    """The masterrig profile watches a1's own meter log: the 5-minute reader before it went
+    blind on 2026-10-18 and a1 formed no stretches for days while every check said ok."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.ops = self.tmp / "ops"
+        self.ops.mkdir()
+        self.home = self.tmp / "home"
+        (self.home / ".claude").mkdir(parents=True)
+        self.log = self.ops / "claude-usage-meter-a1.log"
+        self.c = health.masterrig_config(ops=self.ops, home=self.home, checks=("meters",))
+
+    def write(self, ts, trailing=()):
+        rows = [{"ts": iso(ts), "account": "a1", "five_hour": {"utilization": 8.0}}, *trailing]
+        self.log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def test_the_profile_runs_every_check_with_meters_on_a1s_log(self):
+        c = health.masterrig_config(ops=self.ops, home=self.home)
+        self.assertEqual(c.checks, ("collection", "run", "publisher", "page", "token", "lock", "sizes", "meters"))
+        self.assertEqual(c.meter_logs, (self.ops / "claude-usage-meter-a1.log",))
+        self.assertEqual(c.meter_config_dirs, {"a1": self.home / ".claude"})
+        self.assertEqual(c.page_url, health.LIVE_PAGE_URL)
+        self.assertIsNone(health.masterrig_config(ops=self.ops, home=self.home, page_url=None).page_url)
+
+    def test_a_fresh_a1_log_is_healthy(self):
+        self.write(NOW - 130)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_a_missing_or_stopped_a1_log_fails(self):
+        self.assertIn("meters: cannot read claude-usage-meter-a1.log", health.first_failure(self.c, NOW))
+        # A stopped timer, or a refusal (exit 2 writes nothing): the newest reading only ages.
+        self.write(NOW - 20 * 60)
+        self.assertIn("claude-usage-meter-a1.log is 20m old", health.first_failure(self.c, NOW))
+
+    def test_an_idle_a1_whose_token_lapsed_is_not_a_dead_feed(self):
+        # Read off ~/.claude's refresh-token expiry, the dir the a1 unit samples.
+        creds = self.home / ".claude" / ".credentials.json"
+        creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": int((NOW + 86400) * 1000)}}))
+        gaps = [{"ts": iso(t), "account": "a1", "error": "AuthExpired: token expired, sign in again",
+                 "reason": "auth_expired"} for t in range(int(NOW - 3 * 3600) + 110, int(NOW), 110)]
+        self.write(NOW - 3 * 3600, trailing=gaps)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+        creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": int((NOW - 3600) * 1000)}}))
+        self.assertIn("a1's refresh token expired", health.first_failure(self.c, NOW))
+
+    def test_the_cli_defaults_to_a1s_log(self):
+        a = health.build_parser().parse_args([])
+        self.assertEqual(health.config_from_args(a).meter_logs, (health.GS_OPS / "claude-usage-meter-a1.log",))

@@ -36,7 +36,7 @@ Both installers refuse (exit 3) on a checkout that is dirty, off main or predate
 | `token:` | credentials unreadable, signed out, or access token expired more than 12 h ago, or refresh token expired | `claude /login` on masterrig |
 | `lock:` | dead pid file, or a run holding the lock over 2 h | a hung join; kill it, the next run clears the pid file |
 | `sizes:` | a log or `history/` over its bound | look for a runaway writer |
-| `meters:` (gs) | a `claude-usage-meter-*.log` has had no usable reading (a line with `five_hour`, not a logged 429 gap) for 15 min plus any Retry-After it is honouring, or is unreadable. Every failing log is named, joined with " \| ", and each account is its own incident. An account whose reads are all `auth_expired` while its refresh token is valid is idle and passes for 24 h ("token lapsed (idle)" after that) | `systemctl --user status claude-usage-meter-<account>.timer`; "needs a login" means the refresh token expired; "token lapsed (idle)" means use that account once so Claude Code refreshes it |
+| `meters:` (gs; masterrig for a1) | a `claude-usage-meter-*.log` has had no usable reading (a line with `five_hour`, not a logged 429 gap) for 15 min plus any Retry-After it is honouring, or is unreadable. Every failing log is named, joined with " \| ", and each account is its own incident. An account whose reads are all `auth_expired` while its refresh token is valid is idle and passes for 24 h ("token lapsed (idle)" after that) | `systemctl --user status claude-usage-meter-<account>.timer`; "needs a login" means the refresh token expired; "token lapsed (idle)" means use that account once so Claude Code refreshes it |
 
 On gs, `run:` means the supervised `bin/daily.sh` has not succeeded in an hour (its state is `~/.paperclip/ops/claude-usage-daily-state.json`, its log `~/.paperclip/ops/claude-usage-daily.log`). gs has no `collection`, `publisher` or `token` check: there is no moonlighter log there, the publisher is the job itself, and the meter check covers each account's sign-in.
 
@@ -76,7 +76,7 @@ A ping goes only on a healthy run, so a run that keeps failing also goes silent 
 ## Failure handling
 
 - `bin/passive.sh` exits 3 when the checkout is not on `main`. The supervisor does not retry it, records `last_exit: 3` with the reason "checkout is off main", and sends the alert on that first run. `tracker.health` fails its `run` check with "the checkout is off main (exit 3)" until a run succeeds. Fix: `git checkout main` in the live checkout.
-- `tracker.meter_log` skips a tick within 110 s of the last call (exit 0, no line), so per-account reads land about 130 s apart. The gs profile's `meters` check allows 15 min since the newest good reading, well above that, and also fails when more than half of a log's last 40 or more lines are 429s.
+- `tracker.meter_log` skips a tick within 110 s of the last call (exit 0, no line), so per-account reads land about 130 s apart. The `meters` check (gs, and a1's log on masterrig) allows 15 min since the newest good reading, well above that, and also fails when more than half of a log's last 40 or more lines are 429s.
 - `bin/passive.sh` and `bin/daily.sh` exit 7 when a pull's rebase stops on a conflict: the rebase is aborted, so the checkout is back on `main` and clean, and the supervisor alerts on that first run without retrying. Fix: `git pull --rebase origin main` in that checkout and resolve the conflict by hand. Both exit 8 at start when a rebase or merge is already in progress (`git rebase --abort`). `bin/passive.sh` exits 4 when `tracker/` has uncommitted changes, since the joins would run on that code; the supervisor alerts after three such runs. Both wrappers commit only their own files (`git commit --only`), so anything else staged in the checkout is never pushed.
 - `tracker.passive` exits 2 without writing when `history/passive.json` exists but does not parse: an unreadable record is never treated as an absent one. Restore it with `git checkout -- history/passive.json`.
 - `tracker.meter_log` honours a logged Retry-After up to 2 h (the endpoint's measured long block is 3,600 s).
@@ -108,7 +108,7 @@ From 2026-10-13T11:00Z the page stayed on its 13 October JSON for nine days. Blo
 
 The supervisor reads every failing check (`health.all_failures`), not only the first, and each kind (`advisory/<step>`, `meters/<account>`, `page/age`, …) keeps its own clock in the state file's `kinds_since`. A kind is alerted once it has failed for `--stale-after`, as a "further problem" inside an open incident, and named as recovered when it clears while something else still fails. A later check is no longer hidden behind an earlier one: with only the first failure, `advisory` never alerted while the page was withheld. `page/age` while the runs fail is the same incident as the runs.
 
-a1's meter feed is not a masterrig health check here: the ceiling log stopped on 2026-10-18 and its successor, `claude-usage-meter-a1.log`, is checked by `meters` in the a1 slice (`fix/a1-meter-feed`). Both slices define `health.masterrig_config`; when both are merged, keep the a1 slice's body and add `page_url=LIVE_PAGE_URL` to it (this slice's `Config(**{"page_url": LIVE_PAGE_URL, **kw})`), so the masterrig profile checks a1's meter and the live page.
+The masterrig profile (`health.masterrig_config`) checks the live page and a1's meter feed, `claude-usage-meter-a1.log`, with `meters` (see "a1 meter on masterrig" below). The ceiling log it replaces stopped on 2026-10-18 and is not checked.
 
 The supervisor alerts on a health failure only after it has lasted `--stale-after` (1 h), so a meter has to go 2 h without a reading before anyone hears about it. On the gs logs from 1 to 22 October there were nine such gaps, about one every 2.4 days. Three already failed under the old checks: the 2 October outage on avis and dave, and jwork's 41.7 h on 19-20 October. The other six are new alerts, all dave's overnight probe hold (3.7-5.4 h). Gaps of 1.1-1.3 h, usually a Retry-After, end before the alert would fire.
 
@@ -173,3 +173,41 @@ cd ~/claude-usage-tracker && python3 -m tracker.gs_passive --prices data/prices.
 ```
 
 A deliberate recount (a change to how transcripts are found or attributed) bumps `SOURCES_VERSION` in `tracker/gs_passive.py`, which skips the comparison for one run.
+
+## a1 meter on masterrig
+
+masterrig's own account (a1, `~/.claude`) is read by `tracker.meter_log`, the sampler gs runs for jwork, dave and avis, from a systemd user timer: `deploy/systemd-masterrig/claude-usage-meter-a1.{service,timer}`, one tick a minute, about 130 s between reads after the sampler's 110 s spacing. It writes `~/.paperclip/ops/claude-usage-meter-a1.log`, which `tracker.gs_passive --masterrig` and `tracker.passive` merge with moonlighter's and the ceiling's logs (`masterrig_account`). The units sit outside `deploy/systemd/`, which `deploy/install-gs.sh` compares with gs's installed units.
+
+Why: `tracker/join.py` pairs no two readings more than `MAX_PAIR_GAP` (15 min) apart, and moonlighter reads every 30 min. The only closer reader was Mission Control's `mis-usage-ceiling.service` (every 5 min, `~/.paperclip/ops/mis-usage-ceiling-systemd.log`). That service asks the Paperclip board API which account the seats are on before it reads the usage endpoint. From 2026-10-18 00:49Z the API answered 401, and later HTTP 0 when Paperclip was down. The ceiling logged `BLIND` and never read the meter again: its last reading is 2026-10-18 00:44:41Z. Paperclip was stopped at 2026-10-20 19:43Z and the ceiling at 19:57Z, and both units are disabled. Moonlighter, on the same login, read on throughout. a1's last stretch ends 2026-10-17 11:14Z. The new sampler asks nothing but the usage endpoint.
+
+Install, once, on masterrig, **before this branch merges**. The sampler's code is already on main, so the timer runs as is. After the merge the masterrig health check watches this log (below), so merging first would fail `meters` until the timer is in, and the supervisor would alert after an hour:
+
+```bash
+cd ~/code/claude-usage-tracker
+mkdir -p ~/.config/systemd/user ~/.paperclip/ops
+install -m 644 deploy/systemd-masterrig/claude-usage-meter-a1.service deploy/systemd-masterrig/claude-usage-meter-a1.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now claude-usage-meter-a1.timer
+```
+
+Check, five minutes later:
+
+```bash
+systemctl --user list-timers claude-usage-meter-a1.timer --no-pager
+journalctl --user -u claude-usage-meter-a1.service -n 5 --no-pager   # "a1: five_hour=N% seven_day=M"
+cd ~/code/claude-usage-tracker && python3 -c "
+from itertools import pairwise; from pathlib import Path
+from tracker.samples import parse_meter_log
+s = parse_meter_log(Path.home().joinpath('.paperclip/ops/claude-usage-meter-a1.log').read_text().splitlines())
+print(len(s), 'readings; widest gap', max((b.ts - a.ts for a, b in pairwise(s)), default=None))"
+```
+
+Expect at least two readings and a widest gap of about two minutes. A refusal (exit 2) means `~/.claude` is signed out, or the log holds another account. `error` lines with `reason: rate_limited` are 429s, and the sampler waits out their Retry-After by itself.
+
+The joins pick the log up on the first `bin/passive.sh` run after the change reaches main, because a change to `tracker/` triggers a rejoin. Stretches form again from the first pair of readings.
+
+Do not re-enable `mis-usage-ceiling.service` for the tracker. It belongs to Mission Control, and the tracker no longer needs it.
+
+Health: the masterrig profile (`tracker.health`, run by the hourly supervisor) checks this log with `meters`, as gs checks its three: no usable reading in 15 min fails, so a stopped timer, a refusal loop or a run of 429s alerts. An idle a1 whose access token lapsed is told from a dead feed by `~/.claude/.credentials.json`'s refresh-token expiry. Check by hand with `python3 -m tracker.health --all`.
+
+Identity: the unit passes `--config-dir %h/.claude`, the default dir. Without `CLAUDE_CONFIG_DIR`, Claude Code keeps its live config in `~/.claude.json`, beside the dir, so the sampler labels a1's lines from that file. `~/.claude/.claude.json` is a stale leftover (on 2026-10-23 last written 2026-10-19, 32 keys against 95). Both named the same account that day, so the label did not change, and a re-login to another account now refuses (exit 2) instead of mixing two meters in one log.

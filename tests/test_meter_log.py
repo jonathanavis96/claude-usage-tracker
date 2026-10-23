@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from tracker.meter_log import NO_RETRY_FETCH, account_identity, main, sample
+from tracker.meter_log import MASTERRIG_METER_LOG, NO_RETRY_FETCH, account_identity, claude_json, main, sample
 from tracker.samples import parse_meter_log, parse_moonlighter
 from tracker.weekly import parse_row
 
 ROOT = Path(__file__).resolve().parent.parent
 UNITS = ROOT / "deploy" / "systemd"
+MASTERRIG_UNITS = ROOT / "deploy" / "systemd-masterrig"
 NOW = datetime(2026, 9, 15, 21, 0, 3, tzinfo=timezone.utc)
 BODY = {"five_hour": {"utilization": 12.0, "resets_at": "2026-09-15T23:00:00.4+00:00"},
         "seven_day": {"utilization": 30.0, "resets_at": "2026-09-17T23:00:00.9+00:00"}}
@@ -38,6 +39,51 @@ class IdentityTests(unittest.TestCase):
     def test_a_signed_out_config_dir_has_no_identity(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertIsNone(account_identity(config_dir(Path(d), uuid=None)))
+
+    def default_home(self, root: Path, stale: str | None, live: str | None) -> Path:
+        """A home whose default ~/.claude holds a stale in-dir .claude.json, as masterrig's does."""
+        cfg = root / ".claude"
+        cfg.mkdir()
+        (cfg / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": TOKEN}}))
+        if stale:
+            (cfg / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": stale}}))
+        if live:
+            (root / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": live}}))
+        return cfg
+
+    def test_the_default_config_dir_is_labelled_from_the_home_level_file(self):
+        # Without CLAUDE_CONFIG_DIR Claude Code keeps ~/.claude.json live; ~/.claude/.claude.json
+        # is a leftover that does not follow a re-login.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = self.default_home(Path(d), stale="old-account", live="new-login")
+            self.assertEqual(claude_json(cfg, home=Path(d)), Path(d) / ".claude.json")
+            self.assertEqual(account_identity(cfg, home=Path(d)), hashlib.sha256(b"new-login").hexdigest()[:12])
+
+    def test_the_default_config_dir_without_a_home_level_file_is_signed_out(self):
+        # The leftover is never a fallback: it would label readings with an account that may be gone.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = self.default_home(Path(d), stale="old-account", live=None)
+            self.assertIsNone(account_identity(cfg, home=Path(d)))
+
+    def test_an_explicit_config_dir_keeps_its_own_file(self):
+        # The gs seats (CLAUDE_CONFIG_DIR=~/.claude-dave and the rest): the home-level file is another login.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = config_dir(Path(d))
+            (Path(d) / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "uuid-home"}}))
+            self.assertEqual(account_identity(cfg, home=Path(d)), hashlib.sha256(b"uuid-dave").hexdigest()[:12])
+
+    def test_a_relogin_on_the_default_dir_is_refused_not_mixed_into_the_log(self):
+        # a1's unit: --config-dir %h/.claude. ~/.claude signs into another account; the in-dir
+        # leftover still names the old one. The sampler must see the switch and refuse.
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"HOME": d}):
+            cfg = self.default_home(Path(d), stale="old-account", live="old-account")
+            log = Path(d) / "ops" / MASTERRIG_METER_LOG
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: BODY, now=lambda: NOW), 0)
+            (Path(d) / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "new-login"}}))
+            before = log.read_text()
+            later = lambda: NOW.replace(minute=10)  # noqa: E731 - past MIN_READ_SPACING_S
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: BODY, now=later), 2)
+            self.assertEqual(log.read_text(), before)
 
 
 class SampleTests(unittest.TestCase):
@@ -262,6 +308,28 @@ class UnitFileTests(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=1min", timer)
         self.assertIn("Unit=claude-usage-meter-jwork.service", timer)
         self.assertIn("WantedBy=timers.target", timer)
+
+    def test_a1_sampler_reads_masterrigs_own_account_into_the_log_the_joins_read(self):
+        # masterrig's checkout is ~/code/claude-usage-tracker, not gs's ~/claude-usage-tracker.
+        service = (MASTERRIG_UNITS / "claude-usage-meter-a1.service").read_text()
+        self.assertIn("-m tracker.meter_log", service)
+        self.assertIn("--config-dir %h/.claude ", service)
+        self.assertIn("--account a1", service)
+        self.assertIn(f"--log %h/.paperclip/ops/{MASTERRIG_METER_LOG}", service)
+        self.assertNotIn("--token-env", service)  # a /login seat: the usage endpoint reads it
+        self.assertIn("SuccessExitStatus=0 4", service)
+        self.assertIn("WorkingDirectory=%h/code/claude-usage-tracker", service)
+
+    def test_a1_timer_samples_every_minute(self):
+        timer = (MASTERRIG_UNITS / "claude-usage-meter-a1.timer").read_text()
+        self.assertIn("OnUnitActiveSec=1min", timer)
+        self.assertIn("Unit=claude-usage-meter-a1.service", timer)
+        self.assertIn("WantedBy=timers.target", timer)
+
+    def test_the_a1_units_stay_out_of_the_gs_unit_set(self):
+        # deploy/install-gs.sh compares every deploy/systemd/claude-usage-meter-* with gs's
+        # installed units; an a1 unit there would read as drift on every gs install.
+        self.assertEqual(sorted(p.name for p in UNITS.glob("claude-usage-meter-a1*")), [])
 
 
 HEADERS = {"anthropic-ratelimit-unified-5h-utilization": "0.05",

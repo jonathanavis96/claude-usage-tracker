@@ -84,6 +84,10 @@ from .usage_api import (
 )
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
+#: The log masterrig's own account (a1, `~/.claude`) is sampled into, under ~/.paperclip/ops
+#: beside gs's three. tracker/gs_passive.py masterrig_account and tracker/passive.py read it;
+#: docs/OPERATIONS.md "a1 meter on masterrig" installs the timer that writes it.
+MASTERRIG_METER_LOG = "claude-usage-meter-a1.log"
 #: A 429 is logged and left for the next tick. read_usage's own default retries
 #: for up to ~15 minutes, which would carry one oneshot through three of its
 #: own timer's ticks.
@@ -119,14 +123,35 @@ LOCK_WAIT_S = 45
 MAX_CLOCK_STALL_S = RETRY_429_MAX_S
 
 
-def account_identity(config_dir: Path) -> str | None:
+def claude_json(config_dir: Path, home: Path | None = None) -> Path:
+    """The `.claude.json` Claude Code keeps live for a config dir.
+
+    Claude Code's own rule: `$CLAUDE_CONFIG_DIR/.claude.json` when that variable is set,
+    and `~/.claude.json` -- beside the default `~/.claude`, not inside it -- when it is not.
+    The gs seats all run with CLAUDE_CONFIG_DIR (~/.claude-dave and the rest), so theirs is
+    in the dir. masterrig's a1 is the default dir, and its `~/.claude/.claude.json` is a
+    stale leftover: on 2026-10-23 it was last written 2026-10-19 with 32 keys, while
+    `~/.claude.json` had 95 and was written by every session. Reading the leftover would
+    keep the old label on every line after a re-login to another account, which is the
+    mixed log the identity exists to refuse. So the default dir reads the home-level file,
+    and CLAUDE_CONFIG_DIR pointed explicitly at ~/.claude (which nothing here does) is
+    the one case this cannot tell apart.
+    """
+    config_dir = Path(config_dir).expanduser()
+    home = Path(home) if home is not None else Path.home()
+    if config_dir.resolve() == (home / ".claude").resolve():
+        return home / ".claude.json"
+    return config_dir / ".claude.json"
+
+
+def account_identity(config_dir: Path, home: Path | None = None) -> str | None:
     """A short hash of the account a config dir is signed into, or None if signed out.
 
-    Read from `.claude.json`'s `oauthAccount.accountUuid`; the credentials file
-    is never opened for this.
+    Read from `oauthAccount.accountUuid` in the `.claude.json` Claude Code keeps for that
+    dir (claude_json); the credentials file is never opened for this.
     """
     try:
-        doc = json.loads((Path(config_dir) / ".claude.json").read_text(encoding="utf-8"))
+        doc = json.loads(claude_json(config_dir, home).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     account = doc.get("oauthAccount") if isinstance(doc, dict) else None
