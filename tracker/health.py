@@ -44,7 +44,8 @@ Checks, in order (the first failure is the one-line reason):
                blind once its meter has not read for an hour, idle token or held probe
                or not: what it spends on another host meanwhile is not measured.
   advisory     (gs profile) no advisory step of bin/daily.sh (list_prices, contributed,
-               gs_passive, the model_rates refit) has failed on every run for 3 h.
+               gs_passive, the model_rates refit, the four_accounts daily run) has failed
+               on every run for 3 h.
 
 Profiles pick which checks run. `masterrig` (default, masterrig_config) is collection,
 run, publisher, page, token, lock, sizes and meters, the last on a1's own meter log

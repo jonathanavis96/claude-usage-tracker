@@ -8,7 +8,7 @@ What runs, where, how it heals itself, and what each alert means.
 |---|---|---|---|
 | masterrig | cron `15 * * * *` → `tracker.supervise` → `bin/passive.sh` | hourly; real work every 20h or when `tracker/` changes on main | passive join, writes `history/passive.json`, `masterrig-passive.json`, `masterrig-speed.json`, commits and pushes "Passive history" |
 | masterrig | moonlighter `gate.py` (not this repo) | 30 min | samples the usage meter into `~/.moonlighter/usage_log.jsonl`, the join's meter input |
-| gs | cron `0,30 * * * *` → `tracker.supervise --profile gs` → `bin/daily.sh` | 30 min | merges history, runs the publish test gate, publishes the site JSON, commits "Daily publisher state" (`history/gs-passive.json`) |
+| gs | cron `0,30 * * * *` → `tracker.supervise --profile gs` → `bin/daily.sh` | 30 min | merges history, runs the four-account detector on the day's first run (`tracker.four_accounts`), runs the publish test gate, publishes the site JSON, commits "Daily publisher state" (`history/gs-passive.json`, `history/four-accounts.json`) |
 | gs | `claude-usage-meter-{avis,dave,jwork}.timer` (`deploy/systemd/`) | 1 min | one meter sample per account into `~/.paperclip/ops/claude-usage-meter-*.log`; exit 4 = logged gap, next tick retries; a 429 backs off by `retry_after_s` |
 
 Install or update the masterrig schedule with `deploy/install-schedule.sh` (`--dry-run` first). It is idempotent and replaces the old bare `bin/passive.sh` cron line.
@@ -104,7 +104,7 @@ From 2026-10-13T11:00Z the page stayed on its 13 October JSON for nine days. Blo
 |---|---|---|
 | `page:` | gs | the site checkout's `claude-usage.json` has a `generated_at` older than 2 h, or cannot be read |
 | `page:` | masterrig | the live `https://alldonesites.com/data/claude-usage.json` is older than 2 h. "cannot fetch … for Nh" is a separate incident, raised only after 2 h of failed fetches in a row. The time of the first failure is kept in `~/.cache/claude-usage-tracker/page-fetch.json`. |
-| `advisory:` | gs | one of `tracker.list_prices`, `tracker.contributed`, `tracker.gs_passive` or `tools.model_rates` has failed on every run for 3 h. Each step is its own incident. Outcomes are recorded in `~/.paperclip/ops/claude-usage-advisory.json` (`tracker/advisory.py`). |
+| `advisory:` | gs | one of `tracker.list_prices`, `tracker.contributed`, `tracker.gs_passive`, `tools.model_rates` or `tracker.four_accounts` has failed on every run for 3 h. Each step is its own incident. Outcomes are recorded in `~/.paperclip/ops/claude-usage-advisory.json` (`tracker/advisory.py`). |
 | `meters: <account> is blind` | gs | an account that appears in `history/gs-passive.json` has had no meter reading for 1 h. This applies even when the cause is an idle token lapse, a held header probe or an honoured Retry-After, because use from another host goes unmeasured during the gap. |
 
 The supervisor reads every failing check (`health.all_failures`), not only the first, and each kind (`advisory/<step>`, `meters/<account>`, `page/age`, …) keeps its own clock in the state file's `kinds_since`. A kind is alerted once it has failed for `--stale-after`, as a "further problem" inside an open incident, and named as recovered when it clears while something else still fails. A later check is no longer hidden behind an earlier one: with only the first failure, `advisory` never alerted while the page was withheld. `page/age` while the runs fail is the same incident as the runs.
