@@ -1,0 +1,64 @@
+{
+ "_about": "sha256 of the files in this folder's data/ and recorded/, and of the private inputs on the measuring machine that the re-run of 2026-10-23 read (meter logs as byte prefixes cut at the two window ends). The 12 Oct history used by meter_split.py holds the same steps as the 11 Oct one.",
+ "files": {
+  "data/steps.csv": "31b3c15b93b7aead68e2a39cdcd01e398b449a1236f9aba41014055778336bdb",
+  "data/tracker_steps.json": "a57d57a1143a6c8df5b42873e2cf95de9f1e07c180375dd2398268859517fbcb",
+  "data/valuations.json": "4ff6ae2a20cf1c29326b26eb966ccdd5310b92394d4551f1496d2eb90f9b25a9",
+  "recorded/fits.json": "7d6b9121c495992df65d20483276621ec99ce6d2e752f6ebc47496e8c585813f",
+  "recorded/tables.json": "bfe8dbd69803488f30c9c5f0b32b3fafa5efba58dd9f86432655dfbc299c386e"
+ },
+ "private_inputs": {
+  "transcript cache behind the 5 Oct docs (written 2026-10-04 20:06Z, 143,406 assistant messages with usage)": "f98bcc4b596a418f5500f805535d61a9cbab39c70efac0e30f5db0f0428c93db",
+  "effort cache (written 2026-10-05 15:54Z)": "14d34b65eadeb447616d98bc7b55ded6727d829d154d72c56548377b3906f091",
+  "re-run: headless labels read from the 2026-10-15 transcript archive": "cb2549af8372fefdb1e6aadb1b4445e9e61c7b418aefb99a2a5dd497e0d816c9",
+  "re-run: turn set rebuilt from files on disk plus the archive (to 2026-10-23)": "3baa6441f33cd7f37689d930f49af574340186c9a938ad391f46bb55cdc67f32",
+  "re-run: rebuilt headless labels": "4d128550071b06ba07b2b014fcd713765e1bc79dac8a4e351ac83f7a5a11cfe2",
+  "re-run: rebuilt effort values": "fa244137bcc5a70b36014b050bbfbec4407ea424a9145423df6663871d656ad8",
+  "Max account 2 meter log, byte prefix to 2026-10-04T19:53:23.051Z": {
+   "lines": 14864,
+   "sha256": "9a533ab0db2524ec7219c759179ab1cf43468b68d4129e724e3fba936c40050e"
+  },
+  "Max account 2 meter log, byte prefix to 2026-10-11T22:23:57.561Z": {
+   "lines": 19697,
+   "sha256": "ef40054e9fd75f78343022a84a7ce15f46ae03434aa54bdd06f9dbce0b49f12c"
+  },
+  "Max account 2 legacy ceiling log, byte prefix to 2026-10-04T19:53:23.051Z": {
+   "lines": 14931,
+   "sha256": "e5b290ecdb09877ef655cfe767de52c40d838050a5cd0d2e03e87789cd91d1c3"
+  },
+  "Max account 2 legacy ceiling log, byte prefix to 2026-10-11T22:23:57.561Z": {
+   "lines": 16919,
+   "sha256": "d37ee914c7c1482de7cc0989891a10d6062d6838fe78049d84c674e121910688"
+  },
+  "Max account 3 meter log, byte prefix to 2026-10-04T19:53:23.051Z": {
+   "lines": 15145,
+   "sha256": "b98eb7fb07f6aa3bb62301d9b460d2822d7bed933f33f721768ce85018d142ca"
+  },
+  "Max account 3 meter log, byte prefix to 2026-10-11T22:23:57.561Z": {
+   "lines": 19841,
+   "sha256": "50ea9135798b4e44fa24315145ec1e300d39e2d207006d1ad0ce832d6a1c18e2"
+  },
+  "Max account 4 meter log, byte prefix to 2026-10-04T19:53:23.051Z": {
+   "lines": 13136,
+   "sha256": "7dfa40711ee94f9bcb30d60ae87c60008592440ebf0712760014b7ae08203d6e"
+  },
+  "Max account 4 meter log, byte prefix to 2026-10-11T22:23:57.561Z": {
+   "lines": 17970,
+   "sha256": "d9d3f948f9e999b1e79ba9308f4a31f57224763368140b561c318c5874057439"
+  },
+  "transcript archive 2026-10-15 (manifest of name, size, sha256)": {
+   "archives": 2412,
+   "sha256": "a255f5af26c64406732bf9f052b41107d164844a744e237e56e6d01bbac4f348"
+  },
+  "tracker passive history as published 2026-10-05T17:32Z, three-account file": "2414c335014e5a9f5ef52b10f9efcd6aa69adbe8b075c41c15503fbb236e2ce2",
+  "tracker passive history as published 2026-10-05T17:32Z, one-account file": "53e3bfb9bc5a706ed00f588b72476c6d2c8e6c8614196dec4bae88c18accab19",
+  "tracker model rates as published 2026-10-05T15:01Z (generated 2026-10-05T14:32Z)": "da8af98cb7060e30a57e2d8ac804ad000c727b1e8eea935a7f19a795933f887b",
+  "tracker model rates as published 2026-10-05T17:32Z": "9d625777b5b546c8a4641632620f3485ecf5dc2cd17fcc6f85a6a828089af099",
+  "tracker passive history as published 2026-10-11T23:31Z, three-account file": "923c0b96bfbcba1f7c98e2886a51e86d5374ce46b33bb6a404c3fde64c5ed9d1",
+  "tracker passive history as published 2026-10-11T23:31Z, one-account file": "cc23a38d4cf566df1c2b6ee0efe99934078ad51410866d2e8155d98b17e4b35e",
+  "tracker model rates as published 2026-10-11T23:31Z": "98611fc0224cf2bd61106d00e55d3afc9e6b3b3353ce3381c8e064fd9304d06e",
+  "tracker passive history as published 2026-10-12T00:00Z, three-account file": "8eadf7f20f1aa7a49aeef9a45cd83f2d9719081114b06f288e9cf305525404c3",
+  "tracker model rates as published 2026-10-12T00:02Z": "a5d42ff1161ba478b80b48ed75765b8dbb89575305996e0f7bf90c1425386f74",
+  "tracker harness-run log as published 2026-10-12T00:00Z": "62d66a20f09ae1e9b287851ae68dd8cc35c39382854735ed49687dd6c05f4726"
+ }
+}
