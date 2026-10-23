@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-23T02:16:27.724801+00:00",
+ "generated_at": "2026-10-23T14:16:32.723048+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -27,23 +27,23 @@
      }
     ],
     "note": "This meter counts the whole account -- web, phone and every other machine -- while only this host's transcripts are read, so every stretch may carry usage the tokens cannot see. Read `capture` and `capture_status` per stretch before using a rate; the capture check is advisory here (CAPTURE_GATE is False) and never withholds a stretch from this file.",
-    "reset_verified_samples": 4649,
+    "reset_verified_samples": 4990,
     "since": null,
-    "samples": 19029,
+    "samples": 19372,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-10-23T02:14:32+00:00"
+    "last": "2026-10-23T14:15:23+00:00"
    },
    "transcripts": {
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 6970,
-    "turns": 167600,
+    "files": 7129,
+    "turns": 172761,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 6970,
+     "kept": 7129,
      "dropped": 205,
-     "subagent_files": 2372,
+     "subagent_files": 2468,
      "dropped_to": {
       ".claude-avis": 133
      },
@@ -58,8 +58,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 6970,
-      "turns": 167600
+      "files": 7129,
+      "turns": 172761
      }
     ]
    },
@@ -17988,6 +17988,342 @@
      },
      "unpriced_tokens": 0,
      "turns": 198,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T02:12:18+00:00",
+     "end": "2026-10-23T04:30:03.994313+02:00",
+     "seven_day": 98,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 638,
+       "output": 326918,
+       "cache_read": 66570241,
+       "cache_write": 1191790,
+       "cache_write_1h": 57555
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 316,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T04:30:03.994313+02:00",
+     "end": "2026-10-23T02:47:41+00:00",
+     "seven_day": 99,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 560,
+       "output": 301685,
+       "cache_read": 76721107,
+       "cache_write": 1621911,
+       "cache_write_1h": 12237
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 277,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T02:47:41+00:00",
+     "end": "2026-10-23T03:07:36+00:00",
+     "seven_day": 100,
+     "d7": 1,
+     "d5": 5,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 780,
+       "output": 317172,
+       "cache_read": 63065887,
+       "cache_write": 1611722,
+       "cache_write_1h": 172348
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 389,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T10:16:42+00:00",
+     "end": "2026-10-23T10:25:18+00:00",
+     "seven_day": 2,
+     "d7": 1,
+     "d5": 2,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 342,
+       "output": 177266,
+       "cache_read": 30625895,
+       "cache_write": 375046,
+       "cache_write_1h": 27519
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 171,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T10:25:18+00:00",
+     "end": "2026-10-23T10:46:37+00:00",
+     "seven_day": 3,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 692,
+       "output": 325743,
+       "cache_read": 83651980,
+       "cache_write": 1333869,
+       "cache_write_1h": 86210
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 344,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T10:46:37+00:00",
+     "end": "2026-10-23T13:00:01.861060+02:00",
+     "seven_day": 4,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 460,
+       "output": 237222,
+       "cache_read": 43877184,
+       "cache_write": 1988570,
+       "cache_write_1h": 7807
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 230,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T13:00:01.861060+02:00",
+     "end": "2026-10-23T11:12:33+00:00",
+     "seven_day": 5,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 566,
+       "output": 257198,
+       "cache_read": 58369709,
+       "cache_write": 1955009,
+       "cache_write_1h": 70956
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 279,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T11:12:33+00:00",
+     "end": "2026-10-23T11:31:54+00:00",
+     "seven_day": 6,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 448,
+       "output": 178041,
+       "cache_read": 48888962,
+       "cache_write": 2002694,
+       "cache_write_1h": 125142
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 222,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T11:31:54+00:00",
+     "end": "2026-10-23T12:02:09+00:00",
+     "seven_day": 7,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 578,
+       "output": 337021,
+       "cache_read": 54748732,
+       "cache_write": 1776928,
+       "cache_write_1h": 96304
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 289,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T12:02:09+00:00",
+     "end": "2026-10-23T12:28:16+00:00",
+     "seven_day": 8,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 600,
+       "output": 221386,
+       "cache_read": 59922486,
+       "cache_write": 2025902,
+       "cache_write_1h": 285743
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 298,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T12:28:16+00:00",
+     "end": "2026-10-23T12:45:42+00:00",
+     "seven_day": 9,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 612,
+       "output": 258388,
+       "cache_read": 45502512,
+       "cache_write": 1771960,
+       "cache_write_1h": 38658
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 305,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T12:45:42+00:00",
+     "end": "2026-10-23T13:03:00+00:00",
+     "seven_day": 10,
+     "d7": 1,
+     "d5": 3,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 674,
+       "output": 392657,
+       "cache_read": 45187570,
+       "cache_write": 1876372,
+       "cache_write_1h": 94451
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 335,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T13:03:00+00:00",
+     "end": "2026-10-23T13:20:29+00:00",
+     "seven_day": 11,
+     "d7": 1,
+     "d5": 4,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 768,
+       "output": 292417,
+       "cache_read": 61207604,
+       "cache_write": 1397980,
+       "cache_write_1h": 102561
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 381,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T13:20:29+00:00",
+     "end": "2026-10-23T13:40:12+00:00",
+     "seven_day": 12,
+     "d7": 1,
+     "d5": 5,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 736,
+       "output": 321023,
+       "cache_read": 66435403,
+       "cache_write": 1277734,
+       "cache_write_1h": 119980
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 366,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-10-23T13:40:12+00:00",
+     "end": "2026-10-23T14:04:22+00:00",
+     "seven_day": 13,
+     "d7": 1,
+     "d5": 3,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 726,
+       "output": 348765,
+       "cache_read": 50655750,
+       "cache_write": 1780558,
+       "cache_write_1h": 60088
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 362,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
@@ -36387,6 +36723,274 @@
        "cache_write": 151287
       }
      }
+    },
+    {
+     "start": "2026-10-23T02:05:37+00:00",
+     "end": "2026-10-23T02:49:55+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 36.3017,
+     "usd_per_pct": 3.6302,
+     "bounds": [
+      3.3002,
+      4.0335
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1672,
+       "output": 863037,
+       "cache_read": 183406582,
+       "cache_write": 3717513,
+       "cache_write_1h": 148901
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 827,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 2.667,
+     "capture": 1.3611,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "<synthetic>": "2026-10-23T02:13:33.949000+00:00",
+      "claude-opus-5-5": "2026-10-23T02:05:38.898000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-23T02:49:55+00:00",
+     "end": "2026-10-23T10:12:32+00:00",
+     "delta_pct": 10.0,
+     "windows": 3,
+     "usd": 30.7154,
+     "usd_per_pct": 3.0715,
+     "bounds": [
+      2.3627,
+      4.3879
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1330,
+       "output": 614569,
+       "cache_read": 111617356,
+       "cache_write": 3357362,
+       "cache_write_1h": 543949
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "turns": 676,
+     "reset_verified": false,
+     "reset_source": "none",
+     "status": "accepted",
+     "capture_status": "accepted",
+     "reference": 2.667,
+     "capture": 1.1517,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "<synthetic>": "2026-10-23T03:25:24.296000+00:00",
+      "claude-opus-5-5": "2026-10-23T02:49:55.534000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-23T10:12:32+00:00",
+     "end": "2026-10-23T10:59:33+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 37.0056,
+     "usd_per_pct": 3.7006,
+     "bounds": [
+      3.3641,
+      4.1117
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1702,
+       "output": 825448,
+       "cache_read": 172638957,
+       "cache_write": 4025053,
+       "cache_write_1h": 121536
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 849,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 2.7326,
+     "capture": 1.3542,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-23T10:12:33.989000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-23T10:59:33+00:00",
+     "end": "2026-10-23T11:44:51+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 35.6204,
+     "usd_per_pct": 3.562,
+     "bounds": [
+      3.2382,
+      3.9578
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1260,
+       "output": 538077,
+       "cache_read": 134223378,
+       "cache_write": 4827536,
+       "cache_write_1h": 238728
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 624,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 2.7326,
+     "capture": 1.3035,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-23T10:59:33.627000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-23T11:44:51+00:00",
+     "end": "2026-10-23T12:43:31+00:00",
+     "delta_pct": 10.0,
+     "windows": 1,
+     "usd": 37.2963,
+     "usd_per_pct": 3.7296,
+     "bounds": [
+      3.3906,
+      4.144
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1508,
+       "output": 701921,
+       "cache_read": 131112899,
+       "cache_write": 4423520,
+       "cache_write_1h": 378075
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 751,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 2.7326,
+     "capture": 1.3648,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-23T11:45:31.180000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
+    },
+    {
+     "start": "2026-10-23T12:43:31+00:00",
+     "end": "2026-10-23T13:29:17+00:00",
+     "delta_pct": 10.0,
+     "windows": 2,
+     "usd": 37.7987,
+     "usd_per_pct": 3.7799,
+     "bounds": [
+      3.1499,
+      4.7248
+     ],
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 1808,
+       "output": 833429,
+       "cache_read": 139643085,
+       "cache_write": 4067793,
+       "cache_write_1h": 261322
+      }
+     },
+     "unpriced_tokens": 0,
+     "unpriced": {},
+     "turns": 897,
+     "reset_verified": true,
+     "reset_source": "logged",
+     "status": "accepted",
+     "capture_status": "surplus",
+     "reference": 2.7326,
+     "capture": 1.3832,
+     "fast_session_tokens": {},
+     "fast_session_turns": 0,
+     "first_turns": {
+      "claude-opus-5-5": "2026-10-23T12:43:42.057000+00:00"
+     },
+     "remote_sourced_turns": 0,
+     "cloud_session": false,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "unclaimed_tokens": {}
     }
    ],
    "runs": [
@@ -36838,6 +37442,28 @@
      "stretches": 1,
      "step": -0.3031,
      "capture": 0.6969,
+     "corroborated_by": [],
+     "contradicted_by": []
+    },
+    {
+     "start": "2026-10-23T02:05:37+00:00",
+     "end": "2026-10-23T02:49:55+00:00",
+     "kind": "surplus",
+     "direction": "high",
+     "stretches": 1,
+     "step": 0.3611,
+     "capture": 1.3611,
+     "corroborated_by": [],
+     "contradicted_by": []
+    },
+    {
+     "start": "2026-10-23T10:12:32+00:00",
+     "end": "2026-10-23T13:29:17+00:00",
+     "kind": "level_shift",
+     "direction": "high",
+     "stretches": 4,
+     "step": 0.3595,
+     "capture": 1.3595,
      "corroborated_by": [],
      "contradicted_by": []
     }
@@ -37447,44 +38073,44 @@
     },
     {
      "date": "2026-10-23",
-     "usd_per_pct": 3.3612,
-     "delta_pct": 11.0,
-     "stretches": 1,
-     "rounding": 0.4545,
+     "usd_per_pct": 3.5452,
+     "delta_pct": 71.0,
+     "stretches": 7,
+     "rounding": 0.1127,
      "bounds": [
-      2.3109,
-      6.1623
+      3.1862,
+      3.9954
      ],
-     "pieces": 5,
+     "pieces": 8,
      "reset_verified": false,
-     "capture_diagnosed": 0
+     "capture_diagnosed": 5
     }
    ],
    "split": {
-    "input": 7.4e-05,
-    "output": 0.005099,
-    "cache_read": 0.965593,
-    "cache_write": 0.029235,
-    "cache_write_1h": 0.012763
+    "input": 7e-05,
+    "output": 0.005085,
+    "cache_read": 0.96573,
+    "cache_write": 0.029114,
+    "cache_write_1h": 0.012151
    },
-   "last_usable_at": "2026-10-23T02:05:37+00:00",
+   "last_usable_at": "2026-10-23T13:29:17+00:00",
    "state": {
     "state": "ok"
    },
    "spread": {
     "stretch": {
-     "n": 261,
-     "median": 1.5432,
-     "half_range": 2.6292,
-     "mad": 0.3833,
-     "cv": 0.6384
+     "n": 267,
+     "median": 1.5597,
+     "half_range": 2.6013,
+     "mad": 0.3929,
+     "cv": 0.6365
     },
     "daily": {
      "n": 44,
      "median": 2.0532,
      "half_range": 0.8398,
      "mad": 0.4465,
-     "cv": 0.4203
+     "cv": 0.4227
     }
    },
    "weekly_by_window": [
@@ -39854,12 +40480,36 @@
     },
     {
      "window_ending": "2026-10-23T03:00:00.042340+00:00",
-     "windows": 4.0,
-     "five_hour_pct": 4.0,
-     "seven_day_pct": 1.0,
+     "windows": 4.67,
+     "five_hour_pct": 14.0,
+     "seven_day_pct": 3.0,
      "rounding_interval": [
-      0.9451,
-      null
+      2.7195,
+      10.8928
+     ],
+     "pieces": 1,
+     "reset_verified": true
+    },
+    {
+     "window_ending": "2026-10-23T12:58:48+00:00",
+     "windows": 3.89,
+     "five_hour_pct": 35.0,
+     "seven_day_pct": 9.0,
+     "rounding_interval": [
+      3.1625,
+      4.9224
+     ],
+     "pieces": 1,
+     "reset_verified": false
+    },
+    {
+     "window_ending": "2026-10-23T17:59:59.954760+00:00",
+     "windows": 3.75,
+     "five_hour_pct": 15.0,
+     "seven_day_pct": 4.0,
+     "rounding_interval": [
+      2.4108,
+      6.8207
      ],
      "pieces": 1,
      "reset_verified": true

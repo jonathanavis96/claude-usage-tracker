@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-23T02:16:27.595814+00:00",
+ "generated_at": "2026-10-23T14:16:32.481353+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -349,22 +349,22 @@
    "interpolated": false
   },
   "2026-10-23": {
-   "tokens_per_pct": 14723532,
+   "tokens_per_pct": 14461556,
    "interpolated": false
   }
  },
  "session_tokens": {
   "claude-sonnet-4-6": 230379,
-  "claude-opus-5-5": 1003061,
-  "claude-sonnet-5": 348370,
-  "claude-opus-5": 13193265,
-  "claude-opus-4-7": 146193,
+  "claude-opus-5-5": 1075739,
+  "claude-sonnet-5": 883323,
+  "claude-opus-5": 9838081,
+  "claude-opus-4-7": 136591,
   "claude-fable-5-1": 2011452,
   "claude-haiku-4-5": 158674,
   "claude-opus-4-8": 10052
  },
  "weekly_windows": {
-  "current": 4.23,
+  "current": 4.0,
   "history": [
    {
     "week_ending": "2026-06-19",
@@ -623,18 +623,18 @@
    },
    {
     "week_ending": "2026-10-23",
-    "windows": 4.0,
-    "five_hour_pct": 312.0,
-    "seven_day_pct": 78.0,
+    "windows": 3.99,
+    "five_hour_pct": 319.0,
+    "seven_day_pct": 80.0,
     "rounding_interval": [
-     3.4816,
-     4.654
+     3.482,
+     4.6215
     ],
     "pieces": 33,
     "source": "paired_meter_deltas",
     "reset_verified": true,
-    "partial": true,
-    "resets_at": "2026-10-23T04:00:00.042358+00:00"
+    "partial": false,
+    "resets_at": "2026-10-23T04:00:00.411302+00:00"
    }
   ],
   "by_window": [
@@ -5704,12 +5704,36 @@
    },
    {
     "window_ending": "2026-10-23T03:00:00.358860+00:00",
-    "windows": 3.72,
-    "five_hour_pct": 67.0,
-    "seven_day_pct": 18.0,
+    "windows": 3.7,
+    "five_hour_pct": 74.0,
+    "seven_day_pct": 20.0,
     "rounding_interval": [
-     3.3433,
-     4.1736
+     3.3578,
+     4.1005
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-23T13:00:00.019591+00:00",
+    "windows": 3.62,
+    "five_hour_pct": 29.0,
+    "seven_day_pct": 8.0,
+    "rounding_interval": [
+     2.866,
+     4.7548
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-23T18:00:00.282812+00:00",
+    "windows": 4.0,
+    "five_hour_pct": 12.0,
+    "seven_day_pct": 3.0,
+    "rounding_interval": [
+     2.2819,
+     9.4936
     ],
     "pieces": 1,
     "reset_verified": true
