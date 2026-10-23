@@ -69,7 +69,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from tracker import four_accounts as detector
+from tracker import four_accounts_page as detector
 from tracker import health, publish_gate, supervise
 from tracker.publish import ACCOUNT_LABELS
 

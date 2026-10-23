@@ -9,7 +9,7 @@ from statistics import median
 
 from .atomic import write_text_atomic
 from . import credits as credit_model
-from . import four_accounts
+from . import four_accounts_page as four_accounts
 from .capture import ACCEPTED
 from .detect import MIN_POOL_D7, pooled_interval, pooled_windows, weighted_regimes
 from .gs_passive import credit_rate_sources, passive_dollar_readings, unpriced_credit_models

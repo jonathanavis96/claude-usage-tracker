@@ -284,7 +284,7 @@ class TestDailyNotifyChange(unittest.TestCase):
             (self.FIVE_HOUR, self.STALLED, "200", feeds2))
         self.assertEqual(requests[:2], ["", ""], "one look at the same evidence is not two")
         self.assertEqual(self._payload(requests[2]),
-                         {"date": "2026-09-22", "direction": "increased", "percent": 38, "scope": "five_hour",
+                         {"date": "2026-09-22", "direction": "increased", "percent": 38, "scope": "window",
                           "state": "measured"})
         self.assertIn("Observed change: increased 38% on 2026-09-22", alerts[2])
         self.assertEqual(self.state, ["2026-09-22"])
@@ -501,6 +501,19 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertEqual(len(told), 1, alerts)
         self.assertIn("Observed change: decreased 29% on 2026-09-14", told[0])
         self.assertNotIn("not emailed", told[0])
+
+    def test_every_published_scope_is_sent_as_one_the_site_accepts(self) -> None:
+        # The site's /api/notify/send answers 400 to any scope but "window" or "weekly"; the
+        # 21 and 29 Sep changes ("five_hour", "both") never reached subscribers that way. A
+        # windows-per-week change (the four-account detector's ratio) or an undetermined one
+        # is sent without a scope, which the site accepts.
+        sent = {}
+        for scope in ("five_hour", "both", "weekly", "windows_per_week", "undetermined"):
+            change = {**self.CHANGE, "scope": scope}
+            _procs, requests, _alerts = self._publishes((change, self.W1), (change, self.W2))
+            sent[scope] = self._payload(requests[1]).get("scope")
+        self.assertEqual(sent, {"five_hour": "window", "both": "window", "weekly": "weekly",
+                                "windows_per_week": None, "undetermined": None})
 
     def test_a_provisional_flagged_change_is_never_emailed_whatever_its_state(self) -> None:
         flagged = {**self.CHANGE, "provisional": True}

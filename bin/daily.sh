@@ -448,10 +448,20 @@ if any(same_event(d, shown) for d in announced):
 payload = {k: change[k] for k in required}
 if change.get("model"):
     payload["model"] = change["model"]
-for key in ("scope", "metric", "change_pct", "interval_pct", "weekly_limit_change_pct",
+for key in ("metric", "change_pct", "interval_pct", "weekly_limit_change_pct",
             "weekly_limit_change_interval_pct", "state"):
     if change.get(key) is not None:
         payload[key] = change[key]
+# The site's /api/notify/send takes scope "window" or "weekly" and answers 400 to anything
+# else (functions/api/notify/send.js), so the publisher's scopes are mapped here: a five-hour
+# change is the window's; one that moved both limits is sent as the window's, its weekly
+# figure riding in weekly_limit_change_pct; a windows-per-week change (one limit against the
+# other, which one not known) or an undetermined one goes without a scope, which the site
+# accepts. An unmapped scope is never sent as it is.
+SITE_SCOPE = {"five_hour": "window", "both": "window", "weekly": "weekly",
+              "window": "window", "windows_per_week": None, "undetermined": None}
+if SITE_SCOPE.get(change.get("scope")):
+    payload["scope"] = SITE_SCOPE[change["scope"]]
 print(json.dumps(payload))
 PYEOF
 )"

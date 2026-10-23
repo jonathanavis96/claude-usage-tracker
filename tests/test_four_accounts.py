@@ -20,7 +20,9 @@ import functools
 import json
 import math
 import tempfile
+import time
 import unittest
+from unittest import mock
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -29,6 +31,8 @@ import numpy as np
 from tracker import four_accounts as F
 
 FIXTURE = Path(__file__).parent / "fixtures" / "four_accounts" / "readings-2026-10-23.json"
+PRE_REPAIR = (Path(__file__).parent / "fixtures" / "four_accounts"
+              / "readings-2026-10-23-without-masterrig-local-work.json")
 UTC = timezone.utc
 DAY = 24.0
 
@@ -52,10 +56,10 @@ def synth(steps: dict[str, float], *, days: int = 40, step_day: int = 20, noise:
 
 
 def at_step(p: F.Prepared, step_day: int = 20, n_perm: int = F.PERMUTATIONS,
-            screen: float | None = F.Z_SCREEN) -> dict | None:
+            screen: float | None = F.Z_SCREEN, n_max: int | None = None) -> dict | None:
     tau = step_day * DAY
     return F.step_at(p, "seven_day", tau, tau - F.SIDE_DAYS * DAY, tau + F.SIDE_DAYS * DAY,
-                     seed=11, n_perm=n_perm, screen=screen)
+                     seed=11, n_perm=n_perm, screen=screen, n_max=n_max)
 
 
 class RuleTest(unittest.TestCase):
@@ -190,6 +194,7 @@ def as_previous(changes: list[dict], withdrawn: list[dict] | None = None) -> dic
                          "state": c["state"], "held_days": c["held_days"],
                          "first_found": c["first_found"], "measured_on": c.get("measured_on"),
                          "instant_range": [F.stamp(x) for x in c["instant_range"]],
+                         "finds": c.get("finds"), "decided": c.get("decided"),
                          "change_pct": -10.0} for c in changes],
             "withdrawn": withdrawn or []}
 
@@ -279,13 +284,14 @@ def size(pct: float, lo: float, hi: float, accounts=("a1", "a2")) -> dict:
 
 def change(at: str, found_on: str, state: str, sizes: dict) -> dict:
     found = sizes[found_on]
-    return {"at": at, "_h": F.hours(F.parse(at)), "instant_range": [at, at], "found_on": found_on,
-            "sign": 1 if found["change_pct"] > 0 else -1, "state": state, "carried": False,
-            "found_today": True, "held_days": 7 if state == "measured" else 2,
-            "first_found": "2026-09-19", "measured_on": "2026-09-25" if state == "measured" else None,
-            "p": 0.00025, "z": -6.9, "change_pct": found["change_pct"],
-            "interval_pct": found["interval_pct"], "accounts": found["accounts"],
-            "reading": F.reading(sizes), "sizes": sizes}
+    c = {"at": at, "_h": F.hours(F.parse(at)), "instant_range": [at, at], "found_on": found_on,
+         "sign": 1 if found["change_pct"] > 0 else -1, "state": state, "carried": False,
+         "found_today": True, "held_days": 7 if state == "measured" else 2,
+         "first_found": "2026-09-19", "measured_on": "2026-09-25" if state == "measured" else None,
+         "p": 0.00025, "z": -6.9, "change_pct": found["change_pct"],
+         "interval_pct": found["interval_pct"], "accounts": found["accounts"], "sizes": sizes}
+    c["reading"] = F.reading(c)
+    return c
 
 
 SEP14 = change("2026-09-14T16:00:00+00:00", "ratio", "measured",
@@ -400,6 +406,10 @@ def fixture_readings() -> dict:
     return F.readings_from_json(json.loads(FIXTURE.read_text(encoding="utf-8")))
 
 
+#: Each replayed daily run's wall time, seconds.
+SECONDS: list[float] = []
+
+
 @functools.lru_cache(maxsize=1)
 def replayed() -> tuple[dict, ...]:
     """Every daily run from the first possible day to 23 October on the frozen readings:
@@ -408,9 +418,12 @@ def replayed() -> tuple[dict, ...]:
     blocks = []
     state = None
     d = F.first_day(readings)
+    valued = json.loads(FIXTURE.read_text(encoding="utf-8"))["valuation"]
     while d <= date(2026, 10, 23):
+        t = time.time()
         block = F.run(readings, datetime(d.year, d.month, d.day, tzinfo=UTC),
-                      (state or {}).get("latest"))
+                      (state or {}).get("latest"), valued, replayed=True)
+        SECONDS.append(time.time() - t)
         state = F.advance(state, block)
         blocks.append(block)
         d += timedelta(days=1)
@@ -436,20 +449,53 @@ class RecoveryTest(unittest.TestCase):
                  and overlaps(c, "2026-09-14T00:00:00+00:00", "2026-09-15T23:59:00+00:00")]
         self.assertEqual(len(sep14), 1, self.measured)
         c = sep14[0]
-        self.assertLess(c["change_pct"], 0)
         self.assertLess(c["interval_pct"][1], 0)
         self.assertEqual(c["sizes"]["ratio"]["accounts"], ["a1", "a2"])
+        # R1: the ratio's step inside its measured interval on these readings (spec 8), every
+        # voting account agreeing and each leave-one-out step holding; the seven-day line's
+        # interval holds the -9.9% the frozen figure once stated.
+        ratio = c["sizes"]["ratio"]
+        self.assertTrue(-21.6 <= ratio["change_pct"] <= -13.0, ratio["change_pct"])
+        self.assertTrue(ratio["agree"] and ratio["plan_wide"])
+        for x in ratio["per_account"].values():
+            self.assertGreaterEqual(abs(x["without_this_account"]["z"]), 1.96)
+        lo, hi = c["sizes"]["seven_day"]["interval_pct"]
+        self.assertTrue(lo <= -9.9 <= hi, (lo, hi))
+        # R6 on the ratio: it reads no rate but a step's headless share, so no family's rate
+        # interval moves it by more than a point.
+        lo, hi = ratio["rate_dependence"]["change_pct_range"]
+        self.assertLess(hi - lo, 1.0)
+        self.assertFalse(ratio["rate_dependence"]["rate_limited"])
 
     def test_it_finds_22_september_on_the_seven_day_meter(self):
         sep22 = [c for c in self.measured if c["found_on"] == "seven_day"
                  and overlaps(c, "2026-09-22T00:00:00+00:00", "2026-09-23T23:59:00+00:00")]
         self.assertEqual(len(sep22), 1, self.measured)
         c = sep22[0]
-        self.assertGreater(c["interval_pct"][0], 0)
         # Max account 4's readings start on 23 September at 10:53, two hours before the
         # instant: too little on the before side to vote.
         self.assertEqual(c["accounts"], ["a1", "a2", "a3"])
-        self.assertTrue(c["sizes"]["five_hour"]["excludes_no_change"])
+        # R2: the seven-day step inside [+11.5, +25.7]%, the five-hour interval holding the
+        # announced +20%, the ratio not significant.
+        seven, five, ratio = (c["sizes"][x] for x in ("seven_day", "five_hour", "ratio"))
+        self.assertTrue(11.5 <= seven["change_pct"] <= 25.7, seven["change_pct"])
+        self.assertGreater(seven["statistical_interval_pct"][0], 0)
+        self.assertTrue(five["interval_pct"][0] <= 20 <= five["interval_pct"][1])
+        self.assertFalse(ratio["excludes_no_change"])
+        # The after side runs on Opus 5.5, which the before side never used: across that
+        # family's rate interval the step runs from about nothing to about +35%. The published
+        # interval says so, and nothing is decided to have moved on a credit line.
+        rd = seven["rate_dependence"]
+        self.assertTrue(rd["rate_limited"])
+        self.assertEqual(rd["families"][0]["family"], "opus-5-5")
+        self.assertLess(seven["interval_pct"][0], 0)
+        self.assertEqual(c["decided"]["moved"], {"seven_day": False, "ratio": False, "five_hour": False})
+        # The instant: the median of the hold's seven finds, the range spanning all of them.
+        self.assertEqual(c["at"], sorted(f[0] for f in c["finds"])[(len(c["finds"]) - 1) // 2])
+        self.assertLessEqual(F.parse(c["instant_range"][0]), min(F.parse(f[1]) for f in c["finds"]))
+        self.assertGreaterEqual(F.parse(c["instant_range"][1]), max(F.parse(f[2]) for f in c["finds"]))
+        # Its capture passed on both sides for every voting account.
+        self.assertEqual(c["capture_audit"]["failing"], [])
 
     def test_nothing_at_17_october_with_the_masterrig_local_work_in(self):
         for block in self.blocks:
@@ -487,8 +533,41 @@ class RecoveryTest(unittest.TestCase):
             self.assertEqual(sorted(self.last["lines"][line]), ["a1", "a2", "a3", "a4"])
             self.assertEqual(self.last["levels"][line][-1]["index"], 1.0)
 
+    def test_what_a_measured_change_says_moved_is_never_re_decided(self):
+        for c in self.measured:
+            later = [x for b in self.blocks if b["day"] >= c["measured_on"]
+                     for x in b["changes"] if x["at"] == c["at"] and x["found_on"] == c["found_on"]]
+            self.assertTrue(later)
+            self.assertEqual({json.dumps(x["decided"], sort_keys=True) for x in later},
+                             {json.dumps(c["decided"], sort_keys=True)})
+            self.assertEqual(c["decided"]["on"], c["measured_on"])
+
+    def test_every_run_and_hold_is_marked_replayed(self):
+        self.assertTrue(all(b["replayed"] for b in self.blocks))
+        self.assertTrue(all(c["hold_replayed"] for c in self.last["changes"]))
+
+    def test_the_same_readings_give_the_same_changes_on_later_days(self):
+        # The review's seed flip: on the readings of 23 October, the runs of 24 and 25
+        # October find the 9 October ratio step again, one more day held each time, at the
+        # same p (the shuffles are seeded by line, instant and account, never by the day).
+        readings = F.known_at(fixture_readings(), datetime(2026, 10, 23, tzinfo=UTC))
+        valued = json.loads(FIXTURE.read_text(encoding="utf-8"))["valuation"]
+        prev, held = self.last, []
+        for day in (24, 25):
+            block = F.run(readings, datetime(2026, 10, day, tzinfo=UTC), prev, valued)
+            oct9 = [c for c in block["changes"] if c["found_on"] == "ratio"
+                    and overlaps(c, "2026-10-08T00:00:00+00:00", "2026-10-10T23:59:00+00:00")]
+            self.assertEqual(len(oct9), 1, (day, F.summary(block)))
+            held.append((oct9[0]["held_days"], oct9[0]["p"]))
+            self.assertFalse(block["replayed"])
+            prev = block
+        last9 = [c for c in self.last["changes"] if c["found_on"] == "ratio"
+                 and overlaps(c, "2026-10-08T00:00:00+00:00", "2026-10-10T23:59:00+00:00")][0]
+        self.assertEqual([h for h, _ in held], [last9["held_days"] + 1, last9["held_days"] + 2])
+        self.assertEqual(held[0][1], held[1][1])
+
     def test_a_daily_run_fits_the_cron(self):
-        self.assertLess(max(b["seconds"] for b in self.blocks), 60)
+        self.assertLess(max(SECONDS), 60)
 
 
 class NullTest(unittest.TestCase):
@@ -525,7 +604,314 @@ class NullTest(unittest.TestCase):
                                         for a in sorted(bed["seven_day"].accounts)}
             preps = self.shifted(bed, offs)
             taus = F.grid({line: preps[line] for line in F.SEARCHED}, F.hours(until))
-            self.assertEqual(F.search(F.Scanner(preps, F.run_seed(until.date()) + k), taus), [], offs)
+            self.assertEqual(F.search(F.Scanner(preps, F.SEED + k), taus), [], offs)
+
+
+# ------------------------------------------------------------------------------- more rule tests
+class PermutationTest(unittest.TestCase):
+    """The shuffles: seeded by line, instant and account alone; more of them near ALPHA."""
+
+    def test_the_seed_is_never_the_day(self):
+        self.assertFalse(hasattr(F, "run_seed"))
+        a = F._rng(F.SEED, "ratio", 100.0, "a1").random(5)
+        self.assertTrue(np.array_equal(a, F._rng(F.SEED, "ratio", 100.0, "a1").random(5)))
+        self.assertFalse(np.array_equal(a, F._rng(F.SEED, "ratio", 100.0, "a2").random(5)))
+        self.assertFalse(np.array_equal(a, F._rng(F.SEED, "seven_day", 100.0, "a1").random(5)))
+
+    def test_one_account_more_or_less_never_changes_another_accounts_shuffles(self):
+        four = synth({"a1": 0.15, "a2": 0.15, "a3": 0.15, "a4": 0.15}, noise=0.25)
+        three = F.Prepared(["a1", "a2", "a3"], four.tm, four.W, four.D, four.s2, four.first, four.last)
+        tau = 20 * DAY
+        for p in (four, three):
+            r = F.step_at(p, "seven_day", tau, tau - 14 * DAY, tau + 14 * DAY, screen=None, n_max=4000)
+            self.assertIsNotNone(r["p"])
+        # Same account set, same draws: a second call is identical.
+        r1 = F.step_at(three, "seven_day", tau, tau - 14 * DAY, tau + 14 * DAY, screen=None, n_max=4000)
+        r2 = F.step_at(three, "seven_day", tau, tau - 14 * DAY, tau + 14 * DAY, screen=None, n_max=4000)
+        self.assertEqual(r1["p"], r2["p"])
+
+    def test_ambiguous_is_within_mc_z_monte_carlo_errors_of_alpha(self):
+        self.assertFalse(F._ambiguous(0, 4000))       # no shuffle reached it
+        self.assertTrue(F._ambiguous(3, 4000))        # p = 4/4001, right on ALPHA
+        self.assertTrue(F._ambiguous(8, 4000))        # p = 0.00225, inside 3 errors
+        self.assertFalse(F._ambiguous(12, 4000))      # p = 0.00325, outside
+        self.assertFalse(F._ambiguous(3, 100_000))    # p = 0.00004 with 100,000
+
+    def test_a_step_near_alpha_gets_more_shuffles(self):
+        p = synth({"a1": 0.07, "a2": 0.07, "a3": 0.07, "a4": 0.07}, noise=0.35, seed=5)  # p ~ 0.006
+        first = at_step(p, screen=None, n_max=F.PERMUTATIONS)
+        self.assertEqual(first["permutations"], F.PERMUTATIONS)
+        k = round(first["p"] * (F.PERMUTATIONS + 1)) - 1
+        self.assertGreater(k, 0, "the test needs a step some shuffles reach")
+        with mock.patch.object(F, "ALPHA", first["p"]):
+            more = at_step(p, screen=None)
+        self.assertGreater(more["permutations"], F.PERMUTATIONS)
+        self.assertLessEqual(more["permutations"], F.PERMUTATIONS_MAX)
+
+    def test_a_published_p_keeps_four_significant_figures(self):
+        self.assertEqual(F.p_value(4 / 4001), 0.0009998)
+        self.assertLess(F.p_value(4 / 4001), F.ALPHA)
+        self.assertIsNone(F.p_value(None))
+
+
+class CalibrationTest(unittest.TestCase):
+    """Spec 8, tests 4 and 13: on null panels the permutation p is calibrated, and the
+    24-hour unit is what keeps readings that share a day's shock from passing as evidence."""
+
+    @staticmethod
+    def panel(seed: int, shared: bool) -> F.Prepared:
+        rng = np.random.default_rng(seed)
+        by = {}
+        for i, a in enumerate(("a1", "a2", "a3", "a4")):
+            tm = np.sort(rng.uniform(0, 28 * DAY, 28 * 4))
+            D = rng.integers(1, 4, tm.size).astype(float)
+            day_shock = rng.normal(0, 0.2, 28)[np.floor(tm / DAY).astype(int)] if shared else 0.0
+            own = rng.normal(0, 0.2 if not shared else 0.05, tm.size)
+            W = 1000 * (1 + 0.2 * i) * D * np.exp(day_shock + own)
+            by[a] = (tm - 0.5, tm + 0.5, W, D)
+        return F.prepare(by)
+
+    def share(self, shared: bool, n: int = 300) -> tuple[float, float]:
+        ps = []
+        for k in range(n):
+            r = at_step(self.panel(1000 + k, shared), step_day=14, screen=None, n_max=F.PERMUTATIONS)
+            ps.append(r["p"])
+        ps = np.array(ps)
+        return float(np.mean(ps < 0.01)), float(np.mean(ps < 0.001))
+
+    def test_on_null_panels_the_p_is_calibrated(self):
+        p01, p001 = self.share(shared=False)
+        self.assertTrue(0.003 <= p01 <= 0.02, p01)
+        self.assertLessEqual(p001, 0.005)
+
+    def test_day_units_hold_where_hour_units_would_not(self):
+        _, day = self.share(shared=True)
+        self.assertLessEqual(day, 0.005)
+        with mock.patch.object(F, "UNIT_HOURS", 1.0):
+            _, hour = self.share(shared=True)
+        self.assertGreater(hour, 0.005)
+
+
+class CoverageTest(unittest.TestCase):
+    @staticmethod
+    def drifting(drift: float, seed: int = 4) -> F.Prepared:
+        """Four flat accounts over 80 days whose levels wander day by day (a random walk of
+        `drift` a day): what independent day units understate."""
+        rng = np.random.default_rng(seed)
+        by = {}
+        for i, a in enumerate(("a1", "a2", "a3", "a4")):
+            walk = np.cumsum(rng.normal(0, drift, 80))
+            tm = np.sort(rng.uniform(0, 80 * DAY, 80 * 6))
+            D = rng.integers(1, 5, tm.size).astype(float)
+            W = 1000 * (1 + 0.2 * i) * D * np.exp(walk[np.floor(tm / DAY).astype(int)]
+                                                  + rng.normal(0, 0.1, tm.size) / np.sqrt(D))
+            by[a] = (tm - 0.5, tm + 0.5, W, D)
+        return F.prepare(by)
+
+    def test_the_factor_is_the_spread_of_z_where_days_are_not_independent(self):
+        # Independent days: z spreads as a standard normal and the factor stays near one.
+        # Levels that wander from day to day: the day units understate the step's error, z
+        # spreads wider, and the factor widens the interval by that spread.
+        for drift, lo, hi in ((0.0, 1.0, 1.4), (0.04, 1.5, 10.0)):
+            p = self.drifting(drift)
+            taus = F.grid({"x": p}, None)
+            cover = F.coverage({line: p for line in F.LINES}, [], taus)["seven_day"]
+            self.assertTrue(lo <= cover["factor"] <= hi, (drift, cover))
+
+    def test_an_interval_is_its_factor_times_wider(self):
+        p = synth({"a1": 0.2, "a2": 0.2, "a3": 0.2, "a4": 0.2})
+        one = F.size_on(p, "seven_day", 20 * DAY, [], 1.0)
+        two = F.size_on(p, "seven_day", 20 * DAY, [], 2.0)
+        w1 = math.log1p(one["interval_pct"][1] / 100) - math.log1p(one["interval_pct"][0] / 100)
+        w2 = math.log1p(two["interval_pct"][1] / 100) - math.log1p(two["interval_pct"][0] / 100)
+        self.assertAlmostEqual(w2 / w1, 2.0, delta=0.1)  # percents to one decimal
+
+    def test_on_the_frozen_readings_the_ratio_and_five_hour_intervals_are_widened(self):
+        cover = replayed()[-1]["interval_coverage"]
+        self.assertGreater(cover["ratio"]["factor"], 1.5)
+        self.assertGreater(cover["five_hour"]["factor"], 1.5)
+
+
+class HoldInstantTest(unittest.TestCase):
+    H = F.hours(datetime(2026, 9, 23, 13, tzinfo=UTC))
+
+    def days(self, finds):
+        return HoldTest.days(self, finds)
+
+    def test_the_measured_instant_is_the_median_of_the_finds_and_the_range_spans_them(self):
+        moves = [-21, 120, 118, 0, 0, 0, 0]   # 22 Sep 16:00, 28 Sep twice, then 23 Sep
+        runs = self.days([[found_at(self.H + m, line="seven_day", sign=1)] for m in moves])
+        last = runs[-1][0][0]
+        self.assertEqual(last["state"], "measured")
+        self.assertEqual(last["_h"], self.H)
+        self.assertEqual(last["instant_range"], [self.H - 21, self.H + 120])
+        self.assertEqual(len(last["finds"]), 7)
+
+    def test_a_find_is_matched_against_the_hold_not_yesterday(self):
+        # 0, +150, +300: each within MATCH_HOURS of the day before, but +300 is not within
+        # it of the hold's median (0): a walking find restarts the hold.
+        runs = self.days([[found_at(self.H + m)] for m in (0, 150, 300)])
+        self.assertEqual([c[0][-1]["held_days"] for c in runs], [1, 2, 1])
+
+    def test_a_second_change_beside_a_measured_one_is_its_own(self):
+        carried = {"found_on": "seven_day", "sign": 1, "_h": self.H,
+                   "instant_range": [self.H - 10, self.H + 30]}
+        r = {"d": 0.2}
+        self.assertTrue(F._carried_again([carried], "seven_day", self.H + 30 + F.MIN_GAP_HOURS, r))
+        self.assertFalse(F._carried_again([carried], "seven_day", self.H + 5 * DAY, r))
+        self.assertFalse(F._carried_again([carried], "seven_day", self.H, {"d": -0.2}))
+
+
+class DecidedTest(unittest.TestCase):
+    def test_a_decided_line_draws_as_decided_whatever_todays_interval_says(self):
+        c = change("2026-09-23T13:00:00+00:00", "seven_day", "measured",
+                   {"seven_day": size(18.3, 11.5, 25.6), "five_hour": size(17.8, -0.4, 39.2),
+                    "ratio": size(-2.6, -7.9, 3.0)})
+        self.assertFalse(F.drawn(c, "five_hour"))
+        c["decided"] = {"on": "2026-10-11", "moved": {"seven_day": True, "five_hour": True, "ratio": False}}
+        self.assertTrue(F.drawn(c, "five_hour"))
+        self.assertEqual(F.change_record(c, {})["scope"], "both")
+        self.assertEqual(F.reading(c), "both_limits")
+
+
+# ------------------------------------------------------------------------------- whole runs
+def synth_readings(names: list[str], *, days: int = 44, step_day: int = 22, step: float = 0.3,
+                   gap_after: dict | None = None, seed: int = 9, new_family: str | None = None) -> dict:
+    """Readings as `readings_for` gives them, for synthetic accounts: a five-hour stretch every
+    two hours (2 points) and a seven-day step every six (1 point), work per point lognormal
+    around each account's level, times 1 + `step` from `step_day` on both credit lines.
+    `gap_after` gives an account the share of its after-side stretches with nothing captured.
+    With `new_family`, every reading after the step is that family's work."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for i, a in enumerate(names):
+        level = 1000.0 * (1 + 0.25 * i)
+        rs = {"stretches": [], "steps": []}
+        for kind, every, d5, d7 in (("stretches", 2.0, 2.0, 0.0), ("steps", 6.0, 3.0, 1.0)):
+            t = rng.uniform(0, every)
+            while t < days * DAY:
+                after = t >= step_day * DAY
+                pts = d5 if kind == "stretches" else d7
+                w = level * pts * (1 + step if after else 1.0) * math.exp(rng.normal(0, 0.1))
+                if kind == "stretches" and after and rng.random() < (gap_after or {}).get(a, 0.0):
+                    w = 0.0
+                fam = {new_family: w} if new_family and after and w else None
+                rs[kind].append(F.Reading(t, t + 1.0, w, 0.0, d5, d7, fam, None))
+                t += every
+        out[a] = rs
+    return out
+
+
+def synth_valued(new_family: str | None = None) -> dict:
+    v = dict(F.VALUATION)
+    fams = {new_family: {"times_opus": 1.0, "interval": [0.7, 1.3], "provisional": False}} if new_family else {}
+    v["rate_intervals"] = {"percentiles": [10, 90], "families": fams}
+    return v
+
+
+def held_six_days(at: str, line: str = "seven_day", sign: int = 1) -> dict:
+    """A previous run holding one unconfirmed change six days."""
+    return {"changes": [{"at": at, "found_on": line, "sign": sign, "state": "provisional",
+                         "held_days": 6, "first_found": "2026-02-10", "measured_on": None,
+                         "instant_range": [at, at], "finds": [[at, at, at]] * 6}],
+            "withdrawn": []}
+
+
+class WholeRunTest(unittest.TestCase):
+    """`run` on synthetic accounts: no date given, any number of accounts."""
+
+    UNTIL = F.from_hours(44 * DAY)
+    AT = F.stamp(22 * DAY)
+
+    def test_a_fifth_account_votes_with_no_code_change(self):
+        fixed = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"), ("avis", "a4"))
+        labels = F.labels_for(["masterrig", "jwork", "dave", "avis", "newcomer"], fixed)
+        self.assertEqual(labels["newcomer"], "a5")
+        readings = synth_readings(sorted(labels.values()))
+        block = F.run(readings, self.UNTIL, None, synth_valued())
+        found = [c for c in block["changes"] if c["found_on"] == "seven_day"]
+        self.assertEqual(len(found), 1, F.summary(block))
+        self.assertIn("a5", found[0]["accounts"])
+        self.assertIn("Max account 5", F.public_block(block)["accounts"])
+
+    def test_the_same_inputs_give_byte_identical_json_and_no_date_is_read(self):
+        readings = synth_readings(["a1", "a2", "a3", "a4"])
+        one = json.dumps(F.run(readings, self.UNTIL, None, synth_valued()), sort_keys=True)
+        two = json.dumps(F.run(readings, self.UNTIL, None, synth_valued()), sort_keys=True)
+        self.assertEqual(one, two)
+        from tracker import credits as credit_model
+        with mock.patch.object(credit_model, "ANNOUNCEMENTS", []), \
+                mock.patch.object(credit_model, "CUT_AT", datetime(2030, 1, 1, tzinfo=UTC)):
+            three = json.dumps(F.run(readings, self.UNTIL, None, synth_valued()), sort_keys=True)
+        self.assertEqual(one, three)
+        source = Path(F.__file__).read_text(encoding="utf-8")
+        for name in ("ANNOUNCEMENTS", "CUT_AT", "PLAN_CHANGE", "ACCOUNTS ="):
+            self.assertNotIn(name, source)
+
+    def test_a_change_whose_capture_fails_stays_provisional_and_names_the_account(self):
+        readings = synth_readings(["a1", "a2", "a3", "a4"], gap_after={"a2": 0.3})
+        block = F.run(readings, self.UNTIL, held_six_days(self.AT), synth_valued())
+        c = [c for c in block["changes"] if c["found_on"] == "seven_day"][0]
+        self.assertEqual(c["held_days"], 7)
+        self.assertEqual(c["state"], "provisional")
+        self.assertEqual(c["held_by_capture"], ["a2"])
+        self.assertLess(c["capture_audit"]["per_account"]["a2"]["after"], F.CAPTURE_MIN)
+        clean = F.run(synth_readings(["a1", "a2", "a3", "a4"]), self.UNTIL, held_six_days(self.AT),
+                      synth_valued())
+        c = [c for c in clean["changes"] if c["found_on"] == "seven_day"][0]
+        self.assertEqual((c["state"], c["held_by_capture"]), ("measured", None))
+        self.assertEqual(c["capture_audit"]["failing"], [])
+        self.assertEqual(c["decided"]["on"], clean["day"])
+
+    def test_a_step_that_comes_with_a_new_model_is_limited_by_its_rate(self):
+        readings = synth_readings(["a1", "a2", "a3", "a4"], new_family="newmodel")
+        block = F.run(readings, self.UNTIL, held_six_days(self.AT), synth_valued("newmodel"))
+        c = [c for c in block["changes"] if c["found_on"] == "seven_day"][0]
+        seven = c["sizes"]["seven_day"]
+        rd = seven["rate_dependence"]
+        self.assertEqual(rd["families"][0]["family"], "newmodel")
+        # Every after-side reading is the new model's: its rate at 0.7 and 1.3 of the rate in
+        # force moves the +30% step to about 1.3 x 0.7 - 1 = -9% and 1.3 x 1.3 - 1 = +69%.
+        self.assertAlmostEqual(rd["change_pct_range"][0], -9.0, delta=3)
+        self.assertAlmostEqual(rd["change_pct_range"][1], 69.0, delta=4)
+        self.assertTrue(rd["rate_limited"])
+        self.assertLess(seven["interval_pct"][0], seven["statistical_interval_pct"][0])
+        self.assertFalse(seven["excludes_no_change"])
+        self.assertTrue(seven["statistical_interval_pct"][0] > 0)
+        self.assertFalse(c["decided"]["moved"]["seven_day"])
+        record = F.change_record(c, {})
+        self.assertEqual(record["rate_dependence"]["families"][0]["family"], "newmodel")
+        self.assertFalse(record["interval_excludes_no_change"])
+
+
+class CaptureDependenceTest(unittest.TestCase):
+    """Spec 8 R3: the protection against the 17 October artifact is the capture, and this
+    test has teeth. On the records as they were before the capture repair (#137, the
+    masterrig-local work missing; tests/fixtures/four_accounts/
+    readings-2026-10-23-without-masterrig-local-work.json), a shared seven-day step of -30% or
+    more around 17 October is significant by permutation; only the accounts' disagreement or
+    the leave-one-out test keeps it from being a change. With the work in, nothing there is
+    even significant (`RecoveryTest.test_nothing_at_17_october_with_the_masterrig_local_work_in`)."""
+
+    def test_without_the_masterrig_local_work_17_october_is_a_significant_shared_step(self):
+        obj = json.loads(PRE_REPAIR.read_text(encoding="utf-8"))
+        block = F.run(F.readings_from_json(obj), datetime(2026, 10, 23, tzinfo=UTC), None,
+                      obj["valuation"])
+        steps = [e for e in block["not_limit_changes"] + [
+                     {"line": c["found_on"], "at": c["at"], "change_pct": c["change_pct"]}
+                     for c in block["changes"]]
+                 if e["line"] == "seven_day" and "2026-10-16" <= e["at"][:10] <= "2026-10-18"]
+        self.assertTrue(steps, F.summary(block))
+        self.assertLessEqual(min(e["change_pct"] for e in steps), -30.0)
+        for e in block["not_limit_changes"]:
+            if e in steps:
+                self.assertLess(e["p"], F.ALPHA)
+                self.assertGreaterEqual(len(e["per_account"]), 2)
+
+    def test_with_the_work_in_nothing_is_significant_there(self):
+        last = replayed()[-1]
+        for e in last["not_limit_changes"]:
+            self.assertFalse(e["line"] == "seven_day" and "2026-10-15" <= e["at"][:10] <= "2026-10-19", e)
 
 
 if __name__ == "__main__":

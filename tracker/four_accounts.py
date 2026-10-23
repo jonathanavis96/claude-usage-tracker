@@ -23,7 +23,11 @@ because readings within a day share their shocks). The accounts' steps are avera
 inverse variance. The instant flags when:
 
 - shuffling each account's days between the two sides makes a step that large less than
-  once in a thousand tries (permutation p < ALPHA);
+  once in a thousand tries (permutation p < ALPHA). The shuffles at an instant are seeded by
+  the line, the instant and the account alone, never by the day the search runs, so the same
+  readings give the same p on every run; and where p lies within MC_Z Monte Carlo standard
+  errors of ALPHA the shuffles go on, up to PERMUTATIONS_MAX, so a borderline step is decided
+  by its readings rather than by the draw;
 - every voting account agrees (none more than AGREE_Z standard errors from the others, none
   significantly the other way);
 - it still holds with any one account left out (plan-wide, PLAN_WIDE_Z).
@@ -33,23 +37,33 @@ repeats until nothing flags. A step one account takes alone is a counting proble
 account (`not_limit_changes`), never a limit change. No date is read anywhere: no cut, no
 announcement, no family's first use, no account list.
 
-The search runs once a day on the data known at midnight UTC. A change is a `candidate` the
-day it is first found, `provisional` while it keeps being found, and `measured` once it has
-been found HOLD_DAYS runs in a row on the same line, in the same direction, within
-MATCH_HOURS of the day before. MATCH_HOURS is one weekly cycle: a weekly limit change reaches
-each account at its own seven-day reset, so the instant of one shared step can sit anywhere in
-a week, and on the records of 2026-10-23 the 22 September step is a flat run of flagged
-instants from 22 September to 1 October on the seven-day line, whose strongest instant moved
-anywhere from 23 to 30 September from one daily run to the next (replayed with the 36 hours of
-the spec, it was never held seven runs). Only a measured change reaches the page's headline,
-`events`, the window regimes and the email. The search remembers nothing but its measured
-changes: each is carried into every later run as a fixed change (`carried`), never moved and
-never withdrawn, re-tested at its own instant every day; a run that no longer flags it says so
-(`found_today` false) and the invariants alert. A flagged instant within MATCH_HOURS of a
-carried change, on its line and in its direction, is that change found again, never a second
-one. Without that memory a step whose instant is uncertain by days moved between runs after it
-was measured, and the hold measured it again at the new instant: one change, three measured
-records.
+The search runs once a day on the data known at midnight UTC (`hold`). A change is a
+`candidate` the day it is first found, `provisional` while it keeps being found, and
+`measured` once it has been found HOLD_DAYS runs in a row on the same line, in the same
+direction, each find within MATCH_HOURS of the median of the hold's finds so far. MATCH_HOURS
+is one weekly cycle: a weekly limit change reaches each account at its own seven-day reset,
+so the strongest instant of one shared step can sit anywhere in a week (on the records of
+2026-10-23 the 22 September step's moved between 23 and 30 September from one run to the
+next; with the 36 hours of the spec it was never held seven runs). Matching against the
+hold's median rather than yesterday's find keeps the instant from walking a week a day. The
+change's instant is the median of its finds and its published range spans every find's
+range, so a step whose instant the data cannot place to the day says so rather than taking
+whichever instant the seventh run happened to pick.
+
+A change found on the seven-day line also needs every voting account's capture to pass on
+both sides (`capture_audit`: at least CAPTURE_MIN of the five-hour meter's movement in
+stretches with captured work); one that fails stays provisional and names the account.
+
+Only a measured change reaches the page's headline, `events`, the window regimes and the
+email. The search remembers nothing but its measured changes: each is carried into every
+later run as a fixed change (`carried`), never moved and never withdrawn, and re-tested every
+day within its published range; a run that no longer flags it says so (`found_today` false)
+and the invariants alert. A flagged instant inside a carried change's range (widened by
+MIN_GAP_HOURS), on its line and in its direction, is that change found again, never a second
+one. What a measured change says moved (`decided`: which lines moved, and the interval
+factors that said so) is decided the day it is measured and never re-decided: its sizes and
+intervals are re-measured every run, but the charts, the scope and the email do not flip
+with them.
 
 Valuation (`valuation`): one valuation across the whole history, the rates in force in
 history/model-rates.json as every change figure prices them (`credits.comparison_value`).
@@ -58,11 +72,16 @@ The rates the publisher absorbs at a family's first use (`absorb_new_family_rate
 jointly with a limit change at that first-seen instant) are never read here: they would carry
 that date into the seven-day line. The ratio reads no rate except through a step's headless
 share, so a refit moves the seven-day and five-hour sizes and never what the ratio finds.
+What a rate's own uncertainty does to a size is measured at every change (`rate_dependence`):
+each family's rate moved to either end of its published interval, the size re-read, and the
+published interval widened to cover it. A change whose after side runs on a model the before
+side never used cannot be told from that model's rate on the credit lines (22 September,
+Opus 5.5); its interval says so.
 
 The headless factor is fitted at every run from the seven-day steps, with one level per
 account per ISO week in place of dated regimes (`headless_factor`).
 
-Every interval is widened by the measured spread of z on the history with the found changes
+Every interval is widened by the measured spread of z on the history with the measured changes
 divided out (`coverage`): on the five-hour line and the ratio the nominal 95% interval
 covered 59-74% of injected steps (the 2026-10-23 re-check), so each line's interval is
 multiplied by its own measured spread, never narrowed.
@@ -74,7 +93,8 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass, field
+import zlib
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -83,29 +103,27 @@ import numpy as np
 from . import credits as credit_model
 from .atomic import write_text_atomic
 from .capture import COLLECTION_GAP
+# What the publisher and the invariants read lives in the stdlib module; re-exported here.
+from .four_accounts_page import (  # noqa: F401
+    CREDIT_LINES, EPOCH, HEADLINE_NAMES, LINE_METRIC, LINE_NAMES, LINES, METHOD, SCHEMA, SCOPES,
+    SEARCHED, SENSITIVITY, SENTENCE, account_labels, certified_on, change_record, drawn,
+    drawn_step, events, from_hours, hours, last_change, levels, line_moved, load_state,
+    measured_changes, moved, p_value, page_round, parse, pct, public_block, public_label,
+    reading, regime_changes, stamp, write_state,
+)
 
 UTC = timezone.utc
-EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
-SCHEMA = 1
-METHOD = "four_account_shared_step"
-
-#: The three lines, the two the search runs on, and what each is.
-LINES = ("seven_day", "ratio", "five_hour")
-SEARCHED = ("seven_day", "ratio")
-LINE_NAMES = {
-    "seven_day": "seven-day meter: credits per 1%",
-    "ratio": "five-hour points per seven-day point, headless work at the fitted factor",
-    "five_hour": "five-hour meter: credits per 1%, headless work at the fitted factor",
-}
-#: The published metric each line's size is stated as (`events`, the window regimes).
-LINE_METRIC = {"seven_day": "weekly_limit", "ratio": "windows_per_week",
-               "five_hour": "five_hour_limit"}
 LINE_CODE = {line: i + 1 for i, line in enumerate(LINES)}
 
 #: The rule. Every constant here was fixed before the history was searched with it
 #: (docs/adr/0001-acceptance-rules-for-published-figures.md, rule 22).
 ALPHA = 0.001
 PERMUTATIONS = 4000
+#: Where p after PERMUTATIONS shuffles lies within MC_Z Monte Carlo standard errors of ALPHA
+#: (and at least one shuffle reached the observed |z|), the shuffles go on, five times as many
+#: each round, up to PERMUTATIONS_MAX.
+PERMUTATIONS_MAX = 100_000
+MC_Z = 3.0
 #: The permutation test runs only where the pooled |z| reaches this: on the 2026-10-23 test
 #: beds no instant below it came near p < ALPHA, and the search is about ten times faster.
 Z_SCREEN = 2.0
@@ -122,9 +140,12 @@ PRIOR_UNITS = 4.0
 MIN_UNITS = 2
 MIN_POINTS = {"five_hour": 20.0, "seven_day": 5.0, "ratio": 5.0}
 HOLD_DAYS = 7
-#: One weekly cycle: how far a change's instant may move from one daily run to the next and
-#: still be the same change (module docstring).
+#: One weekly cycle: how far a day's find may sit from the median of the hold's finds so far
+#: and still be the same change (module docstring).
 MATCH_HOURS = 7 * 24.0
+#: A seven-day change's voting accounts each need at least this share of their five-hour
+#: meter movement, on each side, in stretches with captured work (`capture_audit`).
+CAPTURE_MIN = 0.9
 #: The account lines on the chart: each day's level, and the level pooled over this many days.
 LINE_DAYS = 7
 NOISE_HALFWIDTH_DAYS = 7
@@ -132,81 +153,20 @@ NOISE_HALFWIDTH_DAYS = 7
 COVERAGE_MIN_INSTANTS = 20
 #: The headless fit needs at least this many steps in informative account-weeks.
 HEADLESS_MIN_STEPS = 50
+#: The permutations' seed: one number for every run, combined with the line, the instant and
+#: the account (`_rng`). Never the run's day.
 SEED = 20261023
 
 RULE = {
-    "alpha": ALPHA, "permutations": PERMUTATIONS, "z_screen": Z_SCREEN, "agreement_z": AGREE_Z,
+    "alpha": ALPHA, "permutations": PERMUTATIONS, "permutations_max": PERMUTATIONS_MAX,
+    "mc_z": MC_Z, "seed": SEED, "z_screen": Z_SCREEN, "agreement_z": AGREE_Z,
     "plan_wide_z": PLAN_WIDE_Z, "grid_hours": GRID_HOURS, "side_days": SIDE_DAYS,
     "min_gap_hours": MIN_GAP_HOURS, "refine_hours": REFINE_HOURS, "unit_hours": UNIT_HOURS,
     "prior_units": PRIOR_UNITS, "min_units": MIN_UNITS, "min_points": dict(MIN_POINTS),
-    "hold_days": HOLD_DAYS, "match_hours": MATCH_HOURS, "lines_searched": list(SEARCHED),
-    "lines_measured": list(LINES), "collection_gap": COLLECTION_GAP,
+    "hold_days": HOLD_DAYS, "match_hours": MATCH_HOURS, "match_against": "median of the hold's finds",
+    "capture_min": CAPTURE_MIN, "lines_searched": list(SEARCHED), "lines_measured": list(LINES),
+    "collection_gap": COLLECTION_GAP,
 }
-
-#: What a page says this method is, in one sentence.
-SENTENCE = ("Each Max account is its own ruler: when every account gets the same percentage more "
-            "or less work per 1% of a meter at the same moment, and shuffling their days cannot "
-            "make a jump that big more than once in a thousand tries, the limit changed.")
-
-#: The smallest change the rule catches 95% of the time, measured by injecting a step into
-#: every account's real readings (the 2026-10-23 re-check of the rule with its own sides, and
-#: the synthesis of the noise studies, on the records with the masterrig-local work in). Not
-#: re-measured at each run: `measured_on` dates it. Percent, rises and falls apart; None means
-#: not caught 95% of the time by `tested_up_to_pct`.
-_NOT = {"rise": None, "fall": None}
-SENSITIVITY = {
-    "measured_on": "2026-10-23",
-    "method": ("a step injected into every account's real readings at every six-hour start, the "
-               "rule run 7 or 14 days later with its own sides; a hit is a flag within a day of "
-               "the start, in the right direction"),
-    "tested_up_to_pct": 50,
-    "all_four_accounts_voting": {
-        "starts": "October, when all four accounts had readings on both sides",
-        "seven_day": {"7d": {"rise": None, "fall": 40}, "14d": {"rise": 30, "fall": 30}},
-        "ratio": {"7d": {"rise": 30, "fall": 30}, "14d": {"rise": 20, "fall": 15}},
-        "five_hour": {"7d": dict(_NOT), "14d": dict(_NOT)},
-    },
-    "whole_history": {
-        "starts": "12 September to 15 October; in September at most two accounts voted",
-        "seven_day": {"7d": dict(_NOT), "14d": dict(_NOT)},
-        "ratio": {"7d": dict(_NOT), "14d": {"rise": None, "fall": 40}},
-        "five_hour": {"7d": dict(_NOT), "14d": dict(_NOT)},
-    },
-    "false_alarms_per_start": [0.0, 2.8],
-    "whole_run_false_alarms": {"flagged": 2, "of": 20,
-                               "note": ("histories with every account's readings shifted in time "
-                                        "by its own random offset, the two lines searched: 2 of 20 "
-                                        "with the 9 October ratio step left in as noise, 0 of 20 "
-                                        "with it divided out. The 7-day hold is what keeps such a "
-                                        "flag from becoming measured")},
-}
-
-
-def hours(dt: datetime) -> float:
-    return (dt - EPOCH).total_seconds() / 3600.0
-
-
-def from_hours(h: float) -> datetime:
-    return EPOCH + timedelta(hours=float(h))
-
-
-def stamp(h: float) -> str:
-    return from_hours(h).replace(microsecond=0).isoformat()
-
-
-def parse(s: str) -> datetime:
-    d = datetime.fromisoformat(s)
-    return d if d.tzinfo else d.replace(tzinfo=UTC)
-
-
-def pct(x: float) -> float:
-    """A log step as a percent, one decimal."""
-    return round(100 * math.expm1(x), 1)
-
-
-def public_label(label: str) -> str:
-    """`a2` as the page names it: "Max account 2"."""
-    return f"Max account {label[1:]}" if label[:1] == "a" and label[1:].isdigit() else label
 
 
 # ------------------------------------------------------------------------------- accounts
@@ -258,6 +218,49 @@ def valuation(credits: dict, model_rates: dict):
     return credit_model.comparison_value(credits, model_rates)
 
 
+def family_parts(credits: dict, model_rates: dict):
+    """`parts(tokens)`: {family: the credits of `valuation` that scale with that family's rate}
+    (its input, cache-write and output tokens; with a pooled fit every cache read is at the
+    fit's one cache-read rate, whichever family it came from, and moves with none). Moving a
+    family's rate by a factor k moves a reading's credits by (k - 1) x its part."""
+    fit = credit_model.pooled_fit_prices(model_rates)
+    weight = credit_model.cache_read_weight(credits)
+    cache: dict = {}
+
+    def parts(tokens: dict) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for model, tok in (tokens or {}).items():
+            if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
+                continue
+            fam = credit_model.family(model, credits)
+            if fam is None:
+                continue
+            if fam not in cache:
+                cache[fam] = credit_model.comparison_rate(fam, credits, model_rates)
+            pair = cache[fam]
+            if pair is None:
+                continue
+            side = credit_model.input_side(tok, 0.0 if fit is not None else weight)
+            out[fam] = out.get(fam, 0.0) + side * pair[0] + tok.get("output", 0) * pair[1]
+        return out
+    return parts
+
+
+def rate_intervals(model_rates_raw: dict | None) -> dict:
+    """Each family's rate in force and its published interval (times Opus), for the families
+    the rates file gives an interval: what `rate_dependence` moves each rate across."""
+    raw = model_rates_raw or {}
+    per = ((raw.get("measured_rates") or {}).get("per_family")) or {}
+    out = {}
+    for fam, row in sorted(per.items()):
+        x, iv = row.get("times_opus"), row.get("times_opus_interval")
+        if not x or not iv or len(iv) != 2 or not all(iv):
+            continue
+        out[fam] = {"times_opus": round(float(x), 4), "interval": [round(float(v), 4) for v in iv],
+                    "provisional": bool(row.get("provisional"))}
+    return {"percentiles": raw.get("interval_percentiles"), "families": out}
+
+
 def valuation_block(model_rates_raw: dict | None) -> dict:
     """What the run's credits are valued at, for the state and the page."""
     meta = (model_rates_raw or {}).get("_meta") or {}
@@ -267,13 +270,15 @@ def valuation_block(model_rates_raw: dict | None) -> dict:
             "times_opus": ({fam: round(x, 4) for fam, x in sorted(fit["times_opus"].items())}
                            if fit else None),
             "cache_read_weight": round(fit["cache_read_weight"], 6) if fit else None,
+            "rate_intervals": rate_intervals(model_rates_raw),
             "rule": VALUATION_RULE}
 
 
 VALUATION_RULE = ("each family at the rates in force (history/model-rates.json, the pooled fit's "
                   "point estimates, cache reads at its one fitted cache-read rate), the same rates "
                   "across the whole history, so no dated regime enters a line; the ratio reads no "
-                  "rate but a step's headless share")
+                  "rate but a step's headless share; each family's rate interval widens the "
+                  "sizes it moves (rate_dependence)")
 #: The valuation a snapshot or a test names when it has no rates file to describe.
 VALUATION = {"kind": "rates_in_force", "source": "history/model-rates.json", "rule": VALUATION_RULE}
 
@@ -281,13 +286,16 @@ VALUATION = {"kind": "rates_in_force", "source": "history/model-rates.json", "ru
 # ------------------------------------------------------------------------------- readings
 @dataclass
 class Reading:
-    """One reading of one account, in hours since EPOCH."""
+    """One reading of one account, in hours since EPOCH. `fam` and `hfam` are the credits of
+    the work and of its headless part that scale with each family's rate (`family_parts`)."""
     t0: float
     t1: float
     credits: float | None
     headless: float
     d5: float
     d7: float
+    fam: dict | None = None
+    hfam: dict | None = None
 
 
 def _flag_out(row: dict, name: str, runs: list) -> bool:
@@ -300,7 +308,7 @@ def _flag_out(row: dict, name: str, runs: list) -> bool:
     return credit_model.overlapping_run(runs, name, parse(start), parse(end)) is not None
 
 
-def account_readings(body: dict, name: str, value, runs: list, until: datetime | None):
+def account_readings(body: dict, name: str, value, runs: list, until: datetime | None, parts=None):
     """(stretches, steps) of one account as Readings, cut at `until` (a reading ending after
     it is not yet known)."""
     out = {"stretches": [], "steps": []}
@@ -318,15 +326,22 @@ def account_readings(body: dict, name: str, value, runs: list, until: datetime |
                 cr = None
             d5 = float((row.get("delta_pct") if kind == "stretches" else row.get("d5")) or 0)
             d7 = float(row.get("d7") or 1) if kind == "steps" else 0.0
-            out[kind].append(Reading(hours(t0), hours(t1), cr, head or 0.0, d5 or 0.0, d7))
+            fam = hfam = None
+            if parts is not None and cr is not None:
+                fam = {k: round(v, 1) for k, v in parts(row.get("tokens") or {}).items() if v}
+                hfam = {k: round(v, 1) for k, v in parts(row.get("headless_tokens") or {}).items() if v}
+            out[kind].append(Reading(hours(t0), hours(t1), cr, head or 0.0, d5 or 0.0, d7,
+                                     fam or None, hfam or None))
     return out
 
 
-def readings_for(recs: dict[str, dict], labels: dict[str, str], value, runs: list) -> dict[str, dict]:
-    """Every account's readings by label, each valued once by `value` (`valuation`): all of
-    them, a run cuts them at the instant it runs as (`known_at`). Accounts with no reading are
-    left out."""
-    out = {labels[name]: account_readings(body, name, value, runs, None) for name, body in recs.items()}
+def readings_for(recs: dict[str, dict], labels: dict[str, str], value, runs: list,
+                 parts=None) -> dict[str, dict]:
+    """Every account's readings by label, each valued once by `value` (`valuation`, with each
+    family's share by `parts`): all of them, a run cuts them at the instant it runs as
+    (`known_at`). Accounts with no reading are left out."""
+    out = {labels[name]: account_readings(body, name, value, runs, None, parts)
+           for name, body in recs.items()}
     return {k: v for k, v in out.items() if v["stretches"] or v["steps"]}
 
 
@@ -337,9 +352,21 @@ def known_at(readings: dict[str, dict], until: datetime) -> dict[str, dict]:
     return {k: v for k, v in out.items() if v["stretches"] or v["steps"]}
 
 
+def revalued(readings: dict[str, dict], fam: str, k: float) -> dict[str, dict]:
+    """The readings with family `fam`'s rate multiplied by `k`, every other rate as it was."""
+    def one(r: Reading) -> Reading:
+        a = (r.fam or {}).get(fam, 0.0)
+        h = (r.hfam or {}).get(fam, 0.0)
+        if not a and not h:
+            return r
+        return replace(r, credits=None if r.credits is None else r.credits + (k - 1.0) * a,
+                       headless=r.headless + (k - 1.0) * h)
+    return {acc: {kind: [one(r) for r in rs] for kind, rs in v.items()} for acc, v in readings.items()}
+
+
 #: A readings snapshot's columns (`readings_to_json`), the frozen inputs of the recovery tests.
 SNAPSHOT_COLUMNS = ["t0_hours", "t1_hours", "credits", "headless_credits", "five_hour_points",
-                    "seven_day_points"]
+                    "seven_day_points", "credits_by_family", "headless_credits_by_family"]
 
 
 def readings_to_json(readings: dict[str, dict], valued: dict | None = None) -> dict:
@@ -347,7 +374,7 @@ def readings_to_json(readings: dict[str, dict], valued: dict | None = None) -> d
     token count, nothing but what the detector reads. `valued` names their valuation."""
     def row(r: Reading) -> list:
         return [round(r.t0, 4), round(r.t1, 4), None if r.credits is None else round(r.credits, 1),
-                round(r.headless, 1), r.d5, r.d7]
+                round(r.headless, 1), r.d5, r.d7, r.fam, r.hfam]
     return {"epoch": EPOCH.isoformat(), "columns": SNAPSHOT_COLUMNS, "valuation": valued or VALUATION,
             "accounts": {a: {kind: [row(r) for r in rs] for kind, rs in sorted(v.items())}
                          for a, v in sorted(readings.items())}}
@@ -363,7 +390,6 @@ def _irls_poisson(y: np.ndarray, X: np.ndarray, iters: int = 60) -> tuple[np.nda
     """Quasi-Poisson regression by IRLS: (coefficients, dispersion-scaled se, dispersion)."""
     n, p = X.shape
     b = np.zeros(p)
-    b[:] = 0.0
     mu = np.full(n, max(y.mean(), 1e-9))
     eta = np.log(mu)
     for _ in range(iters):
@@ -402,11 +428,11 @@ def headless_factor(steps: dict[str, list[Reading]]) -> dict:
     by: dict[str, list[float]] = {}
     for g, _, share in rows:
         by.setdefault(g, []).append(share)
-    moved: dict[str, float] = {}
+    moved_: dict[str, float] = {}
     for g, d5, _ in rows:
-        moved[g] = moved.get(g, 0.0) + d5
+        moved_[g] = moved_.get(g, 0.0) + d5
     informative = sorted(g for g, xs in by.items()
-                         if len(xs) >= 3 and max(xs) - min(xs) > 0.2 and moved[g] > 0)
+                         if len(xs) >= 3 and max(xs) - min(xs) > 0.2 and moved_[g] > 0)
     rows = [r for r in rows if r[0] in set(informative)]
     block = {"value": None, "interval": None, "n_steps": len(rows), "account_weeks": len(informative),
              "fit": "quasi-Poisson of each step's five-hour points on account x ISO-week levels "
@@ -581,13 +607,45 @@ def _studentized(Wu, Du, Dy, Sy, Sy2, M, s2_prior):
     return rA - rB, var
 
 
-def _rng(seed: int, line: str, tau: float) -> np.random.Generator:
-    """The permutations at one instant, independent of what else was scanned."""
-    return np.random.default_rng(np.random.SeedSequence([seed, LINE_CODE[line], int(round(tau * 4))]))
+def _rng(seed: int, line: str, tau: float, account: str) -> np.random.Generator:
+    """The shuffles of one account at one instant on one line: seeded by those alone (and the
+    one SEED), never by the run's day or by what else was scanned, so the same readings give
+    the same p on every run, and one account's day count never shifts another's draws."""
+    return np.random.default_rng(np.random.SeedSequence(
+        [seed, LINE_CODE[line], int(round(tau * 4)), zlib.crc32(account.encode())]))
 
 
-def step_at(p: Prepared, line: str, tau: float, lo: float, hi: float, seed: int,
-            n_perm: int = PERMUTATIONS, screen: float | None = Z_SCREEN) -> dict | None:
+def _ambiguous(k: int, n: int) -> bool:
+    """Whether p = (1 + k) / (n + 1) after `n` shuffles (`k` of them at least as large) is
+    within MC_Z Monte Carlo standard errors of ALPHA. k = 0 is never ambiguous: no shuffle
+    reached the step, which is under ALPHA with probability 1 - (1 - ALPHA)^n."""
+    if k == 0:
+        return False
+    p = (1 + k) / (n + 1)
+    return abs(p - ALPHA) < MC_Z * math.sqrt(ALPHA * (1 - ALPHA) / n)
+
+
+def _exceed(parts: dict, rngs: dict, n: int, z: float) -> int:
+    """How many of `n` more shuffles give a pooled |z| at least |z|."""
+    num = 0.0
+    den = 0.0
+    for a in sorted(parts):
+        Wu, Du, Dy, Sy, Sy2, nA, s2p = parts[a]
+        m = len(Du)
+        ranks = np.argsort(rngs[a].random((n, m)), axis=1)
+        M = np.zeros((n, m))
+        np.put_along_axis(M, ranks[:, :nA], 1.0, axis=1)
+        pd, pv = _studentized(Wu, Du, Dy, Sy, Sy2, M, s2p)
+        num = num + np.nan_to_num(pd / pv, nan=0.0, posinf=0.0, neginf=0.0)
+        den = den + np.nan_to_num(1 / pv, nan=0.0, posinf=0.0, neginf=0.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        zp = np.where(den > 0, num / np.sqrt(np.where(den > 0, den, 1.0)), 0.0)
+    return int(np.sum(np.abs(zp) >= abs(z)))
+
+
+def step_at(p: Prepared, line: str, tau: float, lo: float, hi: float, seed: int = SEED,
+            n_perm: int = PERMUTATIONS, screen: float | None = Z_SCREEN,
+            n_max: int | None = None) -> dict | None:
     """The pooled step at instant `tau`: before side [lo, tau), after side [tau, hi).
 
     Per account, d = log(sum work / sum points after) - log(the same before), from 24-hour
@@ -595,8 +653,10 @@ def step_at(p: Prepared, line: str, tau: float, lo: float, hi: float, seed: int,
     positive work on each side. The pooled step is the inverse-variance mean of the voting
     accounts', z its ratio to its standard error. p is the permutation p-value: each account's
     units shuffled between the sides (keeping how many each has), the pooled |z| recomputed,
-    p = (1 + #{|z*| >= |z|}) / (n_perm + 1). With `screen`, p is computed only where |z|
-    reaches it and is None below. None when no account votes.
+    p = (1 + #{|z*| >= |z|}) / (n + 1) over n shuffles: `n_perm` first, then, while p is
+    within MC_Z Monte Carlo errors of ALPHA (`_ambiguous`), five times as many again up to
+    `n_max` (PERMUTATIONS_MAX by default; `n_perm` to stop there). With `screen`, p is computed
+    only where |z| reaches it and is None below. None when no account votes.
     """
     obs, parts = {}, {}
     for a in p.accounts:
@@ -631,23 +691,18 @@ def step_at(p: Prepared, line: str, tau: float, lo: float, hi: float, seed: int,
     d = sum(r["d"] * w[a] for a, r in obs.items()) / wsum
     se = math.sqrt(1 / wsum)
     z = d / se
-    pval = None
+    pval, n_done = None, 0
     if n_perm and (screen is None or abs(z) >= screen):
-        rng = _rng(seed, line, tau)
-        num = 0.0
-        den = 0.0
-        for a in sorted(parts):
-            Wu, Du, Dy, Sy, Sy2, nA, s2p = parts[a]
-            n = len(Du)
-            ranks = np.argsort(rng.random((n_perm, n)), axis=1)
-            M = np.zeros((n_perm, n))
-            np.put_along_axis(M, ranks[:, :nA], 1.0, axis=1)
-            pd, pv = _studentized(Wu, Du, Dy, Sy, Sy2, M, s2p)
-            num = num + np.nan_to_num(pd / pv, nan=0.0, posinf=0.0, neginf=0.0)
-            den = den + np.nan_to_num(1 / pv, nan=0.0, posinf=0.0, neginf=0.0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            zp = np.where(den > 0, num / np.sqrt(np.where(den > 0, den, 1.0)), 0.0)
-        pval = (1 + int(np.sum(np.abs(zp) >= abs(z)))) / (n_perm + 1)
+        rngs = {a: _rng(seed, line, tau, a) for a in parts}
+        cap = PERMUTATIONS_MAX if n_max is None else n_max
+        k, n_done, batch = 0, 0, n_perm
+        while True:
+            k += _exceed(parts, rngs, batch, z)
+            n_done += batch
+            if n_done >= cap or not _ambiguous(k, n_done):
+                break
+            batch = min(4 * n_done, cap - n_done)
+        pval = (1 + k) / (n_done + 1)
     for a, r in obs.items():
         others = [b for b in obs if b != a]
         if others:
@@ -657,8 +712,8 @@ def step_at(p: Prepared, line: str, tau: float, lo: float, hi: float, seed: int,
             r["z_others"] = d_o * math.sqrt(ws)
             r["z_vs_others"] = (r["d"] - d_o) / math.sqrt(r["var"] + 1 / ws)
         r["weight"] = w[a] / wsum
-    return {"tau": tau, "lo": lo, "hi": hi, "d": d, "se": se, "z": z, "p": pval, "k": len(obs),
-            "acc": obs}
+    return {"tau": tau, "lo": lo, "hi": hi, "d": d, "se": se, "z": z, "p": pval,
+            "permutations": n_done, "k": len(obs), "acc": obs}
 
 
 def agreement(r: dict) -> dict:
@@ -721,7 +776,7 @@ class Scanner:
     """step_at over the grid, cached by (line, instant, sides): a later pass of the search only
     recomputes the instants whose sides a new change cut."""
 
-    def __init__(self, preps: dict[str, Prepared], seed: int):
+    def __init__(self, preps: dict[str, Prepared], seed: int = SEED):
         self.preps, self.seed, self.cache = preps, seed, {}
 
     def at(self, line: str, tau: float, breaks: list[float]) -> dict | None:
@@ -732,19 +787,35 @@ class Scanner:
         return self.cache[key]
 
 
+def _near_carried(c: dict, tau: float) -> bool:
+    """Whether instant `tau` lies in a carried change's published range, widened by
+    MIN_GAP_HOURS a side."""
+    lo, hi = c["instant_range"]
+    return lo - MIN_GAP_HOURS <= tau <= hi + MIN_GAP_HOURS
+
+
 def _carried_again(fixed_changes: list[dict], line: str, tau: float, r: dict) -> bool:
     """Whether a flagged step is a carried change found again: on its line, in its direction,
-    within MATCH_HOURS of it."""
+    inside its published range (`_near_carried`). One further off, even on the same line and
+    the same way, is a change of its own."""
     sign = 1 if r["d"] > 0 else -1
-    return any(c["found_on"] == line and c["sign"] == sign and abs(c["_h"] - tau) <= MATCH_HOURS
+    return any(c["found_on"] == line and c["sign"] == sign and _near_carried(c, tau)
                for c in fixed_changes)
+
+
+def _rank(r: dict) -> tuple[float, float]:
+    """The order flagged instants are taken in: the smallest p, ties by the largest |z|. p is
+    read at the resolution every instant gets (PERMUTATIONS shuffles): an instant near ALPHA
+    gets more shuffles (`step_at`), and a finer p there must not rank a borderline step ahead
+    of a stronger one whose p sits at the floor of the first round."""
+    return max(r["p"], 1 / (PERMUTATIONS + 1)), -abs(r["z"])
 
 
 def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = (),
            fixed_changes: list[dict] = ()) -> list[dict]:
     """The greedy segmentation: the flagged (line, instant) with the smallest p (ties: the
     largest |z|) at least MIN_GAP_HOURS from every change so far becomes a change; repeat until
-    nothing flags. `fixed` are the measured changes carried from earlier runs: they cut the
+    nothing flags (`_rank`). `fixed` are the measured changes carried from earlier runs: they cut the
     sides from the start and are never searched again, and a flagged instant that is one of
     them found again (`fixed_changes`, `_carried_again`) is not a new change. Returns the new
     changes at their grid instants, in the order found."""
@@ -759,7 +830,7 @@ def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = (),
                     continue
                 r = scanner.at(line, tau, breaks)
                 if flagged(r) and not _carried_again(fixed_changes, line, tau, r):
-                    key = (r["p"], -abs(r["z"]))
+                    key = _rank(r)
                     if best is None or key < best[0]:
                         best = (key, line, tau, r)
         if best is None:
@@ -774,9 +845,9 @@ def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) 
     """The change's instant: the hour with the largest |z| within REFINE_HOURS of its grid
     instant, on the line that found it, sides cut at the neighbouring changes; and the range of
     hours whose |z| is within INSTANT_RANGE_Z of it."""
-    best, zs, ts = grid_tau, [], []
+    zs, ts = [], []
     for t in np.arange(grid_tau - REFINE_HOURS, grid_tau + REFINE_HOURS + 1e-9, 1.0):
-        r = step_at(prep, line, float(t), *sides(float(t), neighbours), seed=0, n_perm=0)
+        r = step_at(prep, line, float(t), *sides(float(t), neighbours), n_perm=0)
         zs.append(abs(r["z"]) if r and r["k"] >= 2 else 0.0)
         ts.append(float(t))
     zs = np.array(zs)
@@ -796,13 +867,13 @@ def refine_all(preps: dict[str, Prepared], found: list[dict], fixed: list[float]
         f["_h"], f["instant_range"] = f["grid"], [f["grid"], f["grid"]]
         f["sign"] = 1 if f["z"] > 0 else -1
     for _ in range(passes):
-        moved = False
+        moved_ = False
         for f in sorted(found, key=lambda f: f["grid"]):
             others = list(fixed) + [g["_h"] for g in found if g is not f]
             t, span = refine(preps[f["line"]], f["line"], f["grid"], others)
-            moved |= t != f["_h"]
+            moved_ |= t != f["_h"]
             f["_h"], f["instant_range"] = t, span
-        if not moved:
+        if not moved_:
             break
 
 
@@ -825,7 +896,7 @@ def not_limit_changes(scanner: Scanner, taus: np.ndarray, breaks: list[float]) -
         why = ("one account only" if r["k"] < 2 else
                "accounts disagree" if not ag["agree"] else "does not hold with one account left out")
         row = {"line": line, "at": stamp(tau), "first": stamp(tau), "last": stamp(tau),
-               "change_pct": pct(r["d"]), "p": round(r["p"], 5), "why": why,
+               "change_pct": pct(r["d"]), "p": p_value(r["p"]), "why": why,
                "accounts_apart": ag["accounts_apart"],
                "per_account": {a: pct(x["d"]) for a, x in sorted(r["acc"].items())}}
         if episodes and episodes[-1]["line"] == line and \
@@ -848,7 +919,9 @@ def coverage(preps: dict[str, Prepared], breaks: list[float], taus: np.ndarray) 
     standard normal; on the five-hour line and the ratio it spread 1.6-1.9 on the 2026-10-23
     re-check's bed (the 14 and 22 Sep changes divided out, everything else left in), so their
     intervals are widened by it. Changes not yet measured stay in the bed as noise, as they
-    did on that bed: an interval is never narrowed by a change the hold has not confirmed."""
+    did on that bed: an interval is never narrowed by a change the hold has not confirmed.
+    Re-measured every run, as the sizes are; what a measured change says moved is not
+    (`decided`)."""
     out = {}
     for line in LINES:
         bed = destepped(preps[line], breaks)
@@ -857,7 +930,7 @@ def coverage(preps: dict[str, Prepared], breaks: list[float], taus: np.ndarray) 
             tau = float(tau)
             if any(abs(tau - b) < MIN_GAP_HOURS for b in breaks):
                 continue
-            r = step_at(bed, line, tau, *sides(tau, breaks), seed=0, n_perm=0)
+            r = step_at(bed, line, tau, *sides(tau, breaks), n_perm=0)
             if r and r["k"] >= 2:
                 zs.append(r["z"])
         if len(zs) >= COVERAGE_MIN_INSTANTS:
@@ -871,12 +944,11 @@ def coverage(preps: dict[str, Prepared], breaks: list[float], taus: np.ndarray) 
     return out
 
 
-def size_on(prep: Prepared, line: str, tau: float, breaks: list[float], seed: int,
-            factor: float) -> dict | None:
+def size_on(prep: Prepared, line: str, tau: float, breaks: list[float], factor: float) -> dict | None:
     """One line's pooled step at a change, sides up to SIDE_DAYS cut at the neighbouring
     changes: the percent, its interval widened by the line's coverage factor, z, p, each
     account's own step and interval, and each account left out in turn."""
-    r = step_at(prep, line, tau, *sides(tau, breaks), seed=seed, screen=None)
+    r = step_at(prep, line, tau, *sides(tau, breaks), screen=None, n_max=PERMUTATIONS)
     if r is None:
         return None
     ag = agreement(r)
@@ -892,35 +964,108 @@ def size_on(prep: Prepared, line: str, tau: float, breaks: list[float], seed: in
             acc[a]["without_this_account"] = {"change_pct": pct(x["d_others"]),
                                               "z": round(x["z_others"], 2)}
     lo, hi = pct(r["d"] - half * r["se"]), pct(r["d"] + half * r["se"])
-    return {"change_pct": pct(r["d"]), "interval_pct": [lo, hi],
+    return {"change_pct": pct(r["d"]), "interval_pct": [lo, hi], "statistical_interval_pct": [lo, hi],
             "nominal_interval_pct": [pct(r["d"] - 1.96 * r["se"]), pct(r["d"] + 1.96 * r["se"])],
-            "interval_factor": factor, "z": round(r["z"], 2),
-            "p": round(r["p"], 5) if r["p"] is not None else None,
-            "excludes_no_change": bool(lo > 0 or hi < 0),
+            "interval_factor": factor, "z": round(r["z"], 2), "p": p_value(r["p"]),
+            "permutations": r["permutations"], "excludes_no_change": bool(lo > 0 or hi < 0),
             "accounts": sorted(r["acc"]), "agree": ag["agree"], "accounts_apart": ag["accounts_apart"],
-            "plan_wide": plan_wide(r), "per_account": acc,
+            "plan_wide": plan_wide(r), "per_account": acc, "rate_dependence": None,
             "before": [stamp(r["lo"] if r["lo"] > -1e17 else min(prep.first.values())), stamp(tau)],
             "after": [stamp(tau), stamp(min(r["hi"], max(prep.last.values())))],
-            "_d": r["d"]}
+            "_d": r["d"], "_se": r["se"]}
 
 
-def moved(size: dict | None) -> bool:
-    """Whether a line's size at a change says the line moved: its interval excludes no change
-    and its voting accounts agree (a step every account takes on that line)."""
-    size = size or {}
-    return bool(size.get("excludes_no_change")) and size.get("agree") is not False
+def rate_variants(readings: dict[str, dict], factor: float | None, valued: dict | None) -> dict:
+    """Each family with a rate interval, its rate moved to either end of it: {family: {"low" |
+    "high": {line: Prepared}}}, every other rate as in force. Only families whose work is in
+    the readings."""
+    fams = ((valued or {}).get("rate_intervals") or {}).get("families") or {}
+    present = {f for rs in readings.values() for kind in rs.values() for r in kind
+               for f in list((r.fam or {})) + list((r.hfam or {}))}
+    out = {}
+    for fam, row in sorted(fams.items()):
+        if fam not in present or not row.get("times_opus"):
+            continue
+        ends = {}
+        for end, x in zip(("low", "high"), row["interval"]):
+            again = revalued(readings, fam, x / row["times_opus"])
+            ends[end] = {line: prepare(series(again, line, factor)) for line in LINES}
+        out[fam] = ends
+    return out
 
 
-def reading(sizes: dict) -> str:
-    """Which limit moved, from the three lines: both credit lines moved (`moved`) the same way
-    and the ratio did not: both limits; the ratio moved: one limit against the other;
-    otherwise the figures alone."""
-    s5, s7, q = (sizes.get(x) or {} for x in ("five_hour", "seven_day", "ratio"))
-    if moved(q):
-        return "one_limit"
-    if moved(s5) and moved(s7) and (s5["change_pct"] > 0) == (s7["change_pct"] > 0):
-        return "both_limits"
-    return "figures_only"
+def rate_dependence(variants: dict, valued: dict | None, line: str, tau: float,
+                    breaks: list[float], size: dict) -> None:
+    """Widen `size`'s interval by what each family's rate interval does to it, in place.
+
+    Each family's rate moved to either end of its published interval (the others as in
+    force), the step re-read at the same instant and sides: the family's two ends move the
+    log step by delta_low and delta_high. The rates together move it from d + the sum of the
+    falls to d + the sum of the rises (each family taken at its worse end, added: wider, never
+    narrower, than any joint draw), and the published interval runs from the lower end's
+    interval low to the upper end's interval high. `statistical_interval_pct` keeps the
+    interval of the rates in force alone, and `rate_limited` says the rates' range is wider
+    than it: the size is limited by what a rate is, not by the meters."""
+    fams = ((valued or {}).get("rate_intervals") or {})
+    d, se = size["_d"], size["_se"]
+    half = 1.96 * size["interval_factor"]
+    rows, fall, rise = [], 0.0, 0.0
+    for fam, ends in variants.items():
+        ds = []
+        for end in ("low", "high"):
+            r = step_at(ends[end][line], line, tau, *sides(tau, breaks), n_perm=0)
+            ds.append(r["d"] - d if r is not None else 0.0)
+        if max(abs(x) for x in ds) < 5e-4:
+            continue
+        fall += min(0.0, *ds)
+        rise += max(0.0, *ds)
+        info = fams["families"][fam]
+        rows.append({"family": fam, "times_opus": info["times_opus"], "interval": info["interval"],
+                     "change_pct_at_interval": [pct(d + ds[0]), pct(d + ds[1])],
+                     "_moves": max(abs(x) for x in ds)})
+    if not rows:
+        size["rate_dependence"] = {"families": [], "change_pct_range": [size["change_pct"]] * 2,
+                                   "rate_limited": False, "interval_percentiles": fams.get("percentiles")}
+        return
+    rows.sort(key=lambda x: -x["_moves"])
+    lo, hi = pct(d + fall - half * se), pct(d + rise + half * se)
+    size["interval_pct"] = [lo, hi]
+    size["excludes_no_change"] = bool(lo > 0 or hi < 0)
+    size["rate_dependence"] = {
+        "families": [{k: v for k, v in x.items() if not k.startswith("_")} for x in rows],
+        "change_pct_range": [pct(d + fall), pct(d + rise)],
+        "rate_limited": bool(rise - fall > 2 * half * se),
+        "interval_percentiles": fams.get("percentiles"),
+    }
+
+
+def capture_audit(readings: dict[str, dict], tau: float, lo: float, hi: float,
+                  accounts: list[str]) -> dict:
+    """Spec 9.7's capture audit at a change: for each voting account, on each side, the share
+    of its five-hour meter movement in stretches with captured work (not a collection gap: at
+    least COLLECTION_GAP of the account's own meter-weighted median work per point). `failing`
+    names the accounts under CAPTURE_MIN on either side: a capture gap every account shares
+    looks exactly like a limit change on the credit lines (the 17 October artifact)."""
+    out, failing = {}, []
+    for a in accounts:
+        rows = [r for r in (readings.get(a) or {}).get("stretches") or []
+                if r.credits is not None and r.d5 > 0]
+        if not rows:
+            continue
+        W = np.array([r.credits for r in rows])
+        D = np.array([r.d5 for r in rows])
+        tm = np.array([(r.t0 + r.t1) / 2 for r in rows])
+        ref = _weighted_median(W / D, D)
+        kept = W / D >= COLLECTION_GAP * ref
+        shares = {}
+        for side, (x, y) in (("before", (lo, tau)), ("after", (tau, hi))):
+            m = (tm >= x) & (tm < y)
+            tot = float(D[m].sum())
+            shares[side] = round(float(D[m & kept].sum()) / tot, 3) if tot > 0 else None
+        out[a] = shares
+        if any(v is not None and v < CAPTURE_MIN for v in shares.values()):
+            failing.append(a)
+    return {"min_share": CAPTURE_MIN, "per_account": out, "failing": sorted(failing)}
 
 
 # ------------------------------------------------------------------------------- lines
@@ -944,8 +1089,8 @@ def account_lines(prep: Prepared, breaks: list[float], steps: list[float]) -> di
         own = W[m].sum() / D[m].sum() if D[m].sum() > 0 and W[m].sum() > 0 else None
         if own is None:
             continue
-        carried = sum(step_of[b] for b in edges[newest:])
-        ref = own * math.exp(carried)
+        carried_ = sum(step_of[b] for b in edges[newest:])
+        ref = own * math.exp(carried_)
         day = np.floor(tm / 24).astype(int)
         rows = []
         keys = sorted(set(zip(seg.tolist(), day.tolist())), key=lambda k: (k[1], k[0]))
@@ -963,76 +1108,58 @@ def account_lines(prep: Prepared, breaks: list[float], steps: list[float]) -> di
     return out
 
 
-def drawn(change: dict, line: str) -> bool:
-    """Whether every chart steps on `line` at `change`: always on the line that found it (the
-    change's own figure), and on another line where that line's interval excludes no change and
-    its voting accounts agree (a step every account takes on that line too). Where neither
-    holds the level is carried: the line is not shown to have moved there, and its size stays
-    published as a figure with its interval."""
-    return change["found_on"] == line or moved((change.get("sizes") or {}).get(line))
-
-
-def drawn_step(change: dict, line: str) -> float:
-    """The log step every chart draws on `line` at `change` (`drawn`), else 0."""
-    d = ((change.get("sizes") or {}).get(line) or {}).get("_d")
-    return d if d is not None and drawn(change, line) else 0.0
-
-
-def levels(breaks: list[dict], line: str) -> list[dict]:
-    """The shared step line: the current segment at 1.0, each earlier one the next over 1 +
-    the step drawn at the change between them (`drawn_step`: the change's size on the line
-    that found it, on another line only where its interval excludes no change)."""
-    segs = []
-    index = 1.0
-    ordered = sorted(breaks, key=lambda c: c["_h"])
-    bounds = [None] + [c["at"] for c in ordered] + [None]
-    vals = [1.0]
-    for c in reversed(ordered):
-        index = index / math.exp(drawn_step(c, line))
-        vals.append(index)
-    vals = list(reversed(vals))
-    for i in range(len(ordered) + 1):
-        segs.append({"from": bounds[i], "to": bounds[i + 1], "index": round(vals[i], 4),
-                     "opened_by": ordered[i - 1]["state"] if i else None})
-    return segs
-
-
 # ------------------------------------------------------------------------------- one run
-def run_seed(day: date) -> int:
-    return SEED + int(day.strftime("%Y%m%d"))
-
-
 def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = None,
-        valued: dict | None = None) -> dict:
+        valued: dict | None = None, replayed: bool = False) -> dict:
     """One daily run on the readings known at `until` (`readings_for`, cut by `known_at`),
     carrying the hold and the measured changes from `previous` (the previous run's block, or
-    None). `valued` names the readings' valuation (`valuation_block`)."""
-    started = time.time()
+    None). `valued` names the readings' valuation (`valuation_block`), and its rate intervals
+    are what `rate_dependence` moves. `replayed` marks a run rebuilt after the fact (`replay`):
+    its hold was not seen live, and the changes it holds say so (`hold_replayed`)."""
     day = until.date()
-    seed = run_seed(day)
     readings = known_at(all_readings, until)
     hf = headless_factor({k: v["steps"] for k, v in readings.items()})
     preps = {line: prepare(series(readings, line, hf["value"])) for line in LINES}
     taus = grid({line: preps[line] for line in SEARCHED}, hours(until))
-    scanner = Scanner(preps, seed)
+    scanner = Scanner(preps)
     held = carried(previous)
     fixed = [c["_h"] for c in held]
     found = search(scanner, taus, fixed, held)
     refine_all(preps, found, fixed)
-    changes, unmatched = advance_changes(found, held, previous, day)
+    changes, unmatched = advance_changes(found, held, previous, day, replayed)
     breaks = [c["_h"] for c in changes]
     for c in changes:
         if c["carried"]:
             retest(scanner, taus, c, breaks)
+    # The capture audit, before the coverage bed reads which changes are measured.
+    for c in changes:
+        c["capture_audit"] = None
+        if c["found_on"] not in CREDIT_LINES:
+            continue
+        lo, hi = sides(c["_h"], breaks)
+        own = step_at(preps[c["found_on"]], c["found_on"], c["_h"], lo, hi, n_perm=0)
+        if own is None:
+            continue
+        c["capture_audit"] = capture_audit(readings, c["_h"], lo, hi, sorted(own["acc"]))
+        if c["capture_audit"]["failing"] and c["state"] == "measured" and not c["carried"]:
+            c["state"], c["measured_on"] = "provisional", None
+            c["held_by_capture"] = c["capture_audit"]["failing"]
     cover = coverage(preps, [c["_h"] for c in changes if c["state"] == "measured"], taus)
+    variants = rate_variants(readings, hf["value"], valued) if changes else {}
     for c in changes:
         c["sizes"] = {}
         for line in LINES:
-            s = size_on(preps[line], line, c["_h"], breaks, seed, cover[line]["factor"])
-            if s is not None:
-                c["sizes"][line] = s
+            s = size_on(preps[line], line, c["_h"], breaks, cover[line]["factor"])
+            if s is None:
+                continue
+            rate_dependence(variants, valued, line, c["_h"], breaks, s)
+            c["sizes"][line] = s
+        if c["state"] == "measured" and not c.get("decided"):
+            c["decided"] = {"on": day.isoformat(),
+                            "interval_factor": {line: s["interval_factor"] for line, s in c["sizes"].items()},
+                            "moved": {line: moved(s) for line, s in c["sizes"].items()}}
         found_on = c["sizes"].get(c["found_on"]) or {}
-        c["reading"] = reading(c["sizes"])
+        c["reading"] = reading(c)
         c["accounts"] = found_on.get("accounts") or []
         c["change_pct"] = found_on.get("change_pct")
         c["interval_pct"] = found_on.get("interval_pct")
@@ -1042,7 +1169,8 @@ def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = 
         lines[line] = account_lines(preps[line], breaks, [drawn_step(c, line) for c in changes])
     return {
         "schema": SCHEMA, "method": METHOD, "day": day.isoformat(), "data_until": until.isoformat(),
-        "seed": seed, "rule": RULE, "valuation": valued or VALUATION, "headless_factor": hf,
+        "replayed": bool(replayed), "rule": RULE, "valuation": valued or VALUATION,
+        "headless_factor": hf,
         "accounts": {a: {"label": public_label(a),
                          "lines": {line: {"readings": int(len(preps[line].W.get(a, ()))),
                                           "first": stamp(preps[line].first[a]) if a in preps[line].first else None,
@@ -1055,23 +1183,22 @@ def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = 
         "not_limit_changes": not_limit_changes(scanner, taus, fixed + [f["grid"] for f in found]),
         "lines": lines,
         "levels": {line: levels(changes, line) for line in LINES},
-        "seconds": round(time.time() - started, 1),
     }
 
 
 def retest(scanner: Scanner, taus: np.ndarray, c: dict, breaks: list[float]) -> None:
-    """Would today's search find the carried change `c` again? As the hold matches a find:
-    a flagged grid instant on its line, in its direction, within MATCH_HOURS of it, with the
-    sides cut at every other change. Sets `found_today`, and `p`/`z` of the strongest such
-    instant (of the nearest when none flags); a found day adds to `held_days`."""
+    """Would today's search find the carried change `c` again? A flagged grid instant on its
+    line, in its direction, inside its published range (`_near_carried`), with the sides cut at
+    every other change. Sets `found_today`, and `p`/`z` of the strongest such instant (of the
+    nearest when none flags); a found day adds to `held_days`."""
     others = [b for b in breaks if b != c["_h"]]
     near = [(float(t), scanner.at(c["found_on"], float(t), others)) for t in taus
-            if abs(float(t) - c["_h"]) <= MATCH_HOURS]
+            if _near_carried(c, float(t))]
     near = [(t, r) for t, r in near if r]
-    hits = [(r["p"], -abs(r["z"]), t, r) for t, r in near
+    hits = [(_rank(r), t, r) for t, r in near
             if flagged(r) and (1 if r["d"] > 0 else -1) == c["sign"]]
     if hits:
-        best = min(hits, key=lambda h: (h[0], h[1]))[3]
+        best = min(hits, key=lambda h: h[0])[2]
     elif near:
         best = min(near, key=lambda tr: abs(tr[0] - c["_h"]))[1]
     else:
@@ -1082,15 +1209,18 @@ def retest(scanner: Scanner, taus: np.ndarray, c: dict, breaks: list[float]) -> 
 
 
 def _public_change(c: dict) -> dict:
-    sizes = {line: {k: v for k, v in s.items() if not k.startswith("_")} for line, s in c["sizes"].items()}
+    sizes = {line: {k: v for k, v in s.items() if not k.startswith("_")}
+             for line, s in (c.get("sizes") or {}).items()}
     return {"at": stamp(c["_h"]), "instant_range": [stamp(x) for x in c["instant_range"]],
-            "found_on": c["found_on"], "sign": c["sign"], "state": c["state"],
-            "carried": c["carried"], "found_today": c["found_today"], "held_days": c["held_days"],
-            "first_found": c["first_found"], "measured_on": c.get("measured_on"),
-            "p": round(c["p"], 5) if c.get("p") is not None else None,
-            "z": round(c["z"], 2) if c.get("z") is not None else None,
-            "change_pct": c["change_pct"], "interval_pct": c["interval_pct"],
-            "accounts": c["accounts"], "reading": c["reading"], "sizes": sizes}
+            "finds": c.get("finds") or [], "found_on": c["found_on"], "sign": c["sign"],
+            "state": c["state"], "carried": c["carried"], "found_today": c["found_today"],
+            "held_days": c["held_days"], "first_found": c["first_found"],
+            "measured_on": c.get("measured_on"), "hold_replayed": bool(c.get("hold_replayed")),
+            "held_by_capture": c.get("held_by_capture"), "capture_audit": c.get("capture_audit"),
+            "decided": c.get("decided"),
+            "p": p_value(c.get("p")), "z": round(c["z"], 2) if c.get("z") is not None else None,
+            "change_pct": c.get("change_pct"), "interval_pct": c.get("interval_pct"),
+            "accounts": c.get("accounts") or [], "reading": c.get("reading"), "sizes": sizes}
 
 
 # ------------------------------------------------------------------------------- the hold
@@ -1098,6 +1228,12 @@ def _state_of(held: int) -> str:
     if held >= HOLD_DAYS:
         return "measured"
     return "provisional" if held >= 2 else "candidate"
+
+
+def _lower_median(xs: list[float]) -> float:
+    """The median of `xs`, the lower middle one when there are two: always one of them."""
+    s = sorted(xs)
+    return s[(len(s) - 1) // 2]
 
 
 def carried(previous: dict | None) -> list[dict]:
@@ -1109,21 +1245,25 @@ def carried(previous: dict | None) -> list[dict]:
         span = c.get("instant_range") or [c["at"], c["at"]]
         out.append({"line": c["found_on"], "found_on": c["found_on"], "grid": None,
                     "_h": hours(parse(c["at"])), "instant_range": [hours(parse(x)) for x in span],
-                    "sign": c["sign"], "p": None, "z": None,
+                    "finds": c.get("finds") or [], "sign": c["sign"], "p": None, "z": None,
                     "held_days": int(c.get("held_days") or HOLD_DAYS), "state": "measured",
                     "carried": True, "found_today": None, "first_found": c.get("first_found"),
-                    "measured_on": c.get("measured_on")})
+                    "measured_on": c.get("measured_on"), "decided": c.get("decided"),
+                    "hold_replayed": bool(c.get("hold_replayed"))})
     return out
 
 
 def advance_changes(found: list[dict], held: list[dict], previous: dict | None,
-                    day: date) -> tuple[list[dict], list[dict]]:
+                    day: date, replayed: bool = False) -> tuple[list[dict], list[dict]]:
     """(today's changes, the previous run's unconfirmed changes today does not hold).
 
-    A new change is held N days when the previous run had an unconfirmed change on the same
-    line, in the same direction, within MATCH_HOURS, held N-1 days; each is matched once, to
-    the nearest. At HOLD_DAYS it is measured, and from the next run on it is carried
-    (`carried`): the search starts from it and never moves or withdraws it.
+    A new find is held N days when the previous run had an unconfirmed change on the same
+    line, in the same direction, whose instant (the median of its hold's finds) is within
+    MATCH_HOURS of it, held N-1 days; each is matched once, to the nearest. The change's
+    `finds` gain today's instant and range; its instant is their median (the lower middle one)
+    and its `instant_range` spans every find's range. At HOLD_DAYS it is measured at that
+    instant, and from the next run on it is carried (`carried`): the search starts from it and
+    never moves or withdraws it.
     """
     prev = [c for c in (previous or {}).get("changes") or [] if c.get("state") != "measured"]
     taken: set[int] = set()
@@ -1135,12 +1275,19 @@ def advance_changes(found: list[dict], held: list[dict], previous: dict | None,
         match = prev[cands[0][1]] if cands else None
         if cands:
             taken.add(cands[0][1])
+        today = [stamp(f["_h"]), stamp(f["instant_range"][0]), stamp(f["instant_range"][1])]
+        finds = ([list(x) for x in match.get("finds") or [[match["at"], *(match.get("instant_range")
+                                                                          or [match["at"]] * 2)]]]
+                 if match else []) + [today]
         days = (int(match["held_days"]) + 1) if match else 1
         state = _state_of(days)
-        out.append({**f, "found_on": f["line"], "held_days": days, "state": state,
-                    "carried": False, "found_today": True,
+        at = _lower_median([hours(parse(x[0])) for x in finds])
+        span = [min(hours(parse(x[1])) for x in finds), max(hours(parse(x[2])) for x in finds)]
+        out.append({**f, "_h": at, "instant_range": span, "finds": finds, "found_on": f["line"],
+                    "held_days": days, "state": state, "carried": False, "found_today": True,
                     "first_found": match["first_found"] if match else day.isoformat(),
-                    "measured_on": day.isoformat() if state == "measured" else None})
+                    "measured_on": day.isoformat() if state == "measured" else None,
+                    "hold_replayed": bool(replayed or (match or {}).get("hold_replayed"))})
     unmatched = [c for i, c in enumerate(prev) if i not in taken]
     return sorted(out, key=lambda c: c["_h"]), unmatched
 
@@ -1163,179 +1310,19 @@ def _withdrawn(unmatched: list[dict], changes: list[dict], previous: dict | None
     return out[-20:]
 
 
-# ------------------------------------------------------------------------------- publishing
-#: How the page names each line's metric in a change record (`metric`), and in a label.
-HEADLINE_NAMES = {"weekly_limit": "Weekly limit", "windows_per_week": "Windows per week",
-                  "five_hour_limit": "Five-hour limit"}
-#: A change's `scope`, from which credit lines' intervals exclude no change.
-SCOPES = {("five_hour_limit",): "five_hour", ("weekly_limit",): "weekly",
-          ("five_hour_limit", "weekly_limit"): "both"}
-
-
-def page_round(x: float) -> int:
-    """Whole percent as the page rounds it (JavaScript Math.round: halves go up)."""
-    return math.floor(x + 0.5)
-
-
-def _labelled(value, labels: dict[str, str]):
-    """`value` with every account key and account-list entry turned into its page label."""
-    if isinstance(value, dict):
-        return {labels.get(k, k): _labelled(v, labels) for k, v in value.items()}
-    if isinstance(value, list):
-        return [labels.get(v, v) if isinstance(v, str) else _labelled(v, labels) for v in value]
-    return value
-
-
-def account_labels(block: dict) -> dict[str, str]:
-    """Each account key of a run (`a1`...) to its page label (`Max account 1`...)."""
-    return {a: row.get("label") or public_label(a) for a, row in (block.get("accounts") or {}).items()}
-
-
-def certified_on(change: dict) -> list[str]:
-    """The direct limits that moved at a change (`moved`: the interval of the limit's own size
-    excludes no change and its accounts agree)."""
-    sizes = change.get("sizes") or {}
-    return [m for m, line in (("five_hour_limit", "five_hour"), ("weekly_limit", "seven_day"))
-            if moved(sizes.get(line))]
-
-
-def change_record(change: dict, labels: dict[str, str]) -> dict:
-    """One change as `events` and `last_change` publish it.
-
-    The figure is the change's size on the line that found it (`metric`): the seven-day line
-    states the weekly limit, the ratio windows per week. Each direct limit's own size and
-    interval rides beside it, and `scope` names the direct limits whose interval excludes no
-    change (`windows_per_week` when only the ratio's does). Accounts appear only by label.
-    """
-    sizes = change.get("sizes") or {}
-    found = sizes.get(change["found_on"]) or {}
-    pct = found.get("change_pct")
-    metric = LINE_METRIC[change["found_on"]]
-    certified = certified_on(change)
-    scope = SCOPES.get(tuple(certified)) or (
-        "windows_per_week" if moved(sizes.get("ratio")) else "undetermined")
-
-    def line(key: str) -> tuple:
-        x = sizes.get(key) or {}
-        return x.get("change_pct"), x.get("interval_pct")
-    five, seven, ratio = line("five_hour"), line("seven_day"), line("ratio")
-    span = change.get("instant_range") or [change["at"], change["at"]]
-    return {
-        "date": change["at"][:10], "at": change["at"], "state": change["state"], "kind": "change",
-        "direction": "increased" if (pct or 0) > 0 else "decreased",
-        "percent": abs(page_round(pct)) if pct is not None else None,
-        "change_pct": pct, "interval_pct": found.get("interval_pct"),
-        "interval_excludes_no_change": found.get("excludes_no_change"),
-        "metric": metric, "found_on": change["found_on"], "line": LINE_NAMES[change["found_on"]],
-        "scope": scope, "certified_on": certified, "reading": change.get("reading"),
-        "five_hour_limit_change_pct": five[0], "five_hour_limit_change_interval_pct": five[1],
-        "weekly_limit_change_pct": seven[0], "weekly_limit_change_interval_pct": seven[1],
-        "windows_per_week_change_pct": ratio[0], "windows_per_week_change_interval_pct": ratio[1],
-        "accounts": [labels.get(a, a) for a in change.get("accounts") or []],
-        "per_account": {labels.get(a, a): x["change_pct"]
-                        for a, x in (found.get("per_account") or {}).items()},
-        "instant_range": span, "onset": {"earliest": span[0][:10], "latest": span[1][:10]},
-        "first_found": change.get("first_found"), "measured_on": change.get("measured_on"),
-        "held_days": change.get("held_days"), "p": change.get("p"),
-        "method": METHOD, "model": None, "observation_scope": "account",
-        "evidence_quality": change["state"], "provisional": False, "legacy_uncertain": False,
-        "label": (f"{HEADLINE_NAMES[metric]} {pct:+g}% ({change['state']})"
-                  if pct is not None else f"{HEADLINE_NAMES[metric]} ({change['state']})"),
-    }
-
-
-def measured_changes(block: dict | None) -> list[dict]:
-    """The run's measured changes, oldest first."""
-    return [c for c in (block or {}).get("changes") or [] if c.get("state") == "measured"]
-
-
-def events(block: dict | None) -> list[dict]:
-    """`events`: every measured change as a change record, oldest first."""
-    labels = account_labels(block or {})
-    return [change_record(c, labels) for c in measured_changes(block)]
-
-
-def last_change(block: dict | None) -> dict | None:
-    """`last_change`: the newest measured change, or None. Never a candidate or a provisional
-    one: the page states it as what Anthropic last did to the limits."""
-    found = events(block)
-    if not found:
-        return None
-    return {k: v for k, v in max(found, key=lambda e: e["at"]).items() if k not in ("kind", "label")}
-
-
-def regime_changes(block: dict | None) -> list[dict]:
-    """The measured changes as the window and week regimes read them, oldest first.
-
-    Each opens a regime at its instant. `window_scaled` (and `ratio`, its interval) is the
-    five-hour size where the charts draw it (`drawn`), `weekly` the seven-day size and
-    `windows_per_week` the ratio's, each with `drawn`. A size the charts do not draw moves
-    nothing on its chart: the level is carried across the change.
-    """
-    out = []
-    for c in measured_changes(block):
-        sizes = c.get("sizes") or {}
-
-        def size(line: str) -> dict:
-            x = sizes.get(line) or {}
-            return {"drawn": drawn(c, line) and x.get("change_pct") is not None,
-                    "excludes_no_change": bool(x.get("excludes_no_change")),
-                    "change_pct": x.get("change_pct"), "interval_pct": x.get("interval_pct")}
-        five = size("five_hour")
-        lo, hi = five["interval_pct"] or (0.0, 0.0)
-        scaled = five["drawn"]
-        out.append({"at": parse(c["at"]), "family": None, "found_on": c["found_on"],
-                    "change_pct": five["change_pct"] if scaled else 0.0,
-                    "scope": c.get("reading") or "undetermined", "window_scaled": scaled,
-                    "ratio": 1 + (five["change_pct"] / 100 if scaled else 0.0),
-                    "ratio_interval": (1 + lo / 100, 1 + hi / 100) if scaled else (1.0, 1.0),
-                    "five_hour": five, "weekly": size("seven_day"),
-                    "windows_per_week": size("ratio")})
-    return sorted(out, key=lambda c: c["at"])
-
-
-def public_block(block: dict | None) -> dict | None:
-    """The `four_accounts` block of the public JSON: the newest daily run, every account by
-    its page label, with the method sentence and the measured sensitivity."""
-    if not block:
-        return None
-    labels = account_labels(block)
-    order = sorted(labels, key=lambda a: (len(a), a))
-    out = {
-        "schema": block["schema"], "method": block["method"], "sentence": SENTENCE,
-        "day": block["day"], "data_until": block["data_until"],
-        "accounts": [labels[a] for a in order],
-        "account_lines": {labels[a]: block["accounts"][a]["lines"] for a in order},
-        "lines_searched": list(SEARCHED), "line_names": dict(LINE_NAMES),
-        "line_metrics": dict(LINE_METRIC),
-        "rule": block["rule"], "valuation": block["valuation"],
-        "headless_factor": block["headless_factor"],
-        "interval_coverage": block["interval_coverage"],
-        "changes": [dict(_labelled({k: v for k, v in c.items() if k != "accounts"}, labels),
-                         accounts=[labels.get(a, a) for a in c.get("accounts") or []])
-                    for c in block["changes"]],
-        "withdrawn": block["withdrawn"],
-        "not_limit_changes": _labelled(block["not_limit_changes"], labels),
-        "lines": {line: {labels.get(a, a): rows for a, rows in by.items()}
-                  for line, by in block["lines"].items()},
-        "line_columns": ["day", "level", "points", "level_pooled_7d"],
-        "levels": block["levels"],
-        "sensitivity": SENSITIVITY,
-        "seconds": block.get("seconds"),
-    }
-    return out
-
-
 # ------------------------------------------------------------------------------- state
+#: The fields of each change the run log keeps (and a redone day's run reads back).
+LOG_FIELDS = ("at", "instant_range", "finds", "found_on", "sign", "state", "held_days",
+              "first_found", "measured_on", "carried", "found_today", "change_pct", "p",
+              "decided", "hold_replayed", "held_by_capture")
+
+
 def run_log_row(block: dict) -> dict:
     """The part of a run the state keeps for every day: what was found and held."""
     return {"day": block["day"], "data_until": block["data_until"],
+            "replayed": bool(block.get("replayed")),
             "headless_factor": block["headless_factor"].get("value"),
-            "seconds": block.get("seconds"),
-            "changes": [{k: c[k] for k in ("at", "instant_range", "found_on", "sign", "state",
-                                          "held_days", "first_found", "measured_on", "carried",
-                                          "found_today", "change_pct", "p")}
-                        for c in block["changes"]],
+            "changes": [{k: c.get(k) for k in LOG_FIELDS} for c in block["changes"]],
             "withdrawn_today": [w for w in block["withdrawn"] if w.get("withdrawn_on") == block["day"]]}
 
 
@@ -1344,28 +1331,16 @@ def advance(state: dict | None, block: dict) -> dict:
     runs = [r for r in (state or {}).get("runs") or [] if r["day"] != block["day"]]
     runs.append(run_log_row(block))
     runs.sort(key=lambda r: r["day"])
+    replayed = [r["day"] for r in runs if r.get("replayed")]
     return {"schema": SCHEMA, "method": METHOD,
             "what": ("the four-account limit-change detector's daily runs (tracker/four_accounts.py): "
                      "`runs` is one row per UTC day, what that day's run found and held; `latest` "
                      "is the newest run in full, which the publisher copies into the public JSON. "
-                     "Accounts are named only by label."),
+                     "Accounts are named only by label. Runs up to `replayed_through` were rebuilt "
+                     "after the fact from the records of that day (--replay), not seen live."),
             "command": "python3 -m tracker.four_accounts --state history/four-accounts.json",
+            "replayed_through": max(replayed) if replayed else None,
             "runs": runs, "latest": block}
-
-
-def load_state(path: Path) -> dict | None:
-    p = Path(path)
-    if not p.exists():
-        return None
-    try:
-        body = json.loads(p.read_text(encoding="utf-8"))
-    except ValueError:
-        return None
-    return body if isinstance(body, dict) and body.get("schema") == SCHEMA else None
-
-
-def write_state(path: Path, state: dict) -> None:
-    write_text_atomic(Path(path), json.dumps(state, indent=1, sort_keys=True) + "\n")
 
 
 def first_day(readings: dict[str, dict]) -> date | None:
@@ -1383,19 +1358,22 @@ def summary(block: dict) -> str:
     for c in block["changes"]:
         size = f"{c['change_pct']:+.1f}%" if c.get("change_pct") is not None else "n/a"
         mark = "" if c.get("found_today") is not False else " NOT FOUND TODAY"
+        if c.get("held_by_capture"):
+            mark += f" HELD BY CAPTURE {','.join(c['held_by_capture'])}"
         parts.append(f"{c['found_on']} {c['at'][:16]} {size} {c['state']}({c['held_days']}){mark}")
-    return (", ".join(parts) or "no change") + f" [{block.get('seconds')}s]"
+    return ", ".join(parts) or "no change"
 
 
 def replay(readings: dict[str, dict], start: date, end: date, log=None,
            valued: dict | None = None) -> dict | None:
     """Every daily run from `start` to `end` on the readings as they are now, each on the data
-    known at its own midnight: the hold rebuilt from scratch."""
+    known at its own midnight: the hold rebuilt from scratch. Every run it builds is marked
+    `replayed`, and so is every change it holds (`hold_replayed`)."""
     state = None
     d = start
     while d <= end:
         until = datetime(d.year, d.month, d.day, tzinfo=UTC)
-        block = run(readings, until, (state or {}).get("latest"), valued)
+        block = run(readings, until, (state or {}).get("latest"), valued, replayed=True)
         state = advance(state, block)
         if log:
             log(f"{d}: {summary(block)}")
@@ -1422,6 +1400,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="write the readings known at --now as a snapshot (the recovery tests' "
                          "frozen inputs) and stop")
     a = ap.parse_args(argv)
+    started = time.time()
     now = parse(a.now) if a.now else datetime.now(UTC)
     today = now.date()
     until = datetime(today.year, today.month, today.day, tzinfo=UTC)
@@ -1437,9 +1416,9 @@ def main(argv: list[str] | None = None) -> int:
                                             + recs[n]["stretches"] if r.get("start")),
                                            default=datetime.max.replace(tzinfo=UTC)))
     labels = labels_for(names, ACCOUNT_LABELS)
-    readings = readings_for(recs, labels,
-                            valuation(credits, credit_model.load_model_rates(raw=rates_raw)),
-                            credit_model.harness_runs(a.harness_runs))
+    rates = credit_model.load_model_rates(raw=rates_raw)
+    readings = readings_for(recs, labels, valuation(credits, rates),
+                            credit_model.harness_runs(a.harness_runs), family_parts(credits, rates))
     if a.snapshot:
         write_text_atomic(a.snapshot, json.dumps(readings_to_json(known_at(readings, until), valued),
                                                  separators=(",", ":")) + "\n")
@@ -1462,7 +1441,8 @@ def main(argv: list[str] | None = None) -> int:
         block = run(readings, until, prev, valued)
         state = advance(state, block)
     write_state(a.state, state)
-    print(f"four_accounts {state['latest']['day']}: {summary(state['latest'])}")
+    print(f"four_accounts {state['latest']['day']}: {summary(state['latest'])} "
+          f"[{time.time() - started:.1f}s]")
     return 0
 
 
