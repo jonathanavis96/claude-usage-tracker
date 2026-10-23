@@ -5,6 +5,7 @@ import random
 import statistics
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from tracker import credits as C
 from tracker import publish as P
@@ -12,6 +13,20 @@ from tracker.gs_passive import stretch_credits
 from tools import announced_change_sim as SIM
 
 CREDITS = P.CREDITS
+
+# These tests drive the first-use machinery (`absorb_new_family_rates`, ADR 0001 rules 8-10)
+# with Opus 5.5 as the example new family. Opus 5.5 itself is held at its list ratio in every
+# comparison (`C.PINNED_AT_LIST`, rule 23), which would hide that machinery, so no family is
+# pinned here. The pin has its own tests in tests/test_pinned_at_list.py.
+_UNPINNED = mock.patch.object(C, "PINNED_AT_LIST", ())
+
+
+def setUpModule():
+    _UNPINNED.start()
+
+
+def tearDownModule():
+    _UNPINNED.stop()
 LABELS = {"acct_one": "a1", "acct_two": "a2", "acct_new": "a3"}
 T0 = datetime(2026, 9, 15, tzinfo=timezone.utc)
 CAND = datetime(2026, 9, 22, 17, tzinfo=timezone.utc)

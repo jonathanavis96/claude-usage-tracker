@@ -1806,6 +1806,26 @@ def across_cut_value(credits: dict, weight: float | None = None,
     return value
 
 
+#: Families every comparison values at their list-price ratio to the Opus anchor, never at a
+#: fitted rate (ADR 0001 rule 23). Opus 5.5 is held at Anthropic's list ratio, 0.8x Opus,
+#: because the meters' profile accepts it: on the records of 2026-10-23 its pooled rate in
+#: force is 0.780x [0.652, 0.938] and a refit reads 0.789x [0.644, 0.944], and holding it at
+#: 0.8 raises the fit's SSE by 0.01 sigma^2 against the 3.84 a one-rate restriction may cost
+#: at 95%. Its fitted rate is still the per-model measurement the page publishes.
+PINNED_AT_LIST = ("opus-5-5",)
+
+
+def pinned_rate(fam: str, credits: dict, prices: dict | None = None) -> tuple[float, float] | None:
+    """(input, output) credits per token of a family in `PINNED_AT_LIST`: its input list-price
+    ratio to the Opus anchor (`list_price_ratio`) times the anchor's rates, so output keeps the
+    anchor's five-to-one. None for any other family, or a pinned one with no list price."""
+    if fam not in PINNED_AT_LIST:
+        return None
+    ratio = list_price_ratio(fam, credits, prices)
+    anchor = rates("opus", credits)
+    return (ratio * anchor[0], ratio * anchor[1]) if ratio is not None and anchor else None
+
+
 def comparison_rate(fam: str, credits: dict, model_rates: dict | None = None,
                     prices: dict | None = None) -> tuple[float, float] | None:
     """(input, output) credits per token a family is priced at inside a comparison, or None.
@@ -1817,6 +1837,8 @@ def comparison_rate(fam: str, credits: dict, model_rates: dict | None = None,
     the joint fit's 22 September five-hour change from +27.7% to +43.4% with no new stretch
     across it. So, in order:
 
+    - a family in `PINNED_AT_LIST` (Opus 5.5): its list-price ratio to the Opus anchor
+      (`pinned_rate`, ADR 0001 rule 23), whatever the fit or an absorbed row says;
     - a family `absorb_new_family_rates` fitted at its first use (`joint_fit_at_first_use`):
       that fitted rate, which was fitted against this same valuation; or one it valued at
       its list price because that fit could not separate the rate from a limit change
@@ -1828,6 +1850,9 @@ def comparison_rate(fam: str, credits: dict, model_rates: dict | None = None,
     - a family on none of those, the list-price ratio to the Opus anchor (`list_price_ratio`),
       as detection prices a family nobody has measured.
     """
+    pinned = pinned_rate(fam, credits, prices)
+    if pinned is not None:
+        return pinned
     row = ((model_rates or {}).get("per_family") or {}).get(fam) or {}
     if row.get("rate_source") in ABSORBED_SOURCES and row.get("input") is not None:
         return float(row["input"]), float(row["input"]) * float(row.get("output_multiplier") or 5)
