@@ -76,6 +76,10 @@ _Avoid_: multiplier, penalty
 **Meter weight**:
 How much harder the meter charges one model than another for the same list value. Currently 1.0 for every model.
 
+**Pinned at list**:
+A family every change figure values at its input list-price ratio to the Opus anchor (data/prices.json) instead of its fitted rate (`credits.PINNED_AT_LIST`). Only Opus 5.5, at 0.8x Opus, since 2026-10-23, because the meters accept that ratio (ADR 0001 rule 23). Its fitted rate is still the per-model figure the page publishes, and the four-account detector moves no pinned family across a rate interval. Every other family, and every cache read, stays at the fit.
+_Avoid_: list-until-separable (rule 10, a different, temporary hold)
+
 **Reference mix**:
 The frozen, versioned token-class mix (data/reference_mix.json) that converts a meter budget into tokens per window, and those tokens into API list value, for the page. It is a scenario, not a measurement of anyone's workload: it changes only with a new id, so figures stay comparable through time (audit 2026-09-16, finding 11). Replaces the passive split, which moved with every day's sessions.
 _Avoid_: real-world mix, session profile, passive split

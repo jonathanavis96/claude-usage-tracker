@@ -66,7 +66,9 @@ intervals are re-measured every run, but the charts, the scope and the email do 
 with them.
 
 Valuation (`valuation`): one valuation across the whole history, the rates in force in
-history/model-rates.json as every change figure prices them (`credits.comparison_value`).
+history/model-rates.json as every change figure prices them (`credits.comparison_value`),
+except a family held at its list price (`credits.PINNED_AT_LIST`: Opus 5.5 at 0.8x Opus,
+ADR 0001 rule 23), which has no rate interval to move.
 The same rate per family on both sides of every instant, so no dated regime enters a line.
 The rates the publisher absorbs at a family's first use (`absorb_new_family_rates`, fitted
 jointly with a limit change at that first-seen instant) are never read here: they would carry
@@ -250,11 +252,15 @@ def family_parts(credits: dict, model_rates: dict):
 
 def rate_intervals(model_rates_raw: dict | None) -> dict:
     """Each family's rate in force and its published interval (times Opus), for the families
-    the rates file gives an interval: what `rate_dependence` moves each rate across."""
+    the rates file gives an interval: what `rate_dependence` moves each rate across. A family
+    held at its list price (`credits.PINNED_AT_LIST`, Opus 5.5) is not valued at its fitted
+    rate, so its fitted interval moves nothing and it is left out."""
     raw = model_rates_raw or {}
     per = ((raw.get("measured_rates") or {}).get("per_family")) or {}
     out = {}
     for fam, row in sorted(per.items()):
+        if fam in credit_model.PINNED_AT_LIST:
+            continue
         x, iv = row.get("times_opus"), row.get("times_opus_interval")
         if not x or not iv or len(iv) != 2 or not all(iv):
             continue
@@ -263,21 +269,27 @@ def rate_intervals(model_rates_raw: dict | None) -> dict:
     return {"percentiles": raw.get("interval_percentiles"), "families": out}
 
 
-def valuation_block(model_rates_raw: dict | None) -> dict:
+def valuation_block(model_rates_raw: dict | None, credits: dict | None = None) -> dict:
     """What the run's credits are valued at, for the state and the page."""
     meta = (model_rates_raw or {}).get("_meta") or {}
     fit = credit_model.pooled_fit_prices(credit_model.load_model_rates(raw=model_rates_raw or {}))
+    credits = credit_model.load_credits() if credits is None else credits
+    pinned = {fam: credit_model.list_price_ratio(fam, credits)
+              for fam in credit_model.PINNED_AT_LIST}
+    pinned = {fam: round(x, 4) for fam, x in pinned.items() if x is not None}
     return {"kind": "rates_in_force", "source": "history/model-rates.json",
             "rates_generated_at": meta.get("generated_at") or (model_rates_raw or {}).get("generated_at"),
-            "times_opus": ({fam: round(x, 4) for fam, x in sorted(fit["times_opus"].items())}
+            "times_opus": ({fam: pinned.get(fam, round(x, 4)) for fam, x in sorted(fit["times_opus"].items())}
                            if fit else None),
+            "pinned_at_list": pinned,
             "cache_read_weight": round(fit["cache_read_weight"], 6) if fit else None,
             "rate_intervals": rate_intervals(model_rates_raw),
             "rule": VALUATION_RULE}
 
 
 VALUATION_RULE = ("each family at the rates in force (history/model-rates.json, the pooled fit's "
-                  "point estimates, cache reads at its one fitted cache-read rate), the same rates "
+                  "point estimates, cache reads at its one fitted cache-read rate), except Opus 5.5, "
+                  "held at Anthropic's list ratio 0.8x Opus (ADR 0001 rule 23), the same rates "
                   "across the whole history, so no dated regime enters a line; the ratio reads no "
                   "rate but a step's headless share; each family's rate interval widens the "
                   "sizes it moves (rate_dependence)")
@@ -1410,7 +1422,7 @@ def main(argv: list[str] | None = None) -> int:
     credits = credit_model.load_credits(prices_raw)
     rates_raw = (json.loads(a.model_rates.read_text(encoding="utf-8"))
                  if a.model_rates.exists() else {})
-    valued = valuation_block(rates_raw)
+    valued = valuation_block(rates_raw, credits)
     gs = json.loads(a.gs_passive.read_text(encoding="utf-8")) if a.gs_passive.exists() else None
     mr = json.loads(a.masterrig_passive.read_text(encoding="utf-8")) if a.masterrig_passive.exists() else None
     recs = records(gs, mr)

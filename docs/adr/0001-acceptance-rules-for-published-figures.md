@@ -517,7 +517,8 @@ These are the acceptance rules. Each names where it lives.
       fitted at every run from the seven-day steps, with one level per account per ISO week in
       place of dated regimes. The credits are valued once across the whole history: at the
       rates in force in history/model-rates.json, as every change figure prices them
-      (`credits.comparison_value`), the same rate per family on both sides of every instant.
+      (`credits.comparison_value`), except Opus 5.5, held at its list ratio (rule 23), the
+      same rate per family on both sides of every instant.
       They are never valued at the rates absorbed at a family's first use (rules 8 and 10),
       which are fitted jointly with a limit change at that first-seen instant and would carry
       its date into the seven-day line. The ratio reads no rate except a step's headless share,
@@ -573,8 +574,9 @@ These are the acceptance rules. Each names where it lives.
       unmeasured 9 October step sits in that bed as noise; once it is measured and divided
       out the factors fall (1.16 and 1.10 on a run of 26 October on the same records).
     - Rates. At every change each family with a rate interval in history/model-rates.json
-      (10th to 90th percentile) has its rate moved to either end of it, the others as in
-      force, and every size re-read (`rate_dependence`): the range the rates move the figure
+      (10th to 90th percentile), other than a family held at its list price (rule 23), has
+      its rate moved to either end of it, the others as in force, and every size re-read
+      (`rate_dependence`): the range the rates move the figure
       over, each family taken at its worse end and added, and the interval that would then be
       published. The figure, its interval and what the charts draw stay at the rates in
       force, the valuation every chart, window and week figure is in. The change record says
@@ -585,7 +587,8 @@ These are the acceptance rules. Each names where it lives.
       +39.3%, interval [-5.2, +47.8]. The five-hour line there reads +0.7% to +38.8%. The
       after side runs on a model the before side never used, so a credit line cannot tell
       that model's rate from a limit change. The ratio moves by under half a point across
-      every family's interval.
+      every family's interval. (Those were the figures before rule 23 held Opus 5.5 at its
+      list ratio; its figures are under that rule.)
     - What the page states. Only measured changes reach `last_change` (the newest), `events`,
       the window and week regimes, and the email (bin/daily.sh mails a change whose state is
       `measured`; the site takes scope "window" or "weekly", so a five-hour or both-limits
@@ -660,6 +663,44 @@ These are the acceptance rules. Each names where it lives.
     `tracker/invariants.py` (checks 4-10), `bin/daily.sh` (the daily run and the state commit),
     `tests/test_four_accounts.py` (the rule, the hold, the null on shifted accounts, and
     recovery on the readings frozen on 2026-10-23 in `tests/fixtures/four_accounts`).
+
+23. **Opus 5.5 is valued at Anthropic's list ratio, 0.8x Opus, in every comparison, added
+    2026-10-23.** Every figure that compares credits across time (`credits.comparison_rate`:
+    the four-account detector's lines and sizes, the window and week figures, the headless
+    factor, the joint fits) values Opus 5.5's input, cache-write and output tokens at its
+    input list-price ratio to Opus 5 in data/prices.json (4/5 = 0.8; output 20/25, cache
+    writes 5/6.25 and 8/10 are the same ratio), not at its fitted rate. The detector moves it
+    across no rate interval (`four_accounts.rate_intervals` leaves it out), and its state
+    names it under `valuation.pinned_at_list`. Its fitted rate stays the per-model
+    measurement the page publishes. Every other family keeps its fitted rate, and every
+    cache read stays at the one fitted cache-read weight.
+    - Why. The 23 September step's after side runs on Opus 5.5, which the before side never
+      used, so on the credit lines its fitted rate and the limit change trade off: across
+      that rate's interval the weekly step read +5.0% to +34.6% (rule 22). The meters accept
+      the list ratio. On the records of 2026-10-23 the rate in force is 0.780x Opus, 80%
+      interval [0.652, 0.938], and a refit on that day's records reads 0.789x [0.644,
+      0.944]. Holding it at 0.8 and refitting everything else raises the pooled fit's
+      residual sum of squares by 0.01 sigma^2 (delta SSE over the fit's residual variance),
+      against the 3.84 a one-rate restriction may cost at 95%. With it held, the accounts
+      still agree on the 23 September step.
+    - What was tested and not adopted, on the same records with rules written before any
+      figure was computed: Sonnet 5.5 at its list ratio 0.4x does not fit (delta SSE 21.1
+      sigma^2), and Opus 5.5's cache reads at their list ratio (0.4x the pooled weight) do
+      not fit either. So only Opus 5.5 is pinned, Sonnet 5.5 stays fitted, and every family
+      shares the one fitted cache-read weight.
+    - A pinned family with no list price in data/prices.json falls back to its fitted rate.
+      The pin outranks a rate absorbed at a family's first use (rule 10), which would
+      otherwise value Opus 5.5 at a joint fit's rate.
+    - On the records of 2026-10-23, replayed from no state with the rates in force of
+      2026-10-13 (no refit): the 23 September weekly limit reads +20.5% [+13.5, +27.9]
+      (before: +18.3% [+11.5, +25.6]). Its rate range narrows from +0.6% to +39.3% to +15.1%
+      to +24.6%, interval with rates [+8.4, +32.3] (before [-5.2, +47.8]), and it is no
+      longer rate-limited. The five-hour limit beside it reads +19.7% [+3.1, +39.1] (before
+      +17.8% [+1.3, +37.0]). The 14 September windows-per-week step (-17.4%) and the
+      provisional 9 October step (-9.2%) do not move.
+    Source: `tracker/credits.py` (`PINNED_AT_LIST`, `pinned_rate`, `comparison_rate`),
+    `tracker/four_accounts.py` (`rate_intervals`, `valuation_block`, `VALUATION_RULE`),
+    `tests/test_pinned_at_list.py`.
 
 ### Pending
 
