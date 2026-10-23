@@ -220,7 +220,8 @@ class TestDailyNotifyChange(unittest.TestCase):
         assert match, "notify_change not found in bin/daily.sh"
         cls.func = match.group(0)
 
-    def _publishes(self, *publishes, notified=None, env_file=True, generated_at=None, days=None):
+    def _publishes(self, *publishes, notified=None, env_file=True, generated_at=None, days=None,
+                   extra=None):
         """Run notify_change once per publish, in order, in one repo checkout.
 
         Each publish is (last_change, newest weekly window[, curl status[, feeds]]): the
@@ -228,7 +229,8 @@ class TestDailyNotifyChange(unittest.TestCase):
         newest_stretch_end. `generated_at`, one stamp per publish, is each publish's own
         time, which the 24 and 48 hour rules measure from. `days`, one per publish, is
         the UTC day a stub `date` reports (2026-10-01 for every publish by default), which
-        the once-a-day failed-send rule keys on. Returns (procs, requests, alerts), one entry per
+        the once-a-day failed-send rule keys on. `extra`, one dict per publish, adds fields to
+        that publish's JSON (the hero's `headline`). Returns (procs, requests, alerts), one entry per
         publish, and sets self.state to the announced dates recorded, or None.
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -257,6 +259,8 @@ class TestDailyNotifyChange(unittest.TestCase):
                 public = {"last_change": last_change, "weekly_windows": {"passive": {"by_window": windows}}}
                 if generated_at is not None:
                     public["generated_at"] = generated_at[i]
+                if extra is not None:
+                    public.update(extra[i])
                 if feeds is not None:
                     public["account_feeds"] = {label: {"newest_stretch_end": end, "state": "fresh"}
                                                for label, end in feeds.items()}
@@ -546,6 +550,45 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIn("not emailed (provisional)", alerts[1])
         self.assertIn("Observed change: decreased 43% on 2026-10-17", alerts[2])
         self.assertEqual(self.state, ["2026-10-17"])
+
+    # The records the publisher wrote on the 2026-10-23 records (the offline lifecycle runs of
+    # feat/provisional-headline): today the hero states 9 October as the 5-hour limit while it
+    # is provisional, and `last_change` is 23 September, already announced; once 9 October is
+    # measured (the run of 2026-10-26) it is `last_change` as well.
+    SEP23_MEASURED: ClassVar[dict] = {
+        "date": "2026-09-23", "at": "2026-09-23T13:00:00+00:00", "direction": "increased",
+        "percent": 21, "state": "measured", "provisional": False, "metric": "weekly_limit",
+        "change_pct": 20.5, "interval_excludes_no_change": True, "scope": "both"}
+    OCT09_HERO_PROVISIONAL: ClassVar[dict] = {
+        "date": "2026-10-09", "at": "2026-10-09T16:00:00+00:00", "state": "provisional",
+        "provisional": True, "held_days": 4, "holds_needed": 7, "quantity": "five_hour_limit",
+        "limit": "5-hour limit", "direction": "increased", "percent": 15, "change_pct": 15.3}
+    OCT09_MEASURED: ClassVar[dict] = {
+        "date": "2026-10-09", "at": "2026-10-09T16:00:00+00:00", "direction": "decreased",
+        "percent": 9, "state": "measured", "provisional": False, "metric": "windows_per_week",
+        "change_pct": -9.3, "interval_excludes_no_change": True, "scope": "windows_per_week"}
+
+    def test_a_provisional_hero_is_never_emailed_and_is_emailed_once_measured(self) -> None:
+        # The email reads `last_change` alone, never `headline`: while the hero states the
+        # provisional 9 October change nothing is sent or alerted; the run it is measured it
+        # becomes `last_change` and is sent once.
+        hero_measured = {**self.OCT09_HERO_PROVISIONAL, "state": "measured", "provisional": False,
+                         "held_days": 7}
+        stamps = ["2026-10-23T14:00:00+00:00"] * 3 + ["2026-10-26T03:00:00+00:00"] * 3
+        _procs, requests, alerts = self._publishes(
+            (self.SEP23_MEASURED, self.W1), (self.SEP23_MEASURED, self.W2), (self.SEP23_MEASURED, self.W3),
+            (self.OCT09_MEASURED, self.W4), (self.OCT09_MEASURED, "2026-09-19T02:30:00+00:00"),
+            (self.OCT09_MEASURED, "2026-09-20T02:30:00+00:00"),
+            notified="2026-09-23", generated_at=stamps,
+            extra=[{"headline": self.OCT09_HERO_PROVISIONAL}] * 3 + [{"headline": hero_measured}] * 3)
+        self.assertEqual(requests[:3], ["", "", ""], "a provisional hero reached the subscriber endpoint")
+        self.assertEqual(alerts[:3], ["", "", ""])
+        self.assertEqual(requests[3], "", "one publish is not enough to announce")
+        self.assertEqual(self._payload(requests[4])["date"], "2026-10-09")
+        self.assertEqual(self._payload(requests[4])["state"], "measured")
+        self.assertEqual(requests[5], "", "a change is announced once")
+        self.assertEqual(self.state, ["2026-09-23", "2026-10-09"])
+        self.assertNotIn('"headline"', self.func, "the email never reads the hero's record")
 
     def test_a_change_with_no_state_is_emailed(self) -> None:
         # Director's ruling (2026-10-23): a change with no `state` is not held. Only a stated

@@ -14,22 +14,33 @@ other figure on the page to it.
    regime's `measured_value`.
 3. `account_units`: each account's anchor-unit `window` times its regime's scale agrees with
    its direct `measured_window` within ACCOUNT_UNITS_TOLERANCE.
-4. `headline_is_last_measured_change`: `last_change` is the detector's newest measured change
-   (its instant, its line's metric, its size and the page's whole percent of it), and there
-   is none when the detector has measured none.
-5. `every_change_drawn`: every change the detector publishes, of any state, is drawn on the
-   line that found it: the step line (`four_accounts.levels`) opens a segment at its instant
-   and steps there by its size. Every published event is one of the detector's measured
-   changes.
-6. `one_figure_per_change`: every figure the page states for one measured change on one line
-   is the same whole percent: the event and the headline, the step line, and each chart that
-   draws the line (the window chart for the five-hour line, the tokens-per-week chart for the
-   seven-day line, the windows-per-week chart and `weekly_windows` for the ratio, the dollar
-   history for the five-hour line). A line the detector does not draw at a change
-   (`four_accounts.drawn`) steps 0 there everywhere. A drawn step is read the way the size is
-   published, to one decimal and then to whole percent, and a step within DRAWN_TOLERANCE_PP
-   of the size is the size (`_same_figure`): the step line draws the detector's unrounded
-   step, so 20.467% is drawn where 20.5% (+21%) is published, and must not read +20%.
+4. `headline_is_newest_stated_change`: the hero's record (`headline`) is the detector's newest
+   provisional-or-measured change that can be stated as a limit (never a candidate, never a
+   withdrawn find): the 5-hour or the weekly limit, whichever of the two sizes whose interval
+   excludes no change is larger (for a measured change, the limit decided the day it was
+   measured, `decided["stated"]`), and its figure is that change's published size for that
+   limit (the size, the page's whole percent of it, its direction and interval), with the
+   limit's words, its line, its date, the change's state and days held. Every
+   provisional-or-measured change newer than it has no such size and is listed in
+   `passed_over`, and there is no headline when no change has one (Jonathan's decision, 2026-10-23; until then
+   this check held `last_change`, the newest measured change, to the hero).
+5. `every_change_drawn`: every measured change is drawn on the line that found it: the step
+   line (`four_accounts.levels`) opens a segment at its instant and steps there by its size.
+   A change not yet measured opens no segment on any step line; a provisional one is a dashed
+   marker (`four_accounts.change_markers`, which lists every chart quantity) on the line that
+   found it, unless it has no size there to mark; a candidate marks nothing, and every marker
+   is one of the detector's provisional or measured changes, styled by its state. Every
+   published event is one of the detector's measured changes.
+6. `one_figure_per_change`: every figure the page states for one change on one line is the
+   same whole percent: for a measured change, the event and `last_change`, the step line, and
+   each chart that draws the line (the window chart for the five-hour line, the tokens-per-week
+   chart for the seven-day line, the windows-per-week chart and `weekly_windows` for the ratio,
+   the dollar history for the five-hour line); for a provisional or measured one, its chart
+   markers (with its date, days held and interval) and the hero, whose limit a chart marks.
+   A line the detector does not draw at a change
+   (`four_accounts.drawn`) steps 0 there everywhere and carries no marker. A drawn step is
+   read the way the size is published, to one decimal and then to whole percent, and a step
+   within DRAWN_TOLERANCE_PP of the size is the size (`_same_figure`).
 7. `regimes_open_at_measured_changes`: every regime boundary on the page is a measured
    change, and every measured change opens one: no chart steps anywhere the detector did not
    measure a change.
@@ -39,12 +50,15 @@ other figure on the page to it.
    (`found_today`). A measured change is never withdrawn; this is the alert that says one
    stopped being found.
 10. `detector_ran`: the detector's newest run is no more than a day older than the publish.
+11. `last_change_is_newest_measured`: `last_change`, the record the subscriber email reads, is
+   the detector's newest measured change (its instant, its line's metric, its size and the
+   page's whole percent of it), and there is none when the detector has measured none.
 
-Checks 4-8 read the page's own figures the way it draws them (`chart_steps`); on 2026-10-05
+Checks 4-8 and 11 read the page's own figures the way it draws them (`chart_steps`); on 2026-10-05
 the page said "+30%" in its headline and "+32%" on two charts for 22 September.
 
 A failure of checks 1-3, 9 or 10 does NOT block the publish (exit 1). A failure of checks 4-8
-(`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
+or 11 (`BLOCKING`) does (exit 2): bin/daily.sh then puts the last published JSON back and commits
 nothing to the site, so the page never states two figures for one change, and exits 9, a
 failed run. bin/daily.sh runs this after the publish, beside tracker.publish_gate, with the
 same incident semantics (`publish_gate.track_incident`): one alert when a check starts
@@ -266,16 +280,97 @@ CHART_NAMES = {"window": "window-size chart", "tokens_per_week": "tokens-per-wee
                "weekly_windows": "pooled windows per week (weekly_windows)"}
 
 
-def headline_is_last_measured_change(doc: dict) -> list[str]:
-    """Check 4: the headline is the detector's newest measured change, or there is none."""
+def _clear_limits(change: dict) -> dict[str, float]:
+    """The change's 5-hour and weekly sizes whose interval excludes no change, by quantity."""
+    out = {}
+    for quantity, line in detector.LIMIT_LINES.items():
+        x = (change.get("sizes") or {}).get(line) or {}
+        if x.get("excludes_no_change") and isinstance(x.get("change_pct"), (int, float)):
+            out[quantity] = x["change_pct"]
+    return out
+
+
+def _stated(change: dict) -> str | None:
+    """The limit the hero must name for `change`: the one decided the day it was measured
+    (`decided["stated"]`), else the larger of its clear 5-hour and weekly sizes (a tie names
+    the weekly limit); None when there is none or it has no size today."""
+    decided = change.get("decided") or {}
+    if "stated" in decided:
+        quantity = decided["stated"] if decided["stated"] in detector.LIMIT_LINES else None
+    else:
+        clear = _clear_limits(change)
+        quantity = max(sorted(clear, reverse=True), key=lambda q: abs(clear[q])) if clear else None
+    if quantity is None:
+        return None
+    size = ((change.get("sizes") or {}).get(detector.LIMIT_LINES[quantity]) or {}).get("change_pct")
+    return quantity if isinstance(size, (int, float)) else None
+
+
+def headline_is_newest_stated_change(doc: dict) -> list[str]:
+    """Check 4: the hero states the newest provisional-or-measured change with a limit to
+    state, as that limit (`_stated`), at that change's published size; or there is none."""
+    h = doc.get("headline")
+    stated = sorted((c for c in _fa(doc).get("changes") or []
+                     if c.get("state") in detector.STATED_STATES),
+                    key=lambda c: datetime.fromisoformat(c["at"]), reverse=True)
+    newest = next((c for c in stated if _stated(c)), None)
+    if newest is None:
+        return ([f"The hero states a change at {h.get('at')} but the detector has no provisional "
+                 f"or measured change whose 5-hour or weekly size is clear."] if h else [])
+    if not h:
+        return [f"The detector's {newest['state']} change at {newest['at']} has a clear limit "
+                f"size but the page has no headline."]
+    if not _same_instant(h.get("at"), newest["at"]):
+        return [f"The hero is dated {h.get('at')} but the newest provisional-or-measured change "
+                f"with a clear limit is at {newest['at']}."]
+    out = []
+    quantity = _stated(newest) or ""   # never empty: `newest` was picked for having one
+    line = detector.LIMIT_LINES[quantity]
+    size = newest["sizes"][line]
+    if h.get("quantity") not in detector.LIMIT_LINES:
+        out.append(f"The hero names {h.get('quantity')}, not the 5-hour or the weekly limit.")
+    elif h.get("quantity") != quantity:
+        out.append(f"The hero names {h.get('quantity')} but the limit to state at {newest['at']} "
+                   f"is {quantity} ({size['change_pct']:+g}%).")
+    words = {"line": line, "limit": detector.LIMIT_WORDS[quantity], "date": newest["at"][:10],
+             "direction": "increased" if size["change_pct"] > 0 else "decreased",
+             "interval_pct": size.get("interval_pct"), "holds_needed": detector.HOLD_DAYS,
+             "measured_on": newest.get("measured_on"), "found_on": newest["found_on"]}
+    for key, want in words.items():
+        if h.get(key) != want:
+            out.append(f"The hero's {key} is {h.get(key)!r} but the change at {newest['at']} "
+                       f"reads {want!r}.")
+    if h.get("change_pct") != size["change_pct"]:
+        out.append(f"The hero says {h.get('change_pct')}% but the detector's {line} size is "
+                   f"{size['change_pct']}%.")
+    if _signed(h) != _page_round(size["change_pct"]):
+        out.append(f"The hero's whole percent is {_signed(h)}% but the detector's "
+                   f"{size['change_pct']:+g}% reads {_page_round(size['change_pct']):+d}%.")
+    if h.get("state") != newest["state"]:
+        out.append(f"The hero's state is {h.get('state')} but the change is {newest['state']}.")
+    if h.get("provisional") is not (newest["state"] != "measured"):
+        out.append(f"The hero's provisional tag is {h.get('provisional')} for a {newest['state']} change.")
+    if h.get("held_days") != newest.get("held_days"):
+        out.append(f"The hero says the change was held {h.get('held_days')} days but the detector "
+                   f"held it {newest.get('held_days')}.")
+    newer = [(c["at"], c["state"], c["found_on"]) for c in stated[:stated.index(newest)]]
+    said = [(p.get("at"), p.get("state"), p.get("found_on")) for p in h.get("passed_over") or []]
+    if said != newer:
+        out.append(f"The hero passes over {said} but the newer provisional-or-measured changes "
+                   f"are {newer}.")
+    return out
+
+
+def last_change_is_newest_measured(doc: dict) -> list[str]:
+    """Check 11: `last_change` is the detector's newest measured change, or there is none."""
     measured = _measured(doc)
     c = doc.get("last_change")
     if not measured:
-        return ([f"The headline states a change on {c.get('date')} but the four-account detector "
+        return ([f"last_change states a change on {c.get('date')} but the four-account detector "
                  f"has measured none."] if c else [])
     newest = max(measured, key=lambda m: datetime.fromisoformat(m["at"]))
     if not c:
-        return [f"The detector measured a change at {newest['at']} but the page has no headline."]
+        return [f"The detector measured a change at {newest['at']} but the page has no last_change."]
     out = []
     metric = detector.LINE_METRIC[newest["found_on"]]
     if not _same_instant(c.get("at"), newest["at"]):
@@ -293,15 +388,47 @@ def headline_is_last_measured_change(doc: dict) -> list[str]:
                    f"{newest['change_pct']:+g}% reads {_page_round(newest['change_pct']):+d}%.")
     if c.get("state") != "measured":
         out.append(f"The headline's state is {c.get('state')}, not measured.")
-    return out
+    return [m.replace("The headline", "last_change", 1) for m in out]
+
+
+def _markers_at(doc: dict, at: str) -> dict[str, list[dict]]:
+    """The chart markers (`four_accounts.change_markers`) at one instant, by quantity."""
+    marks = _fa(doc).get("change_markers") or {}
+    return {q: [m for m in marks.get(q) or [] if _same_instant(m.get("at"), at)]
+            for q in detector.LINE_METRIC.values()}
+
+
+def _opens_segment(segments: list[dict], at: str) -> bool:
+    return any(_same_instant(seg.get("from"), at) for seg in segments)
 
 
 def every_change_drawn(doc: dict) -> list[str]:
-    """Check 5: every detector change is drawn on its line, and every event is one of them."""
+    """Check 5: every measured change steps on its line, a provisional one is a dashed marker
+    and steps nowhere, a candidate shows nowhere, and every event is a measured change."""
     fa = _fa(doc)
     levels = fa.get("levels") or {}
     out = []
-    for c in fa.get("changes") or []:
+    changes = fa.get("changes") or []
+    for c in changes:
+        markers = _markers_at(doc, c["at"])
+        own = markers.get(detector.LINE_METRIC[c["found_on"]]) or []
+        if c.get("state") != "measured":
+            for line in detector.LINES:
+                if _opens_segment(levels.get(line) or [], c["at"]):
+                    out.append(f"The {c['state']} change at {c['at']} opens a segment on the "
+                               f"{line} step line; only a measured change moves a level.")
+            # A change with no size on its line has no figure to mark (2026-10-07: the 22 Sep
+            # change, provisional with no sizes beside a candidate inside its gap).
+            if c.get("state") == "provisional" and c.get("change_pct") is not None \
+                    and not any(m.get("style") == "dashed" for m in own):
+                out.append(f"The provisional change at {c['at']} ({c['found_on']}) has no dashed "
+                           f"marker on its line's charts.")
+            if c.get("state") not in detector.STATED_STATES and any(markers.values()):
+                out.append(f"The {c.get('state')} change at {c['at']} is marked on a chart.")
+            continue
+        if c.get("change_pct") is not None and not any(m.get("style") == "step" for m in own):
+            out.append(f"The measured change at {c['at']} ({c['found_on']}) has no step marker on "
+                       f"its line's charts.")
         step = _level_step(levels.get(c["found_on"]) or [], c["at"])
         if step is None:
             out.append(f"The {c['state']} change at {c['at']} ({c['found_on']}) opens no segment "
@@ -309,6 +436,19 @@ def every_change_drawn(doc: dict) -> list[str]:
         elif c.get("change_pct") is not None and abs(step - c["change_pct"]) > DRAWN_TOLERANCE_PP:
             out.append(f"The {c['state']} change at {c['at']} is {c['change_pct']:+g}% on the "
                        f"{c['found_on']} line, but its step line steps {step:+.2f}% there.")
+    if fa and set(fa.get("change_markers") or {}) != set(detector.LINE_METRIC.values()):
+        out.append(f"four_accounts.change_markers has the charts {sorted(fa.get('change_markers') or {})}, "
+                   f"not {sorted(detector.LINE_METRIC.values())}.")
+    for quantity, rows in (fa.get("change_markers") or {}).items():
+        for m in rows:
+            match = [c for c in changes if _same_instant(c["at"], m.get("at"))]
+            if not match or match[0].get("state") not in detector.STATED_STATES:
+                out.append(f"The {quantity} chart marks {m.get('at')}, which is not a provisional "
+                           f"or measured change of the four-account detector.")
+            elif m.get("style") != ("step" if match[0]["state"] == "measured" else "dashed") \
+                    or m.get("state") != match[0]["state"]:
+                out.append(f"The {quantity} chart marks the {match[0]['state']} change at "
+                           f"{m.get('at')} as {m.get('state')} ({m.get('style')}).")
     measured = {(m["at"], m["found_on"]) for m in _measured(doc)}
     for e in doc.get("events") or []:
         if e.get("kind") != "change":
@@ -328,6 +468,40 @@ def one_figure_per_change(doc: dict) -> list[str]:
     if doc.get("last_change"):
         records.append(("the headline", doc["last_change"]))
     out = []
+    metric_line = {v: k for k, v in detector.LINE_METRIC.items()}
+    h = doc.get("headline")
+    for c in _fa(doc).get("changes") or []:
+        if c.get("state") not in detector.STATED_STATES:
+            continue
+        at = c["at"]
+        for quantity, marks in _markers_at(doc, at).items():
+            line = metric_line.get(quantity)
+            size = ((c.get("sizes") or {}).get(line) or {}).get("change_pct")
+            drawn = line is not None and detector.drawn(c, line) and size is not None
+            if marks and not drawn:
+                out.append(f"At {at} the {quantity} chart marks a change the detector does not "
+                           f"draw on the {line} line.")
+            if drawn and not marks:
+                out.append(f"At {at} the {quantity} charts carry no marker, but the detector draws "
+                           f"the {c['state']} change on the {line} line ({size:+g}%).")
+            for m in marks:
+                if size is not None and (m.get("change_pct") != size or _signed(m) != _page_round(size)):
+                    out.append(f"At {at} the {quantity} marker says {m.get('change_pct')}% "
+                               f"({_signed(m)}), but the detector's {line} size is {size:+g}%.")
+                fields = {"date": at[:10], "held_days": c.get("held_days"),
+                          "interval_pct": ((c.get("sizes") or {}).get(line) or {}).get("interval_pct")}
+                for key, value in fields.items():
+                    if m.get(key) != value:
+                        out.append(f"At {at} the {quantity} marker's {key} is {m.get(key)!r}, but the "
+                                   f"change reads {value!r}.")
+        if h and _same_instant(h.get("at"), at):
+            line = detector.LIMIT_LINES.get(h.get("quantity"))
+            size = ((c.get("sizes") or {}).get(line) or {}).get("change_pct")
+            if size is None or h.get("change_pct") != size or _signed(h) != _page_round(size):
+                out.append(f"The hero says {h.get('change_pct')}% ({_signed(h)}) on the "
+                           f"{h.get('quantity')} at {at}, but the detector's {line} size is {size}.")
+            if not _markers_at(doc, at).get(h.get("quantity")):
+                out.append(f"The hero names the {h.get('quantity')} at {at}, which no chart marks.")
     for c in _measured(doc):
         at = c["at"]
         for line in detector.LINES:
@@ -424,7 +598,8 @@ def accounts_named_by_label(doc: dict) -> list[str]:
     for name in fa.get("accounts") or []:
         if not re.fullmatch(r"Max account \d+", str(name)):
             out.append(f"four_accounts.accounts names an account {name!r}, not by its page label.")
-    blocks = [("four_accounts", fa), ("last_change", doc.get("last_change") or {})]
+    blocks = [("four_accounts", fa), ("last_change", doc.get("last_change") or {}),
+              ("headline", doc.get("headline") or {})]
     blocks += [(f"events[{i}]", e) for i, e in enumerate(doc.get("events") or [])]
     for where, block in blocks:
         bad = _labels_in(block)
@@ -460,20 +635,21 @@ CHECKS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("headline_inside_accounts", headline_inside_accounts),
     ("direct_means_direct", direct_means_direct),
     ("account_units", account_units),
-    ("headline_is_last_measured_change", headline_is_last_measured_change),
+    ("headline_is_newest_stated_change", headline_is_newest_stated_change),
     ("every_change_drawn", every_change_drawn),
     ("one_figure_per_change", one_figure_per_change),
     ("regimes_open_at_measured_changes", regimes_open_at_measured_changes),
     ("accounts_named_by_label", accounts_named_by_label),
     ("measured_changes_still_found", measured_changes_still_found),
     ("detector_ran", detector_ran),
+    ("last_change_is_newest_measured", last_change_is_newest_measured),
 ]
 #: The checks whose failure stops the page being published (exit 2): figures that contradict
 #: each other on the page itself, a step the detector did not measure, or an account named by
 #: anything but its label. The rest alert and publish anyway (exit 1).
-BLOCKING = frozenset({"headline_is_last_measured_change", "every_change_drawn",
+BLOCKING = frozenset({"headline_is_newest_stated_change", "every_change_drawn",
                       "one_figure_per_change", "regimes_open_at_measured_changes",
-                      "accounts_named_by_label"})
+                      "accounts_named_by_label", "last_change_is_newest_measured"})
 
 
 def run_checks(doc: dict) -> dict[str, list[str]]:
