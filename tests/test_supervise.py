@@ -59,7 +59,7 @@ class SuperviseTest(unittest.TestCase):
         # No health_cfg (the masterrig cron line): the masterrig profile, with `meters` on
         # a1's own log, so a dead a1 feed alerts instead of hiding as the ceiling's did.
         seen = []
-        with mock.patch.object(health, "first_failure", lambda cfg, *a, **k: seen.append(cfg)):
+        with mock.patch.object(health, "all_failures", lambda cfg, *a, **k: seen.append(cfg)):
             supervise.supervise([PY, "-c", "pass"], lock=self.lock, state_path=self.state, log=self.log,
                                 send=self.send, sleep=self.sleeps.append, now=lambda: self.t)
         self.assertIn("meters", seen[0].checks)
@@ -435,7 +435,8 @@ class ProfileArgsTest(unittest.TestCase):
         # The live page: a bare Config (as tests build) leaves it out.
         cfg = kw["health_cfg"]
         self.assertEqual(cfg.page_url, health.LIVE_PAGE_URL)
-        self.assertIsNone(cfg.checks)
+        self.assertEqual(cfg.checks, health.MASTERRIG_CHECKS)
+        self.assertEqual(cfg.meter_logs, (health.GS_OPS / "claude-usage-meter-a1.log",))
         self.assertEqual(cfg.state, supervise.ROOT / ".supervise-state.json")
         self.assertEqual(cfg.lock_pidfile, supervise.ROOT / ".supervise.pid")
         self.assertEqual(kw["lock"], supervise.ROOT / ".supervise.lock")

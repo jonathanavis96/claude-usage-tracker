@@ -551,9 +551,11 @@ class MasterrigProfileTest(unittest.TestCase):
 
     def test_the_profile_runs_every_check_with_meters_on_a1s_log(self):
         c = health.masterrig_config(ops=self.ops, home=self.home)
-        self.assertEqual(c.checks, ("collection", "run", "publisher", "token", "lock", "sizes", "meters"))
+        self.assertEqual(c.checks, ("collection", "run", "publisher", "page", "token", "lock", "sizes", "meters"))
         self.assertEqual(c.meter_logs, (self.ops / "claude-usage-meter-a1.log",))
         self.assertEqual(c.meter_config_dirs, {"a1": self.home / ".claude"})
+        self.assertEqual(c.page_url, health.LIVE_PAGE_URL)
+        self.assertIsNone(health.masterrig_config(ops=self.ops, home=self.home, page_url=None).page_url)
 
     def test_a_fresh_a1_log_is_healthy(self):
         self.write(NOW - 130)
