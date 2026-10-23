@@ -148,7 +148,7 @@ def headline_inside_accounts(doc: dict) -> list[str]:
 
 
 def direct_means_direct(doc: dict) -> list[str]:
-    """Check 3: a headline family measured directly is the newest regime's direct figure."""
+    """Check 2: a headline family measured directly is the newest regime's direct figure."""
     wt = _wt(doc)
     fam = headline_family(doc)
     row = (wt.get("per_family") or {}).get(fam) or {}
@@ -163,7 +163,7 @@ def direct_means_direct(doc: dict) -> list[str]:
 
 
 def account_units(doc: dict) -> list[str]:
-    """Check 4: each account's window, in its regime's family, agrees with its direct reading.
+    """Check 3: each account's window, in its regime's family, agrees with its direct reading.
 
     The scale is the regime's own `measured_value` over its `value` (the page's scale for the
     newest regime); an account row is matched to its regime by `from`.
@@ -201,10 +201,6 @@ def _page_round(x: float) -> int:
     return math.floor(x + 0.5)
 
 
-def _same_instant(a: str | None, b: str | None) -> bool:
-    return bool(a and b) and datetime.fromisoformat(a) == datetime.fromisoformat(b)
-
-
 def _signed(change: dict) -> int | None:
     pct = change.get("percent")
     if not isinstance(pct, (int, float)):
@@ -216,9 +212,7 @@ def _expected(change: dict, line: str) -> float:
     """The percent every chart draws on `line` at `change`: its size where the detector draws
     the line there (`four_accounts.drawn`), else 0."""
     size = ((change.get("sizes") or {}).get(line) or {}).get("change_pct")
-    drawn = change.get("found_on") == line or bool(
-        ((change.get("sizes") or {}).get(line) or {}).get("excludes_no_change"))
-    return size if drawn and size is not None else 0.0
+    return size if detector.drawn(change, line) and size is not None else 0.0
 
 
 def _level_step(segments: list[dict], at: str) -> float | None:

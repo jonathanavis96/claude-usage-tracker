@@ -63,6 +63,7 @@ def publisher_argv(root: Path, prices: Path, out: Path) -> list[str]:
         "--gs-passive", str(root / "history/gs-passive.json"),
         "--effort", str(root / "data/effort_matrix.json"),
         "--masterrig-passive", str(root / "history/masterrig-passive.json"),
+        "--four-accounts", str(root / "history/four-accounts.json"),
         "--prices", str(prices),
         "--alert-env-file", str(out.parent / "no-alert.env"),
         "--out", str(out),

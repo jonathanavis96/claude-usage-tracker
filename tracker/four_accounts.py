@@ -36,20 +36,28 @@ announcement, no family's first use, no account list.
 The search runs once a day on the data known at midnight UTC. A change is a `candidate` the
 day it is first found, `provisional` while it keeps being found, and `measured` once it has
 been found HOLD_DAYS runs in a row on the same line, in the same direction, within
-MATCH_HOURS. Only a measured change reaches the page's headline, `events`, the window regimes
-and the email. The search remembers nothing but its measured changes: each is carried into
-every later run as a fixed change (`carried`), never moved and never withdrawn, re-tested at
-its own instant every day; a run that no longer flags it says so (`found_today` false) and
-the invariants alert. Without that memory a step whose instant is uncertain by days (22 Sep:
-a flat run of flagged instants from 22 to 29 Sep on the seven-day line, the weekly limit
-reaching each account at its own reset) moved between runs after it was measured, and the
-hold measured it again at the new instant: one change, three measured records.
+MATCH_HOURS of the day before. MATCH_HOURS is one weekly cycle: a weekly limit change reaches
+each account at its own seven-day reset, so the instant of one shared step can sit anywhere in
+a week, and on the records of 2026-10-23 the 22 September step is a flat run of flagged
+instants from 22 September to 1 October on the seven-day line, whose strongest instant moved
+between 23, 25, 28 and 30 September from one daily run to the next (with the 36 hours of the
+spec it was never held seven runs). Only a measured change reaches the page's headline,
+`events`, the window regimes and the email. The search remembers nothing but its measured
+changes: each is carried into every later run as a fixed change (`carried`), never moved and
+never withdrawn, re-tested at its own instant every day; a run that no longer flags it says so
+(`found_today` false) and the invariants alert. A flagged instant within MATCH_HOURS of a
+carried change, on its line and in its direction, is that change found again, never a second
+one. Without that memory a step whose instant is uncertain by days moved between runs after it
+was measured, and the hold measured it again at the new instant: one change, three measured
+records.
 
-Valuation (`list_valuation`): one valuation across the whole history, the API list prices in
-data/prices.json, cache writes at the input price and cache reads at the table's
-`cache_read_weight`. No fitted rate enters a searched line: the per-model rate fit splits
-its regimes at the 14 September cut and at each family's first use, so a line valued with it
-would carry those dates in.
+Valuation (`valuation`): one valuation across the whole history, the rates in force in
+history/model-rates.json as every change figure prices them (`credits.comparison_value`).
+The same rate per family on both sides of every instant, so no dated regime enters a line.
+The rates the publisher absorbs at a family's first use (`absorb_new_family_rates`, fitted
+jointly with a limit change at that first-seen instant) are never read here: they would carry
+that date into the seven-day line. The ratio reads no rate except through a step's headless
+share, so a refit moves the seven-day and five-hour sizes and never what the ratio finds.
 
 The headless factor is fitted at every run from the seven-day steps, with one level per
 account per ISO week in place of dated regimes (`headless_factor`).
@@ -114,7 +122,9 @@ PRIOR_UNITS = 4.0
 MIN_UNITS = 2
 MIN_POINTS = {"five_hour": 20.0, "seven_day": 5.0, "ratio": 5.0}
 HOLD_DAYS = 7
-MATCH_HOURS = 36.0
+#: One weekly cycle: how far a change's instant may move from one daily run to the next and
+#: still be the same change (module docstring).
+MATCH_HOURS = 7 * 24.0
 #: The account lines on the chart: each day's level, and the level pooled over this many days.
 LINE_DAYS = 7
 NOISE_HALFWIDTH_DAYS = 7
@@ -230,52 +240,42 @@ def records(gs_passive: dict | None, masterrig_passive: dict | None) -> dict[str
 
 
 # ------------------------------------------------------------------------------- valuation
-def list_valuation(prices: dict, credits: dict):
-    """`value(tokens)`: credits at the API list prices of data/prices.json, or None.
+def valuation(credits: dict, model_rates: dict):
+    """`value(tokens)`: a reading's credits at the rates in force, or None when a model has
+    no rate.
 
-    One valuation across the whole history. Each model's input and cache writes at its input
-    price (a subscription charges a cache write as plain input), output at its output price,
-    cache reads at the table's `cache_read_weight` of the input price, all scaled so Opus's
-    list input price is the Opus anchor's credits per token. A model with no row, directly or
-    through its family's list-price model, leaves the reading unpriced.
+    The rates in force are history/model-rates.json as committed (`model_rates`, its
+    `measured_rates` block), priced the way every change figure prices them
+    (`credits.comparison_value`: each family at the pooled fit's point estimate, every cache
+    read at the fit's one cache-read rate). They are applied to the whole history: one rate
+    per family on both sides of every instant, so no dated regime enters a line. Not the rates
+    `publish` absorbs at a family's first use (`absorb_new_family_rates`), which are fitted
+    jointly with a limit change at that family's first-seen instant and would carry that date
+    into the seven-day line. A held refit (tools/model_rates.py exit 3) changes nothing here
+    until it is accepted; once it is, the next run values the whole history at the new rates.
+    The ratio reads no rate except through a step's headless share.
     """
-    anchor_row = prices.get(credit_model.list_price_model("opus", credits)) or {}
-    anchor_rate = credit_model.rates("opus", credits)
-    unit = (anchor_rate[0] / anchor_row["input"]) if anchor_rate and anchor_row.get("input") else 1.0
-    weight = credit_model.cache_read_weight(credits)
-    cache: dict[str, dict | None] = {}
-
-    def row_for(model: str) -> dict | None:
-        if model not in cache:
-            row = prices.get(model)
-            if not isinstance(row, dict) or not row.get("input"):
-                fam = credit_model.family(model, credits)
-                row = prices.get(credit_model.list_price_model(fam, credits)) if fam else None
-            cache[model] = row if isinstance(row, dict) and row.get("input") else None
-        return cache[model]
-
-    def value(tokens: dict) -> float | None:
-        total = 0.0
-        for model, tok in (tokens or {}).items():
-            if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
-                continue
-            row = row_for(model)
-            if row is None:
-                return None
-            total += (credit_model.input_side(tok, weight) * row["input"]
-                      + tok.get("output", 0) * row.get("output", 5 * row["input"])) * unit
-        return total
-    return value
+    return credit_model.comparison_value(credits, model_rates)
 
 
-VALUATION = {
-    "kind": "list_prices",
-    "source": "data/prices.json",
-    "rule": ("every model at its API list price, cache writes at the input price, cache reads at "
-             "the table's cache_read_weight of it, scaled to credits by the Opus anchor; one "
-             "valuation across the whole history, so no fitted rate and no dated regime enters "
-             "a searched line"),
-}
+def valuation_block(model_rates_raw: dict | None) -> dict:
+    """What the run's credits are valued at, for the state and the page."""
+    meta = (model_rates_raw or {}).get("_meta") or {}
+    fit = credit_model.pooled_fit_prices(credit_model.load_model_rates(raw=model_rates_raw or {}))
+    return {"kind": "rates_in_force", "source": "history/model-rates.json",
+            "rates_generated_at": meta.get("generated_at") or (model_rates_raw or {}).get("generated_at"),
+            "times_opus": ({fam: round(x, 4) for fam, x in sorted(fit["times_opus"].items())}
+                           if fit else None),
+            "cache_read_weight": round(fit["cache_read_weight"], 6) if fit else None,
+            "rule": VALUATION_RULE}
+
+
+VALUATION_RULE = ("each family at the rates in force (history/model-rates.json, the pooled fit's "
+                  "point estimates, cache reads at its one fitted cache-read rate), the same rates "
+                  "across the whole history, so no dated regime enters a line; the ratio reads no "
+                  "rate but a step's headless share")
+#: The valuation a snapshot or a test names when it has no rates file to describe.
+VALUATION = {"kind": "rates_in_force", "source": "history/model-rates.json", "rule": VALUATION_RULE}
 
 
 # ------------------------------------------------------------------------------- readings
@@ -322,11 +322,10 @@ def account_readings(body: dict, name: str, value, runs: list, until: datetime |
     return out
 
 
-def readings_for(recs: dict[str, dict], labels: dict[str, str], prices: dict, credits: dict,
-                 runs: list) -> dict[str, dict]:
-    """Every account's readings by label, valued once (`list_valuation`): all of them, a run
-    cuts them at the instant it runs as (`known_at`). Accounts with no reading are left out."""
-    value = list_valuation(prices, credits)
+def readings_for(recs: dict[str, dict], labels: dict[str, str], value, runs: list) -> dict[str, dict]:
+    """Every account's readings by label, each valued once by `value` (`valuation`): all of
+    them, a run cuts them at the instant it runs as (`known_at`). Accounts with no reading are
+    left out."""
     out = {labels[name]: account_readings(body, name, value, runs, None) for name, body in recs.items()}
     return {k: v for k, v in out.items() if v["stretches"] or v["steps"]}
 
@@ -343,13 +342,13 @@ SNAPSHOT_COLUMNS = ["t0_hours", "t1_hours", "credits", "headless_credits", "five
                     "seven_day_points"]
 
 
-def readings_to_json(readings: dict[str, dict]) -> dict:
+def readings_to_json(readings: dict[str, dict], valued: dict | None = None) -> dict:
     """The readings as plain numbers by account label, hours since EPOCH: no account name, no
-    token count, nothing but what the detector reads."""
+    token count, nothing but what the detector reads. `valued` names their valuation."""
     def row(r: Reading) -> list:
         return [round(r.t0, 4), round(r.t1, 4), None if r.credits is None else round(r.credits, 1),
                 round(r.headless, 1), r.d5, r.d7]
-    return {"epoch": EPOCH.isoformat(), "columns": SNAPSHOT_COLUMNS, "valuation": VALUATION,
+    return {"epoch": EPOCH.isoformat(), "columns": SNAPSHOT_COLUMNS, "valuation": valued or VALUATION,
             "accounts": {a: {kind: [row(r) for r in rs] for kind, rs in sorted(v.items())}
                          for a, v in sorted(readings.items())}}
 
@@ -733,12 +732,22 @@ class Scanner:
         return self.cache[key]
 
 
-def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = ()) -> list[dict]:
+def _carried_again(fixed_changes: list[dict], line: str, tau: float, r: dict) -> bool:
+    """Whether a flagged step is a carried change found again: on its line, in its direction,
+    within MATCH_HOURS of it."""
+    sign = 1 if r["d"] > 0 else -1
+    return any(c["found_on"] == line and c["sign"] == sign and abs(c["_h"] - tau) <= MATCH_HOURS
+               for c in fixed_changes)
+
+
+def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = (),
+           fixed_changes: list[dict] = ()) -> list[dict]:
     """The greedy segmentation: the flagged (line, instant) with the smallest p (ties: the
     largest |z|) at least MIN_GAP_HOURS from every change so far becomes a change; repeat until
     nothing flags. `fixed` are the measured changes carried from earlier runs: they cut the
-    sides from the start and are never searched again. Returns the new changes at their grid
-    instants, in the order found."""
+    sides from the start and are never searched again, and a flagged instant that is one of
+    them found again (`fixed_changes`, `_carried_again`) is not a new change. Returns the new
+    changes at their grid instants, in the order found."""
     breaks: list[float] = list(fixed)
     found: list[dict] = []
     for _ in range(MAX_CHANGES):
@@ -749,7 +758,7 @@ def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = ()) -> list[
                 if any(abs(tau - b) < MIN_GAP_HOURS for b in breaks):
                     continue
                 r = scanner.at(line, tau, breaks)
-                if flagged(r):
+                if flagged(r) and not _carried_again(fixed_changes, line, tau, r):
                     key = (r["p"], -abs(r["z"]))
                     if best is None or key < best[0]:
                         best = (key, line, tau, r)
@@ -895,15 +904,21 @@ def size_on(prep: Prepared, line: str, tau: float, breaks: list[float], seed: in
             "_d": r["d"]}
 
 
+def moved(size: dict | None) -> bool:
+    """Whether a line's size at a change says the line moved: its interval excludes no change
+    and its voting accounts agree (a step every account takes on that line)."""
+    size = size or {}
+    return bool(size.get("excludes_no_change")) and size.get("agree") is not False
+
+
 def reading(sizes: dict) -> str:
-    """Which limit moved, from the three lines: both credit lines step the same way and the
-    ratio's interval holds no change: both limits; the ratio's interval excludes no change: one
-    limit against the other; otherwise the figures alone."""
+    """Which limit moved, from the three lines: both credit lines moved (`moved`) the same way
+    and the ratio did not: both limits; the ratio moved: one limit against the other;
+    otherwise the figures alone."""
     s5, s7, q = (sizes.get(x) or {} for x in ("five_hour", "seven_day", "ratio"))
-    if q.get("excludes_no_change"):
+    if moved(q):
         return "one_limit"
-    if s5.get("excludes_no_change") and s7.get("excludes_no_change") and \
-            (s5["change_pct"] > 0) == (s7["change_pct"] > 0):
+    if moved(s5) and moved(s7) and (s5["change_pct"] > 0) == (s7["change_pct"] > 0):
         return "both_limits"
     return "figures_only"
 
@@ -950,11 +965,11 @@ def account_lines(prep: Prepared, breaks: list[float], steps: list[float]) -> di
 
 def drawn(change: dict, line: str) -> bool:
     """Whether every chart steps on `line` at `change`: always on the line that found it (the
-    change's own figure), and on another line where that line's interval excludes no change.
-    Where neither holds the level is carried: the line is not shown to have moved there, and
-    its size stays published as a figure with its interval."""
-    size = (change.get("sizes") or {}).get(line) or {}
-    return change["found_on"] == line or bool(size.get("excludes_no_change"))
+    change's own figure), and on another line where that line's interval excludes no change and
+    its voting accounts agree (a step every account takes on that line too). Where neither
+    holds the level is carried: the line is not shown to have moved there, and its size stays
+    published as a figure with its interval."""
+    return change["found_on"] == line or moved((change.get("sizes") or {}).get(line))
 
 
 def drawn_step(change: dict, line: str) -> float:
@@ -987,10 +1002,11 @@ def run_seed(day: date) -> int:
     return SEED + int(day.strftime("%Y%m%d"))
 
 
-def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = None) -> dict:
+def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = None,
+        valued: dict | None = None) -> dict:
     """One daily run on the readings known at `until` (`readings_for`, cut by `known_at`),
     carrying the hold and the measured changes from `previous` (the previous run's block, or
-    None)."""
+    None). `valued` names the readings' valuation (`valuation_block`)."""
     started = time.time()
     day = until.date()
     seed = run_seed(day)
@@ -1001,7 +1017,7 @@ def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = 
     scanner = Scanner(preps, seed)
     held = carried(previous)
     fixed = [c["_h"] for c in held]
-    found = search(scanner, taus, fixed)
+    found = search(scanner, taus, fixed, held)
     refine_all(preps, found, fixed)
     changes, unmatched = advance_changes(found, held, previous, day)
     breaks = [c["_h"] for c in changes]
@@ -1026,7 +1042,7 @@ def run(all_readings: dict[str, dict], until: datetime, previous: dict | None = 
         lines[line] = account_lines(preps[line], breaks, [drawn_step(c, line) for c in changes])
     return {
         "schema": SCHEMA, "method": METHOD, "day": day.isoformat(), "data_until": until.isoformat(),
-        "seed": seed, "rule": RULE, "valuation": VALUATION, "headless_factor": hf,
+        "seed": seed, "rule": RULE, "valuation": valued or VALUATION, "headless_factor": hf,
         "accounts": {a: {"label": public_label(a),
                          "lines": {line: {"readings": int(len(preps[line].W.get(a, ()))),
                                           "first": stamp(preps[line].first[a]) if a in preps[line].first else None,
@@ -1176,10 +1192,11 @@ def account_labels(block: dict) -> dict[str, str]:
 
 
 def certified_on(change: dict) -> list[str]:
-    """The direct limits whose own interval at a change excludes no change."""
+    """The direct limits that moved at a change (`moved`: the interval of the limit's own size
+    excludes no change and its accounts agree)."""
     sizes = change.get("sizes") or {}
     return [m for m, line in (("five_hour_limit", "five_hour"), ("weekly_limit", "seven_day"))
-            if (sizes.get(line) or {}).get("excludes_no_change")]
+            if moved(sizes.get(line))]
 
 
 def change_record(change: dict, labels: dict[str, str]) -> dict:
@@ -1196,7 +1213,7 @@ def change_record(change: dict, labels: dict[str, str]) -> dict:
     metric = LINE_METRIC[change["found_on"]]
     certified = certified_on(change)
     scope = SCOPES.get(tuple(certified)) or (
-        "windows_per_week" if (sizes.get("ratio") or {}).get("excludes_no_change") else "undetermined")
+        "windows_per_week" if moved(sizes.get("ratio")) else "undetermined")
 
     def line(key: str) -> tuple:
         x = sizes.get(key) or {}
@@ -1370,14 +1387,15 @@ def summary(block: dict) -> str:
     return (", ".join(parts) or "no change") + f" [{block.get('seconds')}s]"
 
 
-def replay(readings: dict[str, dict], start: date, end: date, log=None) -> dict | None:
+def replay(readings: dict[str, dict], start: date, end: date, log=None,
+           valued: dict | None = None) -> dict | None:
     """Every daily run from `start` to `end` on the readings as they are now, each on the data
     known at its own midnight: the hold rebuilt from scratch."""
     state = None
     d = start
     while d <= end:
         until = datetime(d.year, d.month, d.day, tzinfo=UTC)
-        block = run(readings, until, (state or {}).get("latest"))
+        block = run(readings, until, (state or {}).get("latest"), valued)
         state = advance(state, block)
         if log:
             log(f"{d}: {summary(block)}")
@@ -1392,6 +1410,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--gs-passive", type=Path, default=Path("history/gs-passive.json"))
     ap.add_argument("--masterrig-passive", type=Path, default=Path("history/masterrig-passive.json"))
     ap.add_argument("--prices", type=Path, default=Path("data/prices.json"))
+    ap.add_argument("--model-rates", type=Path, default=Path("history/model-rates.json"),
+                    help="the rates in force (tools/model_rates.py), applied to the whole history")
     ap.add_argument("--harness-runs", type=Path, default=None)
     ap.add_argument("--state", type=Path, default=Path("history/four-accounts.json"))
     ap.add_argument("--now", type=str, default=None, help="ISO instant to run as (default: the clock)")
@@ -1406,8 +1426,10 @@ def main(argv: list[str] | None = None) -> int:
     today = now.date()
     until = datetime(today.year, today.month, today.day, tzinfo=UTC)
     prices_raw = json.loads(a.prices.read_text(encoding="utf-8"))
-    prices = {k: v for k, v in prices_raw.items() if not k.startswith("_")}
     credits = credit_model.load_credits(prices_raw)
+    rates_raw = (json.loads(a.model_rates.read_text(encoding="utf-8"))
+                 if a.model_rates.exists() else {})
+    valued = valuation_block(rates_raw)
     gs = json.loads(a.gs_passive.read_text(encoding="utf-8")) if a.gs_passive.exists() else None
     mr = json.loads(a.masterrig_passive.read_text(encoding="utf-8")) if a.masterrig_passive.exists() else None
     recs = records(gs, mr)
@@ -1415,9 +1437,11 @@ def main(argv: list[str] | None = None) -> int:
                                             + recs[n]["stretches"] if r.get("start")),
                                            default=datetime.max.replace(tzinfo=UTC)))
     labels = labels_for(names, ACCOUNT_LABELS)
-    readings = readings_for(recs, labels, prices, credits, credit_model.harness_runs(a.harness_runs))
+    readings = readings_for(recs, labels,
+                            valuation(credits, credit_model.load_model_rates(raw=rates_raw)),
+                            credit_model.harness_runs(a.harness_runs))
     if a.snapshot:
-        write_text_atomic(a.snapshot, json.dumps(readings_to_json(known_at(readings, until)),
+        write_text_atomic(a.snapshot, json.dumps(readings_to_json(known_at(readings, until), valued),
                                                  separators=(",", ":")) + "\n")
         print(f"four_accounts: readings known at {until.isoformat()} written to {a.snapshot}")
         return 0
@@ -1427,14 +1451,15 @@ def main(argv: list[str] | None = None) -> int:
         if start is None:
             print("four_accounts: fewer than two accounts with readings, nothing to run", file=sys.stderr)
             return 0
-        state = replay(readings, start, today, log=lambda s: print(s, file=sys.stderr, flush=True))
+        state = replay(readings, start, today, log=lambda s: print(s, file=sys.stderr, flush=True),
+                       valued=valued)
     else:
         if state["latest"]["day"] == today.isoformat() and not a.force:
             print(f"four_accounts: the run for {today} is already in {a.state}", file=sys.stderr)
             return 0
         prev = state["latest"] if state["latest"]["day"] != today.isoformat() else \
             _previous_block(state, today)
-        block = run(readings, until, prev)
+        block = run(readings, until, prev, valued)
         state = advance(state, block)
     write_state(a.state, state)
     print(f"four_accounts {state['latest']['day']}: {summary(state['latest'])}")

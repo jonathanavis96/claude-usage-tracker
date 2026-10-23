@@ -58,7 +58,7 @@ class Finding4CumulativeStep(unittest.TestCase):
         # Audit: 4 windows at 60/10 then 21 at 18/4 produced no event and one flat 4.98.
         points = [(T0 + timedelta(days=i), 60, 10) for i in range(4)]
         points += [(T0 + timedelta(days=i), 18, 4) for i in range(4, 25)]
-        events = detect.detect_weighted_changes(points)
+        events = detect._detect_weighted(points, 0.15)[0]
         self.assertEqual([(e.direction, e.percent) for e in events], [("decreased", 25)])
         self.assertEqual([r["windows"] for r in detect.weighted_regimes(points)], [6.0, 4.5])
         self.assertIsNotNone(events[0].onset_earliest)
@@ -103,8 +103,9 @@ class Finding16WeeklyFreshness(unittest.TestCase):
         # Audit: the weekly current anchored its lookback to its own newest point,
         # so a stopped weekly collector stayed "current" indefinitely.
         points = [(T0 + timedelta(hours=6 * i), 30, 5, 1) for i in range(12)]
-        fresh = _regime_current(points, now=points[-1][0] + timedelta(hours=1))
-        stopped = _regime_current(points, now=points[-1][0] + timedelta(days=30))
+        # No measured change: the whole series is the current regime (ADR 0001 rule 22).
+        fresh = _regime_current(points, points[-1][0] + timedelta(hours=1), [])
+        stopped = _regime_current(points, points[-1][0] + timedelta(days=30), [])
         self.assertFalse(fresh["stale"])
         self.assertTrue(stopped["stale"])
         self.assertIn("evidence_stale", stopped["reasons"])

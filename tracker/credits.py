@@ -1493,6 +1493,13 @@ def window_tokens(clean: dict[str, list[dict]], credits: dict, labels: dict[str,
                                  if history_rate and r["value"] is not None else None)
             r["family_interval"] = ([_round(x / history_rate) for x in r["interval"]]
                                     if history_rate and r["interval"] else None)
+    # A regime restated from the one after it (`chain_regimes`) steps by the detector's own size
+    # in the family's units too, chained back from the newest regime's direct figure: a run
+    # carried across a change draws no step there from a rate rounded to four places.
+    for k in range(len(regimes) - 2, -1, -1):
+        r, nxt = regimes[k], regimes[k + 1]
+        if r.get("chained") and history_rate and nxt.get("family_value") is not None:
+            r["family_value"] = _round(nxt["family_value"] / (1 + r["chained"]["step_pct"] / 100))
     if measured_family and measured_family != fam and measured_family in families:
         families[measured_family]["history_rate"] = {
             "times_anchor": round(history_rate, 4) if history_rate else None,
@@ -3145,7 +3152,9 @@ PER_REGIME_METHOD = (
     "each other inside one regime and the pool's median account sits at the regime's window. "
     "`measured_window` is the account's direct reading beside it: the median tokens per 1% "
     "times 100 of its own pure stretches of the regime's `regime_family` (named on the row "
-    "as `measured_family`, counted in `n_measured_window`), with no rate in it. For regimes "
+    "as `measured_family`, counted in `n_measured_window`), with no rate in it, published "
+    f"from {MIN_AFTER_CLUSTER} such stretches as a regime's own direct window is (null below "
+    "that: one stretch reads its own token mix, not the account's level). For regimes "
     "stated by one run's cluster, both medians are over the stretches lying wholly in the "
     "run, and every regime of the run carries the same readings. `windows_per_week_meters` "
     "is its own five-hour over seven-day readings, for reference. A figure with no reading "
@@ -3389,7 +3398,13 @@ def regime_figures(window_credits: dict, window_tokens: dict, max20: dict | None
             rows.append({"from": regimes[k]["from"], "until": reg["until"], "window": window,
                          "measured_family": (reg.get("regime_family") or reg.get("measured_family")
                                              or "opus"),
-                         "measured_window": round(median(readings)) if readings else None,
+                         # A direct reading needs the readings a regime's own direct window
+                         # needs (MIN_AFTER_CLUSTER): one stretch is that stretch's own token
+                         # mix, not the account's level (a3's one pure-Opus stretch of 14-22
+                         # September, 98.7% cache reads and almost all headless, read 906M
+                         # against its 27 stretches' 624M; `invariants.account_units`).
+                         "measured_window": (round(median(readings))
+                                             if len(readings) >= MIN_AFTER_CLUSTER else None),
                          "per_week": round(acct_week) if acct_week is not None else None,
                          "per_week_interval": ([round(x) for x in acct_week_iv]
                                                if acct_week_iv else None),
