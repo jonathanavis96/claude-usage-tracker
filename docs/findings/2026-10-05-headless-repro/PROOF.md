@@ -341,6 +341,17 @@ python3 meter_split.py             # which meter carries it (section 6)
 python3 recorded.py                # the figures that need the private transcripts
 ```
 
+The five charts in `charts/` are drawn from the same files. That needs matplotlib as well, and
+the Liberation Sans font for an exact match:
+
+```sh
+cd charts
+for f in fig1_headline fig2_accounts fig3_covariates fig4_timing fig5_split; do python3 $f.py; done
+```
+
+Each script overwrites its PNG. On 2026-10-24 all five came out pixel-identical to the
+committed images.
+
 - **From public files.** The per-step table gives the headline, the per-account and extended-window fits, section 1's step counts, peaks and plan check, and most of sections 4b, 4d, 4e and 5. `refit_from_csv.py --incl` prints the per-account table in section 3, and `--all --incl` the per-account figures to 11 Oct. The tracker's step records give the four-account fit (1.486 [1.381, 1.599], 659 steps; 1.484 [1.384, 1.592], 738 steps to 11 Oct) and section 6, including the token-class mix in 4d.
 - **From the raw transcripts.** The TTL write shares and pricings (4a), the first-turn share (4b), the timing shifts (4c) and three step features in 4d need the raw Claude Code transcripts, which stay private. `recorded.py` prints them as the re-run recorded them. The original runs were:
 
