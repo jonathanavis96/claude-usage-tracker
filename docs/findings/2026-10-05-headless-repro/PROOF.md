@@ -3,6 +3,7 @@
 **Summary.** For each 1% of the seven-day (weekly) meter, headless `claude -p` work moved the five-hour meter **1.53x** as far as interactive Claude Code work (95% CI 1.41 to 1.67), across 306 meter steps on three Max 20x accounts from 14 Sep to 4 Oct 2026.
 At the tracker's token valuation (302 clean steps, [section 6](#6-which-meter-carries-it)), headless moved the five-hour meter 1.63x [1.36, 1.95] as far per credit and the seven-day meter 1.05x [0.93, 1.18] as far. Under other valuations these run about 1.3 to 2.1 and 0.83 to 1.37. At the weights the meters prefer, the seven-day figure is 1.14 to 1.21; the 1.53 ratio barely moves.
 Every explanation tested (cache TTL, per-run overhead, timing, concurrency, model mix, effort, sub-agents, window resets) leaves the factor between 1.39 and 1.59.
+Fresh `claude -p` runs carry the factor on their own, and interactive sessions that a script feeds messages into cost about the same as typed ones (1.07x), not like headless ([section 4f](#4f-fresh-and-resumed-runs-and-script-fed-interactive-sessions)).
 
 This page holds the full evidence. The data, scripts and commands are described in [REPRODUCE.md](REPRODUCE.md) in this folder.
 
@@ -193,6 +194,40 @@ Refitted from the per-step table, 306 steps; continuous variables per standard d
 - **Sub-agents.** Plain means of five-hour points per seven-day point: steps that are mostly interactive main session (38 steps) read 4.63, mostly sub-agent (91 steps) 4.24, and mostly headless (58 steps) 7.09.
 - **Whole-percent rounding and window resets.** Five-hour window resets are equally common in both kinds of step: 0.21 per mostly-headless step against 0.205 per interactive step (57 steps over 0.8 and 224 under 0.2, on the share without cache reads). On the 245 steps with no reset, headless reads 1.53 [1.38, 1.69].
 - The rebuild of the ten-variable fit from the per-step table gives 1.53 [1.35, 1.73], against the tool's 1.52 [1.34, 1.72].
+
+### 4f. Fresh and resumed runs, and script-fed interactive sessions
+
+Added 23 Oct 2026, after a reader asked two questions: does the factor come from resuming sessions, and is a long-lived interactive session that a script sends messages into cheaper than `claude -p`?
+
+**Classes.**
+
+- **Headless fresh / resumed.** A `claude -p --resume` run keeps the session id and appends to the same transcript, so each later real user prompt in a headless file starts a resumed run. Checked against one pipeline's own run log: 54 of 55 sessions match on run count, each start within 2 minutes.
+- **Scripted interactive.** Interactive sessions started in tmux with a scripted first prompt and then sent messages by another process.
+- **Human interactive.** Every other interactive session, typed or pasted.
+- Sub-agents take their parent's class in these fits. That moves the fresh-headless factor from 1.53 to 1.62, because the original rule put every sub-agent in the baseline.
+
+| class | share of credits | steps over 80% |
+|---|---:|---:|
+| headless fresh | 30.3% | 50 |
+| headless resumed | 1.2% (38 runs, one account, three days) | 0 |
+| scripted interactive | 8.3% | 11 |
+| human interactive | 60.2% | 172 |
+
+**Factors**, 306 steps (397 steps to 11 Oct in the second column):
+
+| fit | to 4 Oct | to 11 Oct |
+|---|---|---|
+| fresh, original sub-agent rule | 1.53 [1.39, 1.69] | 1.48 [1.36, 1.62] |
+| resumed, original sub-agent rule | 1.54 [1.07, 2.22] | 1.58 [1.09, 2.27] |
+| resumed ÷ fresh | 1.00 [0.67, 1.49] | 1.06 [0.72, 1.57] |
+| scripted interactive vs human (sub-agents inherit) | **1.07 [0.93, 1.22]** | 1.04 [0.91, 1.18] |
+| scripted ÷ fresh headless (sub-agents inherit) | **0.66 [0.56, 0.78]** | 0.64 [0.55, 0.75] |
+
+Plain means, steps over 80% one class: fresh headless 7.12 [6.66, 7.58] five-hour points per seven-day point (50 steps), scripted interactive 4.36 [3.73, 4.91] (11 steps), human interactive 4.31 [4.15, 4.47] (172 steps). Within Max account 2 alone, the one account with plenty of both, scripted interactive cost 0.59x [0.42, 0.83] what headless did.
+
+- **Resuming does not cause it.** Fresh runs alone carry the full factor. Resumed runs are too few to say whether they differ from fresh ones; a difference of about ±50% is not ruled out.
+- **Script-fed interactive sessions cost what typed sessions cost**, about 1.07x, and about two-thirds of what `claude -p` costs on the five-hour meter. On this data, feeding a long-lived interactive session is the cheaper way to run unattended work as far as the five-hour limit goes.
+- **Caveats.** Scripted sessions are 7–8% of credits and 11 steps over 80%, mostly on Max account 2, while headless work sits mostly on Max account 3. The two classes did different jobs: builds in the scripted sessions, pipelines in headless. The split needs the private transcripts and is not yet in `recorded.py`.
 
 ## 5. Robustness
 
