@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-24T14:00:06.055583+00:00",
+ "generated_at": "2026-10-24T14:30:05.697737+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13549,
+    "reset_verified_samples": 13560,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 18280,
+    "samples": 18291,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-24T13:57:39+00:00"
+    "last": "2026-10-24T14:28:59+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,7 +33,7 @@
      ".claude-jono"
     ],
     "files": 5685,
-    "turns": 137352,
+    "turns": 137360,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 4546,
@@ -59,7 +59,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
       "files": 1444,
-      "turns": 39763
+      "turns": 39771
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -33821,18 +33821,18 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 12719,
+    "reset_verified_samples": 12724,
     "since": null,
-    "samples": 15771,
+    "samples": 15776,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-24T13:58:45+00:00"
+    "last": "2026-10-24T14:25:45+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
     "files": 3035,
-    "turns": 110349,
+    "turns": 110350,
     "withheld_patterns": [],
     "own_sessions": null,
     "sources": [
@@ -33840,7 +33840,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-dave/projects",
       "files": 1524,
-      "turns": 60070
+      "turns": 60071
      },
      {
       "source": "archive:transcripts-20261015/claude-dave",
@@ -60483,11 +60483,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 15758,
+    "reset_verified_samples": 15770,
     "since": null,
-    "samples": 17953,
+    "samples": 17965,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-24T13:59:49+00:00"
+    "last": "2026-10-24T14:28:59+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -68885,7 +68885,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-24T13:59:49+00:00",
+     "window_ending": "2026-10-24T14:28:59+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -68907,7 +68907,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-24T14:01:21.734419+00:00",
+  "generated_at": "2026-10-24T14:31:18.105379+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -128153,7 +128153,7 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 231,
+    "n": 232,
     "fast_session_requests": 0,
     "output_hist": {
      "194": 1,
@@ -128164,7 +128164,7 @@
      "218": 8,
      "241": 2,
      "225": 12,
-     "221": 7,
+     "221": 8,
      "233": 11,
      "222": 9,
      "217": 3,
@@ -128274,6 +128274,7 @@
      "54": 6,
      "41": 1,
      "86": 1,
+     "81": 2,
      "144": 1,
      "91": 2,
      "24": 1,
@@ -128295,8 +128296,7 @@
      "120": 1,
      "100": 1,
      "87": 1,
-     "73": 1,
-     "81": 1
+     "73": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
@@ -128332,7 +128332,7 @@
     "model": "claude-opus-5-5",
     "account": "a3",
     "entrypoint": "sdk-cli",
-    "n": 193,
+    "n": 194,
     "fast_session_requests": 0,
     "output_hist": {
      "213": 8,
@@ -128373,7 +128373,7 @@
      "238": 2,
      "224": 7,
      "241": 2,
-     "235": 3,
+     "235": 4,
      "233": 2,
      "242": 2,
      "199": 2,
@@ -128443,6 +128443,7 @@
      "27": 1,
      "23": 1,
      "40": 1,
+     "41": 1,
      "159": 1,
      "83": 1,
      "120": 1,
