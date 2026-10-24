@@ -3,8 +3,8 @@
  "max20": {
   "contributors": 1,
   "evidence": {
-   "as_of": "2026-10-24T07:30:04+00:00",
-   "current_since": "2026-09-24T07:30:04+00:00",
+   "as_of": "2026-10-24T08:00:05+00:00",
+   "current_since": "2026-09-24T08:00:05+00:00",
    "freshest_sample_at": "2026-10-23T19:12:07+00:00",
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 2,
@@ -57,8 +57,8 @@
  "max5": {
   "contributors": 1,
   "evidence": {
-   "as_of": "2026-10-24T07:30:04+00:00",
-   "current_since": "2026-09-24T07:30:04+00:00",
+   "as_of": "2026-10-24T08:00:05+00:00",
+   "current_since": "2026-09-24T08:00:05+00:00",
    "freshest_sample_at": "2026-10-23T19:56:41+00:00",
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 0,
@@ -123,36 +123,48 @@
  },
  "min_utilization": 5.0,
  "pro": {
-  "contributors": 0,
+  "contributors": 1,
   "evidence": {
-   "as_of": "2026-10-24T07:30:04+00:00",
-   "current_since": "2026-09-24T07:30:04+00:00",
-   "freshest_sample_at": null,
+   "as_of": "2026-10-24T08:00:05+00:00",
+   "current_since": "2026-09-24T08:00:05+00:00",
+   "freshest_sample_at": "2026-10-24T07:37:50+00:00",
    "ignored_invalid_time_samples": 0,
    "ignored_old_samples": 0,
-   "reason": "no current samples",
+   "reason": null,
    "samples_without_capture": 0,
-   "stale": true
+   "stale": false
   },
   "identity_basis": "unverified_source_ids",
   "missing_reasons": [
    "no current sample cleared the utilization floor with priced tokens"
   ],
-  "points": [],
+  "points": [
+   {
+    "c": 2479663326,
+    "coarse": true,
+    "t": "2026-10-24T07:37:50Z",
+    "tokens_per_pct": null,
+    "tokens_per_pct_week": 7789468,
+    "tokens_per_pct_week_by_model": {
+     "claude-opus-5-5": 8052943
+    },
+    "usd_per_pct": 0.1996
+   }
+  ],
   "quality": "conditional_local_transcripts",
-  "samples": 0,
+  "samples": 1,
   "tokens_per_pct": {},
   "usd_per_pct": null,
   "weekly_windows": {
-   "contributors": 0,
+   "contributors": 1,
    "dropped": 0,
    "estimates": [],
    "measured": null,
    "quality": "conditional_paired_meter_deltas",
-   "reason": "no samples",
+   "reason": "1 contributor, none with a complete week yet; per-source estimates only, never pooled into a plan figure",
    "weeks": 0,
    "with_complete_week": 0
   }
  },
- "updated_at": "2026-10-24T07:30:04+00:00"
+ "updated_at": "2026-10-24T08:00:05+00:00"
 }
