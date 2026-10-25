@@ -27,18 +27,18 @@
     "lines": {
      "five_hour": {
       "first": "2026-09-05T06:14:32+00:00",
-      "last": "2026-10-23T17:04:04+00:00",
-      "readings": 205
+      "last": "2026-10-24T14:35:06+00:00",
+      "readings": 206
      },
      "ratio": {
       "first": "2026-09-05T06:19:55+00:00",
-      "last": "2026-10-23T18:42:44+00:00",
-      "readings": 425
+      "last": "2026-10-24T21:06:39+00:00",
+      "readings": 427
      },
      "seven_day": {
       "first": "2026-09-05T06:19:55+00:00",
-      "last": "2026-10-23T18:42:44+00:00",
-      "readings": 412
+      "last": "2026-10-24T21:06:39+00:00",
+      "readings": 414
      }
     }
    },
@@ -47,18 +47,18 @@
     "lines": {
      "five_hour": {
       "first": "2026-09-18T12:04:39+00:00",
-      "last": "2026-10-23T17:15:30+00:00",
-      "readings": 202
+      "last": "2026-10-24T16:06:06+00:00",
+      "readings": 203
      },
      "ratio": {
       "first": "2026-09-18T11:37:09+00:00",
-      "last": "2026-10-23T17:36:35+00:00",
-      "readings": 287
+      "last": "2026-10-24T22:48:00+00:00",
+      "readings": 288
      },
      "seven_day": {
       "first": "2026-09-18T19:34:39+00:00",
-      "last": "2026-10-23T17:36:35+00:00",
-      "readings": 286
+      "last": "2026-10-24T22:48:00+00:00",
+      "readings": 287
      }
     }
    },
@@ -149,15 +149,15 @@
     "found_on": "ratio",
     "found_today": true,
     "held_by_capture": null,
-    "held_days": 36,
+    "held_days": 37,
     "hold_replayed": true,
     "instant_range": [
      "2026-09-14T00:00:00+00:00",
      "2026-09-17T00:00:00+00:00"
     ],
     "interval_pct": [
-     -25.8,
-     -8.2
+     -25.7,
+     -8.3
     ],
     "measured_on": "2026-09-25",
     "p": 0.0002499,
@@ -181,44 +181,44 @@
       ],
       "change_pct": 8.8,
       "excludes_no_change": false,
-      "interval_factor": 2.158,
+      "interval_factor": 2.173,
       "interval_pct": [
-       -17.7,
-       43.7
+       -17.9,
+       44.2
       ],
       "nominal_interval_pct": [
        -4.4,
-       23.7
+       23.9
       ],
-      "p": 0.2994,
+      "p": 0.2959,
       "per_account": {
        "a1": {
         "change_pct": 54.3,
         "days_after": 8,
         "days_before": 13,
         "interval_pct": [
-         -31.7,
-         248.5
+         -32.1,
+         250.5
         ],
         "points_after": 541.0,
         "points_before": 1013.0,
-        "weight": 0.117,
+        "weight": 0.118,
         "without_this_account": {
-         "change_pct": 3.8,
+         "change_pct": 3.9,
          "z": 0.54
         }
        },
        "a2": {
-        "change_pct": 3.8,
+        "change_pct": 3.9,
         "days_after": 9,
         "days_before": 8,
         "interval_pct": [
-         -22.8,
-         39.7
+         -23.0,
+         40.1
         ],
         "points_after": 440.0,
         "points_before": 829.0,
-        "weight": 0.883,
+        "weight": 0.882,
         "without_this_account": {
          "change_pct": 54.3,
          "z": 2.25
@@ -229,7 +229,7 @@
       "plan_wide": false,
       "rate_dependence": {
        "change_pct_range": [
-        7.6,
+        7.7,
         10.3
        ],
        "excludes_no_change": false,
@@ -241,27 +241,27 @@
          ],
          "family": "fable",
          "interval": [
-          2.8175,
-          3.2505
+          2.8299,
+          3.2737
          ],
-         "times_opus": 3.0322
+         "times_opus": 3.0318
         },
         {
          "change_pct_at_interval": [
-          8.4,
-          9.2
+          8.5,
+          9.3
          ],
          "family": "sonnet",
          "interval": [
-          0.4549,
-          0.5951
+          0.4492,
+          0.594
          ],
-         "times_opus": 0.5151
+         "times_opus": 0.5128
         }
        ],
        "interval_pct": [
-        -18.5,
-        45.7
+        -18.7,
+        46.1
        ],
        "interval_percentiles": [
         10,
@@ -288,10 +288,10 @@
       ],
       "change_pct": -17.5,
       "excludes_no_change": true,
-      "interval_factor": 2.042,
+      "interval_factor": 2.01,
       "interval_pct": [
-       -25.8,
-       -8.2
+       -25.7,
+       -8.3
       ],
       "nominal_interval_pct": [
        -21.7,
@@ -304,28 +304,28 @@
         "days_after": 7,
         "days_before": 13,
         "interval_pct": [
-         -30.8,
-         -4.3
+         -30.7,
+         -4.6
         ],
         "points_after": 103.0,
         "points_before": 221.0,
-        "weight": 0.434,
+        "weight": 0.437,
         "without_this_account": {
-         "change_pct": -16.5,
-         "z": -5.1
+         "change_pct": -16.6,
+         "z": -5.07
         }
        },
        "a2": {
-        "change_pct": -16.5,
+        "change_pct": -16.6,
         "days_after": 8,
         "days_before": 9,
         "interval_pct": [
-         -27.6,
-         -3.8
+         -27.5,
+         -3.9
         ],
         "points_after": 95.0,
         "points_before": 150.0,
-        "weight": 0.566,
+        "weight": 0.563,
         "without_this_account": {
          "change_pct": -18.6,
          "z": -5.09
@@ -336,7 +336,7 @@
       "plan_wide": true,
       "rate_dependence": {
        "change_pct_range": [
-        -17.5,
+        -17.6,
         -17.4
        ],
        "excludes_no_change": true,
@@ -344,19 +344,19 @@
         {
          "change_pct_at_interval": [
           -17.4,
-          -17.5
+          -17.6
          ],
          "family": "sonnet",
          "interval": [
-          0.4549,
-          0.5951
+          0.4492,
+          0.594
          ],
-         "times_opus": 0.5151
+         "times_opus": 0.5128
         }
        ],
        "interval_pct": [
-        -25.9,
-        -8.1
+        -25.8,
+        -8.2
        ],
        "interval_percentiles": [
         10,
@@ -364,7 +364,7 @@
        ],
        "rate_limited": false
       },
-      "z": -7.19
+      "z": -7.17
      },
      "seven_day": {
       "accounts": [
@@ -383,31 +383,31 @@
       ],
       "change_pct": -4.5,
       "excludes_no_change": false,
-      "interval_factor": 1.07,
+      "interval_factor": 1.082,
       "interval_pct": [
-       -16.2,
-       8.7
+       -16.3,
+       8.9
       ],
       "nominal_interval_pct": [
        -15.4,
-       7.8
+       7.9
       ],
-      "p": 0.6448,
+      "p": 0.6471,
       "per_account": {
        "a1": {
         "change_pct": 27.5,
         "days_after": 7,
         "days_before": 13,
         "interval_pct": [
-         -6.5,
-         73.9
+         -6.9,
+         74.5
         ],
         "points_after": 101.0,
         "points_before": 161.0,
-        "weight": 0.175,
+        "weight": 0.176,
         "without_this_account": {
          "change_pct": -10.2,
-         "z": -1.58
+         "z": -1.57
         }
        },
        "a2": {
@@ -415,12 +415,12 @@
         "days_after": 8,
         "days_before": 9,
         "interval_pct": [
-         -22.2,
-         3.6
+         -22.3,
+         3.8
         ],
         "points_after": 95.0,
         "points_before": 139.0,
-        "weight": 0.825,
+        "weight": 0.824,
         "without_this_account": {
          "change_pct": 27.5,
          "z": 1.64
@@ -431,7 +431,7 @@
       "plan_wide": false,
       "rate_dependence": {
        "change_pct_range": [
-        -5.6,
+        -5.7,
         -3.1
        ],
        "excludes_no_change": false,
@@ -439,26 +439,26 @@
         {
          "change_pct_at_interval": [
           -3.4,
-          -5.5
+          -5.6
          ],
          "family": "fable",
          "interval": [
-          2.8175,
-          3.2505
+          2.8299,
+          3.2737
          ],
-         "times_opus": 3.0322
+         "times_opus": 3.0318
         },
         {
          "change_pct_at_interval": [
           -4.2,
-          -4.4
+          -4.3
          ],
          "family": "sonnet",
          "interval": [
-          0.4549,
-          0.5951
+          0.4492,
+          0.594
          ],
-         "times_opus": 0.5151
+         "times_opus": 0.5128
         },
         {
          "change_pct_at_interval": [
@@ -467,15 +467,15 @@
          ],
          "family": "sonnet-5-5",
          "interval": [
-          0.5484,
-          0.8494
+          0.5482,
+          0.8731
          ],
-         "times_opus": 0.6696
+         "times_opus": 0.6651
         }
        ],
        "interval_pct": [
-        -17.1,
-        10.4
+        -17.3,
+        10.5
        ],
        "interval_percentiles": [
         10,
@@ -483,11 +483,11 @@
        ],
        "rate_limited": false
       },
-      "z": -0.75
+      "z": -0.74
      }
     },
     "state": "measured",
-    "z": -6.95
+    "z": -6.93
    },
    {
     "accounts": [
@@ -515,7 +515,7 @@
      }
     },
     "carried": true,
-    "change_pct": 20.8,
+    "change_pct": 20.9,
     "decided": {
      "interval_factor": {
       "five_hour": 1.522,
@@ -572,7 +572,7 @@
     "found_on": "seven_day",
     "found_today": true,
     "held_by_capture": null,
-    "held_days": 21,
+    "held_days": 22,
     "hold_replayed": true,
     "instant_range": [
      "2026-09-20T12:00:00+00:00",
@@ -580,7 +580,7 @@
     ],
     "interval_pct": [
      13.3,
-     28.9
+     29.2
     ],
     "measured_on": "2026-10-10",
     "p": 0.0002499,
@@ -603,64 +603,64 @@
        "2026-09-14T09:00:00+00:00",
        "2026-09-23T13:00:00+00:00"
       ],
-      "change_pct": 20.2,
+      "change_pct": 20.4,
       "excludes_no_change": true,
-      "interval_factor": 2.158,
+      "interval_factor": 2.173,
       "interval_pct": [
-       1.6,
-       42.3
+       1.4,
+       42.8
       ],
       "nominal_interval_pct": [
        11.2,
-       30.0
+       30.2
       ],
       "p": 0.003499,
       "per_account": {
        "a1": {
-        "change_pct": 39.1,
+        "change_pct": 39.2,
         "days_after": 11,
         "days_before": 7,
         "interval_pct": [
-         -9.4,
-         113.6
+         -9.6,
+         114.5
         ],
         "points_after": 286.0,
         "points_before": 541.0,
-        "weight": 0.155,
+        "weight": 0.157,
         "without_this_account": {
          "change_pct": 17.1,
-         "z": 3.63
+         "z": 3.61
         }
        },
        "a2": {
-        "change_pct": 17.4,
+        "change_pct": 17.5,
         "days_after": 11,
         "days_before": 8,
         "interval_pct": [
-         -6.0,
-         46.7
+         -6.3,
+         47.4
         ],
         "points_after": 254.0,
         "points_before": 440.0,
-        "weight": 0.573,
+        "weight": 0.569,
         "without_this_account": {
-         "change_pct": 24.1,
+         "change_pct": 24.2,
          "z": 3.54
         }
        },
        "a3": {
-        "change_pct": 16.3,
+        "change_pct": 16.4,
         "days_after": 10,
         "days_before": 4,
         "interval_pct": [
-         -15.8,
-         60.7
+         -16.1,
+         61.4
         ],
         "points_after": 514.0,
         "points_before": 537.0,
-        "weight": 0.273,
+        "weight": 0.274,
         "without_this_account": {
-         "change_pct": 21.7,
+         "change_pct": 21.9,
          "z": 4.2
         }
        }
@@ -669,51 +669,51 @@
       "plan_wide": true,
       "rate_dependence": {
        "change_pct_range": [
-        15.6,
-        25.3
+        15.5,
+        25.6
        ],
        "excludes_no_change": false,
        "families": [
         {
          "change_pct_at_interval": [
           22.6,
-          17.9
+          17.8
          ],
          "family": "fable",
          "interval": [
-          2.8175,
-          3.2505
+          2.8299,
+          3.2737
          ],
-         "times_opus": 3.0322
+         "times_opus": 3.0318
         },
         {
          "change_pct_at_interval": [
-          21.4,
-          18.8
-         ],
-         "family": "sonnet",
-         "interval": [
-          0.4549,
-          0.5951
-         ],
-         "times_opus": 0.5151
-        },
-        {
-         "change_pct_at_interval": [
-          19.3,
-          21.7
+          19.4,
+          21.9
          ],
          "family": "sonnet-5-5",
          "interval": [
-          0.5484,
-          0.8494
+          0.5482,
+          0.8731
          ],
-         "times_opus": 0.6696
+         "times_opus": 0.6651
+        },
+        {
+         "change_pct_at_interval": [
+          21.7,
+          18.9
+         ],
+         "family": "sonnet",
+         "interval": [
+          0.4492,
+          0.594
+         ],
+         "times_opus": 0.5128
         }
        ],
        "interval_pct": [
-        -2.3,
-        48.3
+        -2.7,
+        49.0
        ],
        "interval_percentiles": [
         10,
@@ -721,7 +721,7 @@
        ],
        "rate_limited": false
       },
-      "z": 4.62
+      "z": 4.61
      },
      "ratio": {
       "accounts": [
@@ -742,33 +742,33 @@
        "2026-09-14T09:00:00+00:00",
        "2026-09-23T13:00:00+00:00"
       ],
-      "change_pct": -2.6,
+      "change_pct": -2.5,
       "excludes_no_change": false,
-      "interval_factor": 2.042,
+      "interval_factor": 2.01,
       "interval_pct": [
-       -12.7,
+       -12.4,
        8.5
       ],
       "nominal_interval_pct": [
-       -7.7,
-       2.7
+       -7.6,
+       2.8
       ],
-      "p": 0.4961,
+      "p": 0.5129,
       "per_account": {
        "a1": {
         "change_pct": -13.6,
         "days_after": 8,
         "days_before": 6,
         "interval_pct": [
-         -29.4,
-         5.7
+         -29.2,
+         5.4
         ],
         "points_after": 56.0,
         "points_before": 103.0,
         "weight": 0.29,
         "without_this_account": {
-         "change_pct": 2.2,
-         "z": 0.68
+         "change_pct": 2.4,
+         "z": 0.72
         }
        },
        "a2": {
@@ -776,28 +776,28 @@
         "days_after": 12,
         "days_before": 8,
         "interval_pct": [
-         -20.3,
-         16.2
+         -20.2,
+         16.1
         ],
         "points_after": 44.0,
         "points_before": 95.0,
-        "weight": 0.332,
+        "weight": 0.326,
         "without_this_account": {
-         "change_pct": -2.1,
-         "z": -0.63
+         "change_pct": -1.9,
+         "z": -0.59
         }
        },
        "a3": {
-        "change_pct": 7.8,
+        "change_pct": 7.9,
         "days_after": 8,
         "days_before": 5,
         "interval_pct": [
-         -9.7,
-         28.7
+         -9.2,
+         28.2
         ],
         "points_after": 58.0,
         "points_before": 97.0,
-        "weight": 0.378,
+        "weight": 0.384,
         "without_this_account": {
          "change_pct": -8.5,
          "z": -2.58
@@ -808,13 +808,13 @@
       "plan_wide": false,
       "rate_dependence": {
        "change_pct_range": [
-        -2.6,
-        -2.6
+        -2.5,
+        -2.5
        ],
        "excludes_no_change": false,
        "families": [],
        "interval_pct": [
-        -12.7,
+        -12.4,
         8.5
        ],
        "interval_percentiles": [
@@ -823,7 +823,7 @@
        ],
        "rate_limited": false
       },
-      "z": -0.99
+      "z": -0.95
      },
      "seven_day": {
       "accounts": [
@@ -841,65 +841,65 @@
        "2026-09-14T09:00:00+00:00",
        "2026-09-23T13:00:00+00:00"
       ],
-      "change_pct": 20.8,
+      "change_pct": 20.9,
       "excludes_no_change": true,
-      "interval_factor": 1.07,
+      "interval_factor": 1.082,
       "interval_pct": [
        13.3,
-       28.9
+       29.2
       ],
       "nominal_interval_pct": [
        13.8,
-       28.3
+       28.5
       ],
       "p": 0.0002499,
       "per_account": {
        "a1": {
-        "change_pct": 41.7,
+        "change_pct": 41.9,
         "days_after": 8,
         "days_before": 6,
         "interval_pct": [
-         13.5,
-         77.0
+         13.2,
+         77.8
         ],
         "points_after": 48.0,
         "points_before": 101.0,
-        "weight": 0.084,
+        "weight": 0.085,
         "without_this_account": {
-         "change_pct": 19.1,
-         "z": 5.44
+         "change_pct": 19.2,
+         "z": 5.42
         }
        },
        "a2": {
-        "change_pct": 18.1,
+        "change_pct": 18.2,
         "days_after": 12,
         "days_before": 8,
         "interval_pct": [
-         3.4,
-         35.0
+         3.3,
+         35.4
         ],
         "points_after": 44.0,
         "points_before": 95.0,
-        "weight": 0.235,
+        "weight": 0.236,
         "without_this_account": {
-         "change_pct": 21.7,
-         "z": 5.58
+         "change_pct": 21.8,
+         "z": 5.57
         }
        },
        "a3": {
-        "change_pct": 19.4,
+        "change_pct": 19.5,
         "days_after": 8,
         "days_before": 4,
         "interval_pct": [
          10.4,
-         29.1
+         29.4
         ],
         "points_after": 58.0,
         "points_before": 96.0,
-        "weight": 0.681,
+        "weight": 0.679,
         "without_this_account": {
-         "change_pct": 24.0,
-         "z": 3.95
+         "change_pct": 24.1,
+         "z": 3.94
         }
        }
       },
@@ -907,51 +907,51 @@
       "plan_wide": true,
       "rate_dependence": {
        "change_pct_range": [
-        15.9,
-        25.0
+        15.8,
+        25.2
        ],
        "excludes_no_change": true,
        "families": [
         {
          "change_pct_at_interval": [
-          22.5,
-          18.3
+          22.7,
+          18.4
          ],
          "family": "sonnet",
          "interval": [
-          0.4549,
-          0.5951
+          0.4492,
+          0.594
          ],
-         "times_opus": 0.5151
+         "times_opus": 0.5128
         },
         {
          "change_pct_at_interval": [
           22.7,
-          19.0
+          18.9
          ],
          "family": "fable",
          "interval": [
-          2.8175,
-          3.2505
+          2.8299,
+          3.2737
          ],
-         "times_opus": 3.0322
+         "times_opus": 3.0318
         },
         {
          "change_pct_at_interval": [
-          20.2,
-          21.4
+          20.4,
+          21.6
          ],
          "family": "sonnet-5-5",
          "interval": [
-          0.5484,
-          0.8494
+          0.5482,
+          0.8731
          ],
-         "times_opus": 0.6696
+         "times_opus": 0.6651
         }
        ],
        "interval_pct": [
-        8.7,
-        33.3
+        8.5,
+        33.7
        ],
        "interval_percentiles": [
         10,
@@ -959,11 +959,11 @@
        ],
        "rate_limited": false
       },
-      "z": 6.16
+      "z": 6.14
      }
     },
     "state": "measured",
-    "z": 6.49
+    "z": 6.48
    },
    {
     "accounts": [
@@ -975,7 +975,7 @@
     "at": "2026-10-09T16:00:00+00:00",
     "capture_audit": null,
     "carried": false,
-    "change_pct": -9.2,
+    "change_pct": -9.1,
     "decided": null,
     "finds": [
      [
@@ -1002,24 +1002,29 @@
       "2026-10-10T15:00:00+00:00",
       "2026-10-09T12:00:00+00:00",
       "2026-10-11T18:00:00+00:00"
+     ],
+     [
+      "2026-10-09T16:00:00+00:00",
+      "2026-10-09T12:00:00+00:00",
+      "2026-10-11T17:00:00+00:00"
      ]
     ],
     "first_found": "2026-10-20",
     "found_on": "ratio",
     "found_today": true,
     "held_by_capture": null,
-    "held_days": 5,
+    "held_days": 6,
     "hold_replayed": true,
     "instant_range": [
      "2026-10-09T12:00:00+00:00",
      "2026-10-11T21:00:00+00:00"
     ],
     "interval_pct": [
-     -16.2,
+     -16.0,
      -1.7
     ],
     "measured_on": null,
-    "p": 0.00052,
+    "p": 0.00051,
     "reading": "one_limit",
     "sign": -1,
     "sizes": {
@@ -1042,33 +1047,33 @@
        "2026-09-25T16:00:00+00:00",
        "2026-10-09T16:00:00+00:00"
       ],
-      "change_pct": 17.1,
+      "change_pct": 17.0,
       "excludes_no_change": true,
-      "interval_factor": 2.158,
+      "interval_factor": 2.173,
       "interval_pct": [
-       3.8,
-       32.0
+       3.6,
+       32.1
       ],
       "nominal_interval_pct": [
-       10.7,
-       23.8
+       10.6,
+       23.7
       ],
       "p": 0.0002499,
       "per_account": {
        "a1": {
-        "change_pct": 36.9,
+        "change_pct": 36.8,
         "days_after": 8,
         "days_before": 8,
         "interval_pct": [
-         -0.5,
-         88.5
+         -0.9,
+         88.8
         ],
         "points_after": 317.0,
         "points_before": 256.0,
         "weight": 0.142,
         "without_this_account": {
-         "change_pct": 14.1,
-         "z": 4.28
+         "change_pct": 14.0,
+         "z": 4.25
         }
        },
        "a2": {
@@ -1076,12 +1081,12 @@
         "days_after": 10,
         "days_before": 11,
         "interval_pct": [
-         3.3,
-         68.0
+         2.8,
+         68.6
         ],
         "points_after": 547.0,
         "points_before": 212.0,
-        "weight": 0.245,
+        "weight": 0.241,
         "without_this_account": {
          "change_pct": 12.7,
          "z": 3.64
@@ -1092,31 +1097,31 @@
         "days_after": 14,
         "days_before": 12,
         "interval_pct": [
-         -10.7,
-         25.3
+         -10.8,
+         25.5
         ],
         "points_after": 780.0,
         "points_before": 747.0,
-        "weight": 0.507,
+        "weight": 0.509,
         "without_this_account": {
-         "change_pct": 29.9,
-         "z": 6.45
+         "change_pct": 29.8,
+         "z": 6.41
         }
        },
        "a4": {
-        "change_pct": 17.2,
+        "change_pct": 17.3,
         "days_after": 7,
         "days_before": 6,
         "interval_pct": [
          -19.0,
-         69.6
+         70.0
         ],
         "points_after": 311.0,
         "points_before": 153.0,
-        "weight": 0.106,
+        "weight": 0.107,
         "without_this_account": {
          "change_pct": 17.0,
-         "z": 5.22
+         "z": 5.18
         }
        }
       },
@@ -1124,51 +1129,51 @@
       "plan_wide": true,
       "rate_dependence": {
        "change_pct_range": [
-        16.1,
-        18.2
+        16.0,
+        18.1
        ],
        "excludes_no_change": true,
        "families": [
         {
          "change_pct_at_interval": [
           16.3,
-          18.1
+          17.9
          ],
          "family": "sonnet-5-5",
          "interval": [
-          0.5484,
-          0.8494
+          0.5482,
+          0.8731
          ],
-         "times_opus": 0.6696
-        },
-        {
-         "change_pct_at_interval": [
-          17.2,
-          17.0
-         ],
-         "family": "sonnet",
-         "interval": [
-          0.4549,
-          0.5951
-         ],
-         "times_opus": 0.5151
+         "times_opus": 0.6651
         },
         {
          "change_pct_at_interval": [
           16.9,
-          16.9
+          16.8
          ],
          "family": "fable",
          "interval": [
-          2.8175,
-          3.2505
+          2.8299,
+          3.2737
          ],
-         "times_opus": 3.0322
+         "times_opus": 3.0318
+        },
+        {
+         "change_pct_at_interval": [
+          17.1,
+          16.9
+         ],
+         "family": "sonnet",
+         "interval": [
+          0.4492,
+          0.594
+         ],
+         "times_opus": 0.5128
         }
        ],
        "interval_pct": [
-        3.0,
-        33.4
+        2.7,
+        33.3
        ],
        "interval_percentiles": [
         10,
@@ -1176,7 +1181,7 @@
        ],
        "rate_limited": false
       },
-      "z": 5.53
+      "z": 5.5
      },
      "ratio": {
       "accounts": [
@@ -1195,16 +1200,16 @@
        "2026-09-25T16:00:00+00:00",
        "2026-10-09T16:00:00+00:00"
       ],
-      "change_pct": -9.2,
+      "change_pct": -9.1,
       "excludes_no_change": true,
-      "interval_factor": 2.042,
+      "interval_factor": 2.01,
       "interval_pct": [
-       -16.2,
+       -16.0,
        -1.7
       ],
       "nominal_interval_pct": [
-       -12.7,
-       -5.6
+       -12.6,
+       -5.5
       ],
       "p": 0.0002499,
       "per_account": {
@@ -1213,15 +1218,15 @@
         "days_after": 6,
         "days_before": 9,
         "interval_pct": [
-         -23.6,
-         15.9
+         -23.3,
+         15.5
         ],
         "points_after": 68.0,
         "points_before": 53.0,
-        "weight": 0.148,
+        "weight": 0.149,
         "without_this_account": {
-         "change_pct": -9.8,
-         "z": -4.75
+         "change_pct": -9.7,
+         "z": -4.69
         }
        },
        "a2": {
@@ -1230,14 +1235,14 @@
         "days_before": 11,
         "interval_pct": [
          -23.0,
-         -1.0
+         -0.9
         ],
         "points_after": 121.0,
         "points_before": 37.0,
-        "weight": 0.406,
+        "weight": 0.393,
         "without_this_account": {
          "change_pct": -6.8,
-         "z": -2.71
+         "z": -2.72
         }
        },
        "a3": {
@@ -1245,15 +1250,15 @@
         "days_after": 13,
         "days_before": 12,
         "interval_pct": [
-         -17.2,
-         6.5
+         -17.0,
+         6.2
         ],
         "points_after": 99.0,
         "points_before": 90.0,
-        "weight": 0.403,
+        "weight": 0.413,
         "without_this_account": {
-         "change_pct": -11.3,
-         "z": -4.62
+         "change_pct": -11.2,
+         "z": -4.55
         }
        },
        "a4": {
@@ -1261,15 +1266,15 @@
         "days_after": 7,
         "days_before": 7,
         "interval_pct": [
-         -42.2,
-         23.6
+         -41.9,
+         22.8
         ],
         "points_after": 75.0,
         "points_before": 20.0,
-        "weight": 0.044,
+        "weight": 0.045,
         "without_this_account": {
-         "change_pct": -8.9,
-         "z": -4.57
+         "change_pct": -8.8,
+         "z": -4.5
         }
        }
       },
@@ -1277,26 +1282,26 @@
       "plan_wide": true,
       "rate_dependence": {
        "change_pct_range": [
-        -9.3,
-        -9.1
+        -9.2,
+        -9.0
        ],
        "excludes_no_change": true,
        "families": [
         {
          "change_pct_at_interval": [
-          -9.3,
-          -9.1
+          -9.2,
+          -9.0
          ],
          "family": "sonnet-5-5",
          "interval": [
-          0.5484,
-          0.8494
+          0.5482,
+          0.8731
          ],
-         "times_opus": 0.6696
+         "times_opus": 0.6651
         }
        ],
        "interval_pct": [
-        -16.3,
+        -16.1,
         -1.5
        ],
        "interval_percentiles": [
@@ -1305,7 +1310,7 @@
        ],
        "rate_limited": false
       },
-      "z": -4.84
+      "z": -4.78
      },
      "seven_day": {
       "accounts": [
@@ -1326,44 +1331,44 @@
       ],
       "change_pct": 5.7,
       "excludes_no_change": false,
-      "interval_factor": 1.07,
+      "interval_factor": 1.082,
       "interval_pct": [
-       -0.3,
-       12.0
+       -0.4,
+       12.1
       ],
       "nominal_interval_pct": [
-       0.1,
+       0.0,
        11.6
       ],
-      "p": 0.03974,
+      "p": 0.04149,
       "per_account": {
        "a1": {
-        "change_pct": 16.4,
+        "change_pct": 16.3,
         "days_after": 6,
         "days_before": 9,
         "interval_pct": [
-         -7.4,
-         46.2
+         -7.8,
+         46.7
         ],
         "points_after": 63.0,
         "points_before": 45.0,
         "weight": 0.065,
         "without_this_account": {
          "change_pct": 5.0,
-         "z": 1.69
+         "z": 1.67
         }
        },
        "a2": {
-        "change_pct": 16.8,
+        "change_pct": 16.7,
         "days_after": 8,
         "days_before": 11,
         "interval_pct": [
-         3.1,
-         32.4
+         2.8,
+         32.6
         ],
         "points_after": 121.0,
         "points_before": 35.0,
-        "weight": 0.218,
+        "weight": 0.217,
         "without_this_account": {
          "change_pct": 2.8,
          "z": 0.87
@@ -1374,31 +1379,31 @@
         "days_after": 13,
         "days_before": 12,
         "interval_pct": [
-         -5.5,
-         9.3
+         -5.7,
+         9.5
         ],
         "points_after": 99.0,
         "points_before": 90.0,
-        "weight": 0.635,
+        "weight": 0.634,
         "without_this_account": {
-         "change_pct": 13.1,
-         "z": 2.68
+         "change_pct": 13.0,
+         "z": 2.65
         }
        },
        "a4": {
-        "change_pct": 1.5,
+        "change_pct": 1.6,
         "days_after": 7,
         "days_before": 7,
         "interval_pct": [
-         -17.2,
-         24.6
+         -17.3,
+         24.8
         ],
         "points_after": 75.0,
         "points_before": 19.0,
-        "weight": 0.082,
+        "weight": 0.083,
         "without_this_account": {
-         "change_pct": 6.1,
-         "z": 2.02
+         "change_pct": 6.0,
+         "z": 2.01
         }
        }
       },
@@ -1406,34 +1411,34 @@
       "plan_wide": false,
       "rate_dependence": {
        "change_pct_range": [
-        4.9,
-        6.4
+        4.8,
+        6.5
        ],
        "excludes_no_change": false,
        "families": [
         {
          "change_pct_at_interval": [
-          5.3,
+          6.0,
+          5.2
+         ],
+         "family": "sonnet",
+         "interval": [
+          0.4492,
+          0.594
+         ],
+         "times_opus": 0.5128
+        },
+        {
+         "change_pct_at_interval": [
+          5.4,
           6.1
          ],
          "family": "sonnet-5-5",
          "interval": [
-          0.5484,
-          0.8494
+          0.5482,
+          0.8731
          ],
-         "times_opus": 0.6696
-        },
-        {
-         "change_pct_at_interval": [
-          6.0,
-          5.3
-         ],
-         "family": "sonnet",
-         "interval": [
-          0.4549,
-          0.5951
-         ],
-         "times_opus": 0.5151
+         "times_opus": 0.6651
         },
         {
          "change_pct_at_interval": [
@@ -1442,15 +1447,15 @@
          ],
          "family": "fable",
          "interval": [
-          2.8175,
-          3.2505
+          2.8299,
+          3.2737
          ],
-         "times_opus": 3.0322
+         "times_opus": 3.0318
         }
        ],
        "interval_pct": [
-        -1.0,
-        12.8
+        -1.2,
+        13.0
        ],
        "interval_percentiles": [
         10,
@@ -1458,63 +1463,63 @@
        ],
        "rate_limited": false
       },
-      "z": 1.99
+      "z": 1.97
      }
     },
     "state": "provisional",
-    "z": -4.25
+    "z": -4.21
    }
   ],
-  "data_until": "2026-10-24T00:00:00+00:00",
-  "day": "2026-10-24",
+  "data_until": "2026-10-25T00:00:00+00:00",
+  "day": "2026-10-25",
   "headless_factor": {
    "account_weeks": 20,
    "dispersion": 0.314,
    "fit": "quasi-Poisson of each step's five-hour points on account x ISO-week levels and its headless share of credits",
    "interval": [
-    1.329,
+    1.328,
     1.53
    ],
-   "n_steps": 935,
+   "n_steps": 936,
    "status": null,
-   "value": 1.426
+   "value": 1.425
   },
   "interval_coverage": {
    "five_hour": {
-    "factor": 2.158,
-    "instants": 144,
-    "z_spread": 2.158
+    "factor": 2.173,
+    "instants": 146,
+    "z_spread": 2.173
    },
    "ratio": {
-    "factor": 2.042,
-    "instants": 138,
-    "z_spread": 2.042
+    "factor": 2.01,
+    "instants": 139,
+    "z_spread": 2.01
    },
    "seven_day": {
-    "factor": 1.07,
-    "instants": 138,
-    "z_spread": 1.07
+    "factor": 1.082,
+    "instants": 139,
+    "z_spread": 1.082
    }
   },
   "levels": {
    "five_hour": [
     {
      "from": null,
-     "index": 0.7105,
+     "index": 0.7099,
      "opened_by": null,
      "provisional": false,
      "to": "2026-09-14T09:00:00+00:00"
     },
     {
      "from": "2026-09-14T09:00:00+00:00",
-     "index": 0.7105,
+     "index": 0.7099,
      "opened_by": "measured",
      "provisional": false,
      "to": "2026-09-23T13:00:00+00:00"
     },
     {
      "from": "2026-09-23T13:00:00+00:00",
-     "index": 0.854,
+     "index": 0.8547,
      "opened_by": "measured",
      "provisional": false,
      "to": "2026-10-09T16:00:00+00:00"
@@ -1530,21 +1535,21 @@
    "ratio": [
     {
      "from": null,
-     "index": 1.3349,
+     "index": 1.3335,
      "opened_by": null,
      "provisional": false,
      "to": "2026-09-14T09:00:00+00:00"
     },
     {
      "from": "2026-09-14T09:00:00+00:00",
-     "index": 1.1013,
+     "index": 1.1001,
      "opened_by": "measured",
      "provisional": false,
      "to": "2026-09-23T13:00:00+00:00"
     },
     {
      "from": "2026-09-23T13:00:00+00:00",
-     "index": 1.1013,
+     "index": 1.1001,
      "opened_by": "measured",
      "provisional": false,
      "to": "2026-10-09T16:00:00+00:00"
@@ -1560,14 +1565,14 @@
    "seven_day": [
     {
      "from": null,
-     "index": 0.8278,
+     "index": 0.8271,
      "opened_by": null,
      "provisional": false,
      "to": "2026-09-14T09:00:00+00:00"
     },
     {
      "from": "2026-09-14T09:00:00+00:00",
-     "index": 0.8278,
+     "index": 0.8271,
      "opened_by": "measured",
      "provisional": false,
      "to": "2026-09-23T13:00:00+00:00"
@@ -1599,69 +1604,69 @@
      ],
      [
       "2026-08-21",
-      0.9272,
+      0.9274,
       13.0,
       0.3691
      ],
      [
       "2026-08-22",
-      0.7939,
+      0.7932,
       40.0,
-      0.569
+      0.5687
      ],
      [
       "2026-08-23",
-      0.4722,
+      0.472,
       105.0,
-      0.5155
+      0.5152
      ],
      [
       "2026-08-24",
       0.6643,
       82.0,
-      0.5604
+      0.5602
      ],
      [
       "2026-08-26",
-      2.1644,
+      2.1635,
       10.0,
-      0.6172
+      0.617
      ],
      [
       "2026-08-27",
       0.3497,
       228.0,
-      0.5214
+      0.5213
      ],
      [
       "2026-08-28",
       0.4273,
       103.0,
-      0.4951
+      0.495
      ],
      [
       "2026-08-29",
-      0.1215,
+      0.1214,
       30.0,
-      0.4536
+      0.4535
      ],
      [
       "2026-08-30",
-      0.2546,
+      0.2543,
       60.0,
-      0.4265
+      0.4264
      ],
      [
       "2026-08-31",
-      0.3204,
+      0.3203,
       20.0,
-      0.3785
+      0.3784
      ],
      [
       "2026-09-01",
-      0.6387,
+      0.6398,
       20.0,
-      0.3896
+      0.3895
      ],
      [
       "2026-09-02",
@@ -1671,777 +1676,789 @@
      ],
      [
       "2026-09-03",
-      0.1939,
+      0.1938,
       317.0,
       0.2424
      ],
      [
       "2026-09-04",
-      0.3063,
+      0.3062,
       143.0,
-      0.2273
+      0.2272
      ],
      [
       "2026-09-05",
-      0.4345,
+      0.4344,
       65.0,
-      0.2514
+      0.2513
      ],
      [
       "2026-09-06",
-      0.4431,
+      0.443,
       62.0,
-      0.2683
+      0.2682
      ],
      [
       "2026-09-07",
-      0.5002,
+      0.4997,
       20.0,
-      0.2735
+      0.2734
      ],
      [
       "2026-09-08",
       0.4991,
       31.0,
-      0.273
+      0.2729
      ],
      [
       "2026-09-09",
-      0.4583,
+      0.4581,
       73.0,
-      0.3093
+      0.3092
      ],
      [
       "2026-09-10",
-      0.4561,
+      0.4559,
       135.0,
-      0.4159
+      0.4158
      ],
      [
       "2026-09-11",
-      0.4697,
+      0.4694,
       10.0,
-      0.4569
+      0.4567
      ],
      [
       "2026-09-12",
-      0.5207,
+      0.5203,
       61.0,
-      0.4705
+      0.4703
      ],
      [
       "2026-09-15",
-      0.5618,
+      0.5613,
       14.0,
-      0.5618
+      0.5613
      ],
      [
       "2026-09-18",
-      0.4274,
+      0.4272,
       297.0,
-      0.4335
+      0.4332
      ],
      [
       "2026-09-19",
-      0.5627,
+      0.5625,
       60.0,
-      0.4544
+      0.4541
      ],
      [
       "2026-09-20",
-      0.5224,
+      0.5221,
       70.0,
-      0.4652
+      0.4649
      ],
      [
       "2026-09-21",
-      0.8219,
+      0.8222,
       30.0,
-      0.4879
+      0.4877
      ],
      [
       "2026-09-22",
-      0.7152,
+      0.7151,
       30.0,
-      0.4998
+      0.4996
      ],
      [
       "2026-09-23",
-      0.7272,
+      0.727,
       40.0,
-      0.517
+      0.5168
      ],
      [
       "2026-09-23",
-      0.6948,
+      0.6952,
       10.0,
-      0.6948
+      0.6952
      ],
      [
       "2026-09-24",
-      0.6939,
+      0.6945,
       10.0,
-      0.6943
+      0.6949
      ],
      [
       "2026-09-25",
-      0.5266,
+      0.5269,
       10.0,
-      0.6384
+      0.6389
      ],
      [
       "2026-09-27",
-      0.6262,
+      0.6261,
       12.0,
-      0.6349
+      0.6352
      ],
      [
       "2026-09-28",
-      0.5728,
+      0.5731,
       20.0,
-      0.6149
+      0.6152
      ],
      [
       "2026-09-29",
-      0.7198,
+      0.7208,
       10.0,
-      0.6295
+      0.6299
      ],
      [
       "2026-10-01",
-      0.6424,
+      0.6427,
       34.0,
-      0.6195
+      0.6198
      ],
      [
       "2026-10-02",
-      0.7696,
+      0.7701,
       150.0,
-      0.7232
+      0.7237
      ],
      [
       "2026-10-03",
-      0.7964,
+      0.7971,
       10.0,
-      0.7263
+      0.7268
      ],
      [
       "2026-10-05",
-      0.7829,
+      0.7837,
       10.0,
-      0.7489
+      0.7494
      ],
      [
       "2026-10-06",
-      0.7735,
+      0.7744,
       10.0,
-      0.7514
+      0.7519
      ],
      [
       "2026-10-10",
-      0.8451,
+      0.8462,
       10.0,
-      0.8451
+      0.8462
      ],
      [
       "2026-10-13",
-      0.7475,
+      0.7471,
       10.0,
-      0.7963
+      0.7966
      ],
      [
       "2026-10-14",
-      0.959,
+      0.9579,
       10.0,
-      0.8506
+      0.8504
      ],
      [
       "2026-10-15",
-      0.895,
+      0.8944,
       10.0,
-      0.8617
+      0.8614
      ],
      [
       "2026-10-16",
-      1.0152,
+      1.0153,
       156.0,
-      0.9838
+      0.9839
      ],
      [
       "2026-10-17",
-      0.8694,
+      0.8674,
       30.0,
-      0.9744
+      0.9741
      ],
      [
       "2026-10-20",
-      1.1427,
+      1.1393,
       11.0,
-      0.9933
+      0.9929
      ],
      [
       "2026-10-23",
-      1.069,
+      1.0701,
       80.0,
-      1.0262
+      1.0261
      ]
     ],
     "a2": [
      [
       "2026-09-05",
-      0.6327,
+      0.6345,
       298.0,
-      0.6327
+      0.6345
      ],
      [
       "2026-09-06",
-      0.6377,
+      0.6394,
       122.0,
-      0.6341
+      0.636
      ],
      [
       "2026-09-08",
-      0.5399,
+      0.5412,
       21.0,
-      0.6296
+      0.6314
      ],
      [
       "2026-09-09",
-      0.6976,
+      0.6993,
       132.0,
-      0.6453
+      0.6471
      ],
      [
       "2026-09-10",
-      0.5499,
+      0.5513,
       135.0,
-      0.6271
+      0.6288
      ],
      [
       "2026-09-11",
-      0.4196,
+      0.4206,
       71.0,
-      0.6082
+      0.6098
      ],
      [
       "2026-09-12",
-      0.5817,
+      0.5828,
       30.0,
-      0.5924
+      0.5938
      ],
      [
       "2026-09-13",
-      0.5511,
+      0.5524,
       20.0,
-      0.5768
+      0.5782
      ],
      [
       "2026-09-15",
-      0.7557,
+      0.7579,
       20.0,
-      0.7557
+      0.7579
      ],
      [
       "2026-09-16",
-      0.7026,
+      0.7048,
       72.0,
-      0.7141
+      0.7163
      ],
      [
       "2026-09-17",
-      0.5151,
+      0.5167,
       147.0,
-      0.5917
+      0.5935
      ],
      [
       "2026-09-18",
-      0.7029,
+      0.7051,
       100.0,
-      0.6245
+      0.6265
      ],
      [
       "2026-09-19",
-      0.6158,
+      0.6175,
       30.0,
-      0.6238
+      0.6257
      ],
      [
       "2026-09-20",
-      0.7339,
+      0.7363,
       20.0,
-      0.6295
+      0.6314
      ],
      [
       "2026-09-21",
-      0.5862,
+      0.5876,
       31.0,
-      0.6263
+      0.6282
      ],
      [
       "2026-09-22",
-      0.6577,
+      0.6582,
       10.0,
-      0.6207
+      0.6226
      ],
      [
       "2026-09-23",
-      0.7221,
+      0.7234,
       10.0,
-      0.6067
+      0.6085
      ],
      [
       "2026-09-23",
-      0.7184,
+      0.7207,
       10.0,
-      0.7184
+      0.7207
      ],
      [
       "2026-09-24",
-      0.7417,
+      0.7443,
       51.0,
-      0.7379
+      0.7404
      ],
      [
       "2026-09-25",
-      0.7228,
+      0.7256,
       33.0,
-      0.7326
+      0.7352
      ],
      [
       "2026-09-28",
-      0.5804,
-      10.0,
-      0.7179
-     ],
-     [
-      "2026-09-29",
-      0.6906,
-      30.0,
-      0.7118
-     ],
-     [
-      "2026-09-30",
-      0.7516,
-      50.0,
-      0.7229
-     ],
-     [
-      "2026-10-01",
-      0.6235,
-      10.0,
-      0.7082
-     ],
-     [
-      "2026-10-02",
-      0.842,
-      10.0,
-      0.716
-     ],
-     [
-      "2026-10-03",
-      0.7709,
+      0.582,
       10.0,
       0.7205
      ],
      [
+      "2026-09-29",
+      0.6932,
+      30.0,
+      0.7144
+     ],
+     [
+      "2026-09-30",
+      0.7539,
+      50.0,
+      0.7254
+     ],
+     [
+      "2026-10-01",
+      0.6245,
+      10.0,
+      0.7105
+     ],
+     [
+      "2026-10-02",
+      0.845,
+      10.0,
+      0.7182
+     ],
+     [
+      "2026-10-03",
+      0.7751,
+      10.0,
+      0.723
+     ],
+     [
       "2026-10-05",
-      0.7766,
+      0.7803,
       20.0,
-      0.7399
+      0.7426
      ],
      [
       "2026-10-06",
-      0.9207,
+      0.9254,
       10.0,
-      0.7698
+      0.7727
      ],
      [
       "2026-10-07",
-      0.454,
+      0.4563,
       22.0,
-      0.6962
+      0.6993
      ],
      [
       "2026-10-08",
-      0.9715,
+      0.9765,
       20.0,
-      0.764
+      0.7677
      ],
      [
       "2026-10-09",
-      1.0159,
+      1.0209,
       20.0,
-      0.8057
+      0.8098
      ],
      [
       "2026-10-10",
-      0.7844,
+      0.789,
       10.0,
-      0.7844
+      0.789
      ],
      [
       "2026-10-11",
-      0.7791,
+      0.7825,
       10.0,
-      0.7818
+      0.7857
      ],
      [
       "2026-10-12",
-      1.1131,
+      1.1168,
       61.0,
-      1.0313
+      1.0351
      ],
      [
       "2026-10-13",
-      1.0847,
+      1.0889,
       70.0,
-      1.056
+      1.06
      ],
      [
       "2026-10-14",
-      0.9178,
+      0.9217,
       40.0,
-      1.0271
+      1.031
      ],
      [
       "2026-10-15",
-      0.9601,
+      0.9635,
       92.0,
-      1.0053
+      1.0091
      ],
      [
       "2026-10-16",
-      0.8969,
+      0.9008,
       30.0,
-      0.9949
+      0.9987
      ],
      [
       "2026-10-17",
-      1.0575,
+      1.0615,
       164.0,
-      1.0214
+      1.0252
      ],
      [
       "2026-10-18",
-      0.9456,
+      0.948,
       20.0,
-      1.0233
+      1.0271
      ],
      [
       "2026-10-20",
-      0.6966,
+      0.6972,
       10.0,
-      0.9866
+      0.9903
      ],
      [
       "2026-10-22",
-      1.0068,
+      1.0099,
       20.0,
-      1.0096
+      1.0133
      ],
      [
       "2026-10-23",
-      0.808,
+      0.8099,
       20.0,
-      1.0068
+      1.0103
+     ],
+     [
+      "2026-10-24",
+      0.799,
+      10.0,
+      0.879
      ]
     ],
     "a3": [
      [
       "2026-09-18",
-      0.6628,
+      0.662,
       54.0,
-      0.6628
+      0.662
      ],
      [
       "2026-09-19",
-      0.9573,
+      0.9569,
       168.0,
-      0.8856
+      0.8852
      ],
      [
       "2026-09-20",
-      0.8047,
+      0.8045,
       222.0,
-      0.8452
+      0.8448
      ],
      [
       "2026-09-21",
-      0.6195,
+      0.6191,
       93.0,
-      0.8061
+      0.8057
      ],
      [
       "2026-09-25",
-      0.5131,
+      0.5019,
       10.0,
-      0.5131
+      0.5019
      ],
      [
       "2026-09-28",
-      0.8862,
+      0.8858,
       52.0,
-      0.826
+      0.8239
      ],
      [
       "2026-09-29",
-      1.0284,
+      1.0283,
       122.0,
-      0.9602
+      0.9594
      ],
      [
       "2026-09-30",
-      0.8577,
+      0.856,
       10.0,
-      0.9549
+      0.9541
      ],
      [
       "2026-10-01",
-      0.8571,
+      0.8547,
       20.0,
-      0.9458
+      0.9448
      ],
      [
       "2026-10-02",
       0.7853,
       53.0,
-      0.9295
+      0.9291
      ],
      [
       "2026-10-03",
-      1.1996,
+      1.1997,
       30.0,
-      0.9578
+      0.9574
      ],
      [
       "2026-10-04",
-      1.1679,
+      1.1674,
       20.0,
-      0.9715
+      0.9711
      ],
      [
       "2026-10-05",
-      0.9209,
+      0.921,
       51.0,
-      0.9775
+      0.9773
      ],
      [
       "2026-10-06",
-      0.8693,
+      0.8696,
       125.0,
       0.9136
      ],
      [
       "2026-10-07",
-      0.9863,
+      0.9869,
       82.0,
-      0.9307
+      0.9308
      ],
      [
       "2026-10-08",
-      0.9728,
+      0.9738,
       142.0,
-      0.9456
+      0.946
      ],
      [
       "2026-10-09",
       0.8855,
       40.0,
-      0.958
+      0.9584
      ],
      [
       "2026-10-09",
-      1.0535,
+      1.0538,
       10.0,
-      1.0535
+      1.0538
      ],
      [
       "2026-10-10",
-      1.1196,
+      1.1202,
       20.0,
-      1.0976
+      1.0981
      ],
      [
       "2026-10-11",
-      1.1302,
+      1.1303,
       20.0,
-      1.1106
+      1.111
      ],
      [
       "2026-10-12",
-      0.9891,
+      0.988,
       30.0,
-      1.0651
+      1.0649
      ],
      [
       "2026-10-13",
-      0.8515,
+      0.852,
       10.0,
-      1.0413
+      1.0412
      ],
      [
       "2026-10-14",
-      0.9371,
+      0.9377,
       42.0,
-      1.0082
+      1.0083
      ],
      [
       "2026-10-15",
-      0.9221,
+      0.9216,
       64.0,
-      0.9801
+      0.98
      ],
      [
       "2026-10-16",
-      0.9557,
+      0.9547,
       40.0,
-      0.9725
+      0.9722
      ],
      [
       "2026-10-17",
-      0.9921,
+      0.9897,
       10.0,
-      0.9598
+      0.9593
      ],
      [
       "2026-10-18",
-      0.8765,
+      0.8759,
       20.0,
-      0.9363
+      0.9358
      ],
      [
       "2026-10-19",
-      1.0002,
+      1.0003,
       138.0,
-      0.9586
+      0.9584
      ],
      [
       "2026-10-20",
-      1.0573,
+      1.0586,
       195.0,
-      0.9985
+      0.9989
      ],
      [
       "2026-10-21",
-      1.0713,
+      1.0726,
       80.0,
-      1.0139
+      1.0144
      ],
      [
       "2026-10-22",
-      0.9435,
+      0.9439,
       81.0,
-      1.0142
+      1.0148
      ],
      [
       "2026-10-23",
-      0.8631,
+      0.8636,
       30.0,
-      1.0103
+      1.0109
+     ],
+     [
+      "2026-10-24",
+      0.9682,
+      10.0,
+      1.0105
      ]
     ],
     "a4": [
      [
       "2026-09-23",
-      1.0549,
+      1.0544,
       10.0,
-      1.0549
+      1.0544
      ],
      [
       "2026-09-23",
-      0.9418,
+      0.9417,
       70.0,
-      0.9418
+      0.9417
      ],
      [
       "2026-09-24",
-      0.9053,
+      0.9051,
       42.0,
-      0.9281
+      0.928
      ],
      [
       "2026-09-26",
-      0.8088,
+      0.8082,
       10.0,
-      0.9183
+      0.9181
      ],
      [
       "2026-09-29",
-      0.8364,
+      0.8361,
       10.0,
-      0.9121
+      0.9119
      ],
      [
       "2026-09-30",
-      0.8553,
+      0.8569,
       10.0,
       0.8754
      ],
      [
       "2026-10-01",
-      0.9466,
+      0.945,
       83.0,
-      0.9166
+      0.9154
      ],
      [
       "2026-10-03",
-      0.8794,
+      0.8791,
       10.0,
-      0.9228
+      0.9217
      ],
      [
       "2026-10-06",
-      0.5197,
+      0.5194,
       20.0,
-      0.8643
+      0.8633
      ],
      [
       "2026-10-07",
-      0.7769,
+      0.7762,
       10.0,
-      0.8579
+      0.8567
      ],
      [
       "2026-10-10",
-      0.764,
+      0.762,
       10.0,
-      0.764
+      0.762
      ],
      [
       "2026-10-15",
-      0.7592,
+      0.7581,
       10.0,
-      0.7616
+      0.76
      ],
      [
       "2026-10-18",
-      1.0956,
+      1.0949,
       70.0,
-      1.0535
+      1.0528
      ],
      [
       "2026-10-19",
       1.0259,
       181.0,
-      1.0344
+      1.0342
      ],
      [
       "2026-10-20",
-      0.8565,
+      0.8594,
       20.0,
       1.0217
      ],
      [
       "2026-10-21",
-      0.7886,
+      0.7907,
       10.0,
-      1.0137
+      1.0138
      ],
      [
       "2026-10-22",
-      0.8365,
+      0.8369,
       10.0,
-      1.0164
+      1.0165
      ]
     ]
    },
@@ -2461,75 +2478,75 @@
      ],
      [
       "2026-08-20",
-      1.6413,
+      1.6412,
       2.0,
-      1.7886
+      1.7885
      ],
      [
       "2026-08-22",
-      1.5435,
+      1.544,
       2.0,
       1.7536
      ],
      [
       "2026-08-23",
-      1.479,
+      1.4794,
       15.0,
-      1.6115
+      1.6118
      ],
      [
       "2026-08-24",
-      1.5242,
+      1.5245,
       12.0,
-      1.586
+      1.5862
      ],
      [
       "2026-08-25",
-      0.931,
+      0.9312,
       1.0,
-      1.4877
+      1.488
      ],
      [
       "2026-08-27",
-      1.9277,
+      1.928,
       24.0,
-      1.6807
+      1.681
      ],
      [
       "2026-08-28",
-      1.475,
+      1.4751,
       13.0,
-      1.6408
+      1.6411
      ],
      [
       "2026-08-29",
-      1.3483,
+      1.3485,
       8.0,
-      1.6114
+      1.6117
      ],
      [
       "2026-08-30",
-      1.2909,
+      1.2911,
       10.0,
-      1.5935
+      1.5937
      ],
      [
       "2026-08-31",
-      1.4786,
+      1.4787,
       3.0,
-      1.6017
+      1.6019
      ],
      [
       "2026-09-01",
       1.2625,
       3.0,
-      1.596
+      1.5962
      ],
      [
       "2026-09-02",
       1.9005,
       20.0,
-      1.6712
+      1.6714
      ],
      [
       "2026-09-03",
@@ -2557,7 +2574,7 @@
      ],
      [
       "2026-09-07",
-      1.7024,
+      1.703,
       1.0,
       1.5607
      ],
@@ -2571,17 +2588,17 @@
       "2026-09-09",
       1.3995,
       11.0,
-      1.5063
+      1.5062
      ],
      [
       "2026-09-10",
-      1.4684,
+      1.4686,
       22.0,
       1.4966
      ],
      [
       "2026-09-11",
-      1.129,
+      1.1291,
       2.0,
       1.4805
      ],
@@ -2589,7 +2606,7 @@
       "2026-09-12",
       1.2625,
       11.0,
-      1.3852
+      1.3853
      ],
      [
       "2026-09-13",
@@ -2599,9 +2616,9 @@
      ],
      [
       "2026-09-18",
-      1.291,
+      1.2911,
       55.0,
-      1.291
+      1.2911
      ],
      [
       "2026-09-19",
@@ -2625,11 +2642,11 @@
       "2026-09-22",
       1.0942,
       6.0,
-      1.2468
+      1.2469
      ],
      [
       "2026-09-23",
-      1.1147,
+      1.115,
       8.0,
       1.2366
      ],
@@ -2641,7 +2658,7 @@
      ],
      [
       "2026-09-28",
-      1.0972,
+      1.0973,
       7.0,
       1.1109
      ],
@@ -2649,19 +2666,19 @@
       "2026-09-29",
       1.2572,
       1.0,
-      1.123
+      1.1231
      ],
      [
       "2026-09-30",
-      1.3792,
+      1.3793,
       2.0,
-      1.1696
+      1.1697
      ],
      [
       "2026-10-01",
       1.2473,
       5.0,
-      1.1955
+      1.1956
      ],
      [
       "2026-10-02",
@@ -2673,7 +2690,7 @@
       "2026-10-04",
       1.01,
       1.0,
-      1.0564
+      1.0565
      ],
      [
       "2026-10-05",
@@ -2691,7 +2708,7 @@
       "2026-10-07",
       1.01,
       1.0,
-      1.0373
+      1.0374
      ],
      [
       "2026-10-12",
@@ -2701,9 +2718,9 @@
      ],
      [
       "2026-10-13",
-      1.232,
+      1.2322,
       1.0,
-      0.8685
+      0.8686
      ],
      [
       "2026-10-14",
@@ -2713,7 +2730,7 @@
      ],
      [
       "2026-10-15",
-      0.9979,
+      0.998,
       1.0,
       1.045
      ],
@@ -2731,7 +2748,7 @@
      ],
      [
       "2026-10-23",
-      0.986,
+      0.9859,
       21.0,
       0.9926
      ]
@@ -2739,431 +2756,443 @@
     "a2": [
      [
       "2026-09-05",
-      1.2212,
+      1.2173,
       51.0,
-      1.2212
+      1.2173
      ],
      [
       "2026-09-06",
-      1.2853,
+      1.2812,
       20.0,
-      1.2392
+      1.2353
      ],
      [
       "2026-09-07",
-      1.4736,
+      1.4689,
       1.0,
-      1.2425
+      1.2386
      ],
      [
       "2026-09-08",
-      1.4398,
+      1.4356,
       3.0,
-      1.2504
+      1.2464
      ],
      [
       "2026-09-09",
-      1.2386,
+      1.235,
       18.0,
-      1.2481
+      1.2442
      ],
      [
       "2026-09-10",
-      1.3225,
+      1.3181,
       24.0,
-      1.2633
+      1.2594
      ],
      [
       "2026-09-11",
-      1.3237,
+      1.3191,
       12.0,
-      1.269
+      1.2649
      ],
      [
       "2026-09-12",
-      1.5127,
+      1.5075,
       7.0,
-      1.3177
+      1.3135
      ],
      [
       "2026-09-13",
-      1.5339,
+      1.5285,
       12.0,
-      1.3598
+      1.3554
      ],
      [
       "2026-09-14",
-      1.639,
+      1.6332,
       2.0,
-      1.3655
+      1.361
      ],
      [
       "2026-09-15",
-      1.1347,
+      1.1307,
       4.0,
-      1.1347
+      1.1307
      ],
      [
       "2026-09-16",
-      1.1191,
+      1.1152,
       17.0,
-      1.1221
+      1.1182
      ],
      [
       "2026-09-17",
-      1.0681,
+      1.0643,
       35.0,
-      1.0883
+      1.0845
      ],
      [
       "2026-09-18",
-      1.0659,
+      1.0621,
       22.0,
-      1.082
+      1.0782
      ],
      [
       "2026-09-19",
-      1.158,
+      1.1541,
       6.0,
-      1.0874
+      1.0836
      ],
      [
       "2026-09-20",
-      1.1777,
+      1.1738,
       5.0,
-      1.0925
+      1.0887
      ],
      [
       "2026-09-21",
-      1.1377,
+      1.1338,
       5.0,
-      1.0949
+      1.0911
      ],
      [
       "2026-09-23",
-      0.669,
+      0.6672,
       1.0,
-      1.0814
+      1.0777
      ],
      [
       "2026-09-23",
-      1.0947,
+      1.0913,
       4.0,
-      1.0947
+      1.0913
      ],
      [
       "2026-09-24",
-      0.9742,
+      0.9708,
       11.0,
-      1.0063
+      1.0029
      ],
      [
       "2026-09-25",
-      0.8287,
+      0.8258,
       6.0,
-      0.9556
+      0.9523
      ],
      [
       "2026-09-28",
-      1.0501,
+      1.0469,
       2.0,
-      0.9638
+      0.9606
      ],
      [
       "2026-09-29",
-      1.1514,
+      1.1475,
       6.0,
-      1.0026
+      0.9992
      ],
      [
       "2026-09-30",
-      1.183,
+      1.179,
       7.0,
-      1.0306
+      1.0271
      ],
      [
       "2026-10-02",
-      1.2277,
+      1.224,
       2.0,
-      1.1615
+      1.1576
      ],
      [
       "2026-10-03",
-      1.2499,
+      1.2457,
       1.0,
-      1.1664
+      1.1625
      ],
      [
       "2026-10-04",
-      1.2231,
+      1.2193,
       1.0,
-      1.1694
+      1.1655
      ],
      [
       "2026-10-05",
-      1.0812,
+      1.078,
       2.0,
-      1.1726
+      1.1688
      ],
      [
       "2026-10-06",
-      0.8547,
+      0.8519,
       2.0,
-      1.1388
+      1.135
      ],
      [
       "2026-10-07",
-      1.4581,
+      1.4534,
       4.0,
-      1.2194
+      1.2155
      ],
      [
       "2026-10-08",
-      1.0371,
+      1.0335,
       6.0,
-      1.1586
+      1.1549
      ],
      [
       "2026-10-09",
-      1.0564,
+      1.0528,
       4.0,
-      1.1313
+      1.1275
      ],
      [
       "2026-10-12",
-      0.964,
+      0.9606,
       12.0,
-      0.964
+      0.9606
      ],
      [
       "2026-10-13",
-      1.0046,
+      1.001,
       18.0,
-      0.9883
+      0.9849
      ],
      [
       "2026-10-14",
-      1.0598,
+      1.0561,
       8.0,
-      1.0034
+      0.9998
      ],
      [
       "2026-10-15",
-      1.0037,
+      1.0002,
       23.0,
-      1.0035
+      1.0
      ],
      [
       "2026-10-16",
-      1.0299,
+      1.0264,
       7.0,
-      1.0062
+      1.0027
      ],
      [
       "2026-10-17",
-      0.9806,
+      0.9772,
       42.0,
-      0.9964
+      0.993
      ],
      [
       "2026-10-18",
-      1.0363,
+      1.0327,
       5.0,
-      0.9982
+      0.9947
      ],
      [
       "2026-10-22",
-      1.0509,
+      1.0472,
       5.0,
-      0.9972
+      0.9937
      ],
      [
       "2026-10-23",
-      0.9771,
+      0.9739,
       2.0,
-      0.9922
+      0.9887
+     ],
+     [
+      "2026-10-24",
+      1.2139,
+      2.0,
+      1.0554
      ]
     ],
     "a3": [
      [
       "2026-09-18",
-      0.9412,
+      0.9425,
       8.0,
-      0.9412
+      0.9425
      ],
      [
       "2026-09-19",
-      0.9304,
+      0.9312,
       33.0,
-      0.9325
+      0.9334
      ],
      [
       "2026-09-20",
-      1.0031,
+      1.0039,
       43.0,
-      0.9686
+      0.9695
      ],
      [
       "2026-09-21",
-      1.1593,
+      1.1607,
       13.0,
-      0.9942
+      0.9951
      ],
      [
       "2026-09-28",
-      1.2175,
+      1.2192,
       6.0,
-      1.2175
+      1.2192
      ],
      [
       "2026-09-29",
-      0.9698,
+      0.9712,
       14.0,
-      1.0441
+      1.0456
      ],
      [
       "2026-09-30",
-      1.011,
+      1.0125,
       1.0,
-      1.0425
+      1.044
      ],
      [
       "2026-10-01",
-      1.3559,
+      1.3574,
       1.0,
-      1.0568
+      1.0583
      ],
      [
       "2026-10-02",
-      1.1314,
+      1.1331,
       6.0,
-      1.0728
+      1.0743
      ],
      [
       "2026-10-03",
-      0.8666,
+      0.8679,
       4.0,
-      1.047
+      1.0485
      ],
      [
       "2026-10-04",
-      0.9772,
+      0.9785,
       1.0,
-      1.0449
+      1.0464
      ],
      [
       "2026-10-05",
-      1.0679,
+      1.0694,
       9.0,
-      1.0219
+      1.0233
      ],
      [
       "2026-10-06",
-      1.1476,
+      1.1493,
       15.0,
-      1.0926
+      1.0941
      ],
      [
       "2026-10-07",
-      1.0688,
+      1.0704,
       10.0,
-      1.0892
+      1.0907
      ],
      [
       "2026-10-08",
-      1.003,
+      1.0045,
       18.0,
+      1.0619
+     ],
+     [
+      "2026-10-09",
+      1.1282,
+      5.0,
       1.0603
      ],
      [
       "2026-10-09",
-      1.1266,
-      5.0,
-      1.0588
-     ],
-     [
-      "2026-10-09",
-      0.8666,
+      0.8679,
       2.0,
-      0.8666
+      0.8679
      ],
      [
       "2026-10-10",
-      0.8666,
+      0.8679,
       1.0,
-      0.8666
+      0.8679
      ],
      [
       "2026-10-11",
-      0.8666,
+      0.8679,
       3.0,
-      0.8666
+      0.8679
      ],
      [
       "2026-10-12",
-      1.1006,
+      1.1018,
       5.0,
-      0.973
+      0.9742
      ],
      [
       "2026-10-14",
-      1.1555,
+      1.1572,
       4.0,
-      1.0216
+      1.023
      ],
      [
       "2026-10-15",
-      0.9789,
+      0.9804,
       9.0,
-      1.0056
+      1.007
      ],
      [
       "2026-10-16",
-      1.0592,
+      1.0607,
       3.0,
-      1.0232
+      1.0246
      ],
      [
       "2026-10-17",
-      0.9388,
+      0.9402,
       2.0,
-      1.0227
+      1.0241
      ],
      [
       "2026-10-18",
-      0.8666,
+      0.8679,
       1.0,
-      1.0357
+      1.0371
      ],
      [
       "2026-10-19",
-      0.9823,
+      0.9834,
       20.0,
-      1.0
+      1.0013
      ],
      [
       "2026-10-20",
-      0.9706,
+      0.9719,
       28.0,
-      0.9877
+      0.989
      ],
      [
       "2026-10-21",
-      0.9459,
+      0.9472,
       12.0,
-      0.9721
+      0.9733
      ],
      [
       "2026-10-22",
-      1.1862,
+      1.1879,
       7.0,
-      0.9918
+      0.993
      ],
      [
       "2026-10-23",
-      1.1555,
+      1.1572,
       3.0,
-      0.9957
+      0.997
+     ],
+     [
+      "2026-10-24",
+      0.8679,
+      1.0,
+      0.9968
      ]
     ],
     "a4": [
@@ -3175,61 +3204,61 @@
      ],
      [
       "2026-09-23",
-      1.0799,
+      1.0798,
       18.0,
-      1.0799
+      1.0798
      ],
      [
       "2026-09-24",
       1.0835,
       8.0,
-      1.081
+      1.0809
      ],
      [
       "2026-09-28",
       0.788,
       2.0,
-      1.0601
+      1.06
      ],
      [
       "2026-09-30",
-      1.0507,
+      1.0506,
       2.0,
       1.0288
      ],
      [
       "2026-10-01",
-      1.0768,
+      1.0775,
       11.0,
-      1.0348
+      1.0353
      ],
      [
       "2026-10-06",
-      2.1008,
+      2.1011,
       2.0,
-      1.2099
+      1.2104
      ],
      [
       "2026-10-07",
-      1.313,
+      1.3132,
       3.0,
-      1.2491
+      1.2496
      ],
      [
       "2026-10-11",
-      0.7866,
+      0.7875,
       1.0,
-      0.7866
+      0.7875
      ],
      [
       "2026-10-18",
-      0.971,
+      0.9709,
       17.0,
-      0.971
+      0.9709
      ],
      [
       "2026-10-19",
-      1.0071,
+      1.007,
       48.0,
       0.9976
      ],
@@ -3241,7 +3270,7 @@
      ],
      [
       "2026-10-21",
-      1.146,
+      1.1464,
       2.0,
       1.009
      ],
@@ -3269,27 +3298,27 @@
      ],
      [
       "2026-08-22",
-      0.6833,
+      0.6832,
       2.0,
-      0.506
+      0.5059
      ],
      [
       "2026-08-23",
-      0.6627,
+      0.6625,
       15.0,
-      0.6297
+      0.6295
      ],
      [
       "2026-08-24",
-      1.1047,
+      1.1048,
       12.0,
-      0.8136
+      0.8135
      ],
      [
       "2026-08-25",
-      1.9872,
+      1.9871,
       1.0,
-      0.8503
+      0.8502
      ],
      [
       "2026-08-27",
@@ -3305,25 +3334,25 @@
      ],
      [
       "2026-08-29",
-      0.1757,
+      0.1754,
       6.0,
-      0.7039
+      0.7038
      ],
      [
       "2026-08-30",
-      0.3595,
+      0.3591,
       9.0,
       0.6651
      ],
      [
       "2026-08-31",
-      0.4436,
+      0.4435,
       3.0,
-      0.5571
+      0.557
      ],
      [
       "2026-09-01",
-      0.7616,
+      0.7631,
       3.0,
       0.5428
      ],
@@ -3335,715 +3364,727 @@
      ],
      [
       "2026-09-03",
-      0.3209,
+      0.3207,
       45.0,
-      0.3628
+      0.3627
      ],
      [
       "2026-09-04",
-      0.3848,
+      0.3847,
       24.0,
-      0.3355
+      0.3354
      ],
      [
       "2026-09-05",
-      0.5487,
+      0.5485,
       11.0,
-      0.3673
+      0.3671
      ],
      [
       "2026-09-06",
-      0.5368,
+      0.5366,
       14.0,
-      0.3897
+      0.3896
      ],
      [
       "2026-09-07",
-      0.6776,
+      0.6767,
       1.0,
-      0.3909
+      0.3907
      ],
      [
       "2026-09-08",
-      0.6516,
+      0.6515,
       6.0,
-      0.395
+      0.3948
      ],
      [
       "2026-09-09",
-      0.6169,
+      0.6166,
       11.0,
-      0.4339
+      0.4337
      ],
      [
       "2026-09-10",
-      0.6573,
+      0.657,
       21.0,
-      0.5451
+      0.5448
      ],
      [
       "2026-09-11",
-      0.3744,
+      0.3742,
       2.0,
-      0.5981
+      0.5979
      ],
      [
       "2026-09-12",
-      0.6602,
+      0.6596,
       11.0,
-      0.6167
+      0.6164
      ],
      [
       "2026-09-13",
-      0.6077,
+      0.6072,
       1.0,
-      0.6377
+      0.6373
      ],
      [
       "2026-09-18",
-      0.5377,
+      0.5374,
       53.0,
-      0.5377
+      0.5374
      ],
      [
       "2026-09-19",
-      0.6388,
+      0.6385,
       12.0,
-      0.5564
+      0.5561
      ],
      [
       "2026-09-20",
-      0.5598,
+      0.5595,
       17.0,
-      0.5571
+      0.5568
      ],
      [
       "2026-09-21",
-      0.9845,
+      0.9848,
       5.0,
-      0.5816
+      0.5814
      ],
      [
       "2026-09-22",
-      0.6734,
+      0.6731,
       6.0,
-      0.5876
+      0.5873
      ],
      [
       "2026-09-23",
-      0.7636,
+      0.7635,
       8.0,
-      0.6015
+      0.6013
      ],
      [
       "2026-09-23",
-      0.745,
+      0.7455,
       4.0,
-      0.745
+      0.7455
      ],
      [
       "2026-09-28",
-      0.6548,
+      0.6551,
       7.0,
-      0.6876
+      0.688
      ],
      [
       "2026-09-29",
-      0.7624,
+      0.7634,
       1.0,
-      0.6939
+      0.6943
      ],
      [
       "2026-09-30",
-      0.7837,
+      0.7852,
       2.0,
-      0.6914
+      0.6919
      ],
      [
       "2026-10-01",
-      1.0073,
+      1.0071,
       4.0,
-      0.7816
+      0.782
      ],
      [
       "2026-10-02",
-      0.9082,
+      0.9088,
       26.0,
-      0.8639
+      0.8644
      ],
      [
       "2026-10-04",
-      0.91,
+      0.9106,
       1.0,
-      0.865
+      0.8656
      ],
      [
       "2026-10-05",
-      0.832,
+      0.8327,
       2.0,
-      0.9041
+      0.9047
      ],
      [
       "2026-10-06",
-      0.8082,
+      0.8094,
       1.0,
-      0.9054
+      0.9059
      ],
      [
       "2026-10-07",
-      0.8587,
+      0.8593,
       1.0,
-      0.911
+      0.9115
      ],
      [
       "2026-10-12",
-      0.4933,
+      0.4939,
       1.0,
-      0.4933
+      0.4939
      ],
      [
       "2026-10-13",
-      0.9277,
+      0.9285,
       1.0,
-      0.7105
+      0.7112
      ],
      [
       "2026-10-14",
-      0.9479,
+      0.9463,
       3.0,
-      0.8529
+      0.8522
      ],
      [
       "2026-10-15",
-      0.8934,
+      0.8932,
       1.0,
-      0.8597
+      0.8591
      ],
      [
       "2026-10-16",
       1.0988,
       30.0,
-      1.0589
+      1.0588
      ],
      [
       "2026-10-17",
-      0.8384,
+      0.8361,
       8.0,
-      1.0188
+      1.0183
      ],
      [
       "2026-10-23",
-      0.9606,
+      0.9616,
       21.0,
-      0.9269
+      0.927
      ]
     ],
     "a2": [
      [
       "2026-09-05",
-      0.7636,
+      0.7655,
       51.0,
-      0.7636
+      0.7655
      ],
      [
       "2026-09-06",
-      0.7894,
+      0.7911,
       20.0,
-      0.7709
+      0.7727
      ],
      [
       "2026-09-07",
-      0.9951,
+      0.9953,
       1.0,
-      0.774
+      0.7758
      ],
      [
       "2026-09-08",
-      0.849,
+      0.8507,
       3.0,
-      0.777
+      0.7788
      ],
      [
       "2026-09-09",
-      0.8322,
+      0.8342,
       18.0,
-      0.7877
+      0.7895
      ],
      [
       "2026-09-10",
-      0.676,
+      0.6771,
       24.0,
-      0.7648
+      0.7664
      ],
      [
       "2026-09-11",
-      0.5713,
+      0.5722,
       12.0,
-      0.7468
+      0.7484
      ],
      [
       "2026-09-12",
-      0.7663,
+      0.7673,
       7.0,
-      0.7383
+      0.7397
      ],
      [
       "2026-09-13",
-      0.7047,
+      0.7057,
       3.0,
-      0.7218
+      0.723
      ],
      [
       "2026-09-15",
-      0.8388,
+      0.8406,
       4.0,
-      0.8388
+      0.8406
      ],
      [
       "2026-09-16",
-      0.745,
+      0.7467,
       17.0,
-      0.7629
+      0.7646
      ],
      [
       "2026-09-17",
-      0.5506,
+      0.5519,
       35.0,
-      0.6302
+      0.6316
      ],
      [
       "2026-09-18",
-      0.7351,
+      0.7368,
       22.0,
-      0.6598
+      0.6613
      ],
      [
       "2026-09-19",
-      0.6603,
+      0.6616,
       6.0,
-      0.6599
+      0.6613
      ],
      [
       "2026-09-20",
-      0.904,
+      0.9061,
       5.0,
-      0.6736
+      0.6751
      ],
      [
       "2026-09-21",
-      0.6289,
+      0.6302,
       5.0,
-      0.6712
+      0.6727
      ],
      [
       "2026-09-23",
-      0.6164,
+      0.617,
       1.0,
-      0.6444
+      0.6459
      ],
      [
       "2026-09-23",
-      0.7108,
+      0.7126,
       4.0,
-      0.7108
+      0.7126
      ],
      [
       "2026-09-24",
-      0.7557,
+      0.7579,
       11.0,
-      0.7437
+      0.7458
      ],
      [
       "2026-09-25",
-      0.6838,
+      0.686,
       6.0,
-      0.7266
+      0.7287
      ],
      [
       "2026-09-28",
-      0.7,
+      0.7018,
       2.0,
-      0.7243
+      0.7264
      ],
      [
       "2026-09-29",
-      0.7648,
+      0.7672,
       6.0,
-      0.7327
+      0.7348
      ],
      [
       "2026-09-30",
-      0.9286,
+      0.9306,
       7.0,
-      0.7782
+      0.7804
      ],
      [
       "2026-10-02",
-      0.9701,
+      0.9733,
       2.0,
-      0.8488
+      0.851
      ],
      [
       "2026-10-03",
-      0.9397,
+      0.9454,
       1.0,
-      0.8538
+      0.8563
      ],
      [
       "2026-10-04",
-      0.9489,
+      0.9523,
       1.0,
-      0.8588
+      0.8613
      ],
      [
       "2026-10-05",
-      0.9473,
+      0.9514,
       2.0,
-      0.8848
+      0.8876
      ],
      [
       "2026-10-06",
-      0.6952,
+      0.6983,
       2.0,
-      0.9076
+      0.9105
      ],
      [
       "2026-10-07",
-      0.1839,
+      0.1846,
       2.0,
-      0.7482
+      0.7513
      ],
      [
       "2026-10-08",
-      0.9818,
+      0.9861,
       6.0,
-      0.8358
+      0.8394
      ],
      [
       "2026-10-09",
-      1.028,
+      1.0321,
       4.0,
-      0.8636
+      0.8673
      ],
      [
       "2026-10-12",
-      1.0712,
+      1.0736,
       12.0,
-      1.0712
+      1.0736
      ],
      [
       "2026-10-13",
-      1.0363,
+      1.0394,
       18.0,
-      1.0503
+      1.0531
      ],
      [
       "2026-10-14",
-      0.9466,
+      0.9497,
       8.0,
-      1.0284
+      1.0313
      ],
      [
       "2026-10-15",
-      0.9414,
+      0.9439,
       23.0,
-      0.9956
+      0.9984
      ],
      [
       "2026-10-16",
-      0.9261,
+      0.9294,
       7.0,
-      0.9885
+      0.9913
      ],
      [
       "2026-10-17",
-      1.0151,
+      1.018,
       42.0,
-      0.9986
+      1.0015
      ],
      [
       "2026-10-18",
-      0.9882,
+      0.9898,
       5.0,
-      0.9982
+      1.001
      ],
      [
       "2026-10-22",
-      1.0533,
+      1.0555,
       5.0,
-      1.0055
+      1.0083
      ],
      [
       "2026-10-23",
-      0.9721,
+      0.9745,
       2.0,
-      1.0145
+      1.0173
+     ],
+     [
+      "2026-10-24",
+      0.8302,
+      2.0,
+      0.9883
      ]
     ],
     "a3": [
      [
       "2026-09-18",
-      0.7144,
+      0.7146,
       7.0,
-      0.7144
+      0.7146
      ],
      [
       "2026-09-19",
-      0.91,
+      0.9104,
       33.0,
-      0.8757
+      0.8762
      ],
      [
       "2026-09-20",
-      0.7957,
+      0.796,
       43.0,
-      0.8343
+      0.8347
      ],
      [
       "2026-09-21",
-      0.7954,
+      0.7955,
       13.0,
-      0.829
+      0.8294
      ],
      [
       "2026-09-28",
-      1.0853,
+      1.0861,
       6.0,
-      1.0853
+      1.0861
      ],
      [
       "2026-09-29",
-      0.9654,
+      0.9668,
       14.0,
-      1.0014
+      1.0026
      ],
      [
       "2026-09-30",
-      0.875,
+      0.8754,
       1.0,
-      0.9954
+      0.9965
      ],
      [
       "2026-10-01",
-      1.1472,
+      1.1469,
       1.0,
-      1.0023
+      1.0034
      ],
      [
       "2026-10-02",
-      0.8354,
+      0.8367,
       6.0,
-      0.9665
+      0.9676
      ],
      [
       "2026-10-03",
-      1.0206,
+      1.0219,
       4.0,
-      0.9733
-     ],
-     [
-      "2026-10-04",
-      1.1501,
-      1.0,
-      0.9786
-     ],
-     [
-      "2026-10-05",
-      1.0181,
-      9.0,
-      0.9707
-     ],
-     [
-      "2026-10-06",
-      0.9804,
-      15.0,
-      0.9766
-     ],
-     [
-      "2026-10-07",
-      1.042,
-      10.0,
-      0.9931
-     ],
-     [
-      "2026-10-08",
-      0.9681,
-      18.0,
-      0.9835
-     ],
-     [
-      "2026-10-09",
-      0.9493,
-      5.0,
-      0.995
-     ],
-     [
-      "2026-10-09",
-      1.0083,
-      2.0,
-      1.0083
-     ],
-     [
-      "2026-10-10",
-      1.0853,
-      1.0,
-      1.034
-     ],
-     [
-      "2026-10-11",
-      1.0376,
-      3.0,
-      1.0358
-     ],
-     [
-      "2026-10-12",
-      1.0381,
-      5.0,
-      1.0368
-     ],
-     [
-      "2026-10-14",
-      1.0147,
-      4.0,
-      1.0309
-     ],
-     [
-      "2026-10-15",
-      0.9501,
-      9.0,
-      1.0006
-     ],
-     [
-      "2026-10-16",
-      0.9299,
-      3.0,
-      0.9915
-     ],
-     [
-      "2026-10-17",
-      0.8158,
-      2.0,
       0.9744
      ],
      [
-      "2026-10-18",
-      0.5593,
+      "2026-10-04",
+      1.1513,
       1.0,
-      0.9492
+      0.9798
+     ],
+     [
+      "2026-10-05",
+      1.0194,
+      9.0,
+      0.972
+     ],
+     [
+      "2026-10-06",
+      0.9821,
+      15.0,
+      0.9781
+     ],
+     [
+      "2026-10-07",
+      1.0439,
+      10.0,
+      0.9946
+     ],
+     [
+      "2026-10-08",
+      0.9704,
+      18.0,
+      0.9853
+     ],
+     [
+      "2026-10-09",
+      0.9504,
+      5.0,
+      0.9968
+     ],
+     [
+      "2026-10-09",
+      1.0101,
+      2.0,
+      1.0101
+     ],
+     [
+      "2026-10-10",
+      1.0868,
+      1.0,
+      1.0357
+     ],
+     [
+      "2026-10-11",
+      1.0393,
+      3.0,
+      1.0375
+     ],
+     [
+      "2026-10-12",
+      1.038,
+      5.0,
+      1.0377
+     ],
+     [
+      "2026-10-14",
+      1.017,
+      4.0,
+      1.0322
+     ],
+     [
+      "2026-10-15",
+      0.9508,
+      9.0,
+      1.0017
+     ],
+     [
+      "2026-10-16",
+      0.9307,
+      3.0,
+      0.9925
+     ],
+     [
+      "2026-10-17",
+      0.8153,
+      2.0,
+      0.9752
+     ],
+     [
+      "2026-10-18",
+      0.5598,
+      1.0,
+      0.9499
      ],
      [
       "2026-10-19",
-      0.9871,
+      0.9883,
       20.0,
-      0.9573
+      0.9583
      ],
      [
       "2026-10-20",
-      1.0302,
+      1.0327,
       28.0,
-      0.9877
+      0.9894
      ],
      [
       "2026-10-21",
-      1.0385,
+      1.0408,
       12.0,
-      0.9944
+      0.9961
      ],
      [
       "2026-10-22",
-      1.0666,
+      1.0683,
       7.0,
-      1.0068
+      1.0086
      ],
      [
       "2026-10-23",
-      0.8296,
+      0.831,
       3.0,
-      1.0027
+      1.0045
+     ],
+     [
+      "2026-10-24",
+      0.836,
+      1.0,
+      1.0075
      ]
     ],
     "a4": [
      [
       "2026-09-23",
-      0.9885,
+      0.9868,
       1.0,
-      0.9885
+      0.9868
      ],
      [
       "2026-09-23",
-      0.9713,
+      0.9712,
       18.0,
-      0.9713
+      0.9712
      ],
      [
       "2026-09-24",
-      0.9863,
+      0.9857,
       8.0,
-      0.9759
+      0.9756
      ],
      [
       "2026-09-28",
-      0.6373,
+      0.6377,
       2.0,
-      0.9517
+      0.9515
      ],
      [
       "2026-09-30",
-      0.9347,
+      0.9355,
       2.0,
-      0.9196
+      0.9193
      ],
      [
       "2026-10-01",
-      1.0579,
+      1.0566,
       10.0,
-      0.9802
+      0.9795
      ],
      [
       "2026-10-06",
-      1.0298,
+      1.029,
       2.0,
-      1.0363
+      1.0354
      ],
      [
       "2026-10-07",
-      0.9757,
+      0.9751,
       3.0,
-      1.0377
+      1.0366
      ],
      [
       "2026-10-11",
-      0.4922,
+      0.4913,
       1.0,
-      0.4922
+      0.4913
      ],
      [
       "2026-10-18",
-      1.0491,
+      1.0483,
       17.0,
-      1.0491
+      1.0483
      ],
      [
       "2026-10-19",
-      1.0187,
+      1.0186,
       48.0,
-      1.0266
+      1.0264
      ],
      [
       "2026-10-20",
-      0.892,
+      0.8946,
       5.0,
       1.017
      ],
      [
       "2026-10-21",
-      0.9023,
+      0.9044,
       2.0,
       1.0138
      ],
      [
       "2026-10-22",
-      0.5131,
+      0.5135,
       1.0,
       1.007
      ],
@@ -4097,7 +4138,7 @@
   },
   "schema": 1,
   "valuation": {
-   "cache_read_weight": 0.010059,
+   "cache_read_weight": 0.010178,
    "kind": "rates_in_force",
    "pinned_at_list": {
     "opus-5-5": 0.8
@@ -4106,27 +4147,27 @@
     "families": {
      "fable": {
       "interval": [
-       2.8175,
-       3.2505
+       2.8299,
+       3.2737
       ],
       "provisional": false,
-      "times_opus": 3.0322
+      "times_opus": 3.0318
      },
      "sonnet": {
       "interval": [
-       0.4549,
-       0.5951
+       0.4492,
+       0.594
       ],
       "provisional": false,
-      "times_opus": 0.5151
+      "times_opus": 0.5128
      },
      "sonnet-5-5": {
       "interval": [
-       0.5484,
-       0.8494
+       0.5482,
+       0.8731
       ],
       "provisional": true,
-      "times_opus": 0.6696
+      "times_opus": 0.6651
      }
     },
     "percentiles": [
@@ -4134,17 +4175,17 @@
      90
     ]
    },
-   "rates_generated_at": "2026-10-24T00:04:05+00:00",
+   "rates_generated_at": "2026-10-25T00:03:41+00:00",
    "rule": "each family at the rates in force (history/model-rates.json, the pooled fit's point estimates, cache reads at its one fitted cache-read rate), except Opus 5.5, held at Anthropic's list ratio 0.8x Opus (ADR 0001 rule 23), the same rates across the whole history, so no dated regime enters a line; the ratio reads no rate but a step's headless share; each family's rate interval widens the sizes it moves (rate_dependence)",
    "source": "history/model-rates.json",
    "times_opus": {
-    "fable": 3.0322,
-    "haiku": 0.0175,
+    "fable": 3.0318,
+    "haiku": 0.0,
     "haiku-5-5": 0.0,
     "opus": 1.0,
     "opus-5-5": 0.8,
-    "sonnet": 0.5151,
-    "sonnet-5-5": 0.6696
+    "sonnet": 0.5128,
+    "sonnet-5-5": 0.6651
    }
   },
   "withdrawn": [
@@ -8392,6 +8433,209 @@
    "data_until": "2026-10-24T00:00:00+00:00",
    "day": "2026-10-24",
    "headless_factor": 1.426,
+   "replayed": false,
+   "withdrawn_today": []
+  },
+  {
+   "changes": [
+    {
+     "at": "2026-09-14T09:00:00+00:00",
+     "carried": true,
+     "change_pct": -17.5,
+     "decided": {
+      "interval_factor": {
+       "five_hour": 1.273,
+       "ratio": 1.246,
+       "seven_day": 1.214
+      },
+      "moved": {
+       "five_hour": false,
+       "ratio": true,
+       "seven_day": false
+      },
+      "on": "2026-09-25",
+      "stated": null,
+      "stated_on": "2026-10-24"
+     },
+     "finds": [
+      [
+       "2026-09-14T16:00:00+00:00",
+       "2026-09-14T01:00:00+00:00",
+       "2026-09-16T12:00:00+00:00"
+      ],
+      [
+       "2026-09-14T09:00:00+00:00",
+       "2026-09-14T00:00:00+00:00",
+       "2026-09-17T00:00:00+00:00"
+      ],
+      [
+       "2026-09-14T01:00:00+00:00",
+       "2026-09-14T00:00:00+00:00",
+       "2026-09-16T06:00:00+00:00"
+      ],
+      [
+       "2026-09-14T01:00:00+00:00",
+       "2026-09-14T00:00:00+00:00",
+       "2026-09-16T12:00:00+00:00"
+      ],
+      [
+       "2026-09-14T01:00:00+00:00",
+       "2026-09-14T00:00:00+00:00",
+       "2026-09-16T12:00:00+00:00"
+      ],
+      [
+       "2026-09-14T16:00:00+00:00",
+       "2026-09-14T00:00:00+00:00",
+       "2026-09-17T00:00:00+00:00"
+      ],
+      [
+       "2026-09-14T16:00:00+00:00",
+       "2026-09-14T00:00:00+00:00",
+       "2026-09-17T00:00:00+00:00"
+      ]
+     ],
+     "first_found": "2026-09-19",
+     "found_on": "ratio",
+     "found_today": true,
+     "held_by_capture": null,
+     "held_days": 37,
+     "hold_replayed": true,
+     "instant_range": [
+      "2026-09-14T00:00:00+00:00",
+      "2026-09-17T00:00:00+00:00"
+     ],
+     "measured_on": "2026-09-25",
+     "p": 0.0002499,
+     "sign": -1,
+     "state": "measured"
+    },
+    {
+     "at": "2026-09-23T13:00:00+00:00",
+     "carried": true,
+     "change_pct": 20.9,
+     "decided": {
+      "interval_factor": {
+       "five_hour": 1.522,
+       "ratio": 1.04,
+       "seven_day": 1.0
+      },
+      "moved": {
+       "five_hour": true,
+       "ratio": false,
+       "seven_day": true
+      },
+      "on": "2026-10-10",
+      "stated": "weekly_limit",
+      "stated_on": "2026-10-24"
+     },
+     "finds": [
+      [
+       "2026-09-22T15:00:00+00:00",
+       "2026-09-20T12:00:00+00:00",
+       "2026-09-24T12:00:00+00:00"
+      ],
+      [
+       "2026-09-22T15:00:00+00:00",
+       "2026-09-20T12:00:00+00:00",
+       "2026-09-24T12:00:00+00:00"
+      ],
+      [
+       "2026-09-28T13:00:00+00:00",
+       "2026-09-26T12:00:00+00:00",
+       "2026-09-29T15:00:00+00:00"
+      ],
+      [
+       "2026-09-29T13:00:00+00:00",
+       "2026-09-26T12:00:00+00:00",
+       "2026-09-29T17:00:00+00:00"
+      ],
+      [
+       "2026-09-23T13:00:00+00:00",
+       "2026-09-22T02:00:00+00:00",
+       "2026-09-25T12:00:00+00:00"
+      ],
+      [
+       "2026-09-23T13:00:00+00:00",
+       "2026-09-22T03:00:00+00:00",
+       "2026-09-25T12:00:00+00:00"
+      ],
+      [
+       "2026-09-26T18:00:00+00:00",
+       "2026-09-24T18:00:00+00:00",
+       "2026-09-28T18:00:00+00:00"
+      ]
+     ],
+     "first_found": "2026-10-04",
+     "found_on": "seven_day",
+     "found_today": true,
+     "held_by_capture": null,
+     "held_days": 22,
+     "hold_replayed": true,
+     "instant_range": [
+      "2026-09-20T12:00:00+00:00",
+      "2026-09-29T17:00:00+00:00"
+     ],
+     "measured_on": "2026-10-10",
+     "p": 0.0002499,
+     "sign": 1,
+     "state": "measured"
+    },
+    {
+     "at": "2026-10-09T16:00:00+00:00",
+     "carried": false,
+     "change_pct": -9.1,
+     "decided": null,
+     "finds": [
+      [
+       "2026-10-09T16:00:00+00:00",
+       "2026-10-09T12:00:00+00:00",
+       "2026-10-11T21:00:00+00:00"
+      ],
+      [
+       "2026-10-09T16:00:00+00:00",
+       "2026-10-09T12:00:00+00:00",
+       "2026-10-11T03:00:00+00:00"
+      ],
+      [
+       "2026-10-09T16:00:00+00:00",
+       "2026-10-09T12:00:00+00:00",
+       "2026-10-11T21:00:00+00:00"
+      ],
+      [
+       "2026-10-09T16:00:00+00:00",
+       "2026-10-09T12:00:00+00:00",
+       "2026-10-11T18:00:00+00:00"
+      ],
+      [
+       "2026-10-10T15:00:00+00:00",
+       "2026-10-09T12:00:00+00:00",
+       "2026-10-11T18:00:00+00:00"
+      ],
+      [
+       "2026-10-09T16:00:00+00:00",
+       "2026-10-09T12:00:00+00:00",
+       "2026-10-11T17:00:00+00:00"
+      ]
+     ],
+     "first_found": "2026-10-20",
+     "found_on": "ratio",
+     "found_today": true,
+     "held_by_capture": null,
+     "held_days": 6,
+     "hold_replayed": true,
+     "instant_range": [
+      "2026-10-09T12:00:00+00:00",
+      "2026-10-11T21:00:00+00:00"
+     ],
+     "measured_on": null,
+     "p": 0.00051,
+     "sign": -1,
+     "state": "provisional"
+    }
+   ],
+   "data_until": "2026-10-25T00:00:00+00:00",
+   "day": "2026-10-25",
+   "headless_factor": 1.425,
    "replayed": false,
    "withdrawn_today": []
   }
