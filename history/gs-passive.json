@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-26T09:00:05.332780+00:00",
+ "generated_at": "2026-10-26T09:30:06.270572+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 14289,
+    "reset_verified_samples": 14298,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 19046,
+    "samples": 19055,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-26T08:59:12+00:00"
+    "last": "2026-10-26T09:28:39+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -37,7 +37,7 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 4574,
-     "dropped": 4858,
+     "dropped": 4865,
      "subagent_files": 1586,
      "dropped_to": {
       ".claude": 558,
@@ -49,7 +49,7 @@
       "auto_mail_default_login": 555,
       "harness_run": 465
      },
-     "unclaimed": 2411,
+     "unclaimed": 2418,
      "same_account": [
       ".claude-jono"
      ]
@@ -34031,11 +34031,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13154,
+    "reset_verified_samples": 13160,
     "since": null,
-    "samples": 16206,
+    "samples": 16212,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-26T08:57:07+00:00"
+    "last": "2026-10-26T09:28:40+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -61054,11 +61054,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 16606,
+    "reset_verified_samples": 16618,
     "since": null,
-    "samples": 19012,
+    "samples": 19024,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-26T08:58:07+00:00"
+    "last": "2026-10-26T09:29:44+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -61073,7 +61073,7 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1449,
-     "dropped": 4354,
+     "dropped": 4361,
      "subagent_files": 544,
      "dropped_to": {
       ".claude": 2,
@@ -61082,7 +61082,7 @@
      "attributed_by_record": {
       "airlock_tune_env": 544
      },
-     "unclaimed": 2133
+     "unclaimed": 2140
     },
     "sources": [
      {
@@ -69490,7 +69490,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-26T09:01:14.476889+00:00",
+  "generated_at": "2026-10-26T09:31:24.091793+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
