@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-26T01:00:05.178711+00:00",
+ "generated_at": "2026-10-26T01:30:06.542048+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 14156,
+    "reset_verified_samples": 14165,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 18889,
+    "samples": 18898,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-26T00:59:05+00:00"
+    "last": "2026-10-26T01:28:05+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,7 +33,7 @@
      ".claude-jono"
     ],
     "files": 5712,
-    "turns": 137886,
+    "turns": 137887,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 4573,
@@ -59,7 +59,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
       "files": 1471,
-      "turns": 40297
+      "turns": 40298
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -34031,11 +34031,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13109,
+    "reset_verified_samples": 13114,
     "since": null,
-    "samples": 16161,
+    "samples": 16166,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-26T01:00:05+00:00"
+    "last": "2026-10-26T01:26:05+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -61054,11 +61054,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 16486,
+    "reset_verified_samples": 16497,
     "since": null,
-    "samples": 18815,
+    "samples": 18826,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-26T01:00:05+00:00"
+    "last": "2026-10-26T01:29:05+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -69490,7 +69490,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-26T01:01:14.935667+00:00",
+  "generated_at": "2026-10-26T01:31:19.390401+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
