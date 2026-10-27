@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-27T06:00:05.764062+00:00",
+ "generated_at": "2026-10-27T06:30:06.154994+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 14657,
+    "reset_verified_samples": 14665,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 19422,
+    "samples": 19430,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-27T05:57:05+00:00"
+    "last": "2026-10-27T06:28:12+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -34221,26 +34221,26 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13388,
+    "reset_verified_samples": 13394,
     "since": null,
-    "samples": 16440,
+    "samples": 16446,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-27T05:56:06+00:00"
+    "last": "2026-10-27T06:28:13+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
-    "files": 3097,
-    "turns": 114353,
+    "files": 3098,
+    "turns": 114354,
     "withheld_patterns": [],
     "own_sessions": null,
     "sources": [
      {
       "source": "live",
       "root": "/home/jonathan/.claude-dave/projects",
-      "files": 1586,
-      "turns": 64074
+      "files": 1587,
+      "turns": 64075
      },
      {
       "source": "archive:transcripts-20261015/claude-dave",
@@ -61892,9 +61892,9 @@
     "note": null,
     "reset_verified_samples": 17017,
     "since": null,
-    "samples": 19525,
+    "samples": 19537,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-27T05:59:06+00:00"
+    "last": "2026-10-27T06:28:12+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -70326,7 +70326,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-27T06:01:21.915850+00:00",
+  "generated_at": "2026-10-27T06:31:24.031987+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
