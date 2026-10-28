@@ -1,11 +1,11 @@
 {
- "generated_at": "2026-10-27T11:54:34.536710+00:00",
+ "generated_at": "2026-10-28T08:16:14.375379+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
-  "output": 0.0043,
-  "cache_read": 0.9707,
-  "cache_write": 0.0243
+  "output": 0.0041,
+  "cache_read": 0.971,
+  "cache_write": 0.024
  },
  "history": {
   "2026-07-30": {
@@ -365,8 +365,8 @@
    "interpolated": false
   },
   "2026-10-27": {
-   "tokens_per_pct": 14423777,
-   "interpolated": true
+   "tokens_per_pct": 10507765,
+   "interpolated": false
   }
  },
  "session_tokens": {
@@ -654,18 +654,18 @@
    },
    {
     "week_ending": "2026-10-30",
-    "windows": 4.0,
-    "five_hour_pct": 188.0,
-    "seven_day_pct": 47.0,
+    "windows": 3.98,
+    "five_hour_pct": 191.0,
+    "seven_day_pct": 48.0,
     "rounding_interval": [
-     3.3643,
-     4.8525
+     3.3038,
+     4.9059
     ],
-    "pieces": 19,
+    "pieces": 23,
     "source": "paired_meter_deltas",
     "reset_verified": true,
     "partial": true,
-    "resets_at": "2026-10-30T04:00:00.121226+00:00"
+    "resets_at": "2026-10-30T04:00:00.111396+00:00"
    }
   ],
   "by_window": [
@@ -5932,6 +5932,18 @@
     "seven_day_pct": 1.0,
     "rounding_interval": [
      0.0,
+     null
+    ],
+    "pieces": 1,
+    "reset_verified": true
+   },
+   {
+    "window_ending": "2026-10-27T16:30:00.366372+00:00",
+    "windows": 3.0,
+    "five_hour_pct": 3.0,
+    "seven_day_pct": 1.0,
+    "rounding_interval": [
+     0.5561,
      null
     ],
     "pieces": 1,
