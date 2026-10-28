@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-28T23:00:05.950365+00:00",
+ "generated_at": "2026-10-28T23:30:06.170810+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 15430,
+    "reset_verified_samples": 15436,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 20203,
+    "samples": 20209,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-28T22:59:48+00:00"
+    "last": "2026-10-28T23:30:00+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -34510,11 +34510,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 13824,
+    "reset_verified_samples": 13830,
     "since": null,
-    "samples": 16876,
+    "samples": 16882,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-28T22:59:49+00:00"
+    "last": "2026-10-28T23:30:01+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -63191,11 +63191,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 17893,
+    "reset_verified_samples": 17905,
     "since": null,
-    "samples": 20519,
+    "samples": 20531,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-28T22:59:48+00:00"
+    "last": "2026-10-28T23:30:00+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -63206,7 +63206,7 @@
      ".claude-jono"
     ],
     "files": 1913,
-    "turns": 53918,
+    "turns": 53924,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1641,
@@ -63227,7 +63227,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 669,
-      "turns": 21187
+      "turns": 21193
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -72628,7 +72628,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-28T22:59:48+00:00",
+     "window_ending": "2026-10-28T23:30:00+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -72650,7 +72650,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-28T23:01:22.932148+00:00",
+  "generated_at": "2026-10-28T23:31:20.725588+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
