@@ -179,6 +179,8 @@ def schema_problems(body: dict) -> list[str]:
     out = []
     for bucket in ("five_hour", "seven_day"):
         b = body.get(bucket)
+        if bucket == "five_hour" and bucket in body and b is None:
+            continue  # present but null: no 5-hour window open (since 2026-10-31), not a rename
         if not isinstance(b, dict):
             out.append(f"no {bucket} bucket")
             continue

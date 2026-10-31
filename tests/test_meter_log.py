@@ -114,6 +114,7 @@ class SampleTests(unittest.TestCase):
             self.assertNotIn("error", row)
             self.assertEqual(row["five_hour"], {"utilization": 0.0, "resets_at": None})
             self.assertTrue(row["five_hour_idle"])
+            self.assertNotIn("schema", row)  # key present but null is idle, not a rename
             self.assertEqual(parse_moonlighter(lines)[0].five_hour, 0.0)
             # No resets_at, so the weekly pairing skips it, as it does any row without a reset.
             self.assertIsNone(parse_row(row))

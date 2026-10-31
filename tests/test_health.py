@@ -52,6 +52,18 @@ class HealthTest(unittest.TestCase):
         self.log.write_text(json.dumps({"ts": iso(NOW - 2 * 3600), "five_hour": {"utilization": 1}}) + "\n")
         self.assertIn("collection: newest meter sample is 2h00m old", self.reasons()["collection"])
 
+    def test_an_idle_five_hour_window_still_counts_as_collecting(self):
+        # moonlighter writes five_hour.utilization null while no 5-hour window is open;
+        # a numeric seven_day on the same line proves collection is alive.
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None},
+                                        "seven_day": {"utilization": 17.0}}) + "\n")
+        self.assertIsNone(self.reasons()["collection"])
+
+    def test_a_line_with_no_numeric_bucket_is_not_a_sample(self):
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None},
+                                        "seven_day": {"utilization": None}}) + "\n")
+        self.assertIn("no reading", self.reasons()["collection"])
+
     def test_resets_at_style_offsets_are_parsed_not_string_compared(self):
         self.log.write_text(json.dumps({"ts": "2026-10-02T03:59:00+02:00", "five_hour": {"utilization": 1}}) + "\n")
         self.assertIsNone(self.reasons()["collection"])
