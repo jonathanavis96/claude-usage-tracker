@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-31T21:30:06.100811+00:00",
+ "generated_at": "2026-10-31T22:00:05.145237+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 16318,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 21268,
+    "samples": 21269,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-31T20:48:59+00:00"
+    "last": "2026-10-31T21:59:14+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -64688,11 +64688,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 19438,
+    "reset_verified_samples": 19450,
     "since": null,
-    "samples": 22217,
+    "samples": 22229,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-31T21:29:06+00:00"
+    "last": "2026-10-31T21:58:12+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -64702,11 +64702,11 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 2082,
-    "turns": 58681,
+    "files": 2083,
+    "turns": 58685,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1807,
+     "kept": 1808,
      "dropped": 4580,
      "subagent_files": 767,
      "dropped_to": {
@@ -64723,8 +64723,8 @@
      {
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
-      "files": 835,
-      "turns": 25913
+      "files": 836,
+      "turns": 25917
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -75160,7 +75160,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-10-31T21:29:06+00:00",
+     "window_ending": "2026-10-31T21:58:12+00:00",
      "windows": 2.0,
      "five_hour_pct": 2.0,
      "seven_day_pct": 1.0,
@@ -75182,7 +75182,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-31T21:31:34.761479+00:00",
+  "generated_at": "2026-10-31T22:01:37.236859+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -142036,10 +142036,12 @@
     "model": "claude-sonnet-5-5",
     "account": "a4",
     "entrypoint": "sdk-cli",
-    "n": 55,
+    "n": 57,
     "fast_session_requests": 0,
     "output_hist": {
      "245": 5,
+     "198": 1,
+     "244": 2,
      "256": 1,
      "238": 5,
      "234": 2,
@@ -142058,7 +142060,6 @@
      "226": 1,
      "224": 1,
      "248": 1,
-     "244": 1,
      "246": 1,
      "227": 1,
      "247": 1,
@@ -142069,6 +142070,8 @@
     "ttfb_hist": {
      "46": 1,
      "65": 1,
+     "117": 1,
+     "45": 2,
      "29": 1,
      "69": 1,
      "126": 2,
@@ -142086,7 +142089,6 @@
      "85": 2,
      "101": 2,
      "86": 3,
-     "45": 1,
      "122": 1,
      "120": 1,
      "70": 1,
