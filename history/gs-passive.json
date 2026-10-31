@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-31T04:30:05.837089+00:00",
+ "generated_at": "2026-10-31T05:00:05.672527+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -32,11 +32,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 6108,
-    "turns": 141185,
+    "files": 6109,
+    "turns": 141186,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 4804,
+     "kept": 4805,
      "dropped": 5107,
      "subagent_files": 1628,
      "dropped_to": {
@@ -59,8 +59,8 @@
      {
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
-      "files": 1702,
-      "turns": 41473
+      "files": 1703,
+      "turns": 41474
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -64516,11 +64516,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 19075,
+    "reset_verified_samples": 19087,
     "since": null,
-    "samples": 21805,
+    "samples": 21817,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-31T04:28:10+00:00"
+    "last": "2026-10-31T04:59:44+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -64535,11 +64535,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 1758,
-     "dropped": 4524,
+     "dropped": 4525,
      "subagent_files": 741,
      "dropped_to": {
       ".claude": 2,
-      ".claude-javiswork": 2371
+      ".claude-javiswork": 2372
      },
      "attributed_by_record": {
       "airlock_tune_env": 612
@@ -74811,7 +74811,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-31T04:31:24.056968+00:00",
+  "generated_at": "2026-10-31T05:01:27.478390+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -140548,6 +140548,22 @@
      "65": 1,
      "17": 1,
      "43": 1
+    },
+    "fast_output_hist": {},
+    "fast_ttfb_hist": {}
+   },
+   {
+    "day": "2026-10-31",
+    "model": "claude-haiku-5-5",
+    "account": "a2",
+    "entrypoint": "sdk-cli",
+    "n": 1,
+    "fast_session_requests": 0,
+    "output_hist": {
+     "246": 1
+    },
+    "ttfb_hist": {
+     "31": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
