@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-30T23:30:05.445399+00:00",
+ "generated_at": "2026-10-31T00:00:05.348861+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -18,11 +18,11 @@
     "legacy_log": "/home/jonathan/.paperclip/ops/gs-usage-ceiling.log",
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 16315,
+    "reset_verified_samples": 16318,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 21168,
+    "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-10-30T23:26:49+00:00"
+    "last": "2026-10-30T23:37:06+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -34925,7 +34925,7 @@
      "reset_verified": true
     },
     {
-     "window_ending": "2026-10-30T23:26:49+00:00",
+     "window_ending": "2026-10-30T23:37:06+00:00",
      "windows": 3.0,
      "five_hour_pct": 3.0,
      "seven_day_pct": 1.0,
@@ -34946,11 +34946,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 14355,
+    "reset_verified_samples": 14361,
     "since": null,
-    "samples": 17407,
+    "samples": 17413,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-10-30T23:25:45+00:00"
+    "last": "2026-10-30T23:57:06+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-dave/projects",
@@ -64516,11 +64516,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 18979,
+    "reset_verified_samples": 18991,
     "since": null,
-    "samples": 21686,
+    "samples": 21698,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-10-30T23:28:59+00:00"
+    "last": "2026-10-30T23:58:07+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -74811,7 +74811,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-10-30T23:31:23.568326+00:00",
+  "generated_at": "2026-10-31T00:01:26.313186+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {

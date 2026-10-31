@@ -2,7 +2,7 @@
  "_meta": {
   "what": "the meter's own per-model credit rates, fitted from the passive stretches already in the repository. `measured_rates` is the block tracker/credits.py reads; everything else is the working the fits show.",
   "command": "python3 -m tools.model_rates history/masterrig-passive.json --json history/model-rates.json",
-  "generated_at": "2026-10-30T23:33:53+00:00",
+  "generated_at": "2026-10-31T00:03:55+00:00",
   "inputs": [
    "history/gs-passive.json",
    "history/masterrig-passive.json",
@@ -942,7 +942,7 @@
    "what": "stretches are fitted in interactive-equivalent tokens: each stretch's headless tokens count at this factor (tracker/five_hour_weight.py)"
   }
  },
- "generated_at": "2026-10-30T23:33:53+00:00",
+ "generated_at": "2026-10-31T00:03:55+00:00",
  "seed": 20260920,
  "resamples": 600,
  "exclusions": "harness-runs",
