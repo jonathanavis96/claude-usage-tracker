@@ -101,6 +101,31 @@ class SampleTests(unittest.TestCase):
             self.assertIsNotNone(parse_row(row))
             self.assertEqual(parse_meter_log(lines)[0].resets_at, "2026-09-15T23:00:00.4+00:00")
 
+    def test_a_null_five_hour_is_an_idle_window_logged_as_zero_not_a_gap(self):
+        # Since 2026-10-31 the endpoint sends "five_hour": null when no 5-hour window is
+        # open. That is 0% used, not a failed read: logging it as a gap left a1 and jwork
+        # with no usable reading for hours and re-called the endpoint every tick (429s).
+        idle = {"five_hour": None, "seven_day": BODY["seven_day"]}
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: idle, now=lambda: NOW), 0)
+            lines = log.read_text().splitlines()
+            row = json.loads(lines[0])
+            self.assertNotIn("error", row)
+            self.assertEqual(row["five_hour"], {"utilization": 0.0, "resets_at": None})
+            self.assertTrue(row["five_hour_idle"])
+            self.assertEqual(parse_moonlighter(lines)[0].five_hour, 0.0)
+            # No resets_at, so the weekly pairing skips it, as it does any row without a reset.
+            self.assertIsNone(parse_row(row))
+            parse_meter_log(lines)
+
+    def test_a_response_with_no_buckets_at_all_is_still_a_gap(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+            empty = {"five_hour": None, "seven_day": None}
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: empty, now=lambda: NOW), 4)
+            self.assertIn("error", json.loads(log.read_text().splitlines()[0]))
+
     def test_a_failed_read_is_logged_without_the_token_and_exits_4(self):
         def fail(url, headers):
             raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)

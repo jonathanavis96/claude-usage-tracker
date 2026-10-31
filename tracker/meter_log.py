@@ -57,6 +57,7 @@ config dir is signed out), 4 the usage read failed.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import fcntl
 import functools
 import hashlib
@@ -462,6 +463,14 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
             seen["problems"] = problems
         else:
             u = read_usage(config_dir, fetch=capturing_fetch, now=clock)
+            # Since 2026-10-31 the endpoint sends "five_hour": null when no 5-hour window
+            # is open (it used to send 0% with a reset). That is 0% used, not a failed read;
+            # with seven_day still present the response is a real reading.
+            body = seen.get("body")
+            if (u.five_hour is None and u.seven_day is not None and isinstance(body, dict)
+                    and "five_hour" in body and body["five_hour"] is None):
+                u = dataclasses.replace(u, five_hour=0.0, five_hour_resets_at=None)
+                seen["idle"] = True
         if u.five_hour is None:
             raise ValueError("no five_hour utilization in the usage response")
     except AuthExpired as e:
@@ -497,6 +506,8 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED
     line = sample_line(u, account, identity)
+    if seen.get("idle"):
+        line["five_hour_idle"] = True
     if header_extras is not None:
         line.update({"source": "ratelimit_headers", "model": model, "ratelimit": header_extras})
         if seen.get("problems"):
