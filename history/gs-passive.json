@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-01T10:00:05.780020+00:00",
+ "generated_at": "2026-11-01T10:30:05.280408+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -75236,7 +75236,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-01T10:01:32.466328+00:00",
+  "generated_at": "2026-11-01T10:31:35.248065+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
