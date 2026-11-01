@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-01T18:00:06.152664+00:00",
+ "generated_at": "2026-11-01T18:30:05.316282+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 16318,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 21529,
+    "samples": 21538,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-01T17:58:06+00:00"
+    "last": "2026-11-01T18:29:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -16594,6 +16594,20 @@
       }
      },
      "headless_turns": 18,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-01T17:12:29+00:00",
+     "end": "2026-11-01T18:17:05+00:00",
+     "seven_day": 34,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
      "cloud_session": false
     }
    ],
@@ -35241,13 +35255,13 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-01T17:58:06+00:00",
+     "window_ending": "2026-11-01T18:29:24+00:00",
      "windows": 0.0,
      "five_hour_pct": 0.0,
-     "seven_day_pct": 4.0,
+     "seven_day_pct": 5.0,
      "rounding_interval": [
       0.0,
-      0.6465
+      0.458
      ],
      "pieces": 1,
      "reset_verified": false
@@ -64844,11 +64858,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 19775,
+    "reset_verified_samples": 19789,
     "since": null,
-    "samples": 22682,
+    "samples": 22696,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-01T17:58:06+00:00"
+    "last": "2026-11-01T18:29:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -75504,7 +75518,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-01T18:01:28.210465+00:00",
+  "generated_at": "2026-11-01T18:31:34.615012+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
