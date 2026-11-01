@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-01T21:30:06.006587+00:00",
+ "generated_at": "2026-11-01T22:00:05.798722+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -64858,11 +64858,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 19863,
+    "reset_verified_samples": 19875,
     "since": null,
-    "samples": 22770,
+    "samples": 22782,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-01T21:30:10+00:00"
+    "last": "2026-11-01T21:59:24+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -75518,7 +75518,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-01T21:31:32.585655+00:00",
+  "generated_at": "2026-11-01T22:01:27.264054+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
