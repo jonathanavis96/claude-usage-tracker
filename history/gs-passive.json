@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-01T15:00:05.244497+00:00",
+ "generated_at": "2026-11-01T15:30:05.941932+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -20,9 +20,9 @@
     "note": null,
     "reset_verified_samples": 16318,
     "since": "2026-09-05T06:14:32+00:00",
-    "samples": 21478,
+    "samples": 21488,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-01T14:58:39+00:00"
+    "last": "2026-11-01T15:28:06+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-javiswork/projects",
@@ -33,7 +33,7 @@
      ".claude-jono"
     ],
     "files": 6262,
-    "turns": 142756,
+    "turns": 142769,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 4883,
@@ -60,7 +60,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
       "files": 1781,
-      "turns": 42153
+      "turns": 42166
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -35181,7 +35181,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-01T14:58:39+00:00",
+     "window_ending": "2026-11-01T15:28:06+00:00",
      "windows": 0.0,
      "five_hour_pct": 0.0,
      "seven_day_pct": 2.0,
@@ -64784,11 +64784,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 19743,
+    "reset_verified_samples": 19755,
     "since": null,
-    "samples": 22610,
+    "samples": 22622,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-01T14:58:39+00:00"
+    "last": "2026-11-01T15:30:06+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -75444,7 +75444,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-01T15:01:40.478430+00:00",
+  "generated_at": "2026-11-01T15:31:37.117432+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -142591,19 +142591,19 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "sdk-cli",
-    "n": 83,
+    "n": 88,
     "fast_session_requests": 0,
     "output_hist": {
-     "234": 7,
+     "234": 8,
      "247": 4,
      "238": 8,
      "248": 1,
-     "240": 6,
+     "240": 7,
      "237": 5,
-     "235": 6,
-     "241": 4,
+     "235": 7,
+     "241": 5,
      "227": 2,
-     "243": 5,
+     "243": 6,
      "233": 6,
      "236": 3,
      "245": 1,
@@ -142651,6 +142651,11 @@
      "129": 1,
      "24": 2,
      "81": 1,
+     "61": 1,
+     "14": 1,
+     "36": 1,
+     "62": 1,
+     "111": 1,
      "54": 2,
      "49": 2,
      "63": 1,
