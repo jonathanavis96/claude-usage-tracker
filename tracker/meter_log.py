@@ -57,7 +57,6 @@ config dir is signed out), 4 the usage read failed.
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import fcntl
 import functools
 import hashlib
@@ -179,6 +178,8 @@ def schema_problems(body: dict) -> list[str]:
     out = []
     for bucket in ("five_hour", "seven_day"):
         b = body.get(bucket)
+        if bucket == "five_hour" and bucket in body and b is None:
+            continue  # present but null: an account with no five-hour limit, not a rename
         if not isinstance(b, dict):
             out.append(f"no {bucket} bucket")
             continue
@@ -463,15 +464,13 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
             seen["problems"] = problems
         else:
             u = read_usage(config_dir, fetch=capturing_fetch, now=clock)
-            # Since 2026-10-31 the endpoint sends "five_hour": null when no 5-hour window
-            # is open (it used to send 0% with a reset). That is 0% used, not a failed read;
-            # with seven_day still present the response is a real reading.
-            body = seen.get("body")
-            if (u.five_hour is None and u.seven_day is not None and isinstance(body, dict)
-                    and "five_hour" in body and body["five_hour"] is None):
-                u = dataclasses.replace(u, five_hour=0.0, five_hour_resets_at=None)
-                seen["idle"] = True
-        if u.five_hour is None:
+        # Since 2026-10-31 some accounts have no five-hour limit: the endpoint sends
+        # "five_hour": null (the headers carry no 5h-* field) with seven_day intact. That is
+        # a real reading of an account with one meter, logged as five_hour null and
+        # weekly_only, never as a made-up 0%. With neither meter it is still a failed read.
+        if u.seven_day is None and u.five_hour is None:
+            raise ValueError("no five_hour or seven_day utilization in the usage response")
+        if u.five_hour is None and not u.weekly_only:
             raise ValueError("no five_hour utilization in the usage response")
     except AuthExpired as e:
         # Same token before and after the 401: not transient. Logged with its own
@@ -506,8 +505,8 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED
     line = sample_line(u, account, identity)
-    if seen.get("idle"):
-        line["five_hour_idle"] = True
+    if u.weekly_only:
+        line["weekly_only"] = True
     if header_extras is not None:
         line.update({"source": "ratelimit_headers", "model": model, "ratelimit": header_extras})
         if seen.get("problems"):
@@ -528,7 +527,8 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
     if not _append(log, line):
         print(f"{account}: reading not recorded, the log could not be written", file=sys.stderr)
         return EXIT_READ_FAILED
-    print(f"{account}: five_hour={u.five_hour:.0f}% seven_day={u.seven_day}")
+    five = "none (weekly-only)" if u.five_hour is None else f"{u.five_hour:.0f}%"
+    print(f"{account}: five_hour={five} seven_day={u.seven_day}")
     return EXIT_OK
 
 

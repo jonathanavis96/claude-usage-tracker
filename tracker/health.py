@@ -210,12 +210,15 @@ def check_collection(c: Config, now: float) -> str | None:
         rows = _tail_rows(c.usage_log, n=10_000)
     except OSError as e:
         return f"collection: cannot read {c.usage_log}: {e.strerror}"
-    # The newest real reading: an error row carries a ts but no utilization.
-    row = next((r for r in reversed(rows) if isinstance(r.get("five_hour"), dict)
-                and isinstance(r["five_hour"].get("utilization"), (int, float))), None)
+    # The newest real reading: an error row carries a ts but no utilization. An account
+    # with no five-hour limit (weekly_only, since 2026-10-31) logs five_hour null, so a
+    # numeric seven_day counts too.
+    def _numeric(r: dict, bucket: str) -> bool:
+        return isinstance(r.get(bucket), dict) and isinstance(r[bucket].get("utilization"), (int, float))
+    row = next((r for r in reversed(rows) if _numeric(r, "five_hour") or _numeric(r, "seven_day")), None)
     ts = _parse_ts(row.get("ts")) if row else None
     if ts is None:
-        return f"collection: no reading (a line with five_hour utilization) near the end of {c.usage_log}"
+        return f"collection: no reading (a line with five_hour or seven_day utilization) near the end of {c.usage_log}"
     if ts - now > CLOCK_SKEW_S:
         return f"collection: newest sample is stamped {_age(ts - now)} in the future (clock skew)"
     if now - ts > 2 * c.collection_interval_s:

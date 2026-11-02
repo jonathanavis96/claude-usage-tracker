@@ -62,7 +62,10 @@ def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list
             d = json.loads(line)
             fh = d.get("five_hour") or {}
             seven = d.get("seven_day") or {}
-            if fh.get("utilization") is None or not d.get("ts"):
+            # A weekly-only reading (five_hour null, no five-hour limit) has no five-hour
+            # figure, and a `five_hour_idle` row (meter_log, 2026-10-31 to 11-02) logged that
+            # same state as a made-up 0%: neither is a five-hour sample.
+            if fh.get("utilization") is None or d.get("five_hour_idle") or not d.get("ts"):
                 continue
             sd = seven.get("utilization")
             sample = Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),

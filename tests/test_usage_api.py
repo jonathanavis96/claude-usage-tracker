@@ -20,6 +20,16 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(u.seven_day_resets_at, "2026-09-11T03:59:59Z")
         self.assertEqual(u.ts, now)
 
+    def test_explicit_null_five_hour_with_seven_day_is_weekly_only(self):
+        now = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
+        u = parse_usage({"five_hour": None, "seven_day": sd}, now)
+        self.assertTrue(u.weekly_only)
+        self.assertIsNone(u.five_hour)
+        self.assertEqual(u.seven_day, 47.0)
+        self.assertFalse(parse_usage({"seven_day": sd}, now).weekly_only)  # missing key: schema change
+        self.assertFalse(parse_usage({"five_hour": None, "seven_day": None}, now).weekly_only)
+
     def test_read_uses_token_from_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok123"}}))

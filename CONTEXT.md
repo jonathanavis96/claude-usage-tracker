@@ -34,6 +34,10 @@ _Avoid_: entry, sample, reading
 One meter value observed after a prompt, inside a probe.
 _Avoid_: sample, observation
 
+**Weekly-only reading**:
+A reading of an account with no 5-hour limit: the endpoint sends `"five_hour": null` (rate-limit headers carry no `5h-*` field) while the seven-day meter reads normally, seen on some Max 20x accounts from 2026-10-31. Logged with five_hour null and `weekly_only: true`; never a 0% meter, and never a 5-hour sample.
+_Avoid_: idle window, failed read
+
 **Alignment**:
 The first tick a probe waits for so that measurement starts on a whole-percent boundary. The alignment span is discarded.
 _Avoid_: warm-up, calibration, sync
