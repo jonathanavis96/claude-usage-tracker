@@ -93,6 +93,9 @@ class EndTest(unittest.TestCase):
         self.assertEqual(b["accounts"]["Max account 4"],
                          {"switched": False, "five_hour_last": None, "weekly_only_since": None})
         self.assertEqual(E.public_block({"accounts": {}}, None, labels)["status"], "in_force")
+        # An account with no page label is left out, never published by name.
+        gs["accounts"]["someone"] = account(iso(1), iso(2), iso(60))
+        self.assertNotIn("someone", __import__("json").dumps(E.public_block(gs, mr, labels)))
 
 
 if __name__ == "__main__":

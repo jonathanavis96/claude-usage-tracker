@@ -158,9 +158,11 @@ def public_block(gs_passive: dict | None, masterrig_passive: dict | None,
         "ended_at": _iso(end),
         "plan": "max20",
         "plan_display_name": "Ultra",
-        "accounts": {labels.get(n, n): {"switched": s["switched"],
-                                        "five_hour_last": s["five_hour_last"] if s["switched"] else None,
-                                        "weekly_only_since": s["weekly_only_since"] if s["switched"] else None}
-                     for n, s in sorted(sw.items(), key=lambda kv: labels.get(kv[0], kv[0]))},
+        # Only accounts with a page label are listed: an account's name is never published.
+        "accounts": {labels[n]: {"switched": s["switched"],
+                                 "five_hour_last": s["five_hour_last"] if s["switched"] else None,
+                                 "weekly_only_since": s["weekly_only_since"] if s["switched"] else None}
+                     for n, s in sorted(sw.items(), key=lambda kv: labels.get(kv[0], ""))
+                     if n in labels},
         "rule": RULE,
     }
