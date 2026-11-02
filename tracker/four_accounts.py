@@ -338,6 +338,8 @@ def account_readings(body: dict, name: str, value, runs: list, until: datetime |
         for row in rows:
             if _flag_out(row, name, runs):
                 continue
+            if kind == "steps" and row.get("five_hour_measured") is False:
+                continue  # weekly-only: its five-hour movement is unknown, not 0
             t0, t1 = parse(row["start"]), parse(row["end"])
             if until is not None and t1 > until:
                 continue

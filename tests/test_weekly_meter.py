@@ -63,6 +63,13 @@ class SevenDayStepTests(unittest.TestCase):
         self.assertEqual([outputs(s) for s in steps], [10, 1])
         self.assertEqual([s["d5"] for s in steps], [0, 0])
 
+    def test_a_step_with_no_five_hour_reading_says_so(self):
+        samples = [sample(0, 10, 20), sample(5, 11, 21), sample(10, 12, 22),
+                   sample(15, None, 23, resets=None), sample(20, None, 24, resets=None)]
+        steps = W.seven_day_steps(samples, [], PRICES)
+        self.assertEqual([(s["seven_day"], s["five_hour_measured"]) for s in steps],
+                         [(22, True), (23, False), (24, False)])
+
     def test_no_step_spans_a_weekly_reset_or_a_gap(self):
         samples = [sample(0, 0, 50), sample(5, 0, 51), sample(10, 0, 2, seven_resets="W2"),
                    sample(15, 0, 3, seven_resets="W2"), sample(60, 0, 4, seven_resets="W2"),
@@ -187,6 +194,14 @@ class LevelTests(unittest.TestCase):
         self.assertEqual(W.valued([st], value)[0]["d5"], 10)
         lvl = W.level({"a1": [row]}, "t")
         self.assertEqual((lvl["windows_per_week_meters"], lvl["raw_windows_per_week_meters"]), (8.0, 10.0))
+
+    def test_weekly_only_steps_count_for_credits_but_not_windows_per_week(self):
+        a = rows_for([[100, 100]], d5=5)
+        b = [{**r, "d5": 0, "five_hour_measured": False} for r in rows_for([[100, 100]])]
+        lvl = W.level({"a1": a + b}, "t")
+        self.assertEqual(lvl["seven_day_points"], 4)
+        self.assertAlmostEqual(lvl["credits_per_pct"], 100.0)
+        self.assertAlmostEqual(lvl["windows_per_week_meters"], 5.0)
 
     def test_no_steps_is_no_level(self):
         lvl = W.level({"a1": []}, "t")
