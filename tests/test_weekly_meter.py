@@ -54,6 +54,15 @@ class SevenDayStepTests(unittest.TestCase):
         self.assertEqual([outputs(s) for s in steps], [50, 0, 7])
         self.assertEqual(steps[1]["start"], steps[1]["end"])
 
+    def test_weekly_only_readings_still_measure_the_weekly_limit(self):
+        # An account with no five-hour limit: five_hour None on every reading.
+        samples = [sample(0, None, 20, resets=None), sample(5, None, 21, resets=None),
+                   sample(10, None, 22, resets=None), sample(15, None, 23, resets=None)]
+        steps = W.seven_day_steps(samples, [turn(6, 10), turn(12, 1)], PRICES)
+        self.assertEqual([s["seven_day"] for s in steps], [22, 23])
+        self.assertEqual([outputs(s) for s in steps], [10, 1])
+        self.assertEqual([s["d5"] for s in steps], [0, 0])
+
     def test_no_step_spans_a_weekly_reset_or_a_gap(self):
         samples = [sample(0, 0, 50), sample(5, 0, 51), sample(10, 0, 2, seven_resets="W2"),
                    sample(15, 0, 3, seven_resets="W2"), sample(60, 0, 4, seven_resets="W2"),

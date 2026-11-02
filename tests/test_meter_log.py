@@ -116,10 +116,14 @@ class SampleTests(unittest.TestCase):
             self.assertTrue(row["weekly_only"])
             self.assertNotIn("five_hour_idle", row)
             self.assertNotIn("schema", row)  # key present but null is no limit, not a rename
-            # No five-hour figure, so nothing five-hour-based reads it.
+            # No five-hour figure, so nothing five-hour-based reads it...
             self.assertEqual(parse_moonlighter(lines), [])
             self.assertIsNone(parse_row(row))
-            parse_meter_log(lines)
+            self.assertEqual(parse_meter_log(lines), [])
+            # ...but the seven-day readers still get its seven-day figure.
+            kept = parse_meter_log(lines, weekly=True)
+            self.assertEqual([(s.five_hour, s.seven_day, s.resets_at) for s in kept],
+                             [(None, BODY["seven_day"]["utilization"], None)])
 
     def test_a_missing_five_hour_key_is_still_a_gap(self):
         with tempfile.TemporaryDirectory() as d:
@@ -133,6 +137,8 @@ class SampleTests(unittest.TestCase):
         row = {"ts": "2026-10-31T21:00:00+00:00", "five_hour": {"utilization": 0.0, "resets_at": None},
                "five_hour_idle": True, "seven_day": {"utilization": 40.0, "resets_at": None}}
         self.assertEqual(parse_moonlighter([json.dumps(row)]), [])
+        self.assertEqual([(s.five_hour, s.seven_day) for s in parse_moonlighter([json.dumps(row)], weekly=True)],
+                         [(None, 40.0)])
 
     def test_a_response_with_no_buckets_at_all_is_still_a_gap(self):
         with tempfile.TemporaryDirectory() as d:

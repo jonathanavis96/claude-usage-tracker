@@ -34,7 +34,8 @@ class MixedAccountLog(ValueError):
 @dataclass(frozen=True)
 class Sample:
     ts: datetime
-    five_hour: float
+    #: None only in a `weekly=True` parse: a reading with no five-hour figure (weekly_only).
+    five_hour: float | None
     seven_day: float | None
     resets_at: str | None  # the five-hour window's reset
     source: str
@@ -54,7 +55,10 @@ def _sequenced(samples: list[Sample]) -> list[Sample]:
     return [replace(s, seq=(call, i)) for i, s in enumerate(samples)]
 
 
-def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list[Sample]:
+def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter", *, weekly: bool = False) -> list[Sample]:
+    """One Sample per reading. `weekly=True` also keeps a reading with no five-hour figure
+    (weekly_only, or a made-up five_hour_idle 0%) as `five_hour=None` when its seven-day
+    figure is there; only seven-day readers (weekly_meter.seven_day_steps) ask for that."""
     out = []
     for line in lines:
         # One corrupt line (a torn write, a hand edit) skips that line, never the whole log.
@@ -65,19 +69,20 @@ def parse_moonlighter(lines: Iterable[str], source: str = "moonlighter") -> list
             # A weekly-only reading (five_hour null, no five-hour limit) has no five-hour
             # figure, and a `five_hour_idle` row (meter_log, 2026-10-31 to 11-02) logged that
             # same state as a made-up 0%: neither is a five-hour sample.
-            if fh.get("utilization") is None or d.get("five_hour_idle") or not d.get("ts"):
-                continue
             sd = seven.get("utilization")
-            sample = Sample(datetime.fromisoformat(d["ts"]), float(fh["utilization"]),
-                            float(sd) if sd is not None else None, fh.get("resets_at"), source,
-                            seven.get("resets_at"))
+            no_five = fh.get("utilization") is None or bool(d.get("five_hour_idle"))
+            if not d.get("ts") or (no_five and not (weekly and sd is not None)):
+                continue
+            sample = Sample(datetime.fromisoformat(d["ts"]), None if no_five else float(fh["utilization"]),
+                            float(sd) if sd is not None else None, None if no_five else fh.get("resets_at"),
+                            source, seven.get("resets_at"))
         except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
             continue
         out.append(sample)
     return _sequenced(out)
 
 
-def parse_meter_log(lines: Iterable[str]) -> list[Sample]:
+def parse_meter_log(lines: Iterable[str], *, weekly: bool = False) -> list[Sample]:
     """tracker.meter_log's JSONL: moonlighter's row shape plus `account` and `identity`.
 
     Failed reads are `error` lines with no utilization and are skipped, leaving
@@ -95,7 +100,7 @@ def parse_meter_log(lines: Iterable[str]) -> list[Sample]:
             identities.add(ident)
     if len(identities) > 1:
         raise MixedAccountLog(f"meter log holds {len(identities)} accounts: {sorted(identities)}")
-    return parse_moonlighter(lines, source="meter")
+    return parse_moonlighter(lines, source="meter", weekly=weekly)
 
 
 def _iso_or_none(s: str) -> datetime | None:
@@ -254,16 +259,17 @@ PARSERS = {"moonlighter": parse_moonlighter, "meter": parse_meter_log,
            "gs-ceiling": parse_gs_ceiling_log, "ceiling": parse_ceiling_log}
 
 
-def parse_log(fmt: str, lines: Iterable[str], since: datetime | None = None) -> list[Sample]:
+def parse_log(fmt: str, lines: Iterable[str], since: datetime | None = None, *, weekly: bool = False) -> list[Sample]:
     """Parse one log in the named format, dropping readings before `since`.
 
     Only `gs-ceiling` takes `since` in its own signature (its log has not always
     read the account it reads now); for the others it is applied afterwards, so
-    a caller can hand the same cutoff to any format.
+    a caller can hand the same cutoff to any format. `weekly` is parse_moonlighter's.
     """
     parser = PARSERS.get(fmt)
     if parser is None:
         raise ValueError(f"unknown meter log format: {fmt!r} (known: {', '.join(sorted(PARSERS))})")
     if fmt == "gs-ceiling":
         return parser(lines, since=since)
-    return [s for s in parser(lines) if since is None or s.ts >= since]
+    parsed = parser(lines, weekly=True) if weekly and fmt in ("moonlighter", "meter") else parser(lines)
+    return [s for s in parsed if since is None or s.ts >= since]
