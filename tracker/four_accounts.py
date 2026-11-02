@@ -35,7 +35,10 @@ inverse variance. The instant flags when:
 The strongest flagged instant becomes a change, the history is split there, and the search
 repeats until nothing flags. A step one account takes alone is a counting problem on that
 account (`not_limit_changes`), never a limit change. No date is read anywhere: no cut, no
-announcement, no family's first use, no account list.
+announcement, no family's first use, no account list. The one instant the lines are cut at,
+the five-hour limit's end, is read off the accounts' own meter logs
+(tracker/five_hour_end.py, ADR 0001 rule 24): past it the five-hour and ratio lines have no
+readings, and the seven-day line reads every step, weekly-only ones included.
 
 The search runs once a day on the data known at midnight UTC (`hold`). A change is a
 `candidate` the day it is first found, `provisional` while it keeps being found, and
