@@ -1808,6 +1808,20 @@ class FiveHourLimitEndTests(unittest.TestCase):
         self.assertNotIn("jwork", json.dumps(b))
         self.assertEqual(self._build(self._gs(False))["five_hour_limit"]["status"], "in_force")
 
+    def test_windows_per_week_is_final_at_the_end_not_stale(self):
+        from tracker.publish import _end_weekly_windows
+        ww = {"max20": {"current": 13.1, "current_estimate": {"value": 13.1, "stale": True,
+                                                              "reasons": ["evidence_stale"]},
+                        "availability": {"status": "measured", "reason": "evidence_stale"}}}
+        _end_weekly_windows(ww, self.END)
+        self.assertEqual(ww["max20"]["ended_at"], self.END.isoformat())
+        self.assertEqual(ww["max20"]["current_estimate"]["stale"], False)
+        self.assertEqual(ww["max20"]["current_estimate"]["reasons"], ["five_hour_limit_removed"])
+        self.assertEqual(ww["max20"]["availability"], {"status": "measured", "reason": "five_hour_limit_removed"})
+        untouched = {"max20": {"current": 1.0}}
+        _end_weekly_windows(untouched, None)
+        self.assertEqual(untouched, {"max20": {"current": 1.0}})
+
     def test_five_hour_figures_freeze_at_the_end_and_are_final_not_stale(self):
         ended = self._build(self._gs(True))
         frozen = self._build(self._gs(False, after=False))
@@ -1818,6 +1832,11 @@ class FiveHourLimitEndTests(unittest.TestCase):
             self.assertIn("five_hour_limit_removed", r["quality"]["reasons"])
             self.assertNotIn("evidence_stale", r["quality"]["reasons"])
             self.assertTrue(all(h["date"] <= "2026-10-30" for h in ended["history"].get(model) or []), model)
+        ww = ended["weekly_windows"]["max20"]
+        self.assertEqual(ww["ended_at"], self.END.isoformat())
+        if ww.get("current_estimate"):
+            self.assertFalse(ww["current_estimate"]["stale"])
+            self.assertIn("five_hour_limit_removed", ww["current_estimate"]["reasons"])
         # Unswitched, the same late stretch moves the figure: the end is what holds it.
         live = self._build(self._gs(False))
         model = next(iter(live["rates"]))

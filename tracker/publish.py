@@ -1562,14 +1562,14 @@ def _segment_regimes(points: list[tuple], changes: list[dict], chain: bool = Tru
 def _end_weekly_windows(weekly: dict, ended: datetime | None) -> None:
     """Mark max20's windows per week final at the five-hour limit's end: five-hour movement
     over seven-day movement has no numerator after it, so `current` is the level there, not
-    a stale one, and the series is not live (`ended_at`)."""
+    a stale one (`current_estimate.stale` false), and the series is not live (`ended_at`)."""
     if ended is None:
         return
     block = weekly.get("max20")
     if not isinstance(block, dict):
         return
     block["ended_at"] = ended.isoformat()
-    cur = block.get("current")
+    cur = block.get("current_estimate")
     if isinstance(cur, dict):
         cur["stale"] = False
         cur["reasons"] = [r for r in cur.get("reasons") or [] if r != "evidence_stale"] + ["five_hour_limit_removed"]
