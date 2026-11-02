@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-01T23:30:05.853254+00:00",
+ "generated_at": "2026-11-02T00:00:05.224053+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -37,11 +37,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 4887,
-     "dropped": 5202,
+     "dropped": 5203,
      "subagent_files": 1639,
      "dropped_to": {
       ".claude": 558,
-      ".claude-avis": 2207,
+      ".claude-avis": 2208,
       ".claude-dave": 8
      },
      "attributed_by_record": {
@@ -64858,11 +64858,11 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 19887,
+    "reset_verified_samples": 19893,
     "since": null,
-    "samples": 22818,
+    "samples": 22830,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-01T23:29:29+00:00"
+    "last": "2026-11-01T23:58:59+00:00"
    },
    "transcripts": {
     "root": "/home/jonathan/.claude-avis/projects",
@@ -64872,11 +64872,11 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 2139,
-    "turns": 59881,
+    "files": 2140,
+    "turns": 59885,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 1864,
+     "kept": 1865,
      "dropped": 4596,
      "subagent_files": 797,
      "dropped_to": {
@@ -64893,8 +64893,8 @@
      {
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
-      "files": 892,
-      "turns": 27113
+      "files": 893,
+      "turns": 27117
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -75518,7 +75518,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-01T23:31:32.347951+00:00",
+  "generated_at": "2026-11-02T00:01:34.866525+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -143155,7 +143155,7 @@
     "model": "claude-sonnet-5-5",
     "account": "a4",
     "entrypoint": "sdk-cli",
-    "n": 80,
+    "n": 82,
     "fast_session_requests": 0,
     "output_hist": {
      "260": 1,
@@ -143164,6 +143164,8 @@
      "247": 6,
      "254": 1,
      "250": 1,
+     "262": 1,
+     "251": 1,
      "224": 2,
      "238": 4,
      "244": 4,
@@ -143191,7 +143193,8 @@
      "23": 1,
      "57": 1,
      "41": 1,
-     "55": 2,
+     "55": 3,
+     "10": 1,
      "70": 1,
      "141": 3,
      "115": 1,
