@@ -73,7 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.harness_runs import effort_matrix_row, probe_rows
 from tracker import credits as C
-from tracker import five_hour_weight
+from tracker import five_hour_end, five_hour_weight
 
 CUT = C.CUT_AT
 P = datetime.fromisoformat
@@ -1900,6 +1900,9 @@ def main(argv: list[str] | None = None) -> int:
             return STILL_HELD_EXIT
     gs_raw = json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8"))
     mr_raw = json.loads(a.masterrig.read_text(encoding="utf-8"))
+    # The rates are fitted on five-hour stretches, so none past the five-hour limit's end
+    # (tracker/five_hour_end.py): the fit freezes there with every other five-hour figure.
+    gs_raw, mr_raw, _ = five_hour_end.apply(gs_raw, mr_raw)
     unit = five_hour_unit(gs_raw, mr_raw)
     factor = unit["headless_factor"]
     S = stretches_in_five_hour_unit(gs_raw, mr_raw, factor)

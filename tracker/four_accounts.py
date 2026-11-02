@@ -35,7 +35,10 @@ inverse variance. The instant flags when:
 The strongest flagged instant becomes a change, the history is split there, and the search
 repeats until nothing flags. A step one account takes alone is a counting problem on that
 account (`not_limit_changes`), never a limit change. No date is read anywhere: no cut, no
-announcement, no family's first use, no account list.
+announcement, no family's first use, no account list. The one instant the lines are cut at,
+the five-hour limit's end, is read off the accounts' own meter logs
+(tracker/five_hour_end.py, ADR 0001 rule 24): past it the five-hour and ratio lines have no
+readings, and the seven-day line reads every step, weekly-only ones included.
 
 The search runs once a day on the data known at midnight UTC (`hold`). A change is a
 `candidate` the day it is first found, `provisional` while it keeps being found, and
@@ -112,6 +115,7 @@ from pathlib import Path
 import numpy as np
 
 from . import credits as credit_model
+from . import five_hour_end
 from .atomic import write_text_atomic
 from .capture import COLLECTION_GAP
 # What the publisher and the invariants read lives in the stdlib module; re-exported here.
@@ -313,7 +317,7 @@ class Reading:
     t1: float
     credits: float | None
     headless: float
-    d5: float
+    d5: float | None  # None on a step whose five-hour movement is unknown (weekly-only)
     d7: float
     fam: dict | None = None
     hfam: dict | None = None
@@ -338,8 +342,10 @@ def account_readings(body: dict, name: str, value, runs: list, until: datetime |
         for row in rows:
             if _flag_out(row, name, runs):
                 continue
-            if kind == "steps" and row.get("five_hour_measured") is False:
-                continue  # weekly-only: its five-hour movement is unknown, not 0
+            # A weekly-only step (no five-hour reading, or past the five-hour limit's end,
+            # tracker/five_hour_end.py) still reads the weekly limit: its five-hour movement is
+            # unknown, not 0, so `d5` is None and only the ratio leaves it out.
+            unknown5 = kind == "steps" and row.get("five_hour_measured") is False
             t0, t1 = parse(row["start"]), parse(row["end"])
             if until is not None and t1 > until:
                 continue
@@ -347,13 +353,13 @@ def account_readings(body: dict, name: str, value, runs: list, until: datetime |
             head = value(row.get("headless_tokens") or {}) if row.get("headless_tokens") else 0.0
             if cr is not None and head is None:
                 cr = None
-            d5 = float((row.get("delta_pct") if kind == "stretches" else row.get("d5")) or 0)
+            d5 = None if unknown5 else float((row.get("delta_pct") if kind == "stretches" else row.get("d5")) or 0)
             d7 = float(row.get("d7") or 1) if kind == "steps" else 0.0
             fam = hfam = None
             if parts is not None and cr is not None:
                 fam = {k: round(v, 1) for k, v in parts(row.get("tokens") or {}).items() if v}
                 hfam = {k: round(v, 1) for k, v in parts(row.get("headless_tokens") or {}).items() if v}
-            out[kind].append(Reading(hours(t0), hours(t1), cr, head or 0.0, d5 or 0.0, d7,
+            out[kind].append(Reading(hours(t0), hours(t1), cr, head or 0.0, None if d5 is None else d5 or 0.0, d7,
                                      fam or None, hfam or None))
     return out
 
@@ -444,7 +450,7 @@ def headless_factor(steps: dict[str, list[Reading]]) -> dict:
     rows = []
     for label, rs in steps.items():
         for r in rs:
-            if not r.credits:
+            if not r.credits or r.d5 is None:
                 continue
             wk = from_hours(r.t1).isocalendar()
             rows.append((f"{label}-{wk[0]}-{wk[1]:02d}", r.d5, min(max(r.headless / r.credits, 0.0), 1.0)))
@@ -523,6 +529,8 @@ def series(readings: dict[str, dict], line: str, factor: float | None) -> dict[s
             if line == "seven_day":
                 w, d = r.credits, r.d7
             elif line == "ratio":
+                if r.d5 is None:
+                    continue
                 share = min(max(r.headless / r.credits, 0.0), 1.0) if r.credits else 0.0
                 w, d = r.d5 / (1.0 + (h - 1.0) * share), r.d7
             else:
@@ -1062,31 +1070,53 @@ def rate_dependence(variants: dict, valued: dict | None, line: str, tau: float,
     }
 
 
+def _capture_shares(rows: list, points, tau: float, lo: float, hi: float) -> dict:
+    """Each side's share of `rows`' meter points (`points(r)`) not in a collection gap, or
+    None on a side with no movement."""
+    rows = [r for r in rows if r.credits is not None and (points(r) or 0) > 0]
+    if not rows:
+        return {"before": None, "after": None}
+    W = np.array([r.credits for r in rows])
+    D = np.array([points(r) for r in rows], dtype=float)
+    tm = np.array([(r.t0 + r.t1) / 2 for r in rows])
+    ref = _weighted_median(W / D, D)
+    kept = W / D >= COLLECTION_GAP * ref
+    shares = {}
+    for side, (x, y) in (("before", (lo, tau)), ("after", (tau, hi))):
+        m = (tm >= x) & (tm < y)
+        tot = float(D[m].sum())
+        shares[side] = round(float(D[m & kept].sum()) / tot, 3) if tot > 0 else None
+    return shares
+
+
 def capture_audit(readings: dict[str, dict], tau: float, lo: float, hi: float,
                   accounts: list[str]) -> dict:
     """Spec 9.7's capture audit at a change: for each voting account, on each side, the share
     of its five-hour meter movement in stretches with captured work (not a collection gap: at
     least COLLECTION_GAP of the account's own meter-weighted median work per point). `failing`
     names the accounts under CAPTURE_MIN on either side: a capture gap every account shares
-    looks exactly like a limit change on the credit lines (the 17 October artifact)."""
+    looks exactly like a limit change on the credit lines (the 17 October artifact).
+
+    A side with no five-hour movement (past the five-hour limit's end, tracker/five_hour_end.py)
+    is read the same way on the seven-day steps, in seven-day points (`by_side` names which)."""
     out, failing = {}, []
     for a in accounts:
-        rows = [r for r in (readings.get(a) or {}).get("stretches") or []
-                if r.credits is not None and r.d5 > 0]
-        if not rows:
+        rs = readings.get(a) or {}
+        shares = _capture_shares(rs.get("stretches") or [], lambda r: r.d5, tau, lo, hi)
+        weekly = None
+        meter = {}
+        for side in ("before", "after"):
+            meter[side] = "five_hour"
+            if shares[side] is None:
+                weekly = weekly or _capture_shares(rs.get("steps") or [], lambda r: r.d7, tau, lo, hi)
+                if weekly[side] is not None:
+                    shares[side], meter[side] = weekly[side], "seven_day"
+        if shares["before"] is None and shares["after"] is None:
             continue
-        W = np.array([r.credits for r in rows])
-        D = np.array([r.d5 for r in rows])
-        tm = np.array([(r.t0 + r.t1) / 2 for r in rows])
-        ref = _weighted_median(W / D, D)
-        kept = W / D >= COLLECTION_GAP * ref
-        shares = {}
-        for side, (x, y) in (("before", (lo, tau)), ("after", (tau, hi))):
-            m = (tm >= x) & (tm < y)
-            tot = float(D[m].sum())
-            shares[side] = round(float(D[m & kept].sum()) / tot, 3) if tot > 0 else None
+        if weekly is not None:
+            shares = {**shares, "by_side": meter}
         out[a] = shares
-        if any(v is not None and v < CAPTURE_MIN for v in shares.values()):
+        if any(shares[s] is not None and shares[s] < CAPTURE_MIN for s in ("before", "after")):
             failing.append(a)
     return {"min_share": CAPTURE_MIN, "per_account": out, "failing": sorted(failing)}
 
@@ -1442,6 +1472,9 @@ def main(argv: list[str] | None = None) -> int:
     valued = valuation_block(rates_raw, credits)
     gs = json.loads(a.gs_passive.read_text(encoding="utf-8")) if a.gs_passive.exists() else None
     mr = json.loads(a.masterrig_passive.read_text(encoding="utf-8")) if a.masterrig_passive.exists() else None
+    # Every five-hour reading past the five-hour limit's end is cut (tracker/five_hour_end.py):
+    # the five-hour and ratio lines stop there, and the seven-day line reads on.
+    gs, mr, _ = five_hour_end.apply(gs, mr)
     recs = records(gs, mr)
     names = sorted(recs, key=lambda n: min((parse(r["start"]) for r in recs[n]["weekly_steps"]
                                             + recs[n]["stretches"] if r.get("start")),

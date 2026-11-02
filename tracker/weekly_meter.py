@@ -141,7 +141,9 @@ def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.Harne
         rows = []
         for st in steps:
             start, end = datetime.fromisoformat(st["start"]), datetime.fromisoformat(st["end"])
-            if st.get("cloud_session"):
+            # A withheld stretch past the five-hour limit's end is dropped, and marks the steps
+            # it overlapped instead (tracker/five_hour_end.py).
+            if st.get("cloud_session") or st.get("withheld_by_stretch"):
                 continue
             if credit_model.overlapping_run(runs, account, start, end) is not None:
                 continue
