@@ -596,6 +596,8 @@ BLOCK_KIND = {
     "effort_usd": "derived",
     "events": "derived",
     "five_hour_meter": "derived",
+    # The five-hour limit's end, read off the passive reports' meter blocks (tracker/five_hour_end.py).
+    "five_hour_limit": "derived",
     # The four-account detector's newest run (history/four-accounts.json), copied as it is.
     "four_accounts": "derived",
     "headline": "derived",
