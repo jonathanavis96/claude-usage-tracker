@@ -262,7 +262,9 @@ class TestDailyNotifyChange(unittest.TestCase):
                 if extra is not None:
                     public.update(extra[i])
                 if feeds is not None:
-                    public["account_feeds"] = {label: {"newest_stretch_end": end, "state": "fresh"}
+                    # A feed is its newest_stretch_end, or the whole feed record as a dict.
+                    public["account_feeds"] = {label: end if isinstance(end, dict)
+                                               else {"newest_stretch_end": end, "state": "fresh"}
                                                for label, end in feeds.items()}
                 (data / "claude-usage.json").write_text(json.dumps(public), encoding="utf-8")
                 # A stub curl that never touches the network. It records the request
@@ -366,6 +368,19 @@ class TestDailyNotifyChange(unittest.TestCase):
                           "state": "measured"})
         self.assertIn("Observed change: increased 38% on 2026-09-22", alerts[2])
         self.assertEqual(self.state, ["2026-09-22"])
+
+    def test_a_newer_seven_day_step_is_new_evidence_past_the_five_hour_limits_end(self) -> None:
+        # Weekly-only accounts close no stretch and no window: their seven-day steps are what
+        # moves (tracker/five_hour_end.py), so a newer step is a second look.
+        STRETCH = "2026-10-30T23:37:06+00:00"
+        feeds1 = {"a2": {"newest_stretch_end": STRETCH, "newest_step_end": "2026-11-20T09:00:00+00:00"}}
+        feeds2 = {"a2": {"newest_stretch_end": STRETCH, "newest_step_end": "2026-11-21T09:00:00+00:00"}}
+        _procs, requests, _alerts = self._publishes(
+            (self.FIVE_HOUR, self.STALLED, "200", feeds1),
+            (self.FIVE_HOUR, self.STALLED, "200", feeds1),
+            (self.FIVE_HOUR, self.STALLED, "200", feeds2))
+        self.assertEqual(requests[:2], ["", ""])
+        self.assertEqual(self._payload(requests[2])["date"], "2026-09-22")
 
     def test_stalled_windows_and_unchanged_stretches_never_announce(self) -> None:
         # The bug this gate fixes, the other way round: with neither source moving, hourly

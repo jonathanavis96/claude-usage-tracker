@@ -552,8 +552,12 @@ class GsPassiveTests(unittest.TestCase):
         self.assertEqual(j["passive_account_count"], 0)
         # account_feeds is not a figure: the file names jwork, so a2 is listed, and with no
         # stamp to show its feed is running it reads as stopped.
-        self.assertEqual(j.pop("account_feeds"), {"a2": {"feed_at": None, "newest_stretch_end": None, "state": "stopped"}})
+        self.assertEqual(j.pop("account_feeds"), {"a2": {"feed_at": None, "newest_stretch_end": None, "newest_step_end": None,
+                                                         "state": "stopped"}})
         self.assertEqual(without.pop("account_feeds"), {})
+        # So is the five-hour limit's block, which lists the account too, still in force.
+        self.assertEqual(j.pop("five_hour_limit")["status"], "in_force")
+        self.assertEqual(without.pop("five_hour_limit")["accounts"], {})
         self.assertEqual(j, without)
 
     def test_freshness_follows_a_fresh_passive_reading_when_probes_are_stale(self):
@@ -575,7 +579,8 @@ class GsPassiveTests(unittest.TestCase):
         stale_passive = gs_passive_report(end="2026-09-05T08:00:00+00:00", cache_write=352400)
         r = build_public_json(rows, PASSIVE, EFFORT, PRICES, now, gs_passive=stale_passive)["rates"]["claude-sonnet-5"]
         self.assertEqual(r["freshness"], {"as_of": "2026-09-05T08:00:00+00:00",
-                                          "stale_after": "2026-09-15T08:00:00+00:00", "stale": True})
+                                          "stale_after": "2026-09-15T08:00:00+00:00", "stale": True,
+                                          "ended_at": None})
         self.assertIn("evidence_stale", r["quality"]["reasons"])
 
     def test_publishing_works_with_zero_probe_rows(self):
@@ -1695,7 +1700,8 @@ class AccountFeedsTests(unittest.TestCase):
         feeds = self._feeds(*self._inputs())
         self.assertEqual({label: f["state"] for label, f in feeds.items()},
                          {"a1": "fresh", "a2": "idle", "a3": "stopped"})
-        self.assertEqual(feeds["a1"], {"feed_at": self._ago(20), "newest_stretch_end": self._ago(22), "state": "fresh"})
+        self.assertEqual(feeds["a1"], {"feed_at": self._ago(20), "newest_stretch_end": self._ago(22),
+                                       "newest_step_end": None, "state": "fresh"})
         self.assertEqual(feeds["a2"]["feed_at"], self._ago(1))
         self.assertEqual(feeds["a2"]["newest_stretch_end"], self._ago(96))
         self.assertNotIn("a4", feeds)
@@ -1715,13 +1721,23 @@ class AccountFeedsTests(unittest.TestCase):
         masterrig, gs = self._inputs()
         del gs["accounts"]["dave"]["meter"]
         self.assertEqual(self._feeds(masterrig, gs)["a3"],
-                         {"feed_at": self._ago(1), "newest_stretch_end": self._ago(8), "state": "fresh"})
+                         {"feed_at": self._ago(1), "newest_stretch_end": self._ago(8), "newest_step_end": None,
+                          "state": "fresh"})
 
     def test_only_capture_accepted_stretches_date_a_gs_account(self):
         masterrig, gs = self._inputs()
         gs["accounts"]["jwork"]["stretches"] = [self._stretch(self._ago(2), "unaccounted")]
         self.assertEqual(self._feeds(masterrig, gs)["a2"],
-                         {"feed_at": self._ago(1), "newest_stretch_end": None, "state": "idle"})
+                         {"feed_at": self._ago(1), "newest_stretch_end": None, "newest_step_end": None,
+                          "state": "idle"})
+
+    def test_a_weekly_only_account_using_its_weekly_limit_is_not_idle(self):
+        # Past the five-hour limit's end it has no new stretch, only seven-day steps.
+        masterrig, gs = self._inputs()
+        gs["accounts"]["jwork"]["weekly_steps"] = [{"start": self._ago(3), "end": self._ago(2), "d7": 1, "d5": 0,
+                                                    "five_hour_measured": False, "tokens": {}}]
+        feeds = self._feeds(masterrig, gs)
+        self.assertEqual((feeds["a2"]["newest_step_end"], feeds["a2"]["state"]), (self._ago(2), "fresh"))
 
     def test_no_files_publish_an_empty_block(self):
         self.assertEqual(self._feeds(None, None), {})
@@ -1753,6 +1769,60 @@ class AccountFeedsTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             self.assertIn("a3", lines[0])
             self.assertNotIn("a1", lines[0])
+
+
+class FiveHourLimitEndTests(unittest.TestCase):
+    """The five-hour limit's end (tracker/five_hour_end.py): read off the accounts' meter
+    blocks, every five-hour figure frozen there, and the page told so."""
+
+    NOW = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+    END = datetime(2026, 10, 30, 23, 37, tzinfo=timezone.utc)
+
+    def _stretch(self, end, cache_write=400000):
+        return {"status": "accepted", "capture_status": "accepted", "reset_verified": True,
+                "start": end.isoformat(), "end": end.isoformat(), "delta_pct": 10, "windows": 1,
+                "tokens": {"claude-sonnet-5": {"input": 0, "output": 0, "cache_read": 0, "cache_write": cache_write}}}
+
+    def _gs(self, switched: bool, after: bool = True):
+        before = [self._stretch(self.END - timedelta(days=d)) for d in (1, 2, 3)]
+        # avis keeps its five-hour limit: a stretch after the end at another level.
+        late = ([self._stretch(self.END + timedelta(days=d), cache_write=4_000_000) for d in (5, 6, 7, 8)]
+                if after else [])
+        last = (self.NOW - timedelta(hours=1)).isoformat()
+        jwork_meter = ({"last": last, "five_hour_last": self.END.isoformat(),
+                        "weekly_only_since": (self.END + timedelta(minutes=6)).isoformat()}
+                       if switched else {"last": last})
+        return {"generated_at": last, "accounts": {
+            "jwork": {"meter": jwork_meter, "stretches": before},
+            "avis": {"meter": {"last": last, "five_hour_last": last, "weekly_only_since": None},
+                     "stretches": late}}}
+
+    def _build(self, gs):
+        return build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=gs)
+
+    def test_the_block_names_the_end_and_each_accounts_switch_by_label(self):
+        b = self._build(self._gs(True))["five_hour_limit"]
+        self.assertEqual((b["status"], b["ended_at"]), ("removed", self.END.isoformat()))
+        self.assertTrue(b["accounts"]["Max account 2"]["switched"])
+        self.assertFalse(b["accounts"]["Max account 4"]["switched"])
+        self.assertNotIn("jwork", json.dumps(b))
+        self.assertEqual(self._build(self._gs(False))["five_hour_limit"]["status"], "in_force")
+
+    def test_five_hour_figures_freeze_at_the_end_and_are_final_not_stale(self):
+        ended = self._build(self._gs(True))
+        frozen = self._build(self._gs(False, after=False))
+        for model, r in ended["rates"].items():
+            self.assertEqual(r["meter_budget_per_window"], frozen["rates"][model]["meter_budget_per_window"], model)
+            self.assertEqual(r["freshness"]["ended_at"], self.END.isoformat())
+            self.assertFalse(r["freshness"]["stale"])
+            self.assertIn("five_hour_limit_removed", r["quality"]["reasons"])
+            self.assertNotIn("evidence_stale", r["quality"]["reasons"])
+            self.assertTrue(all(h["date"] <= "2026-10-30" for h in ended["history"].get(model) or []), model)
+        # Unswitched, the same late stretch moves the figure: the end is what holds it.
+        live = self._build(self._gs(False))
+        model = next(iter(live["rates"]))
+        self.assertNotEqual(live["rates"][model]["meter_budget_per_window"],
+                            ended["rates"][model]["meter_budget_per_window"])
 
 
 class FiveHourMeterTests(unittest.TestCase):

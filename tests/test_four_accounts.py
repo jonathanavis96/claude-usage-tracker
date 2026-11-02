@@ -1140,5 +1140,51 @@ class CaptureDependenceTest(unittest.TestCase):
             self.assertFalse(e["line"] == "seven_day" and "2026-10-15" <= e["at"][:10] <= "2026-10-19", e)
 
 
+class WeeklyOnlyTest(unittest.TestCase):
+    """The five-hour limit's end (tracker/five_hour_end.py): a step whose five-hour movement
+    is unknown still reads the weekly limit, and only the ratio and the headless fit leave it
+    out."""
+
+    def body(self):
+        t = datetime(2026, 10, 30, tzinfo=UTC)
+        def step(h, measured):
+            return {"start": (t + timedelta(hours=h)).isoformat(), "end": (t + timedelta(hours=h + 1)).isoformat(),
+                    "d7": 1, "d5": 4, "five_hour_measured": measured,
+                    "tokens": {"m": {"output": 1}}, "headless_tokens": {}}
+        return {"stretches": [], "weekly_steps": [step(0, True), step(2, False)]}
+
+    def readings(self):
+        return {"Max account 2": F.account_readings(self.body(), "jwork", lambda tokens: 1000.0, [], None)}
+
+    def test_a_weekly_only_step_is_kept_with_its_five_hour_movement_unknown(self):
+        steps = self.readings()["Max account 2"]["steps"]
+        self.assertEqual([r.d5 for r in steps], [4.0, None])
+        self.assertEqual([r.d7 for r in steps], [1.0, 1.0])
+
+    def test_it_reads_the_seven_day_line_and_not_the_ratio(self):
+        rs = self.readings()
+        self.assertEqual(len(F.series(rs, "seven_day", None)["Max account 2"][2]), 2)
+        self.assertEqual(len(F.series(rs, "ratio", None)["Max account 2"][2]), 1)
+        # The snapshot round trip keeps the unknown as null.
+        back = F.readings_from_json(json.loads(json.dumps(F.readings_to_json(rs))))
+        self.assertIsNone(back["Max account 2"]["steps"][1].d5)
+
+    def test_the_headless_fit_leaves_it_out(self):
+        steps = {"Max account 2": self.readings()["Max account 2"]["steps"]}
+        self.assertEqual(F.headless_factor(steps)["n_steps"], 0)
+
+    def test_the_capture_audit_reads_the_steps_where_no_stretch_moved(self):
+        R = F.Reading
+        rs = {"Max account 2": {"stretches": [R(0.0, 1.0, 100.0, 0.0, 10.0, 0.0)],
+                                "steps": [R(float(h), h + 1.0, 100.0, 0.0, 10.0, 1.0) for h in range(4)]
+                                         + [R(30.0, 31.0, 1.0, 0.0, None, 1.0)]}}
+        audit = F.capture_audit(rs, 20.0, 0.0, 40.0, ["Max account 2"])
+        shares = audit["per_account"]["Max account 2"]
+        self.assertEqual(shares["before"], 1.0)
+        self.assertEqual(shares["after"], 0.0)  # its one step a collection gap
+        self.assertEqual(shares["by_side"], {"before": "five_hour", "after": "seven_day"})
+        self.assertEqual(audit["failing"], ["Max account 2"])
+
+
 if __name__ == "__main__":
     unittest.main()

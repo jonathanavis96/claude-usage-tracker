@@ -96,6 +96,7 @@ from . import speed
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .cloud_sessions import CloudSpan, cloud_spans, overlaps
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
+from . import five_hour_end
 from .meter_log import MASTERRIG_METER_LOG
 from .rows import usable_rows
 from .samples import Sample, infer_resets, merge_samples, parse_log
@@ -242,6 +243,12 @@ def _read(path: Path, fmt: str, since: datetime | None, weekly: bool = False) ->
         return []
     with open(path, encoding="utf-8", errors="replace") as fh:  # one bad byte costs its line only
         return parse_log(fmt, fh, since, weekly=weekly)
+
+
+def _newest(*sample_lists: list[Sample]) -> str | None:
+    """The newest reading's time across `sample_lists`, ISO, or None when all are empty."""
+    stamps = [s[-1].ts for s in sample_lists if s]
+    return max(stamps).isoformat() if stamps else None
 
 
 def load_samples(account: Account, until: datetime | None = None, *, weekly: bool = False) -> list[Sample]:
@@ -899,7 +906,10 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                       "reset_verified_samples": sum(1 for s in joined if s.resets_at is not None),
                       "since": account.meter_since.isoformat() if account.meter_since else None,
                       "samples": len(samples), "first": since.isoformat() if since else None,
-                      "last": samples[-1].ts.isoformat() if samples else None},
+                      # The newest reading of either kind: a weekly-only account's meter is
+                      # still read, so its feed is not stopped (publish `_account_feeds`).
+                      "last": _newest(samples, weekly_samples),
+                      **five_hour_end.meter_fields(samples, weekly_samples)},
             "transcripts": {"root": str(root), "resolves_to": str(root.resolve()),
                             "shared_with": shared_with(account, home or account.config_dir.parent),
                             "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
