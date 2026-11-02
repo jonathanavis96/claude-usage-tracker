@@ -862,7 +862,12 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         joined = samples if INFERRED_RESET_VERIFIED else [
             replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in samples]
         since = samples[0].ts if samples else None
-        split = (_split_sources(account, since, withhold.get(name, ()), home, resolved) if samples
+        # The weekly steps read readings with no five-hour figure too (weekly_only), so the
+        # transcripts are chosen by those readings' coverage: an account whose log holds only
+        # weekly-only readings still gets its turns, not steps of zero credits.
+        weekly_samples = load_samples(account, until, weekly=True)
+        weekly_since = weekly_samples[0].ts if weekly_samples else None
+        split = (_split_sources(account, weekly_since, withhold.get(name, ()), home, resolved) if weekly_samples
                  else _Splitted([], None, [], [], {}, "", set()))
         files, own_sessions, unclaimed_files = split.kept, split.meta, split.unclaimed
         turns, per_source = account_turns(split, until)
@@ -882,7 +887,6 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         # with this account's own tokens in it (tracker/weekly_meter.py). Read with the
         # weekly-only readings kept (five_hour None), so an account with no five-hour limit
         # still measures its weekly limit; their five-hour pairs break, as a gap does.
-        weekly_samples = load_samples(account, until, weekly=True)
         weekly_joined = weekly_samples if INFERRED_RESET_VERIFIED else [
             replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in weekly_samples]
         steps = seven_day_steps(weekly_joined, turns, prices, cloud[name], fast=fast)
