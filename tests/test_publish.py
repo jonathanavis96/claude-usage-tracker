@@ -1822,6 +1822,24 @@ class FiveHourLimitEndTests(unittest.TestCase):
         _end_weekly_windows(untouched, None)
         self.assertEqual(untouched, {"max20": {"current": 1.0}})
 
+    def test_windows_per_week_splits_only_at_changes_up_to_the_end(self):
+        # A weekly change after the end has no five-hour reading after it: splitting the ratio
+        # there would leave its newest regime empty and null the frozen level (Codex, #153).
+        from unittest import mock
+        import tracker.publish as P
+        before = _detector_change((self.END - timedelta(days=20)).isoformat(), "seven_day", "measured",
+                                  {"seven_day": _detector_size(-30.0, -36.0, -24.0),
+                                   "five_hour": _detector_size(-30.0, -38.0, -21.0),
+                                   "ratio": _detector_size(1.0, -4.0, 6.0)})
+        after = _detector_change((self.END + timedelta(days=2)).isoformat(), "seven_day", "provisional",
+                                 {"seven_day": _detector_size(12.0, 5.0, 19.0)})
+        with mock.patch.object(P, "_weekly_block", wraps=P._weekly_block) as wb:
+            j = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self._gs(True),
+                                  four_accounts_run=detector_run(before, after))
+        self.assertEqual([c["at"].isoformat() for c in wb.call_args.kwargs["changes"]], [before["at"]])
+        # Every other series still opens at both.
+        self.assertEqual(len(j["credits"]["window_tokens"]["regimes"]), 3)
+
     def test_five_hour_figures_freeze_at_the_end_and_are_final_not_stale(self):
         ended = self._build(self._gs(True))
         frozen = self._build(self._gs(False, after=False))

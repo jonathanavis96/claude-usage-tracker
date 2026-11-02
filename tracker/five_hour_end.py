@@ -23,7 +23,8 @@ level there:
 - a window point (five-hour against seven-day) ending after it is dropped;
 - a seven-day step ending after it keeps its credits and its seven-day point, but its
   five-hour movement is marked unknown (`five_hour_measured` false), as a weekly-only step
-  already is (tracker/weekly_meter.py).
+  already is (tracker/weekly_meter.py). One that a dropped stretch the capture check
+  withheld overlaps is marked `withheld_by_stretch`, so `clean_steps` still leaves it out.
 
 The weekly limit reads every seven-day step on both sides of the end. An account that still
 has a five-hour limit (avis, on 2026-11-02) needs nothing done when it switches: its readings
@@ -106,6 +107,18 @@ def _after(stamp: str | None, end: datetime) -> bool:
     return t is not None and t > end
 
 
+def _trimmed_step(step: dict, end: datetime, withheld: list[tuple[datetime, datetime]]) -> dict:
+    """One seven-day step past `end`: its five-hour movement unknown, and marked
+    `withheld_by_stretch` where a dropped, withheld stretch overlaps it."""
+    if not _after(step.get("end"), end):
+        return step
+    out = {**step, "five_hour_measured": False}
+    a, b = _parse(step.get("start")), _parse(step.get("end"))
+    if a and b and any(s < b and e > a for s, e in withheld):
+        out["withheld_by_stretch"] = True
+    return out
+
+
 def trimmed(report: dict | None, end: datetime | None) -> dict | None:
     """`report` (a tracker.gs_passive report) with every five-hour reading after `end` cut, as
     the module docstring lists. The input is not changed. None in, None out; no end, as is."""
@@ -117,14 +130,18 @@ def trimmed(report: dict | None, end: datetime | None) -> dict | None:
             accounts[name] = body
             continue
         body = dict(body)
+        # A stretch the capture check withheld still withholds the seven-day steps it overlaps
+        # (tracker/weekly_meter.py `clean_steps`), so dropping it must not admit them: they are
+        # marked `withheld_by_stretch` instead.
+        withheld = [(_parse(s["start"]), _parse(s["end"])) for s in body.get("stretches") or []
+                    if _after(s.get("end"), end) and s.get("start") and s.get("status") != "accepted"]
         if body.get("stretches") is not None:
             body["stretches"] = [s for s in body["stretches"] if not _after(s.get("end"), end)]
         if body.get("weekly_by_window") is not None:
             body["weekly_by_window"] = [p for p in body["weekly_by_window"]
                                         if not _after(p.get("window_ending"), end)]
         if body.get("weekly_steps") is not None:
-            body["weekly_steps"] = [{**s, "five_hour_measured": False} if _after(s.get("end"), end) else s
-                                    for s in body["weekly_steps"]]
+            body["weekly_steps"] = [_trimmed_step(s, end, withheld) for s in body["weekly_steps"]]
         accounts[name] = body
     return {**report, "accounts": accounts}
 

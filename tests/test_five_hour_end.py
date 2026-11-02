@@ -76,6 +76,19 @@ class EndTest(unittest.TestCase):
         self.assertEqual(len(gs["accounts"]["avis"]["stretches"]), 3)
         self.assertTrue(gs["accounts"]["avis"]["weekly_steps"][1]["five_hour_measured"])
 
+    def test_a_dropped_withheld_stretch_still_withholds_the_steps_it_overlapped(self):
+        # weekly_meter.clean_steps leaves out a step overlapping a stretch the capture check
+        # withheld; trimming that stretch away must not admit the step.
+        body = account(iso(60), None, iso(60), steps=[(20, 22), (30, 32), (40, 42)])
+        body["stretches"] = [{"start": iso(19), "end": iso(23), "status": "withheld"},
+                             {"start": iso(29), "end": iso(33), "status": "accepted"}]
+        out = E.trimmed({"accounts": {"avis": body}}, T0 + timedelta(hours=11))["accounts"]["avis"]
+        self.assertEqual(out["stretches"], [])
+        self.assertEqual([s.get("withheld_by_stretch", False) for s in out["weekly_steps"]], [True, False, False])
+        from tracker.weekly_meter import clean_steps
+        kept = clean_steps({"avis": out["weekly_steps"]}, [], {"avis": out["stretches"]})
+        self.assertEqual([s["start"] for s in kept["avis"]], [iso(30), iso(40)])
+
     def test_passive_json_window_points_are_cut_too(self):
         passive = {"weekly_windows": {"by_window": [{"window_ending": iso(5)}, {"window_ending": iso(25)}]}}
         out = E.trimmed_passive(passive, T0 + timedelta(hours=11))

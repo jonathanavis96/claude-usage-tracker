@@ -667,9 +667,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 d += timedelta(days=1)
         history[model] = hist
 
+    # Windows per week is five-hour over seven-day movement, so it has no reading past the
+    # five-hour limit's end: a change after it would open an empty regime and null the frozen
+    # level. Its regimes split only at the changes up to the end; every other series keeps them all.
+    ratio_changes = changes if five_hour_ended is None else [c for c in changes if c["at"] <= five_hour_ended]
     weekly_windows = _weekly_block(passive.get("weekly_windows"), probe_weekly, now,
                                    gs_passive=gs_passive, masterrig_passive=masterrig_passive,
-                                   five_hour=(factor, five_hour_value), changes=changes)
+                                   five_hour=(factor, five_hour_value), changes=ratio_changes)
     _end_weekly_windows(weekly_windows, five_hour_ended)
     # The cache split the session figures assume is the watched accounts' own, from
     # history/passive.json. An archive or a fixture without one falls back to the frozen
