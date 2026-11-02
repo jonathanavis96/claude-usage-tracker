@@ -21,6 +21,10 @@ class Utilization:
     seven_day: float | None
     five_hour_resets_at: str | None
     seven_day_resets_at: str | None = None
+    #: The account has no five-hour limit (five_hour is None by design, not a failed read):
+    #: since 2026-10-31 some Max 20x accounts get `"five_hour": null` from the endpoint, and
+    #: no `5h-*` rate-limit headers, while the seven-day meter reads normally.
+    weekly_only: bool = False
 
 
 def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
@@ -32,8 +36,10 @@ def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
 def parse_usage(body: dict, now: datetime) -> Utilization:
     fh, fh_reset = _bucket(body, "five_hour")
     sd, sd_reset = _bucket(body, "seven_day")
+    # Only an explicit null is "no five-hour limit"; a missing key is a schema change.
+    weekly_only = "five_hour" in body and body["five_hour"] is None and sd is not None
     return Utilization(ts=now, five_hour=fh, seven_day=sd, five_hour_resets_at=fh_reset,
-                        seven_day_resets_at=sd_reset)
+                        seven_day_resets_at=sd_reset, weekly_only=weekly_only)
 
 
 class AuthExpired(Exception):

@@ -67,6 +67,7 @@ def seven_day_steps(samples: Iterable[Sample], turns: Iterable[Turn], prices: di
     stretch is marked (tracker/gs_passive.py `_stretch_record`).
     """
     samples = sorted(samples, key=lambda s: s.ts)
+    stamps = [s.ts for s in samples]
     turns = sorted(turns, key=lambda t: t.ts)
     keys = [t.ts for t in turns]
     cloud = list(cloud)
@@ -83,8 +84,15 @@ def seven_day_steps(samples: Iterable[Sample], turns: Iterable[Turn], prices: di
             st = Stretch(a.upper, b.upper, delta_pct=1.0)
             for t in turns[bisect.bisect_left(keys, a.upper):bisect.bisect_left(keys, b.upper)]:
                 st.add(t, prices, t.id in fast)
+            # A reading with no five-hour figure (weekly_only) in or just before the step
+            # leaves its five-hour movement unknown, not zero: `d5` is then 0 and
+            # `five_hour_measured` False, and five-hour readers leave the step out.
+            lo = max(bisect.bisect_left(stamps, a.upper) - 1, 0)
+            hi = bisect.bisect_right(stamps, b.upper)
+            measured = all(s.five_hour is not None for s in samples[lo:hi])
             out.append({
                 "start": a.upper.isoformat(), "end": b.upper.isoformat(), "seven_day": b.value,
+                "five_hour_measured": measured,
                 "d7": 1, "d5": bisect.bisect_left(five, b.upper) - bisect.bisect_left(five, a.upper),
                 "tokens": {**st.tokens, **st.unpriced}, "unpriced_tokens": st.unpriced_tokens,
                 "turns": st.turns, "remote_sourced_turns": st.remote_sourced_turns,
@@ -169,20 +177,23 @@ def valued(steps: list[dict], value, factor: float | None = None) -> list[dict]:
         out.append({"start": datetime.fromisoformat(st["start"]), "end": end,
                     "day": end.astimezone(timezone.utc).date().isoformat(), "credits": float(credits),
                     "d7": st.get("d7", 1), "d5": raw / (1 + (factor - 1) * share) if share else raw,
-                    "raw_d5": raw})
+                    "raw_d5": raw, "five_hour_measured": st.get("five_hour_measured", True)})
     return out
 
 
 def _by_day(rows: list[dict]) -> list[tuple[float, ...]]:
     """A side's steps summed per UTC day: (credits, seven-day points, five-hour points, the
-    meter's own five-hour points)."""
+    meter's own five-hour points, seven-day points of the steps whose five-hour movement was
+    measured)."""
     days: dict[str, list[float]] = {}
     for r in rows:
-        acc = days.setdefault(r["day"], [0.0, 0.0, 0.0, 0.0])
+        acc = days.setdefault(r["day"], [0.0, 0.0, 0.0, 0.0, 0.0])
         acc[0] += r["credits"]
         acc[1] += r["d7"]
-        acc[2] += r["d5"]
-        acc[3] += r.get("raw_d5", r["d5"])
+        if r.get("five_hour_measured", True):
+            acc[2] += r["d5"]
+            acc[3] += r.get("raw_d5", r["d5"])
+            acc[4] += r["d7"]
     return [tuple(v) for _, v in sorted(days.items())]
 
 
@@ -215,10 +226,12 @@ def level(rows_by_label: dict[str, list[dict]], seed: str) -> dict:
         d7 = sum(x[1] for g in groups for x in g)
         d5 = sum(x[2] for g in groups for x in g)
         raw = sum(x[3] for g in groups for x in g)
+        # Five-hour over seven-day points only where both meters were read (weekly-only steps out).
+        d7_5 = sum(x[4] for g in groups for x in g)
         return {"credits_per_pct": c / d7 if d7 else None, "seven_day_points": d7,
                 "five_hour_points": d5, "days": sum(len(g) for g in groups),
-                "windows_per_week_meters": d5 / d7 if d7 else None,
-                "raw_windows_per_week_meters": raw / d7 if d7 else None}
+                "windows_per_week_meters": d5 / d7_5 if d7_5 else None,
+                "raw_windows_per_week_meters": raw / d7_5 if d7_5 else None}
 
     out = summary(list(days.values()))
     out["accounts"] = sorted(days)

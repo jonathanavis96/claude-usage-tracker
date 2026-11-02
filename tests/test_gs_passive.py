@@ -233,6 +233,23 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(step["d7"], 1)
             self.assertIn("tokens", step)
 
+    def test_a_weekly_only_account_still_gets_its_turns_in_the_weekly_steps(self):
+        # Every reading weekly-only (five_hour null): no five-hour stretch, but the seven-day
+        # steps still carry the transcripts' turns, not zero credits.
+        with tempfile.TemporaryDirectory() as d:
+            home = dave_home(Path(d))
+            log = home / ".paperclip" / "ops" / "claude-usage-meter-dave.log"
+            rows = [json.loads(x) for x in log.read_text().splitlines()]
+            for row in rows:
+                row["five_hour"] = {"utilization": None, "resets_at": None}
+                row["weekly_only"] = True
+            log.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            r = report({"dave": gs_accounts(home)["dave"]}, PRICES, now=T0 + timedelta(days=1))["accounts"]["dave"]
+        self.assertEqual(r["stretches"], [])
+        self.assertEqual(len(r["weekly_steps"]), 12)
+        self.assertEqual(sum(st["turns"] for st in r["weekly_steps"]), 36)
+        self.assertFalse(any(st["five_hour_measured"] for st in r["weekly_steps"]))
+
     def test_fast_session_requests_stay_in_their_stretch_and_are_recorded(self):
         def opus_session(start_min, n, rate, prefix):
             lines, t = [], T0 + timedelta(minutes=start_min)

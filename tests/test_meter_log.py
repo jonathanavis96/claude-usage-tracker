@@ -101,23 +101,44 @@ class SampleTests(unittest.TestCase):
             self.assertIsNotNone(parse_row(row))
             self.assertEqual(parse_meter_log(lines)[0].resets_at, "2026-09-15T23:00:00.4+00:00")
 
-    def test_a_null_five_hour_is_an_idle_window_logged_as_zero_not_a_gap(self):
-        # Since 2026-10-31 the endpoint sends "five_hour": null when no 5-hour window is
-        # open. That is 0% used, not a failed read: logging it as a gap left a1 and jwork
-        # with no usable reading for hours and re-called the endpoint every tick (429s).
-        idle = {"five_hour": None, "seven_day": BODY["seven_day"]}
+    def test_a_null_five_hour_is_a_weekly_only_reading_never_a_made_up_zero(self):
+        # Since 2026-10-31 some Max 20x accounts get "five_hour": null with seven_day intact:
+        # the account has no five-hour limit. That is a real reading, not a gap and not 0%.
+        weekly = {"five_hour": None, "seven_day": BODY["seven_day"]}
         with tempfile.TemporaryDirectory() as d:
             cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
-            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: idle, now=lambda: NOW), 0)
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: weekly, now=lambda: NOW), 0)
             lines = log.read_text().splitlines()
             row = json.loads(lines[0])
             self.assertNotIn("error", row)
-            self.assertEqual(row["five_hour"], {"utilization": 0.0, "resets_at": None})
-            self.assertTrue(row["five_hour_idle"])
-            self.assertEqual(parse_moonlighter(lines)[0].five_hour, 0.0)
-            # No resets_at, so the weekly pairing skips it, as it does any row without a reset.
+            self.assertEqual(row["five_hour"], {"utilization": None, "resets_at": None})
+            self.assertEqual(row["seven_day"]["utilization"], BODY["seven_day"]["utilization"])
+            self.assertTrue(row["weekly_only"])
+            self.assertNotIn("five_hour_idle", row)
+            self.assertNotIn("schema", row)  # key present but null is no limit, not a rename
+            # No five-hour figure, so nothing five-hour-based reads it...
+            self.assertEqual(parse_moonlighter(lines), [])
             self.assertIsNone(parse_row(row))
-            parse_meter_log(lines)
+            self.assertEqual(parse_meter_log(lines), [])
+            # ...but the seven-day readers still get its seven-day figure.
+            kept = parse_meter_log(lines, weekly=True)
+            self.assertEqual([(s.five_hour, s.seven_day, s.resets_at) for s in kept],
+                             [(None, BODY["seven_day"]["utilization"], None)])
+
+    def test_a_missing_five_hour_key_is_still_a_gap(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+            gone = {"seven_day": BODY["seven_day"]}
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: gone, now=lambda: NOW), 4)
+            self.assertIn("error", json.loads(log.read_text().splitlines()[0]))
+
+    def test_old_five_hour_idle_rows_are_not_five_hour_samples(self):
+        # meter_log logged a null five_hour as a made-up 0% (five_hour_idle) from 2026-10-31.
+        row = {"ts": "2026-10-31T21:00:00+00:00", "five_hour": {"utilization": 0.0, "resets_at": None},
+               "five_hour_idle": True, "seven_day": {"utilization": 40.0, "resets_at": None}}
+        self.assertEqual(parse_moonlighter([json.dumps(row)]), [])
+        self.assertEqual([(s.five_hour, s.seven_day) for s in parse_moonlighter([json.dumps(row)], weekly=True)],
+                         [(None, 40.0)])
 
     def test_a_response_with_no_buckets_at_all_is_still_a_gap(self):
         with tempfile.TemporaryDirectory() as d:
@@ -413,6 +434,29 @@ class HeaderModeTests(unittest.TestCase):
         self.assertEqual(parse_meter_log(text.splitlines())[0].resets_at, "2026-09-15T23:00:00+00:00")
         self.assertIsNotNone(parse_row(row))
         self.assertEqual(self.calls[0]["max_tokens"], 1)
+
+    def test_no_5h_headers_is_a_weekly_only_reading(self):
+        # Measured on a Max 20x seat on 2026-11-02: no 5h-* header at all (not even
+        # 5h-status), every 7d-* header present, representative-claim seven_day.
+        weekly = {k: v for k, v in HEADERS.items() if "-5h-" not in k}
+        weekly["anthropic-ratelimit-unified-representative-claim"] = "seven_day"
+        self.assertEqual(self.run_sample(self.post(weekly)), 0)
+        row = json.loads(self.log.read_text())
+        self.assertNotIn("error", row)
+        self.assertEqual(row["five_hour"], {"utilization": None, "resets_at": None})
+        self.assertEqual(row["seven_day"]["utilization"], 22.0)
+        self.assertTrue(row["weekly_only"])
+        self.assertNotIn("schema", row)
+        self.assertEqual(parse_meter_log(self.log.read_text().splitlines()), [])
+
+    def test_a_weekly_only_reading_does_not_hold_the_next_probe(self):
+        # No five-hour window means no lapsed window to avoid starting.
+        row = self.reading("2026-09-15T20:00:00+00:00")
+        row["five_hour"] = {"utilization": None, "resets_at": None}
+        row["weekly_only"] = True
+        self.write(row)
+        self.assertEqual(self.run_sample(self.post()), 0)
+        self.assertEqual(len(self.calls), 1)
 
     def test_probes_are_spaced_five_minutes_apart(self):
         self.write(self.reading("2026-09-15T20:56:03+00:00"))   # 240 s before NOW

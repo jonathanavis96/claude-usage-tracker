@@ -52,6 +52,18 @@ class HealthTest(unittest.TestCase):
         self.log.write_text(json.dumps({"ts": iso(NOW - 2 * 3600), "five_hour": {"utilization": 1}}) + "\n")
         self.assertIn("collection: newest meter sample is 2h00m old", self.reasons()["collection"])
 
+    def test_a_weekly_only_reading_still_counts_as_collecting(self):
+        # An account with no five-hour limit logs five_hour null; its numeric seven_day
+        # proves collection is alive.
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None, "resets_at": None},
+                                        "seven_day": {"utilization": 17.0}, "weekly_only": True}) + "\n")
+        self.assertIsNone(self.reasons()["collection"])
+
+    def test_a_line_with_no_numeric_bucket_is_not_a_sample(self):
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None},
+                                        "seven_day": {"utilization": None}}) + "\n")
+        self.assertIn("no reading", self.reasons()["collection"])
+
     def test_resets_at_style_offsets_are_parsed_not_string_compared(self):
         self.log.write_text(json.dumps({"ts": "2026-10-02T03:59:00+02:00", "five_hour": {"utilization": 1}}) + "\n")
         self.assertIsNone(self.reasons()["collection"])
@@ -126,6 +138,15 @@ class HealthTest(unittest.TestCase):
         meter.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": 3},
                                      "schema": ["seven_day.resets_at missing"]}) + "\n")
         self.assertIn("usage API changed shape", self.reasons()["meters"] or "")
+
+    def test_a_weekly_only_reading_is_not_a_schema_change(self):
+        meter = self.tmp / "meter-dave.log"
+        self.c.meter_logs = (meter,)
+        self.c.checks = ("meters",)
+        meter.write_text(json.dumps({"ts": iso(NOW - 60), "weekly_only": True,
+                                     "five_hour": {"utilization": None, "resets_at": None},
+                                     "seven_day": {"utilization": 8.0, "resets_at": iso(NOW + 86400)}}) + "\n")
+        self.assertIsNone(self.reasons()["meters"])
 
     def test_stale_publisher(self):
         self.c.publisher_max_age_s = 300

@@ -44,6 +44,7 @@ DEFAULT_ENV_FILE = Path("~/.config/greenscape/env")
 SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
 PREFIX = "anthropic-ratelimit-unified-"
 #: Header fields kept beside the two meters, by their name after PREFIX.
+FIVE_HOUR_FIELDS = ("5h-utilization", "5h-reset", "5h-status")
 EXTRA_FIELDS = ("status", "5h-status", "7d-status", "representative-claim", "overage-status", "reset")
 
 
@@ -102,12 +103,18 @@ def parse_ratelimit_headers(headers: Mapping[str, str], now: datetime) -> tuple[
     is a schema problem, named, so a renamed header is not logged as an ordinary reading.
     """
     h = {k.lower(): v for k, v in headers.items()}
-    problems = [f"{PREFIX}{k} missing" for k in ("5h-utilization", "5h-reset", "7d-utilization", "7d-reset")
-                if PREFIX + k not in h]
+    seven_day = _pct(h.get(PREFIX + "7d-utilization"))
+    # A weekly-only account (seen from 2026-10-31 on a Max 20x seat) gets no 5h-* header at
+    # all, not even 5h-status, while every 7d-* header is there. That is "no five-hour
+    # limit", not a renamed header; one 5h header without the others still is a problem.
+    weekly_only = seven_day is not None and not any(PREFIX + k in h for k in FIVE_HOUR_FIELDS)
+    wanted = ("7d-utilization", "7d-reset") if weekly_only else ("5h-utilization", "5h-reset", "7d-utilization", "7d-reset")
+    problems = [f"{PREFIX}{k} missing" for k in wanted if PREFIX + k not in h]
     u = Utilization(ts=now, five_hour=_pct(h.get(PREFIX + "5h-utilization")),
-                    seven_day=_pct(h.get(PREFIX + "7d-utilization")),
+                    seven_day=seven_day,
                     five_hour_resets_at=_iso(h.get(PREFIX + "5h-reset")),
-                    seven_day_resets_at=_iso(h.get(PREFIX + "7d-reset")))
+                    seven_day_resets_at=_iso(h.get(PREFIX + "7d-reset")),
+                    weekly_only=weekly_only)
     extras = {k: h[PREFIX + k] for k in EXTRA_FIELDS if PREFIX + k in h}
     return u, extras, problems
 
@@ -149,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({"ts": u.ts.isoformat(timespec="seconds"),
                       "five_hour": {"utilization": u.five_hour, "resets_at": u.five_hour_resets_at},
                       "seven_day": {"utilization": u.seven_day, "resets_at": u.seven_day_resets_at},
-                      "ratelimit": extras, **({"schema": problems} if problems else {})}))
+                      "ratelimit": extras, **({"weekly_only": True} if u.weekly_only else {}),
+                      **({"schema": problems} if problems else {})}))
     return 0
 
 

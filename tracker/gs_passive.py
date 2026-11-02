@@ -237,14 +237,14 @@ def masterrig_account(home: Path | None = None) -> Account:
                    meter_note=MASTERRIG_METER_NOTE, cloud_dir=home / "private" / "cloud")
 
 
-def _read(path: Path, fmt: str, since: datetime | None) -> list[Sample]:
+def _read(path: Path, fmt: str, since: datetime | None, weekly: bool = False) -> list[Sample]:
     if not path.exists():
         return []
     with open(path, encoding="utf-8", errors="replace") as fh:  # one bad byte costs its line only
-        return parse_log(fmt, fh, since)
+        return parse_log(fmt, fh, since, weekly=weekly)
 
 
-def load_samples(account: Account, until: datetime | None = None) -> list[Sample]:
+def load_samples(account: Account, until: datetime | None = None, *, weekly: bool = False) -> list[Sample]:
     """Every reading of this account's meter, in time order.
 
     `meter_log` and each of `extra_meter_logs` read the same meter, so they are
@@ -259,10 +259,13 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     A sample whose reset came from that inference, rather than the log, is
     marked by suffixing its `source` with `-inferred` (`_reset_source` reads
     this to record each stretch's `reset_source`).
+
+    `weekly=True` also keeps readings with no five-hour figure, as `five_hour=None`
+    (tracker/samples.py parse_moonlighter): for seven-day readers only.
     """
-    samples = _read(account.meter_log, account.meter_format, account.meter_since)
+    samples = _read(account.meter_log, account.meter_format, account.meter_since, weekly)
     if account.extra_meter_logs:
-        samples = merge_samples(samples, *(_read(m.path, m.format, account.meter_since)
+        samples = merge_samples(samples, *(_read(m.path, m.format, account.meter_since, weekly)
                                            for m in account.extra_meter_logs))
     if account.legacy_meter_log is not None and account.legacy_meter_log.exists():
         first = min((s.ts for s in samples), default=None)
@@ -859,7 +862,12 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         joined = samples if INFERRED_RESET_VERIFIED else [
             replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in samples]
         since = samples[0].ts if samples else None
-        split = (_split_sources(account, since, withhold.get(name, ()), home, resolved) if samples
+        # The weekly steps read readings with no five-hour figure too (weekly_only), so the
+        # transcripts are chosen by those readings' coverage: an account whose log holds only
+        # weekly-only readings still gets its turns, not steps of zero credits.
+        weekly_samples = load_samples(account, until, weekly=True)
+        weekly_since = weekly_samples[0].ts if weekly_samples else None
+        split = (_split_sources(account, weekly_since, withhold.get(name, ()), home, resolved) if weekly_samples
                  else _Splitted([], None, [], [], {}, "", set()))
         files, own_sessions, unclaimed_files = split.kept, split.meta, split.unclaimed
         turns, per_source = account_turns(split, until)
@@ -876,8 +884,12 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         reset_sources[name] = {s.start: _reset_source(s, samples) for s in stretches[name]}
         weekly[name] = window_points(joined)
         # The weekly limit measured directly: every one-point step of the seven-day meter
-        # with this account's own tokens in it (tracker/weekly_meter.py).
-        steps = seven_day_steps(joined, turns, prices, cloud[name], fast=fast)
+        # with this account's own tokens in it (tracker/weekly_meter.py). Read with the
+        # weekly-only readings kept (five_hour None), so an account with no five-hour limit
+        # still measures its weekly limit; their five-hour pairs break, as a gap does.
+        weekly_joined = weekly_samples if INFERRED_RESET_VERIFIED else [
+            replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in weekly_samples]
+        steps = seven_day_steps(weekly_joined, turns, prices, cloud[name], fast=fast)
         root = account.config_dir / "projects"
         meta[name] = {
             "meter": {"log": str(account.meter_log), "format": account.meter_format,

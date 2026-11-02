@@ -235,7 +235,8 @@ def _meter_log_reader(path: Path) -> Callable:
             except ValueError:
                 continue
             fh = row.get("five_hour")
-            if isinstance(fh, dict) and fh.get("utilization") is not None:
+            # A weekly-only line has no five-hour figure; a five_hour_idle line's 0% was made up.
+            if isinstance(fh, dict) and fh.get("utilization") is not None and not row.get("five_hour_idle"):
                 sd = row.get("seven_day") or {}
                 return Utilization(datetime.fromisoformat(row["ts"]), fh["utilization"],
                                    sd.get("utilization"), fh.get("resets_at"))
