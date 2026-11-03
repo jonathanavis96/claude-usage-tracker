@@ -247,7 +247,11 @@ def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_u
                 continue
             if st.get("reset_verified") is not True and not allow_legacy_unverified:
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in st.get("tokens", {}).items()):
+            # As passive_dollar_readings selects: a zero-token bundle (`<synthetic>`) is skipped,
+            # and a stretch with no bundle left holds no captured work.
+            bundles = {m: tok for m, tok in (st.get("tokens") or {}).items()
+                       if not (isinstance(tok, dict) and not credit_model.raw_tokens(tok))}
+            if not bundles or any(bundle_meter_usd(m, tok, prices) is None for m, tok in bundles.items()):
                 continue
             out.append({**st, "_account": acct.get("account")})
     return out

@@ -74,3 +74,32 @@ class LastMeterReadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EligibleStretchesMirrorTheDollarSeriesTests(unittest.TestCase):
+    """The evidence beside a rate counts the stretches passive_dollar_readings reads, so the
+    two must select alike: a zero-token `<synthetic>` bundle no longer drops a stretch from
+    the series (afe20044), and must not drop it from the evidence either."""
+
+    def _report(self, *token_sets):
+        end = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+        stretches = [{"status": "accepted", "reset_verified": True, "delta_pct": 4, "windows": 1,
+                      "start": (end + timedelta(hours=i)).isoformat(),
+                      "end": (end + timedelta(hours=i, minutes=30)).isoformat(), "tokens": t}
+                     for i, t in enumerate(token_sets)]
+        return {"accounts": {"jwork": {"account": "jwork", "stretches": stretches}}}
+
+    def test_evidence_and_series_select_the_same_stretches(self):
+        from tracker.gs_passive import passive_dollar_readings
+        from tracker.publish import _eligible_stretches
+        work = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 400000}
+        synthetic = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        report = self._report({"claude-sonnet-5": work},
+                              {"claude-sonnet-5": work, "<synthetic>": synthetic},
+                              {"<synthetic>": synthetic},
+                              {})
+        series = passive_dollar_readings(report, PRICES, by="stretch")
+        evidence = _eligible_stretches(report, PRICES, allow_legacy_unverified=False)
+        self.assertEqual(len(series), 2)
+        self.assertEqual(len(evidence), len(series))
+        self.assertEqual(sorted(datetime.fromisoformat(s["end"]) for s in evidence), [t for t, _ in series])
