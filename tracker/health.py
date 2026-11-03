@@ -64,6 +64,7 @@ Timestamps are parsed, never compared as strings.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import subprocess
@@ -409,11 +410,36 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _held_lock_age(lock: Path, now: float) -> float | None:
+    """How long the supervisor's flock `lock` has been held, from the stamp each run puts on
+    it as it takes the lock (tracker.supervise); None when nothing holds it."""
+    try:
+        fd = os.open(lock, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return now - os.fstat(fd).st_mtime
+        except OSError:
+            return None
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return None
+    finally:
+        os.close(fd)
+
+
 def check_lock(c: Config, now: float) -> str | None:
     try:
         text = c.lock_pidfile.read_text().strip()
         mtime = c.lock_pidfile.stat().st_mtime
     except OSError:
+        # No pid file: a run on a full disk goes on without one (tracker.supervise), so a held
+        # lock (`<name>.lock` beside `<name>.pid`) is aged by its own stamp instead.
+        age = _held_lock_age(c.lock_pidfile.with_suffix(".lock"), now)
+        if age is not None and age > c.lock_max_age_s:
+            return f"lock: a run with no pid file has held the lock {_age(age)}"
         return None
     if not text.isdigit() or not pid_alive(int(text)):
         return f"lock: stale lock {c.lock_pidfile.name} (pid {text or '?'} not running)"

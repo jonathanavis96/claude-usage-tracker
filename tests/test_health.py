@@ -177,6 +177,23 @@ class HealthTest(unittest.TestCase):
         os.utime(self.c.lock_pidfile, (NOW - 3 * 3600, NOW - 3 * 3600))
         self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
 
+    def test_a_held_lock_with_no_pid_file_is_aged_by_the_lock_file(self):
+        # Code review round 5: a run that could not write its pid file (full disk) and then
+        # hung read as a healthy lock here, while supervise alerted on it and pointed here.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.assertIsNone(self.reasons().get("lock"))  # not held: an old lock file is no run at all
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertIn("a run with no pid file has held the lock 3h00m", self.reasons()["lock"])
+            os.utime(lock, (NOW - 600, NOW - 600))
+            self.assertIsNone(self.reasons().get("lock"))
+        finally:
+            os.close(fd)
+
     def test_sizes(self):
         self.c.max_log_bytes = 10
         (self.tmp / "run.log").write_text("x" * 2048)
