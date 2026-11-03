@@ -278,6 +278,23 @@ class CliTests(unittest.TestCase):
         self.assertIn("--each", err)
         self.assertEqual(self.run_main(str(self.log), "--now", (START + timedelta(days=2)).isoformat())[2], "")
 
+    def test_each_tells_two_logs_with_one_file_name_apart(self):
+        # Code review round 11: two accounts' usage_log.jsonl printed the same label.
+        a, b = Path(self.dir.name, "a"), Path(self.dir.name, "b")
+        for d, level in ((a, 10.0), (b, 20.0)):
+            d.mkdir()
+            (d / "usage_log.jsonl").write_text(line(START + timedelta(days=1), level) + "\n")
+        code, out, _ = self.run_main("--each", str(a / "usage_log.jsonl"), str(b / "usage_log.jsonl"),
+                                     "--now", (START + timedelta(days=1)).isoformat())
+        self.assertEqual(code, 0)
+        self.assertIn(str(a / "usage_log.jsonl"), out)
+        self.assertIn(str(b / "usage_log.jsonl"), out)
+
+    def test_a_lookback_longer_than_the_week_reads_the_week(self):
+        # Code review round 11: --lookback 1e8 overflowed the datetime arithmetic.
+        p = measure(samples(*hourly(20.0, 0.25, 24)), now=START + timedelta(days=3), lookback_hours=1e8)
+        self.assertEqual(p.rate_since, START)
+
     def test_bad_arguments(self):
         self.log.write_text(line(START + timedelta(days=1), 10.0) + "\n")
         self.assertEqual(self.run_main(str(self.log), "--now", "yesterday")[0], 2)

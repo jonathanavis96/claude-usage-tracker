@@ -460,8 +460,10 @@ def _flock_held(lock: Path) -> bool | None:
             continue
         # The device and inode agreeing is enough (the holder may sit in another pid namespace,
         # where its pid names some other process); the holder's files settle only a device
-        # that reads differently.
-        if same_dev or _holds_open(pid, st):
+        # that reads differently, and where they cannot be read (hidepid, another user) the
+        # inode stands: a false alarm still needs a stamp past the limit and newer than the
+        # last finished run (`_held_lock_age`).
+        if same_dev or _holds_open(pid, st) is not False:
             return True
     return False
 

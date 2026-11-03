@@ -101,6 +101,13 @@ class ModelMismatchTests(unittest.TestCase):
         u = parse_result(json.dumps(d), "claude-opus-5-5")
         self.assertEqual(u.output, 160)
         self.assertEqual(u.input, 2 * int(block.get("inputTokens") or 0))
+        # Round 11: the keys' own costs only when every one carries it, else the run's total.
+        d["modelUsage"] = {"claude-opus-5-5-20261001": {**block, "costUSD": 0.4},
+                           "claude-opus-5-5[1m]": {k: v for k, v in block.items() if k != "costUSD"}}
+        d["total_cost_usd"] = 1.25
+        self.assertEqual(parse_result(json.dumps(d), "claude-opus-5-5").cost_usd, 1.25)
+        d["modelUsage"]["claude-opus-5-5[1m]"]["costUSD"] = 0.6
+        self.assertAlmostEqual(parse_result(json.dumps(d), "claude-opus-5-5").cost_usd, 1.0)
 
     def test_an_aliased_older_model_is_not_the_one_asked_for(self):
         # turns.MODEL_ALIASES prices claude-fable-5 as claude-fable-5-1; a probe of 5.1 served

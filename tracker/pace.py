@@ -165,7 +165,9 @@ def measure(samples: Iterable[Sample], now: datetime | None = None, lookback_hou
     # The meter reads 0 at the window's start, so that instant anchors the pace even before
     # a second reading exists. Readings stamped before the start (a skewed clock) are dropped.
     points = [(start, 0.0)] + [(as_utc(s.ts), float(s.seven_day or 0.0)) for s in window if as_utc(s.ts) >= start]
-    since = max(at - timedelta(hours=lookback_hours), start)
+    # Capped at the week: nothing before the window's start is read, and a huge lookback would
+    # overflow the datetime arithmetic.
+    since = max(at - timedelta(hours=min(lookback_hours, WEEK / timedelta(hours=1))), start)
     base = max((p for p in points if p[0] <= since), key=lambda p: p[0])
     rate = rate_since = None
     if at > base[0]:
@@ -329,9 +331,13 @@ def _each(paths: Sequence[Path], now: datetime | None, lookback: float, as_json_
         print(json.dumps([{"log": name, **(as_json(p) if p else {}), **({"error": err} if err else {})}
                           for name, p, err in rows], indent=2), file=out)
     else:
-        width = max(len(Path(name).name) for name, _, _ in rows)
-        for name, p, err in rows:
-            label = Path(name).name.ljust(width)
+        # Each log by its file name, unless two share one (two accounts' usage_log.jsonl): then
+        # by its whole path, so the rows can be told apart.
+        names = [Path(name).name for name, _, _ in rows]
+        labels = names if len(set(names)) == len(names) else [name for name, _, _ in rows]
+        width = max(len(label) for label in labels)
+        for label, (name, p, err) in zip(labels, rows):
+            label = label.ljust(width)
             if p is None:
                 print(f"{label}   --  {err}", file=out)
             else:

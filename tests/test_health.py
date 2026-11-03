@@ -227,6 +227,10 @@ class HealthTest(unittest.TestCase):
         try:
             with mock.patch.object(health, "_proc_locks", return_value=row):
                 self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+            # Round 11: a holder whose files cannot be read (hidepid, another user) is no veto.
+            with mock.patch.object(health, "_proc_locks", return_value=row.replace(str(os.getpid()), "1")), \
+                    mock.patch.object(health, "_holds_open", return_value=None):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
             other = f"1: FLOCK  ADVISORY  WRITE 1 ff:ff:{os.stat(lock).st_ino} 0 EOF\n"
             with mock.patch.object(health, "_proc_locks", return_value=other), \
                     mock.patch.object(health, "_holds_open", return_value=False):
