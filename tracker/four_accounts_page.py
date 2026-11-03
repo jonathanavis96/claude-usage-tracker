@@ -354,7 +354,7 @@ def last_change(block: dict | None) -> dict | None:
     found = measured_changes(block)
     if not found:
         return None
-    newest = max(found, key=lambda c: c["at"])
+    newest = max(found, key=lambda c: parse(c["at"]))
     record = change_record(newest, account_labels(block or {}))
     out = {k: v for k, v in record.items() if k not in ("kind", "label")}
     out["hero"] = stated_record(newest)

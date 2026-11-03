@@ -152,5 +152,22 @@ class RetestNeverReadsANeighboursStepTest(unittest.TestCase):
         self.assertEqual(c["held_days"], 7)
 
 
+class LastChangeIsTheNewestInstantTest(unittest.TestCase):
+    """`last_change` takes the newest measured change by its instant, as `headline` does,
+    never by the text of its `at`."""
+
+    def test_the_newest_instant_wins_whatever_the_offset_it_is_written_in(self):
+        def measured(at: str, pct: float) -> dict:
+            return {"at": at, "found_on": "seven_day", "state": "measured", "sign": 1,
+                    "sizes": {"seven_day": {"change_pct": pct, "interval_pct": [pct - 5, pct + 5],
+                                            "excludes_no_change": True}}}
+        block = dict(_block("2026-10-23"), changes=[
+            measured("2026-09-22T06:00:00+00:00", 20.0),
+            measured("2026-09-22T07:00:00+02:00", 10.0),  # 05:00 UTC: the older one
+        ])
+        self.assertEqual(F.last_change(block)["at"], "2026-09-22T06:00:00+00:00")
+        self.assertEqual(F.headline(block)["at"], "2026-09-22T06:00:00+00:00")
+
+
 if __name__ == "__main__":
     unittest.main()
