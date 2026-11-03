@@ -878,6 +878,12 @@ def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) 
     hours whose |z| is within INSTANT_RANGE_Z of it."""
     zs, ts = [], []
     for t in np.arange(grid_tau - REFINE_HOURS, grid_tau + REFINE_HOURS + 1e-9, 1.0):
+        # A neighbour's own instant is no instant for this change: `sides` reads a break at t
+        # as the change itself and would not cut there, so the step would be the neighbour's.
+        if any(abs(float(t) - b) < 1e-9 for b in neighbours):
+            zs.append(0.0)
+            ts.append(float(t))
+            continue
         r = step_at(prep, line, float(t), *sides(float(t), neighbours), n_perm=0)
         zs.append(abs(r["z"]) if r and r["k"] >= 2 else 0.0)
         ts.append(float(t))

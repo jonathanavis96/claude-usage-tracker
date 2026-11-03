@@ -12,6 +12,8 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
+
 from tracker import four_accounts as F
 
 PRICES = Path(__file__).resolve().parent.parent / "data" / "prices.json"
@@ -78,6 +80,36 @@ class NoDayToReplayTest(unittest.TestCase):
                 code = F.main(_argv(tmp, state, "2026-10-23T13:30:00+00:00"))
             self.assertEqual(code, 0)
             self.assertFalse(state.exists())
+
+
+class RefineNeverLandsOnANeighbourTest(unittest.TestCase):
+    """An hour that is a neighbouring change's own instant is no instant for another change:
+    `sides` reads a break at tau as the change itself and does not cut there, so the step at
+    that hour is the neighbour's step, not this change's."""
+
+    @staticmethod
+    def accounts(steps: list[tuple[float, float]], days: int = 40, per_day: int = 6) -> F.Prepared:
+        rng = np.random.default_rng(7)
+        by = {}
+        for i, a in enumerate(("a1", "a2", "a3", "a4")):
+            tm = np.sort(rng.uniform(0, days * 24.0, days * per_day))
+            D = rng.integers(1, 5, tm.size).astype(float)
+            f = np.ones(tm.size)
+            for at, k in steps:
+                f = f * np.where(tm >= at, 1 + k, 1.0)
+            W = 1000.0 * (1 + 0.3 * i) * f * D * np.exp(rng.normal(0, 0.08, tm.size) / np.sqrt(D))
+            by[a] = (tm - 0.5, tm + 0.5, W, D)
+        return F.prepare(by)
+
+    def test_a_find_48_hours_from_a_carried_change_is_not_moved_onto_it(self):
+        carried = 20 * 24.0  # a measured change at a six-hour instant
+        second = carried + 60.0
+        prep = self.accounts([(carried, 0.4), (second, 0.15)])
+        # The search found the second step at the first grid instant it may (MIN_GAP_HOURS).
+        t, span = F.refine(prep, "seven_day", carried + F.MIN_GAP_HOURS, [carried])
+        self.assertNotEqual(t, carried)
+        self.assertGreater(span[0], carried)
+        self.assertLessEqual(abs(t - second), 6.0)
 
 
 if __name__ == "__main__":
