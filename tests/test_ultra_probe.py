@@ -138,6 +138,30 @@ class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
         self.assertIsNone(acc)
         self.assertEqual(slept, [900])
 
+    def test_a_weekly_only_account_with_a_session_open_is_weekly_only_not_busy(self):
+        # Code review round 5: the free pid check came first, so a weekly-only account with a
+        # session open read as busy, and choose_account waited four hours for an account it
+        # could never probe. Its meter is read too, so it is known for what it is.
+        read = lambda: Utilization(T0, None, 40.0, None, weekly_only=True)  # noqa: E731
+        slept, skipped, history = [], {}, []
+        acc = choose_account([("jwork", self.JWORK), ("dave", self.DAVE)], lambda n: read, slept.append,
+                             max_wait_s=4 * 3600, retry_s=900, now=lambda: T0,
+                             processes=lambda: [(491402, self.DAVE)], log=lambda line: None,
+                             skipped=skipped, history=history)
+        self.assertIsNone(acc)
+        self.assertEqual(slept, [])
+        self.assertEqual({s.kind for s in skipped.values()}, {"weekly-only"})
+        self.assertEqual([s.kind for s in history], ["weekly-only", "weekly-only"])
+
+    def test_a_busy_account_with_a_five_hour_limit_is_still_busy(self):
+        reads = {"jwork": lambda: Utilization(T0, 7.0, 40.0, "r1"), "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}
+        skipped = {}
+        choose_account([("dave", self.DAVE)], lambda n: reads[n], lambda s: None, max_wait_s=0, retry_s=900,
+                       now=lambda: T0, processes=lambda: [(491402, self.DAVE)], log=lambda line: None,
+                       skipped=skipped)
+        self.assertEqual(skipped["dave"].kind, "busy")
+        self.assertIn("491402", skipped["dave"].why)
+
     def test_busy_reason_alone_still_reads_a_flat_weekly_only_meter_as_idle(self):
         from tracker.probe import busy_reason
         read = lambda: Utilization(T0, None, 40.0, None, weekly_only=True)  # noqa: E731

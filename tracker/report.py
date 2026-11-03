@@ -170,9 +170,12 @@ def summary(model: str, rc: int, what: str, log_text: str, payload: str = "prose
                 "those sessions are stale, closing them frees the account." if pids else "")
         hows = {how for how, _ in last.values()}
         if hows == {"weekly-only"}:
-            # tracker.probe gave up at once: waiting cannot give an account its limit back.
+            # tracker.probe gives up at once when every account is weekly-only: waiting cannot
+            # give one its limit back. An earlier round's other skip means it waited first.
+            waited = any(how != "weekly-only" for _, how, _ in parsed["skips"])
             return (f"Outcome: SKIPPED. {kind} never started, because no account still has a "
-                    f"five-hour limit to measure. No measurement was recorded.\n\n"
+                    f"five-hour limit to measure{', after a wait for a busy one' if waited else ''}. "
+                    f"No measurement was recorded.\n\n"
                     f"Why each account was skipped: {who}. A tick probe needs a five-hour "
                     f"meter, which a weekly-only account no longer has.\n\n"
                     f"What happens next: nothing is broken. {keeps}")

@@ -798,7 +798,7 @@ class PayloadCliTests(unittest.TestCase):
         captured = {}
 
         def fake_choose_account(accounts, read_for, sleep, max_wait_s=None, retry_s=None,
-                                now=None, deadline=None, skipped=None):
+                                now=None, deadline=None, skipped=None, history=None):
             return accounts[0]
 
         def fake_read_usage(cfg, fetch=None):
@@ -1340,17 +1340,20 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("busy", c)  # no prompt was sent
         self.assertIn("probe aborted on dave: cannot watch", err.getvalue())
 
-    def _skipped(self, skips):
+    def _skipped(self, skips, history=None):
         """main's exit and last line when choose_account passes over every account with
-        these reasons (name -> Skip)."""
+        these reasons (name -> Skip), after these skips in earlier rounds (`history`)."""
         import contextlib
         import io
 
         import tracker.probe as probe_mod
         orig = probe_mod.choose_account
 
-        def fake_choose(accounts, *a, skipped=None, **k):
+        def fake_choose(accounts, *a, skipped=None, history=None, **k):
             skipped.update(skips)
+            if history is not None:
+                history.extend(list(history_in or []) + list(skips.values()))
+        history_in = history
         probe_mod.choose_account = fake_choose
         err = io.StringIO()
         try:
@@ -1379,6 +1382,17 @@ class CliTests(unittest.TestCase):
         rc, last = self._skipped({"jwork": Skip("weekly-only", why), "dave": Skip("weekly-only", why)})
         self.assertEqual(rc, 3)
         self.assertEqual(last, f"probe skipped: every account is weekly-only, nothing to wait for "
+                               f"(jwork weekly-only: {why}; dave weekly-only: {why})")
+
+    def test_a_wait_for_a_busy_account_is_not_called_no_wait(self):
+        # Code review round 5: jwork was busy for rounds before it read weekly-only too, so the
+        # probe did wait; the last skips alone said "nothing to wait for".
+        from tracker.probe import Skip
+        why = "no five-hour limit, so no tick to measure"
+        rc, last = self._skipped({"jwork": Skip("weekly-only", why), "dave": Skip("weekly-only", why)},
+                                 history=[Skip("busy", "pid 1942517"), Skip("weekly-only", why)])
+        self.assertEqual(rc, 3)
+        self.assertEqual(last, f"probe skipped: every account is weekly-only, after waiting for a busy one "
                                f"(jwork weekly-only: {why}; dave weekly-only: {why})")
 
     def test_every_account_busy_keeps_the_no_idle_account_line(self):

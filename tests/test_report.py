@@ -113,6 +113,18 @@ class TestSummary(unittest.TestCase):
         self.assertNotIn("does not say which accounts", s)
         self.assertNotIn("Who was busy", s)
 
+    def test_skipped_after_waiting_for_a_busy_account_says_it_waited(self):
+        # Code review round 5: jwork was busy before it too read weekly-only, so the probe
+        # waited; the last skips alone said it gave up at once.
+        log = ("00:00:01Z jwork busy: pid 1942517\n"
+               "00:00:02Z dave weekly-only: no five-hour limit, so no tick to measure\n"
+               "00:15:01Z jwork weekly-only: no five-hour limit, so no tick to measure\n"
+               "00:15:02Z dave weekly-only: no five-hour limit, so no tick to measure\n")
+        s = summary("claude-opus-5", 3, "Rotation run", log)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because no "
+                                     "account still has a five-hour limit to measure, after a wait for a "
+                                     "busy one."), s)
+
     def test_skipped_with_every_account_weekly_only_claims_no_wait(self):
         log = ("00:00:02Z dave weekly-only: no five-hour limit, so no tick to measure\n"
                "probe skipped: every account is weekly-only, nothing to wait for "
