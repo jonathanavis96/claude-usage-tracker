@@ -119,9 +119,11 @@ def _default_post(url: str, headers: Mapping[str, str], body: bytes) -> tuple[in
             except http.client.IncompleteRead as cut:  # an error reply cut short: its status stands
                 return e.code, cut.partial.decode("utf-8", "replace")
             except http.client.HTTPException as bad:
-                raise OSError(f"HTTP {e.code}, reply {type(bad).__name__}: {bad}") from bad
-    except http.client.HTTPException as e:  # a reply cut short or garbled
-        raise OSError(f"{type(e).__name__}: {e}") from e
+                raise OSError(f"HTTP {e.code}, reply {type(bad).__name__}") from None
+    except http.client.HTTPException as e:  # a reply cut short or garbled, or a URL refused
+        # Named, not quoted: InvalidURL's message repeats the URL's path, query or port, which
+        # may carry a key.
+        raise OSError(f"no usable reply: {type(e).__name__}") from None
     except ValueError as e:  # UnicodeEncodeError too: a header value http refuses to send
         # http.client quotes the offending value, which may be the secret: never chain it.
         raise OSError(f"request refused before sending: {type(e).__name__} in a header or URL") from None

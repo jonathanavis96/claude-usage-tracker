@@ -281,6 +281,15 @@ class DefaultPostErrorTests(unittest.TestCase):
         self.assertIsNone(caught.exception.__cause__)
         self.assertIn("bad endpoint URL", str(caught.exception))
 
+    def test_an_endpoint_url_http_client_refuses_is_not_quoted_either(self):
+        # Code review round 8: http.client.InvalidURL is an HTTPException, not a ValueError,
+        # and quotes the path and query (a control character) or the port it cannot read.
+        for url in ("https://127.0.0.1/send?key=s3cr3t x", "https://127.0.0.1:s3cr3t/send"):
+            with self.assertRaises(OSError) as caught:
+                _default_post(url, {}, b"{}")
+            self.assertNotIn("s3cr3t", str(caught.exception), url)
+            self.assertIsNone(caught.exception.__cause__)
+
     def test_a_header_value_http_refuses_is_an_oserror(self):
         # Code review round 5: a secret with a trailing newline (environ values are not
         # stripped) or a character latin-1 cannot hold raised ValueError or
