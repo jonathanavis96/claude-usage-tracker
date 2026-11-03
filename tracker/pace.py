@@ -96,9 +96,6 @@ class Pace:
         return "USE IT OR LOSE IT"
 
 
-#: A naive stamp is taken as UTC, so naive and aware readings compare instead of raising.
-_aware = as_utc
-_when = parse_instant
 
 
 def _hours(d: timedelta) -> float:
@@ -114,9 +111,9 @@ def current_window(samples: Iterable[Sample]) -> tuple[datetime, list[Sample]] |
     """
     usable = []
     for s in samples:
-        reset = _when(s.seven_resets_at)
+        reset = parse_instant(s.seven_resets_at)
         if s.seven_day is not None and reset is not None:
-            usable.append((_aware(s.ts), reset, s))
+            usable.append((as_utc(s.ts), reset, s))
     if not usable:
         return None
     usable.sort(key=lambda u: u[0])
@@ -154,19 +151,19 @@ def measure(samples: Iterable[Sample], now: datetime | None = None, lookback_hou
     seven-day reading that carries its reset time."""
     if lookback_hours <= 0:
         raise ValueError("lookback_hours must be positive")
-    now = _aware(now) if now is not None else datetime.now(timezone.utc)
+    now = as_utc(now) if now is not None else datetime.now(timezone.utc)
     # Only what was known at `now`: a replay of an earlier moment must not see later readings.
-    found = current_window(s for s in samples if _aware(s.ts) <= now)
+    found = current_window(s for s in samples if as_utc(s.ts) <= now)
     if found is None:
         return None
     resets_at, window = found
     start = resets_at - WEEK
     latest = window[-1]
-    at = _aware(latest.ts)
+    at = as_utc(latest.ts)
     level = float(latest.seven_day or 0.0)  # current_window keeps only readings with a figure
     # The meter reads 0 at the window's start, so that instant anchors the pace even before
     # a second reading exists. Readings stamped before the start (a skewed clock) are dropped.
-    points = [(start, 0.0)] + [(_aware(s.ts), float(s.seven_day or 0.0)) for s in window if _aware(s.ts) >= start]
+    points = [(start, 0.0)] + [(as_utc(s.ts), float(s.seven_day or 0.0)) for s in window if as_utc(s.ts) >= start]
     since = max(at - timedelta(hours=lookback_hours), start)
     base = max((p for p in points if p[0] <= since), key=lambda p: p[0])
     rate = rate_since = None
@@ -189,7 +186,7 @@ def measure(samples: Iterable[Sample], now: datetime | None = None, lookback_hou
     return Pace(now=now, reading_at=at, utilization=level, resets_at=resets_at, window_start=start,
                 rate=rate, rate_since=rate_since, projected=projected, full_at=full_at,
                 needed_rate=needed, five_hour=five,
-                five_resets_at=_when(latest.resets_at) if five is not None else None,
+                five_resets_at=parse_instant(latest.resets_at) if five is not None else None,
                 timeline=_timeline(points, start, resets_at, now, slices))
 
 
@@ -359,7 +356,7 @@ def main(argv: Sequence[str] | None = None, out=None) -> int:
         return 2
     now = None
     if args.now:
-        now = _when(args.now)
+        now = parse_instant(args.now)
         if now is None:
             print(f"pace: --now is not an ISO time: {args.now!r}", file=sys.stderr)
             return 2

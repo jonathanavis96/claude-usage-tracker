@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from itertools import chain, repeat
 
@@ -192,6 +192,24 @@ class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
                                  skipped=skipped, peek_for=lambda n, exc=exc: failing(exc))
             self.assertEqual(acc, ("jwork", self.JWORK), exc)
             self.assertEqual(skipped["dave"].kind, "busy")
+
+    def test_the_peek_fetch_is_one_try_inside_the_runs_budget(self):
+        # Code review round 9: the peek went straight to the endpoint, outside the deadline
+        # that keeps the probe out of the next cron slot.
+        from tracker.probe import ProbeAbort, deadline_peek_fetch
+        calls = []
+
+        def fetch(url, headers, sleep, max_retries):
+            calls.append(max_retries)
+            return {"ok": True}
+        now = [T0]
+        go = deadline_peek_fetch(lambda: now[0], T0 + timedelta(minutes=5), lambda s: None, fetch=fetch)
+        self.assertEqual(go("u", {}), {"ok": True})
+        self.assertEqual(calls, [0])
+        now[0] = T0 + timedelta(minutes=5)
+        with self.assertRaises(ProbeAbort):
+            go("u", {})
+        self.assertEqual(calls, [0])
 
     def test_a_busy_account_with_a_five_hour_limit_is_still_busy(self):
         reads = {"jwork": lambda: Utilization(T0, 7.0, 40.0, "r1"), "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}

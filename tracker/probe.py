@@ -52,7 +52,6 @@ no alignment span (`reset_start` on the row): 0 is the first tick.
 from __future__ import annotations
 
 import ctypes
-import functools
 import json
 import os
 import random
@@ -1015,6 +1014,21 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
         waited += retry_s
 
 
+def deadline_peek_fetch(clock: Callable[[], datetime], deadline: datetime,
+                        sleep: Callable[[float], None], fetch=None):
+    """The fetch for choose_account's peek at a busy account: one try, charged to the run's
+    one budget. None once the deadline is gone, and a 429 is never retried, so a peek cannot
+    spend what is left of the wait."""
+    if fetch is None:
+        from .usage_api import _default_fetch as fetch
+
+    def go(url: str, headers: dict) -> dict:
+        if clock() >= deadline:
+            raise ProbeAbort("deadline")
+        return fetch(url, headers, sleep=sleep, max_retries=0)
+    return go
+
+
 def append_result(path: Path, r: ProbeResult, account: str) -> None:
     row = asdict(r)
     row["ts"] = r.ts.isoformat()
@@ -1128,9 +1142,10 @@ def main(argv: list[str] | None = None) -> int:
     def read_for(name):
         return lambda: read_usage(account_cfgs[name], fetch=fetch)
 
+    peek_fetch = deadline_peek_fetch(clock, deadline, deadline_sleep)
+
     def peek_for(name):
-        # One quick try for a busy account: a 429 here must not spend the run's budget.
-        return lambda: read_usage(account_cfgs[name], fetch=functools.partial(_default_fetch, max_retries=0))
+        return lambda: read_usage(account_cfgs[name], fetch=peek_fetch)
     skipped: dict[str, Skip] = {}
     history: list[Skip] = []
     picked = choose_account(accounts, read_for, time.sleep, max_wait_s=a.max_wait,
