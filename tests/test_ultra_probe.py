@@ -211,6 +211,24 @@ class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
             go("u", {})
         self.assertEqual(calls, [0])
 
+    def test_a_weekly_only_account_is_read_once_per_wait(self):
+        # Code review round 12: every retry round re-read a weekly-only account through the
+        # 429-retrying fetch, though waiting cannot clear it.
+        reads = []
+
+        def weekly_only():
+            reads.append(1)
+            return Utilization(T0, None, 40.0, None, weekly_only=True)
+        rd = {"jwork": weekly_only, "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}
+        slept, skipped = [], {}
+        acc = choose_account([("jwork", self.JWORK), ("dave", self.DAVE)], lambda n: rd[n], slept.append,
+                             max_wait_s=1800, retry_s=900, now=lambda: T0,
+                             processes=lambda: [(491402, self.DAVE)], log=lambda line: None, skipped=skipped)
+        self.assertIsNone(acc)
+        self.assertEqual(slept, [900, 900])  # three rounds, waiting for the busy one
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(skipped["jwork"].kind, "weekly-only")
+
     def test_a_busy_account_with_a_five_hour_limit_is_still_busy(self):
         reads = {"jwork": lambda: Utilization(T0, 7.0, 40.0, "r1"), "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}
         skipped = {}

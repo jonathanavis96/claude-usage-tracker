@@ -60,10 +60,16 @@ def parse_result(stdout: str, model_hint: str) -> RunUsage:
 
         def total(field: str) -> int:
             return sum(int(mu[k].get(field) or 0) for k in keys)
-        # The keys' own costs only when every one carries it, else the run's total: a part sum
-        # would price the summed tokens low.
+        # The keys' own costs when every one carries it; when none does, the run's total, as
+        # before; when only some do, unknown: a part sum prices the summed tokens low, and the
+        # run's total carries a sidecar model's cost too.
         costs = [mu[k].get("costUSD") for k in keys]
-        cost = sum(costs) if all(c is not None for c in costs) else d.get("total_cost_usd")
+        if all(c is not None for c in costs):
+            cost = sum(costs)
+        elif all(c is None for c in costs):
+            cost = d.get("total_cost_usd")
+        else:
+            cost = None
         return RunUsage(model, total("inputTokens"), total("outputTokens"), total("cacheReadInputTokens"),
                         total("cacheCreationInputTokens"), cost, (d.get("duration_ms") or 0) / 1000)
     u = d.get("usage") or {}

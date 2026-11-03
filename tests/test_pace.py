@@ -200,6 +200,14 @@ class MeasureTests(unittest.TestCase):
         self.assertFalse(p.stale)
         self.assertNotIn("Latest reading", render(p, tz=SAST))
 
+    def test_a_reading_that_is_no_number_is_no_reading(self):
+        # Code review round 12: "NaN" passed parse_moonlighter's float() and projected 100%,
+        # ON TARGET for a meter with no valid reading.
+        p = measure(samples(line(START + timedelta(days=1), 20.0), line(START + timedelta(days=2), "NaN")),
+                    now=START + timedelta(days=2))
+        self.assertEqual(p.utilization, 20.0)
+        self.assertIsNone(measure(samples(line(START + timedelta(days=1), "NaN")), now=START + timedelta(days=2)))
+
     def test_lookback_must_be_positive(self):
         for bad in (0, float("nan"), float("inf")):  # round 10: nan and inf slipped past `<= 0`
             with self.assertRaises(ValueError):

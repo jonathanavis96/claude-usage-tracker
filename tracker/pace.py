@@ -113,7 +113,8 @@ def current_window(samples: Iterable[Sample]) -> tuple[datetime, list[Sample]] |
     usable = []
     for s in samples:
         reset = parse_instant(s.seven_resets_at)
-        if s.seven_day is not None and reset is not None:
+        # A figure that is no number (NaN, inf) is no reading: it would project as 100%.
+        if s.seven_day is not None and math.isfinite(s.seven_day) and reset is not None:
             usable.append((as_utc(s.ts), reset, s))
     if not usable:
         return None

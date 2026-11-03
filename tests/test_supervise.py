@@ -174,7 +174,7 @@ class SuperviseTest(unittest.TestCase):
         supervise.decide_alert(state, self.t, reason, 3, 3600.0, self.send, "masterrig",
                                immediate_kinds=frozenset({"lock"}))
         self.assertEqual(state["incident_kinds"], ["lock"])
-        self.assertEqual(state["kinds_since"]["lock"], self.t - 3600.0)
+        self.assertEqual(state["kinds_since"]["lock"], self.t - 60)  # round 12: its true clock, never backdated
         self.assertEqual(state["kinds_since"]["meters/avis"], self.t - 60)
 
     def test_a_hung_run_with_no_pid_file_is_raised_whatever_the_locks_suffix(self):

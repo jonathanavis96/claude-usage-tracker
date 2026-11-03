@@ -101,11 +101,13 @@ class ModelMismatchTests(unittest.TestCase):
         u = parse_result(json.dumps(d), "claude-opus-5-5")
         self.assertEqual(u.output, 160)
         self.assertEqual(u.input, 2 * int(block.get("inputTokens") or 0))
-        # Round 11: the keys' own costs only when every one carries it, else the run's total.
+        # Rounds 11 and 12: the keys' own costs when every one carries it; when only some do,
+        # unknown (the run's total carries the sidecar's cost too).
         d["modelUsage"] = {"claude-opus-5-5-20261001": {**block, "costUSD": 0.4},
-                           "claude-opus-5-5[1m]": {k: v for k, v in block.items() if k != "costUSD"}}
+                           "claude-opus-5-5[1m]": {k: v for k, v in block.items() if k != "costUSD"},
+                           "claude-haiku-4-5": {**block, "costUSD": 0.02}}
         d["total_cost_usd"] = 1.25
-        self.assertEqual(parse_result(json.dumps(d), "claude-opus-5-5").cost_usd, 1.25)
+        self.assertIsNone(parse_result(json.dumps(d), "claude-opus-5-5").cost_usd)
         d["modelUsage"]["claude-opus-5-5[1m]"]["costUSD"] = 0.6
         self.assertAlmostEqual(parse_result(json.dumps(d), "claude-opus-5-5").cost_usd, 1.0)
 

@@ -359,7 +359,7 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
 
     `send` carries the opening message, `send_up` (default `send`) the recovery.
     `immediate_kinds` count at once, a check that already failed past its own limit (a lock
-    held past health's lock limit): their clocks read as `stale_after` old."""
+    held past health's lock limit); their clocks still record when each was first seen."""
     current = health_kinds(health_reason)
     since = state.get("kinds_since") if isinstance(state.get("kinds_since"), dict) else None
     if since is None:
@@ -367,8 +367,6 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
         legacy = state.get("unhealthy_since")
         since = {k: legacy for k in current} if isinstance(legacy, (int, float)) else {}
     since = {k: since.get(k, now) for k in sorted(current)}
-    for k in immediate_kinds & current:
-        since[k] = min(since[k], now - stale_after)
     state.pop("unhealthy_since", None)
     if since:
         state["kinds_since"] = since
@@ -376,7 +374,8 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
         state.pop("kinds_since", None)
     failing = (state.get("consecutive_failures", 0) >= fail_threshold
                or state.get("last_exit") in EXIT_NEEDS_HAND)
-    stale_kinds = {k for k, t0 in since.items() if now - t0 >= stale_after}
+    # An immediate kind counts at once; its clock still records when it was first seen.
+    stale_kinds = {k for k, t0 in since.items() if now - t0 >= stale_after or k in immediate_kinds}
     stale = bool(stale_kinds)
     # What kind of fault this is: failed runs, or a failing health check and its subject. An
     # open incident of one kind must not swallow a later fault of another: that sends one
