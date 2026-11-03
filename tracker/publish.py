@@ -480,8 +480,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # The current five-hour regime is the one holding the series' last day (`last_day` below):
     # a change past the limit's end, which only the seven-day line can find, holds no five-hour
     # reading, so the evidence for the frozen figure stays the regime the end falls in.
-    end_day = five_hour_ended.date() if five_hour_ended else None
-    five_hour_changes = [c for c in changes if end_day is None or c["at"].date() <= end_day]
+    # Instants, as `ratio_changes` below: the end day's readings all precede the end, so a
+    # change later that day holds none of them either.
+    five_hour_changes = [c for c in changes if five_hour_ended is None or c["at"] <= five_hour_ended]
     regime_start = five_hour_changes[-1]["at"].date() if five_hour_changes else None
 
     measured_at = series[-1][0] if series else None

@@ -29,11 +29,20 @@ class EvidencePastTheFiveHourEndTests(unittest.TestCase):
                       "stretches": [self._stretch(self.END - timedelta(days=d)) for d in (1, 2, 3)]}}}
 
     def test_a_weekly_change_after_the_end_leaves_the_frozen_figures_evidence_in_place(self):
+        self._check_change_after_the_end(timedelta(days=2))
+
+    def test_a_weekly_change_later_on_the_end_day_leaves_it_in_place_too(self):
+        # Code review round 1: the end day's readings all precede the end instant, so a change
+        # ten minutes after it holds none of them; filtering changes by date let it open the
+        # current regime and cut the evidence down to that one day.
+        self._check_change_after_the_end(timedelta(minutes=10))
+
+    def _check_change_after_the_end(self, delay):
         before = _detector_change((self.END - timedelta(days=20)).isoformat(), "seven_day", "measured",
                                   {"seven_day": _detector_size(-30.0, -36.0, -24.0),
                                    "five_hour": _detector_size(-30.0, -38.0, -21.0),
                                    "ratio": _detector_size(1.0, -4.0, 6.0)})
-        after = _detector_change((self.END + timedelta(days=2)).isoformat(), "seven_day", "provisional",
+        after = _detector_change((self.END + delay).isoformat(), "seven_day", "provisional",
                                  {"seven_day": _detector_size(12.0, 5.0, 19.0)})
         without = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self._gs(),
                                     four_accounts_run=detector_run(before))
