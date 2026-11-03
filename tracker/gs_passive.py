@@ -1292,9 +1292,10 @@ def fit_output_weight(rpt: dict, prices: dict) -> dict:
             if st.get("capture_status", st["status"]) != ACCEPTED:
                 continue
             base = out = 0.0
-            for m, tok in st["tokens"].items():
-                if _empty(tok):
-                    continue  # Claude Code's `<synthetic>` rows: no tokens and no price, no work
+            work = {m: tok for m, tok in st["tokens"].items() if not _empty(tok)}
+            if not work:
+                continue  # only `<synthetic>` rows, or no bundle: a collection gap, not a zero row
+            for m, tok in work.items():
                 price = prices.get(m)
                 if price is None:
                     break

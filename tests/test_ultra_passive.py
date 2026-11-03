@@ -71,6 +71,23 @@ class FitOutputWeightSyntheticTest(unittest.TestCase):
         self.assertEqual(fit_output_weight(rpt, PRICES)["n"], 2)
 
 
+    def test_a_stretch_with_no_work_left_is_not_a_zero_row(self):
+        # Review of 0a9515d6: a stretch whose only bundles are empty `<synthetic>` ones (or that
+        # holds no bundle at all) is a collection gap, as passive_dollar_readings reads it, not a
+        # (0, 0, delta_pct) row that moves n and the residual.
+        from tracker.gs_passive import fit_output_weight
+        cw = {"claude-sonnet-5": dict(EMPTY, cache_write=800_000)}
+        mixed = {"claude-sonnet-5": dict(EMPTY, output=100_000, cache_write=400_000)}
+        rpt = {"accounts": {"x": {"stretches": [
+            {"status": "accepted", "delta_pct": 10, "tokens": cw},
+            {"status": "accepted", "delta_pct": 10, "tokens": mixed},
+            {"status": "accepted", "delta_pct": 10, "tokens": {"<synthetic>": dict(EMPTY)}},
+            {"status": "accepted", "delta_pct": 10, "tokens": {}},
+        ]}}}
+        fit = fit_output_weight(rpt, PRICES)
+        self.assertEqual(fit["n"], 2)
+        self.assertEqual(fit["residual_rms_pct"], 0.0)
+
 class MeterLogBadByteTest(unittest.TestCase):
     """One undecodable byte near the top of a meter log (a disk fault, a stray write) crashed
     every tick in `log_owner` with UnicodeDecodeError: the text reader decodes a whole chunk at
