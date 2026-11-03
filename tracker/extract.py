@@ -220,12 +220,13 @@ def _births(paths: list[Path]) -> dict[Path, float]:
         try:
             # Decoded as Python decodes file names, so a name that is not UTF-8 neither raises
             # nor fails to match its own str(path) below.
-            res = subprocess.run(["stat", "-c", "%W %Y %n", "--", *map(str, chunk)], capture_output=True,
+            res = subprocess.run(["stat", "--printf", "%W %Y %n\\0", "--", *map(str, chunk)], capture_output=True,
                                  encoding=sys.getfilesystemencoding(),
                                  errors=sys.getfilesystemencodeerrors(), timeout=60)
-            # Rows end in "\n" only: splitlines() would also split a name holding U+2028,
-            # U+0085, a form feed and their kind, which then never matched its own path.
-            rows = res.stdout.split("\n")
+            # Rows end in NUL, the one byte no path holds: split on newlines, a name holding
+            # one became two rows, and a fragment equal to another path in the chunk took over
+            # that path's times (splitlines() also split on U+2028, U+0085 and their kind).
+            rows = res.stdout.split("\0")
         except (OSError, subprocess.SubprocessError):
             rows = []
         # Each row names its path, so a path that vanished mid-call (stat prints no row for
