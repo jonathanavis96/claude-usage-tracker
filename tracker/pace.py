@@ -259,7 +259,9 @@ def render(p: Pace, tz: tzinfo | None = None) -> str:
         lines.append(_row("To use it all", f"{p.needed_rate:.2f}%/h from here{times}, "
                           f"about {p.needed_rate * 24:.0f} points a day."))
     if p.five_hour is None:
-        lines.append(_row("5-hour meter", "none at the latest reading (weekly-only: no 5-hour limit)"))
+        # No figure is either an idle meter with no window open or an account with no five-hour
+        # limit at all (weekly-only): the meter log's samples do not tell the two apart.
+        lines.append(_row("5-hour meter", "no figure at the latest reading (no window open, or no 5-hour limit)"))
     elif p.five_window_over:
         lines.append(_row("5-hour meter", f"reset {_stamp(p.five_resets_at, tz)}, no reading since"))
     else:

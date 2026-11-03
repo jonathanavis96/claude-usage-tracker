@@ -136,7 +136,11 @@ class MeasureTests(unittest.TestCase):
     def test_weekly_only_reading_counts_and_shows_no_five_hour_meter(self):
         p = measure(samples(line(START + timedelta(days=1), 12.0, five=None)), now=START + timedelta(days=1))
         self.assertIsNone(p.five_hour)
-        self.assertIn("5-hour meter   none at the latest reading", render(p, tz=SAST))
+        # Code review round 7: no figure is also an idle meter with no window open, so the
+        # report must not tell an account with a five-hour limit that it lost it.
+        text = render(p, tz=SAST)
+        self.assertIn("5-hour meter   no figure at the latest reading (no window open, or no 5-hour limit)", text)
+        self.assertNotIn("weekly-only", text)
 
     def test_five_hour_meter_is_shown_when_present(self):
         five_reset = START + timedelta(days=1, hours=3)
