@@ -872,11 +872,11 @@ def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = (),
     return found
 
 
-def _at_break(t: float, breaks: list[float]) -> bool:
-    """Whether hour `t` is one of `breaks` (another change's own instant): `sides` reads a
-    break at t as the change itself and would not cut there, so a step read at t would be
-    that change's, not the one being placed."""
-    return any(abs(t - b) < 1e-9 for b in breaks)
+def _too_near(t: float, breaks: list[float]) -> bool:
+    """Whether hour `t` is within MIN_GAP_HOURS of one of `breaks` (the other changes), where
+    `search` places no change: a step read there is that change's, not the one being placed
+    (at a break's own instant `sides` would not even cut, so the step read is that change's)."""
+    return any(abs(t - b) < MIN_GAP_HOURS for b in breaks)
 
 
 def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) -> tuple[float, list[float]]:
@@ -885,7 +885,7 @@ def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) 
     hours whose |z| is within INSTANT_RANGE_Z of it."""
     zs, ts = [], []
     for t in np.arange(grid_tau - REFINE_HOURS, grid_tau + REFINE_HOURS + 1e-9, 1.0):
-        if _at_break(float(t), neighbours):  # a neighbour's own instant is none for this change
+        if _too_near(float(t), neighbours):  # a neighbour's ground, as in `search`
             zs.append(0.0)
             ts.append(float(t))
             continue
@@ -1265,7 +1265,7 @@ def retest(scanner: Scanner, taus: np.ndarray, c: dict, breaks: list[float]) -> 
     nearest when none flags); a found day adds to `held_days`."""
     others = [b for b in breaks if b != c["_h"]]
     near = [(float(t), scanner.at(c["found_on"], float(t), others)) for t in taus
-            if _near_carried(c, float(t)) and not _at_break(float(t), others)]
+            if _near_carried(c, float(t)) and not _too_near(float(t), others)]
     near = [(t, r) for t, r in near if r]
     hits = [(_rank(r), t, r) for t, r in near
             if flagged(r) and (1 if r["d"] > 0 else -1) == c["sign"]]

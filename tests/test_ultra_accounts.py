@@ -111,6 +111,16 @@ class RefineNeverLandsOnANeighbourTest(unittest.TestCase):
         self.assertGreater(span[0], carried)
         self.assertLessEqual(abs(t - second), 6.0)
 
+    def test_a_change_is_never_refined_closer_than_the_minimum_gap(self):
+        # Code review round 3: the search keeps every change MIN_GAP_HOURS from the others, but
+        # refine moved a find at the gap onto a step 30 h from its neighbour (519 h, range
+        # from 511 h), closer than the search may place one.
+        carried = 20 * 24.0
+        prep = self.accounts([(carried, 0.4), (carried + 30.0, 0.15)])
+        t, span = F.refine(prep, "seven_day", carried + F.MIN_GAP_HOURS, [carried])
+        self.assertGreaterEqual(t - carried, F.MIN_GAP_HOURS)
+        self.assertGreaterEqual(span[0] - carried, F.MIN_GAP_HOURS)
+
 
 class StateFromTheFutureTest(unittest.TestCase):
     """A daily run for a day before the state's newest run (a clock that went back, or --now in
@@ -150,6 +160,24 @@ class RetestNeverReadsANeighboursStepTest(unittest.TestCase):
         F.retest(F.Scanner(preps), taus, c, [carried, neighbour])
         self.assertFalse(c["found_today"])
         self.assertEqual(c["held_days"], 7)
+
+    def test_retest_reads_no_instant_within_the_gap_of_another_change(self):
+        # Code review round 3: the search reads no instant within MIN_GAP_HOURS of a change, but
+        # retest skipped only another change's own instant, so it could read a step there with
+        # one side cut down to a few hours and count it as this change found again.
+        carried = 20 * 24.0
+        neighbour = carried + F.MIN_GAP_HOURS
+        prep = RefineNeverLandsOnANeighbourTest.accounts([(carried, 0.4)])
+        scanner = F.Scanner({line: prep for line in F.LINES})
+        read = []
+        real = scanner.at
+        scanner.at = lambda line, tau, breaks: read.append(tau) or real(line, tau, breaks)
+        c = {"found_on": "seven_day", "_h": carried, "instant_range": [carried, carried],
+             "sign": 1, "held_days": 7}
+        F.retest(scanner, F.grid({"seven_day": prep}, None), c, [carried, neighbour])
+        self.assertTrue(read)
+        self.assertTrue(all(abs(t - neighbour) >= F.MIN_GAP_HOURS for t in read), sorted(read))
+        self.assertTrue(c["found_today"])  # its own step, read clear of the neighbour, still counts
 
 
 class LastChangeIsTheNewestInstantTest(unittest.TestCase):
