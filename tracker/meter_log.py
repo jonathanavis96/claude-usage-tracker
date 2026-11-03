@@ -190,9 +190,13 @@ def schema_problems(body: dict) -> list[str]:
 
 
 def log_owner(log: Path) -> str | None:
-    """The identity on the log's first labelled line; None for a new or empty log."""
+    """The identity on the log's first labelled line; None for a new or empty log.
+
+    A bad byte costs its line only, as it does for every other reader of the log: decoded
+    strictly, one undecodable byte in the first chunk raised here and failed every tick.
+    """
     try:
-        with open(log, encoding="utf-8") as fh:
+        with open(log, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 try:
                     ident = json.loads(line).get("identity")
