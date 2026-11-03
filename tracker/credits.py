@@ -1768,11 +1768,13 @@ def _pooled_stretch_credits(tokens: dict, credits: dict, fit: dict) -> float | N
 
     Input-equivalent tokens exactly as the fit's design matrix counts them -- input plus
     cache write, plus `output_multiplier` times output, at the family's rate -- and every
-    cache read at the one fitted cache-read rate, whichever family it came from.
+    cache read at the one fitted cache-read rate, whichever family it came from. A bundle of
+    no tokens (Claude Code's `<synthetic>` rows) is skipped, as the fit's `ok` column and
+    `comparison_value` skip it, rather than leaving the stretch unpriced.
     """
     total = 0.0
     for model, tok in tokens.items():
-        if not isinstance(tok, dict):
+        if not isinstance(tok, dict) or not raw_tokens(tok):
             continue
         fam = family(model, credits)
         rate = fit["input"].get(fam) if fam else None
