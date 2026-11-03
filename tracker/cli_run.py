@@ -51,13 +51,19 @@ def parse_result(stdout: str, model_hint: str) -> RunUsage:
     if mu:
         # Take the entry for the model we asked for; a haiku sidecar can appear first.
         # Falling back to another model would silently measure the wrong one.
-        model = model_hint if model_hint in mu else next((k for k in mu if _served_as_asked(k, model_hint)), None)
-        if model is None:
+        # Every key that is the model asked for counts, summed: a run can be reported under its
+        # dated id and its `[1m]` variant at once, and taking the first would drop the other's.
+        keys = [k for k in mu if _served_as_asked(k, model_hint)]
+        if not keys:
             raise RuntimeError(f"no usage for {model_hint}: {list(mu)}")
-        m = mu[model]
-        return RunUsage(model, int(m.get("inputTokens") or 0), int(m.get("outputTokens") or 0),
-                        int(m.get("cacheReadInputTokens") or 0), int(m.get("cacheCreationInputTokens") or 0),
-                        m.get("costUSD", d.get("total_cost_usd")), (d.get("duration_ms") or 0) / 1000)
+        model = model_hint if model_hint in mu else keys[0]
+
+        def total(field: str) -> int:
+            return sum(int(mu[k].get(field) or 0) for k in keys)
+        costs = [mu[k]["costUSD"] for k in keys if mu[k].get("costUSD") is not None]
+        cost = sum(costs) if costs else d.get("total_cost_usd")
+        return RunUsage(model, total("inputTokens"), total("outputTokens"), total("cacheReadInputTokens"),
+                        total("cacheCreationInputTokens"), cost, (d.get("duration_ms") or 0) / 1000)
     u = d.get("usage") or {}
     return RunUsage(model_hint, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
                     int(u.get("cache_read_input_tokens") or 0), int(u.get("cache_creation_input_tokens") or 0),
