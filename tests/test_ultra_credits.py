@@ -164,6 +164,9 @@ class EmptyBundleRuleTests(unittest.TestCase):
         self.assertEqual(C.bundles_with_work({"m": self.WORK, "<synthetic>": self.EMPTY}), {"m": self.WORK})
         self.assertEqual(C.bundles_with_work({"<synthetic>": self.EMPTY}), {})
         self.assertEqual(C.bundles_with_work(None), {})
+        # Code review round 8: a value that is no bundle (a null, a number) is no work either,
+        # as holds_work and pricing read it, never passed on to bundle_meter_usd's .get.
+        self.assertEqual(C.bundles_with_work({"m": self.WORK, "x": None, "y": 7}), {"m": self.WORK})
 
     def test_pricing_keeps_an_all_empty_stretch_as_it_was(self):
         self.assertEqual(C.work_bundles({"m": self.WORK, "<synthetic>": self.EMPTY}), {"m": self.WORK})

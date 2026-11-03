@@ -431,24 +431,20 @@ def raw_tokens(tok: dict) -> int:
     return sum(tok.get(c, 0) for c in ("input", "output", "cache_read", "cache_write"))
 
 
-def is_empty_bundle(tok) -> bool:
-    """A token bundle that holds no tokens: Claude Code's `<synthetic>` placeholder rows."""
-    return isinstance(tok, dict) and not raw_tokens(tok)
-
-
 def holds_work(tok) -> bool:
-    """A token bundle with tokens in it: neither a `<synthetic>` placeholder (`is_empty_bundle`)
-    nor a value that is no bundle at all. What every per-bundle loop counts."""
+    """A token bundle with tokens in it: neither Claude Code's zero-token `<synthetic>`
+    placeholder rows nor a value that is no bundle at all. What every per-bundle loop counts."""
     return isinstance(tok, dict) and bool(raw_tokens(tok))
 
 
 def bundles_with_work(tokens: dict | None) -> dict:
-    """`tokens` less its zero-token bundles (`<synthetic>` rows), which hide no work. Empty when
+    """`tokens` less every bundle that holds no work (`holds_work`): the zero-token `<synthetic>`
+    rows, and a value that is no bundle at all, which pricing skips too. Empty when
     nothing is left: every reader of a stretch's work (the passive dollar series, the
     output-weight fit, the evidence beside a rate) reads that as no reading through this, so
     the evidence counts exactly the stretches the series reads. Pricing differs on purpose
     (`work_bundles`): a stretch of nothing but empty bundles stays unpriced, not priced at 0."""
-    return {m: tok for m, tok in (tokens or {}).items() if not is_empty_bundle(tok)}
+    return {m: tok for m, tok in (tokens or {}).items() if holds_work(tok)}
 
 
 def work_bundles(tokens: dict) -> dict:
