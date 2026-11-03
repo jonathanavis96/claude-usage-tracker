@@ -1030,8 +1030,10 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             # A stretch with a model these prices do not cover is left out whole:
             # valuing that model at $0 would deflate the reading and look like a
             # cheaper meter, and the stretch's percent is spent on it all the same.
-            valued = {m: bundle_meter_usd(m, tok, prices) for m, tok in s["tokens"].items()}
-            if any(v is None for v in valued.values()):
+            # A bundle of no tokens (Claude Code's `<synthetic>` rows) hides no work and is
+            # skipped, as `passive_credit_points` skips it; with nothing else left, no reading.
+            valued = {m: bundle_meter_usd(m, tok, prices) for m, tok in s["tokens"].items() if not _empty(tok)}
+            if not valued or any(v is None for v in valued.values()):
                 continue
             # Per UTC day, as the docstring says: a +02:00 stretch's own date is not its UTC date.
             key = _utc_day(s["end"]) if by == "day" else s["end"]
