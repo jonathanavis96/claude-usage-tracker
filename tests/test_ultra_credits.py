@@ -4,6 +4,7 @@ Every fixture here is built in memory; nothing reads data/, history/ or any live
 data/prices.json's `_credits` block, which the rest of the credits tests read the same way.
 """
 import unittest
+from datetime import datetime, timezone
 
 from tracker import credits as C
 
@@ -71,6 +72,34 @@ class PriceTokensSkipsEmptyBundleTests(unittest.TestCase):
                  "delta_pct": 10.0, "tokens": {"claude-opus-5": tok(input=1_000), **SYNTHETIC}}
         got = C.fits_as_of({"jwork": [older, newer]}, CREDITS, {"fits_pooled": ["jwork/post"]})
         self.assertEqual(got, newer["end"])
+
+
+class StamplessStretchTests(unittest.TestCase):
+    """A stretch with no `start`/`end` must not crash a selection that `clean_stretches` let
+    it through: that function keeps it ("a missing stamp must not be read as 'overlaps
+    nothing' in one place and crash in another"), and `window_stretches` and `spans_cut` keep
+    it too, but the masterrig filters raised KeyError and `_side_of` raised on it."""
+
+    @staticmethod
+    def _stretch(**extra) -> dict:
+        return {"delta_pct": 10.0, "tokens": {"claude-opus-5": tok(input=1_000)},
+                "status": "accepted", "capture_status": "accepted", **extra}
+
+    def test_the_rate_fit_selection_keeps_a_stampless_masterrig_stretch(self):
+        dated = self._stretch(start="2026-09-10T00:00:00+00:00", end="2026-09-10T02:00:00+00:00")
+        kept = C.rate_fit_stretches({"masterrig": [self._stretch(), dated]}, [])
+        self.assertEqual(len(kept["masterrig"]), 2)
+        self.assertEqual(len(C.window_stretches({"masterrig": [self._stretch(), dated]}, [])
+                             ["masterrig"]), 2)
+
+    def test_the_known_date_selection_keeps_a_stampless_masterrig_stretch(self):
+        kept = C.announced_change_stretches({"masterrig": [self._stretch()]}, [])
+        self.assertEqual(len(kept["masterrig"]), 1)
+
+    def test_a_stampless_stretch_is_on_neither_side_of_a_candidate(self):
+        at = datetime(2026, 9, 20, tzinfo=timezone.utc)
+        split = C.split_at_candidate([self._stretch()], at, None, None, lambda t: 1_000.0)
+        self.assertEqual(split["sides"], {"before": [], "after": []})
 
 
 if __name__ == "__main__":

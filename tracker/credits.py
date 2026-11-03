@@ -652,7 +652,8 @@ def rate_fit_stretches(by_account: dict[str, list[dict]],
     kept = clean_stretches(by_account, runs, require="capture_status")
     if "masterrig" in kept:
         kept["masterrig"] = [st for st in kept["masterrig"]
-                             if datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+                             if not st.get("start")
+                             or datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
     return {account: [st for st in rows if not spans_cut(st)] for account, rows in kept.items()}
 
 
@@ -2216,7 +2217,8 @@ def announced_change_stretches(by_account: dict[str, list[dict]],
     kept = clean_stretches(by_account, runs, require="status")
     if "masterrig" in kept:
         kept["masterrig"] = [st for st in kept["masterrig"]
-                             if datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+                             if not st.get("start")
+                             or datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
     return kept
 
 
@@ -2236,7 +2238,10 @@ def candidate_bounds(at: datetime, cands: list[dict]) -> tuple[datetime | None, 
 
 
 def _side_of(st: dict, at: datetime, lo: datetime | None, hi: datetime | None) -> str | None:
-    """Which side of `at` a stretch lies wholly on, within (lo, hi), or None if it spans one."""
+    """Which side of `at` a stretch lies wholly on, within (lo, hi), or None if it spans one
+    or has no span to place (`clean_stretches` keeps a stretch missing a stamp)."""
+    if not st.get("start") or not st.get("end"):
+        return None
     start = datetime.fromisoformat(st["start"])
     end = datetime.fromisoformat(st["end"])
     if (lo is None or start >= lo) and end <= at:
