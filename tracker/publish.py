@@ -1882,12 +1882,14 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
     reading, not the derivation, and neither the old field nor
     `passive_generated_at` (when a file was rebuilt, on another host) answers that.
     """
+    # Compared as instants, in UTC like `account_feeds`: a string max puts a 'Z' or a non-UTC
+    # offset out of time order, and lets a stamp that is not a time at all win.
     stamps = [
-        (a.get("meter") or {}).get("last")
+        _utc((a.get("meter") or {}).get("last"))
         for a in ((gs_passive or {}).get("accounts") or {}).values()
     ]
-    usable = [t for t in stamps if isinstance(t, str) and t]
-    return max(usable) if usable else None
+    usable = [t for t in stamps if t]
+    return max(usable, key=datetime.fromisoformat) if usable else None
 
 
 def load_contributed(path: Path | None) -> dict | None:

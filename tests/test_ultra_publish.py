@@ -52,5 +52,25 @@ class EvidencePastTheFiveHourEndTests(unittest.TestCase):
         self.assertEqual(with_after["passive_account_count"], without["passive_account_count"])
 
 
+class LastMeterReadTests(unittest.TestCase):
+    """`meter_read_at` is the newest instant across the accounts' meter reads, compared as
+    instants: a string max reads an offset or a 'Z' stamp out of time order."""
+
+    def test_the_newest_instant_wins_whatever_its_spelling(self):
+        from tracker.publish import _last_meter_read
+        gs = {"accounts": {"jwork": {"meter": {"last": "2026-11-02T23:00:00Z"}},
+                           "dave": {"meter": {"last": "2026-11-03T00:30:00+02:00"}},
+                           "avis": {"meter": {"last": "not a stamp"}}}}
+        self.assertEqual(_last_meter_read(gs), "2026-11-02T23:00:00+00:00")
+
+    def test_utc_stamps_are_published_unchanged(self):
+        from tracker.publish import _last_meter_read
+        gs = {"accounts": {"jwork": {"meter": {"last": "2026-11-02T21:49:54+00:00"}},
+                           "dave": {"meter": {"last": "2026-11-02T21:57:06+00:00"}},
+                           "avis": {"meter": None}}}
+        self.assertEqual(_last_meter_read(gs), "2026-11-02T21:57:06+00:00")
+        self.assertIsNone(_last_meter_read({"accounts": {"x": {"meter": {"last": ""}}}}))
+
+
 if __name__ == "__main__":
     unittest.main()
