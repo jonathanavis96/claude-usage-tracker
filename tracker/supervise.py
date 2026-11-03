@@ -441,6 +441,11 @@ def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: S
     if reason is None:
         return
     state = health.read_state(state_path)
+    # Only the lock was checked here: the last finished run's health stands for the rest, so
+    # an open incident's other kinds neither read as recovered nor lose their clocks.
+    last = state.get("last_health")
+    if isinstance(last, str) and last != "ok":
+        reason = " | ".join([reason, *(p.strip() for p in last.split(" | ") if p.strip())])
     decide_alert(state, t, reason, fail_threshold, 0.0, send, label)
     write_state(state_path, state)
 

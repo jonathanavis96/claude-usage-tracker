@@ -96,6 +96,33 @@ class SuperviseTest(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_hung_run_alert_keeps_the_open_incidents_other_kinds(self):
+        # A run holding the lock past health's limit is raised from the skipped run, which
+        # checks only the lock. Every other kind of the open incident then read as cleared:
+        # a false "meters/avis recovered" was sent and its clock was dropped.
+        meters = "meters: newest usable reading in claude-usage-meter-avis.log is 2h00m old (limit 15m)"
+        self.state.write_text(json.dumps({
+            "incident_open": True, "incident_kinds": ["meters/avis"], "incident_since": self.t - 7200,
+            "incident_reason": meters, "kinds_since": {"meters/avis": self.t - 9000},
+            "last_health": meters, "consecutive_failures": 0, "last_exit": 0, "last_ok": self.t - 7200}))
+        pidfile = self.lock.with_suffix(".pid")
+        pidfile.write_text(str(os.getpid()))
+        held = os.path.getmtime(pidfile) - 3 * 3600
+        os.utime(pidfile, (held, held))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertFalse([m for m in self.send.sent if "recovered" in m], self.send.sent)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("further problem", self.send.sent[0])
+        self.assertIn("has held the lock", self.send.sent[0])
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["lock", "meters/avis"])
+        self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 9000)
+
     def test_stale_pidfile_is_cleared(self):
         self.lock.with_suffix(".pid").write_text("999999999")
         self.assertTrue(supervise.clear_stale_pidfile(self.lock.with_suffix(".pid")))
