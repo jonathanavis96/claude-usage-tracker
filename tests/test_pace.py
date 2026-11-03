@@ -62,10 +62,11 @@ class MeasureTests(unittest.TestCase):
         p = measure(samples(*hourly(20.0, 0.25, 24)), now=START + timedelta(days=3, minutes=5))
         self.assertAlmostEqual(p.utilization, 26.0)
         self.assertAlmostEqual(p.rate, 0.25)
-        self.assertAlmostEqual(p.projected, 50.0)
-        self.assertAlmostEqual(p.unused, 50.0)
+        left = 96 - 5 / 60  # every figure is from now, 5 min after the reading
+        self.assertAlmostEqual(p.projected, 26.0 + 0.25 * left)
+        self.assertAlmostEqual(p.unused, 74.0 - 0.25 * left)
         self.assertIsNone(p.full_at)
-        self.assertAlmostEqual(p.needed_rate, 74.0 / (96 - 5 / 60))  # from now, 5 min after the reading
+        self.assertAlmostEqual(p.needed_rate, 74.0 / left)
         self.assertEqual(p.verdict, "USE IT OR LOSE IT")
         text = render(p, tz=SAST)
         self.assertIn("USE IT OR LOSE IT: about 50% at the reset, so 50 points expire unused.", text)
@@ -145,6 +146,33 @@ class MeasureTests(unittest.TestCase):
         text = render(p, tz=SAST)
         self.assertIn("Latest reading 3d 12h old: the figures assume nothing has changed since.", text)
         self.assertIn("To use it all  5.00%/h from here", text)
+
+    def test_a_stale_log_projects_from_now_not_from_the_reading(self):
+        # Code review round 3: 60% then 80% a day later, last read 36 h before now. The pace
+        # (20 points a day) from the reading reached 100% ten hours before now, while the
+        # meter is assumed to still read 80%. Held from now, 80% reaches 100% a day after now.
+        now = START + timedelta(days=4, hours=12)
+        p = measure(samples(line(START + timedelta(days=2), 60.0), line(START + timedelta(days=3), 80.0)),
+                    now=now)
+        self.assertTrue(p.stale)
+        self.assertEqual(p.verdict, "RUNNING HOT")
+        self.assertEqual(p.full_at, now + timedelta(days=1))
+        self.assertGreater(p.full_at, p.now)
+
+    def test_a_stale_log_projects_the_rest_of_the_week_from_now(self):
+        # 10% read on day 2 at +0.5%/h; 60 h later it is 12 h before the reset. Projected
+        # from now: 10 + 0.5 * 12 = 16%, not 10 + 0.5 * 72 from the reading.
+        p = measure(samples(*hourly(0.0, 0.5, 20, begin=START + timedelta(days=2))),
+                    now=RESET - timedelta(hours=12), lookback_hours=20)
+        self.assertAlmostEqual(p.rate, 0.5)
+        self.assertAlmostEqual(p.projected, 16.0)
+
+    def test_a_stale_log_draws_the_hours_already_gone_as_past(self):
+        # Slices between the last reading and now have passed: they carry the level forward
+        # and only slices after now are still to come.
+        p = measure(samples(line(START + timedelta(days=1, hours=1), 20.0)),
+                    now=START + timedelta(days=4, hours=1), slices=7)
+        self.assertEqual(p.timeline, (0.0, 20.0, 20.0, 20.0, 20.0, None, None))
 
     def test_a_fresh_reading_is_not_stale(self):
         p = measure(samples(*hourly(20.0, 0.25, 24)), now=START + timedelta(days=3, minutes=5))

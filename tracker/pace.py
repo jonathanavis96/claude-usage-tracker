@@ -133,7 +133,7 @@ def _timeline(points: Sequence[tuple[datetime, float]], start: datetime, end: da
     """The meter's highest reading in each of `slices` equal slices of [start, end).
 
     A slice with no reading carries the level before it forward (the meter never falls
-    inside a window); a slice starting after the latest reading is still to come (None).
+    inside a window); a slice starting after `last` (now) is still to come (None).
     """
     width = (end - start) / slices
     out: list[float | None] = []
@@ -176,17 +176,16 @@ def measure(samples: Iterable[Sample], now: datetime | None = None, lookback_hou
     if at > base[0]:
         rate = max(0.0, (level - base[1]) / _hours(at - base[0]))
         rate_since = base[0]
-    left = _hours(resets_at - at)
     projected = full_at = needed = None
-    # "From here" is from now, not from the reading: a stale log has fewer hours left than its
-    # last reading did, and the meter is assumed not to have moved since.
+    # Every figure runs from now, not from the reading: a stale log has fewer hours left than
+    # its last reading did, and the meter is assumed not to have moved since (`stale` says so).
     if resets_at > now:
-        needed = max(0.0, (100.0 - level) / _hours(resets_at - now))
-    if left > 0:
+        left = _hours(resets_at - now)
+        needed = max(0.0, (100.0 - level) / left)
         if rate is not None:
             projected = min(100.0, level + rate * left)
             if level < 100 and rate > 0:
-                hit = at + timedelta(hours=(100.0 - level) / rate)
+                hit = now + timedelta(hours=(100.0 - level) / rate)
                 if hit < resets_at:
                     full_at = hit
     five = latest.five_hour
@@ -194,7 +193,7 @@ def measure(samples: Iterable[Sample], now: datetime | None = None, lookback_hou
                 rate=rate, rate_since=rate_since, projected=projected, full_at=full_at,
                 needed_rate=needed, five_hour=five,
                 five_resets_at=_when(latest.resets_at) if five is not None else None,
-                timeline=_timeline(points, start, resets_at, at, slices))
+                timeline=_timeline(points, start, resets_at, now, slices))
 
 
 def sparkline(timeline: Iterable[float | None]) -> str:
