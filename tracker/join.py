@@ -71,6 +71,20 @@ def _is_reset(a: Sample, b: Sample) -> bool:
                 return True
         except ValueError:
             pass
+    # The mirror case: `b` names its window and `a` (a reset-less reading above 0%) was
+    # taken before that window began (five hours before its reset), so the meter fell to
+    # 0 between them even when `b` has already climbed past `a`. A 0% reading with no
+    # reset id is a meter with no window open, which the next window starts from. A
+    # minute of slack, as same_reset allows, for the stamp's rounding and jitter.
+    if b.resets_at and a.resets_at is None and a.five_hour > 0:
+        try:
+            end = datetime.fromisoformat(b.resets_at.replace("Z", "+00:00"))
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            if a.ts < end - FIVE_HOURS - timedelta(seconds=60):
+                return True
+        except ValueError:
+            pass
     return b.five_hour < a.five_hour
 
 
