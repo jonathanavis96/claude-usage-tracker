@@ -1188,7 +1188,8 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                 # `<synthetic>` ones. The meter moved and no work explains it, so it is no
                 # reading of credits per percent, and a zero here would pull the level down.
                 continue
-            out.append((datetime.fromisoformat(s["end"]), value, float(s["delta_pct"]),
+            # A naive end is UTC, as in passive_dollar_readings: left naive it would not sort.
+            out.append((as_utc(datetime.fromisoformat(s["end"])), value, float(s["delta_pct"]),
                         int(s.get("windows") or 1)))
     return sorted(out, key=lambda p: p[0])
 
@@ -1205,9 +1206,10 @@ def unpriced_credit_models(report: dict, prices: dict, credits: dict,
     out = set()
     for account in report.get("accounts", {}).values():
         for s in account.get("stretches") or []:
-            for model, tok in (s.get("tokens") or {}).items():
-                # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows).
-                if model in out or not credit_model.holds_work(tok):
+            for model, tok in credit_model.bundles_with_work(s.get("tokens")).items():
+                # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows); a value
+                # that is no bundle at all cannot be valued, so it is listed like a missing price.
+                if model in out:
                     continue
                 if (bundle_meter_usd(model, tok, prices) is None
                         or stretch_credits({model: tok}, credits, model_rates, prices)[0] is None):

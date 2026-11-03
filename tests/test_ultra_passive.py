@@ -150,3 +150,32 @@ class NaiveStretchEndTests(unittest.TestCase):
         got = passive_dollar_readings(report, PRICES)
         self.assertEqual([ts.isoformat() for ts, _ in got],
                          ["2026-11-01T10:00:00+02:00", "2026-11-02T23:00:00+00:00"])
+
+
+class CreditSeriesStampAndBundleTests(unittest.TestCase):
+    """Code review round 10: the credit series' siblings of fixes made to the dollar series."""
+
+    TOK = {"input": 1000, "output": 2000, "cache_read": 0, "cache_write": 400000}
+
+    def st(self, end, tokens=None):
+        return {"status": "accepted", "capture_status": "accepted", "reset_verified": True,
+                "start": end, "end": end, "delta_pct": 10, "windows": 1,
+                "tokens": tokens or {"claude-sonnet-5": self.TOK}}
+
+    def test_a_naive_end_beside_aware_ones_is_utc_in_the_credit_series_too(self):
+        from tracker.publish import CREDITS
+        from tests.test_publish import PRICES as P
+        from tracker.gs_passive import passive_credit_points
+        report = {"accounts": {"jwork": {"stretches": [self.st("2026-11-02T23:00:00"),
+                                                        self.st("2026-11-01T10:00:00+02:00")]}}}
+        got = passive_credit_points(report, P, CREDITS)
+        self.assertEqual([p[0].isoformat() for p in got], ["2026-11-01T10:00:00+02:00", "2026-11-02T23:00:00+00:00"])
+
+    def test_a_malformed_bundle_is_listed_as_unpriced_not_dropped_without_a_word(self):
+        from tracker.publish import CREDITS
+        from tests.test_publish import PRICES as P
+        from tracker.gs_passive import passive_credit_points, unpriced_credit_models
+        report = {"accounts": {"jwork": {"stretches": [
+            self.st("2026-11-02T10:00:00+00:00", {"claude-sonnet-5": self.TOK, "claude-x": 123})]}}}
+        self.assertEqual(passive_credit_points(report, P, CREDITS), [])
+        self.assertEqual(unpriced_credit_models(report, P, CREDITS), ["claude-x"])

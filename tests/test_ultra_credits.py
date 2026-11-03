@@ -111,6 +111,14 @@ class StamplessStretchTests(unittest.TestCase):
         self.assertTrue(C._masterrig_in_use({"start": "2026-10-01T00:00:00"}))
         self.assertFalse(C._masterrig_in_use({"start": "2026-09-03T00:00:00"}))
 
+    def test_a_naive_stretch_is_placed_beside_a_candidate_not_a_crash(self):
+        # Code review round 10: the filters read a naive stamp as UTC, so it reached _side_of,
+        # which compared it naive with the aware candidate instant.
+        at = datetime(2026, 9, 20, tzinfo=timezone.utc)
+        naive = self._stretch(start="2026-09-21T00:00:00", end="2026-09-21T02:00:00")
+        split = C.split_at_candidate([naive], at, None, None, lambda t: 1_000.0)
+        self.assertEqual(len(split["sides"]["after"]), 1)
+
     def test_masterrig_before_the_cut_is_still_left_out(self):
         early = self._stretch(start="2026-09-03T00:00:00+00:00", end="2026-09-03T02:00:00+00:00")
         for select in (C.rate_fit_stretches, C.window_stretches, C.announced_change_stretches):

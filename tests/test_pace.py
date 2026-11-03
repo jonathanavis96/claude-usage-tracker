@@ -201,8 +201,9 @@ class MeasureTests(unittest.TestCase):
         self.assertNotIn("Latest reading", render(p, tz=SAST))
 
     def test_lookback_must_be_positive(self):
-        with self.assertRaises(ValueError):
-            measure([], lookback_hours=0)
+        for bad in (0, float("nan"), float("inf")):  # round 10: nan and inf slipped past `<= 0`
+            with self.assertRaises(ValueError):
+                measure([], lookback_hours=bad)
 
     def test_timeline_carries_forward_and_marks_the_future(self):
         p = measure(samples(line(START + timedelta(days=1, hours=1), 20.0),
@@ -281,6 +282,8 @@ class CliTests(unittest.TestCase):
         self.log.write_text(line(START + timedelta(days=1), 10.0) + "\n")
         self.assertEqual(self.run_main(str(self.log), "--now", "yesterday")[0], 2)
         self.assertEqual(self.run_main(str(self.log), "--lookback", "0")[0], 2)
+        self.assertEqual(self.run_main(str(self.log), "--lookback", "nan")[0], 2)
+        self.assertEqual(self.run_main(str(self.log), "--lookback", "inf")[0], 2)
 
 
     def test_each_reads_every_log_as_its_own_account(self):

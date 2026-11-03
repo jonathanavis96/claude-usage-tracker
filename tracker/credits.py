@@ -2274,8 +2274,8 @@ def _side_of(st: dict, at: datetime, lo: datetime | None, hi: datetime | None) -
     or has no span to place (`clean_stretches` keeps a stretch missing a stamp)."""
     if not st.get("start") or not st.get("end"):
         return None
-    start = datetime.fromisoformat(st["start"])
-    end = datetime.fromisoformat(st["end"])
+    start = as_utc(datetime.fromisoformat(st["start"]))  # a naive stamp is UTC, as in the filters
+    end = as_utc(datetime.fromisoformat(st["end"]))
     if (lo is None or start >= lo) and end <= at:
         return "before"
     if start >= at and (hi is None or end <= hi):

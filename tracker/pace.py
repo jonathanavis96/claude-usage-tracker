@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -149,7 +150,7 @@ def measure(samples: Iterable[Sample], now: datetime | None = None, lookback_hou
             slices: int = 28) -> Pace | None:
     """Where the current weekly window stands and where it is heading. None without a
     seven-day reading that carries its reset time."""
-    if lookback_hours <= 0:
+    if not (math.isfinite(lookback_hours) and lookback_hours > 0):
         raise ValueError("lookback_hours must be positive")
     now = as_utc(now) if now is not None else datetime.now(timezone.utc)
     # Only what was known at `now`: a replay of an earlier moment must not see later readings.
@@ -351,7 +352,7 @@ def main(argv: Sequence[str] | None = None, out=None) -> int:
                     help="read each log as its own account and print one line per log")
     args = ap.parse_args(argv)
     paths = args.logs or [DEFAULT_LOG]
-    if args.lookback <= 0:
+    if not (math.isfinite(args.lookback) and args.lookback > 0):
         print("pace: --lookback must be positive", file=sys.stderr)
         return 2
     now = None
