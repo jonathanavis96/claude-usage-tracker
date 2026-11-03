@@ -272,6 +272,15 @@ class DefaultPostErrorTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 _default_post(SEND_URL, {}, b"{}")
 
+    def test_a_bad_endpoint_url_is_not_quoted_in_the_error(self):
+        # Code review round 6: urllib's ValueError quotes the whole URL, and a mistyped one can
+        # carry a token in its query string; the error went to stderr and cron logs.
+        with self.assertRaises(OSError) as caught:
+            _default_post("notify.example/send?key=s3cr3t", {}, b"{}")
+        self.assertNotIn("s3cr3t", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIn("bad endpoint URL", str(caught.exception))
+
     def test_a_header_value_http_refuses_is_an_oserror(self):
         # Code review round 5: a secret with a trailing newline (environ values are not
         # stripped) or a character latin-1 cannot hold raised ValueError or

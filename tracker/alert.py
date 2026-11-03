@@ -105,8 +105,10 @@ def _default_post(url: str, headers: Mapping[str, str], body: bytes) -> tuple[in
     # Every failure to get a usable reply is an OSError, the one exception callers catch.
     try:
         req = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
-    except ValueError as e:  # no scheme or host (a NOTIFY_SEND_URL typo): nothing to reach
-        raise OSError(f"bad endpoint URL: {e}") from e
+    except ValueError:  # no scheme or host (a NOTIFY_SEND_URL typo): nothing to reach
+        # urllib's message quotes the whole URL, whose query string may carry a key: never
+        # repeat it, nor chain it.
+        raise OSError("bad endpoint URL (no scheme or host)") from None
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read().decode("utf-8", "replace")
