@@ -55,6 +55,7 @@ Exit status is the command's last exit status (0 when skipped).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -471,14 +472,10 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
         try:
             pidfile.write_text(str(os.getpid()))
         except OSError as e:  # full disk: the pid file only serves the health check's lock age
-            try:  # stderr is a log on the same disk under cron, so the warning can fail too
+            with contextlib.suppress(OSError):  # stderr is a log on the same disk under cron
                 print(f"cannot write pid file {pidfile} ({e}); running without it", file=sys.stderr)
-            except OSError:
-                pass
-            try:
+            with contextlib.suppress(OSError):
                 pidfile.unlink(missing_ok=True)  # an empty one would read as a stale lock
-            except OSError:
-                pass
         try:
             if log:
                 rotate_log(log, max_log_bytes, keep)

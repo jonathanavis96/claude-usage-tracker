@@ -872,15 +872,20 @@ def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = (),
     return found
 
 
+def _at_break(t: float, breaks: list[float]) -> bool:
+    """Whether hour `t` is one of `breaks` (another change's own instant): `sides` reads a
+    break at t as the change itself and would not cut there, so a step read at t would be
+    that change's, not the one being placed."""
+    return any(abs(t - b) < 1e-9 for b in breaks)
+
+
 def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) -> tuple[float, list[float]]:
     """The change's instant: the hour with the largest |z| within REFINE_HOURS of its grid
     instant, on the line that found it, sides cut at the neighbouring changes; and the range of
     hours whose |z| is within INSTANT_RANGE_Z of it."""
     zs, ts = [], []
     for t in np.arange(grid_tau - REFINE_HOURS, grid_tau + REFINE_HOURS + 1e-9, 1.0):
-        # A neighbour's own instant is no instant for this change: `sides` reads a break at t
-        # as the change itself and would not cut there, so the step would be the neighbour's.
-        if any(abs(float(t) - b) < 1e-9 for b in neighbours):
+        if _at_break(float(t), neighbours):  # a neighbour's own instant is none for this change
             zs.append(0.0)
             ts.append(float(t))
             continue
@@ -1259,10 +1264,8 @@ def retest(scanner: Scanner, taus: np.ndarray, c: dict, breaks: list[float]) -> 
     every other change. Sets `found_today`, and `p`/`z` of the strongest such instant (of the
     nearest when none flags); a found day adds to `held_days`."""
     others = [b for b in breaks if b != c["_h"]]
-    # Never at another change's own instant: `sides` would not cut there, and the step read
-    # would be that change's.
     near = [(float(t), scanner.at(c["found_on"], float(t), others)) for t in taus
-            if _near_carried(c, float(t)) and not any(abs(float(t) - b) < 1e-9 for b in others)]
+            if _near_carried(c, float(t)) and not _at_break(float(t), others)]
     near = [(t, r) for t, r in near if r]
     hits = [(_rank(r), t, r) for t, r in near
             if flagged(r) and (1 if r["d"] > 0 else -1) == c["sign"]]
