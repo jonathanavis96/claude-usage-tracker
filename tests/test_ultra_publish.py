@@ -37,6 +37,24 @@ class EvidencePastTheFiveHourEndTests(unittest.TestCase):
         # current regime and cut the evidence down to that one day.
         self._check_change_after_the_end(timedelta(minutes=10))
 
+    def test_a_change_after_the_end_on_a_day_with_readings_keeps_them_as_the_evidence(self):
+        # The workflow's publish review: regimes split by date, so a reading earlier on the end
+        # day falls in the regime that opens that day, and the frozen figure is its median.
+        # The evidence must be that regime's reading, not the regime before it.
+        gs = self._gs()
+        gs["accounts"]["jwork"]["stretches"].append(self._stretch(self.END - timedelta(hours=1)))
+        before = _detector_change((self.END - timedelta(days=20)).isoformat(), "seven_day", "measured",
+                                  {"seven_day": _detector_size(-30.0, -36.0, -24.0),
+                                   "five_hour": _detector_size(-30.0, -38.0, -21.0),
+                                   "ratio": _detector_size(1.0, -4.0, 6.0)})
+        after = _detector_change((self.END + timedelta(minutes=10)).isoformat(), "seven_day", "provisional",
+                                 {"seven_day": _detector_size(12.0, 5.0, 19.0)})
+        out = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=gs,
+                                four_accounts_run=detector_run(before, after))
+        ev = out["rates"]["claude-sonnet-5"]["evidence"]
+        self.assertEqual(ev["readings"], 1)
+        self.assertTrue(ev["observed_from"].startswith(self.END.date().isoformat()), ev["observed_from"])
+
     def _check_change_after_the_end(self, delay):
         before = _detector_change((self.END - timedelta(days=20)).isoformat(), "seven_day", "measured",
                                   {"seven_day": _detector_size(-30.0, -36.0, -24.0),

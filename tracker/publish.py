@@ -477,15 +477,15 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # else (ADR 0001 rule 22, amended 2026-10-23). Each opens a regime in every series below,
     # and each series steps there by the detector's own size on its line.
     changes = four_accounts.regime_changes(four_accounts_run)
-    # The current five-hour regime is the one holding the series' last day (`last_day` below):
-    # a change past the limit's end, which only the seven-day line can find, holds no five-hour
-    # reading, so the evidence for the frozen figure stays the regime the end falls in.
-    # Instants, as `ratio_changes` below: the end day's readings all precede the end, so a
-    # change later that day holds none of them either.
-    five_hour_changes = [c for c in changes if five_hour_ended is None or c["at"] <= five_hour_ended]
+    measured_at = series[-1][0] if series else None
+    # Past the limit's end the frozen figure is held at the newest regime with readings
+    # (`_chained_levels`, regimes split by date in `regime_index` below), so its evidence is that
+    # regime: a change past the end, which only the seven-day line can find, opens one with no
+    # five-hour reading unless it falls on a day that still has one. By date, as the regimes are.
+    last_read = measured_at.date() if five_hour_ended is not None and measured_at is not None else None
+    five_hour_changes = [c for c in changes if last_read is None or c["at"].date() <= last_read]
     regime_start = five_hour_changes[-1]["at"].date() if five_hour_changes else None
 
-    measured_at = series[-1][0] if series else None
     current = [(ts, v) for ts, v in series
                if (regime_start is None or ts.date() >= regime_start) and ts >= measured_at - timedelta(days=7)]
     stale = measured_at < now - timedelta(days=MAX_SAMPLE_AGE_DAYS) if measured_at else None
