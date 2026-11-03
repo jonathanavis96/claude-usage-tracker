@@ -473,7 +473,12 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # else (ADR 0001 rule 22, amended 2026-10-23). Each opens a regime in every series below,
     # and each series steps there by the detector's own size on its line.
     changes = four_accounts.regime_changes(four_accounts_run)
-    regime_start = changes[-1]["at"].date() if changes else None
+    # The current five-hour regime is the one holding the series' last day (`last_day` below):
+    # a change past the limit's end, which only the seven-day line can find, holds no five-hour
+    # reading, so the evidence for the frozen figure stays the regime the end falls in.
+    end_day = five_hour_ended.date() if five_hour_ended else None
+    five_hour_changes = [c for c in changes if end_day is None or c["at"].date() <= end_day]
+    regime_start = five_hour_changes[-1]["at"].date() if five_hour_changes else None
 
     measured_at = series[-1][0] if series else None
     current = [(ts, v) for ts, v in series
