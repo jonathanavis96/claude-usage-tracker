@@ -796,6 +796,20 @@ class RunAllTest(unittest.TestCase):
         out = I.run_checks(doc)
         self.assertTrue(any("could not run" in m for msgs in out.values() for m in msgs))
 
+    def test_a_null_block_is_a_failure_not_a_crash(self):
+        # A null where a block is expected raised AttributeError, which run_checks did not
+        # catch: the run died with a traceback (exit 1, "publishing anyway"), so no blocking
+        # check ran and no alert was sent.
+        doc = _good()
+        _wt(doc)["per_family"]["opus-5-5"]["all"] = None
+        out = I.run_checks(doc)
+        self.assertTrue(any("could not run" in m for m in out["headline_inside_accounts"]), out)
+        self.assertEqual(set(out), {name for name, _ in I.CHECKS})
+        for null_doc in (None, []):
+            out = I.run_checks(null_doc)
+            self.assertTrue(out["every_change_drawn"], out)
+            self.assertTrue(I.BLOCKING & {k for k, v in out.items() if v}, out)
+
 
 class AlertTest(unittest.TestCase):
     """The same incident semantics as tracker.publish_gate: one alert, one recovery."""

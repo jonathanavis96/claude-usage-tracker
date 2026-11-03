@@ -786,7 +786,7 @@ def run_checks(doc: dict) -> dict[str, list[str]]:
     for name, check in CHECKS:
         try:
             out[name] = check(doc)
-        except (KeyError, TypeError, ValueError, IndexError, ZeroDivisionError) as e:
+        except (KeyError, TypeError, ValueError, IndexError, ZeroDivisionError, AttributeError) as e:
             out[name] = [f"{name} could not run on this document: {type(e).__name__}: {e}"]
     return out
 
