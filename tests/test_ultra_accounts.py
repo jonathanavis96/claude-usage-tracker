@@ -133,5 +133,24 @@ class StateFromTheFutureTest(unittest.TestCase):
             self.assertIn("2026-10-25", err.getvalue())
 
 
+class RetestNeverReadsANeighboursStepTest(unittest.TestCase):
+    """A carried change is re-tested at the grid instants in its range: one of them that is
+    another change's own instant reads that change's step (`sides` does not cut there), and
+    must not count as this change found again."""
+
+    def test_a_neighbours_step_does_not_find_a_carried_change(self):
+        carried = 20 * 24.0  # no step of its own in these readings
+        neighbour = carried + F.MIN_GAP_HOURS  # another change, the same way, at a grid instant
+        prep = RefineNeverLandsOnANeighbourTest.accounts([(neighbour, 0.4)])
+        preps = {line: prep for line in F.LINES}
+        taus = F.grid({"seven_day": prep}, None)
+        self.assertIn(neighbour, taus)
+        c = {"found_on": "seven_day", "_h": carried, "instant_range": [carried, carried],
+             "sign": 1, "held_days": 7}
+        F.retest(F.Scanner(preps), taus, c, [carried, neighbour])
+        self.assertFalse(c["found_today"])
+        self.assertEqual(c["held_days"], 7)
+
+
 if __name__ == "__main__":
     unittest.main()

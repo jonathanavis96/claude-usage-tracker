@@ -1259,8 +1259,10 @@ def retest(scanner: Scanner, taus: np.ndarray, c: dict, breaks: list[float]) -> 
     every other change. Sets `found_today`, and `p`/`z` of the strongest such instant (of the
     nearest when none flags); a found day adds to `held_days`."""
     others = [b for b in breaks if b != c["_h"]]
+    # Never at another change's own instant: `sides` would not cut there, and the step read
+    # would be that change's.
     near = [(float(t), scanner.at(c["found_on"], float(t), others)) for t in taus
-            if _near_carried(c, float(t))]
+            if _near_carried(c, float(t)) and not any(abs(float(t) - b) < 1e-9 for b in others)]
     near = [(t, r) for t, r in near if r]
     hits = [(_rank(r), t, r) for t, r in near
             if flagged(r) and (1 if r["d"] > 0 else -1) == c["sign"]]
