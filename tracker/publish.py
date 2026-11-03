@@ -16,6 +16,7 @@ from .gs_passive import credit_rate_sources, passive_dollar_readings, unpriced_c
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
+from .usage_api import parse_instant
 from .speed import load_history as load_speed_history
 from .speed import speed_block
 from . import five_hour_end, five_hour_weight, weekly_meter
@@ -1820,13 +1821,8 @@ def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, floa
 
 def _utc(stamp) -> str | None:
     """An ISO stamp as UTC, or None for anything that is not a parseable stamp."""
-    if not isinstance(stamp, str) or not stamp:
-        return None
-    try:
-        dt = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+    dt = parse_instant(stamp)
+    return dt.astimezone(timezone.utc).isoformat() if dt is not None else None
 
 
 def _account_feeds(gs_passive: dict | None, masterrig_passive: dict | None, credits: dict,

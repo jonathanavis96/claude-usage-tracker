@@ -160,6 +160,18 @@ def _as_utc(d: datetime) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+def parse_instant(stamp: object) -> datetime | None:
+    """An ISO stamp as an aware instant: a 'Z' suffix is UTC and so is a stamp with no offset.
+    None for anything that is not a parseable stamp. The one parser of this rule for join,
+    pace and publish."""
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(stamp.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
 def same_reset(a: str | None, b: str | None, tol_s: float = 60) -> bool:
     """True unless both stamps are present and differ by more than tol_s.
 

@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 from .samples import MixedAccountLog, Sample, parse_meter_log
+from .usage_api import _as_utc, parse_instant
 
 WEEK = timedelta(days=7)
 #: Readings of one weekly window carry the same `resets_at` up to sub-second jitter
@@ -90,18 +91,9 @@ class Pace:
         return "USE IT OR LOSE IT"
 
 
-def _aware(dt: datetime) -> datetime:
-    """A naive stamp is taken as UTC, so naive and aware readings compare instead of raising."""
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
-def _when(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return _aware(datetime.fromisoformat(s))
-    except (TypeError, ValueError):
-        return None
+#: A naive stamp is taken as UTC, so naive and aware readings compare instead of raising.
+_aware = _as_utc
+_when = parse_instant
 
 
 def _hours(d: timedelta) -> float:

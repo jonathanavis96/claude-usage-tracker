@@ -60,6 +60,16 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(parse_usage(huge, now).five_hour)
         self.assertIn("five_hour.utilization is not a number", schema_problems(huge))
 
+    def test_parse_instant_is_the_one_stamp_rule(self):
+        # Code review round 5: join, pace and publish each parsed stamps their own way.
+        from tracker.usage_api import parse_instant
+        utc = timezone.utc
+        self.assertEqual(parse_instant("2026-11-02T04:00:00Z"), datetime(2026, 11, 2, 4, tzinfo=utc))
+        self.assertEqual(parse_instant("2026-11-02T04:00:00"), datetime(2026, 11, 2, 4, tzinfo=utc))
+        self.assertEqual(parse_instant("2026-11-02T06:00:00+02:00"), datetime(2026, 11, 2, 4, tzinfo=utc))
+        for bad in ("", "yesterday", None, 7, ["2026-11-02"]):
+            self.assertIsNone(parse_instant(bad), bad)
+
     def test_read_uses_token_from_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok123"}}))

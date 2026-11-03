@@ -18,7 +18,7 @@ from statistics import median
 
 from .samples import Sample
 from .turns import Turn, normalize_model, normalized_raw_model
-from .usage_api import same_reset
+from .usage_api import parse_instant, same_reset
 from .weekly import _window_point, capped
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
@@ -56,24 +56,13 @@ class DailyRate:
     split: dict
 
 
-def _window_end(resets_at: str | None) -> datetime | None:
-    """A reading's `resets_at` as an aware instant (naive is UTC); None when absent or unparsable."""
-    if not resets_at:
-        return None
-    try:
-        end = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return end if end.tzinfo is not None else end.replace(tzinfo=timezone.utc)
-
-
 def _is_reset(a: Sample, b: Sample) -> bool:
     if not same_reset(a.resets_at, b.resets_at):
         return True
     # `a` says when its window ends; `b` (often a ceiling reading, which carries no reset
     # id) is at or past that instant, so they belong to different windows even if `b` is
     # higher. Parsed, with 5 s for the seconds of jitter resets_at carries.
-    if b.resets_at is None and (end := _window_end(a.resets_at)) is not None:
+    if b.resets_at is None and (end := parse_instant(a.resets_at)) is not None:
         if b.ts > end + timedelta(seconds=5):
             return True
     # The mirror case: `b` names its window and `a` (a reset-less reading above 0%) was
@@ -81,7 +70,7 @@ def _is_reset(a: Sample, b: Sample) -> bool:
     # 0 between them even when `b` has already climbed past `a`. A 0% reading with no
     # reset id is a meter with no window open, which the next window starts from. A
     # minute of slack, as same_reset allows, for the stamp's rounding and jitter.
-    if a.resets_at is None and a.five_hour > 0 and (end := _window_end(b.resets_at)) is not None:
+    if a.resets_at is None and a.five_hour > 0 and (end := parse_instant(b.resets_at)) is not None:
         if a.ts < end - FIVE_HOURS - timedelta(seconds=60):
             return True
     return b.five_hour < a.five_hour
