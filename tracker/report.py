@@ -168,10 +168,19 @@ def summary(model: str, rc: int, what: str, log_text: str, payload: str = "prose
         pids = any(how == "busy" and "pid" in why for _, how, why in parsed["skips"])
         hint = (" A `pid` reason means a Claude session was running on that account; if "
                 "those sessions are stale, closing them frees the account." if pids else "")
-        if any(how == "weekly-only" for how, _ in last.values()) and not any(
-                how == "weekly" for how, _ in last.values()):
-            return (f"Outcome: SKIPPED. {kind} never started, because no idle account still has a "
+        hows = {how for how, _ in last.values()}
+        if hows == {"weekly-only"}:
+            # tracker.probe gave up at once: waiting cannot give an account its limit back.
+            return (f"Outcome: SKIPPED. {kind} never started, because no account still has a "
                     f"five-hour limit to measure. No measurement was recorded.\n\n"
+                    f"Why each account was skipped: {who}. A tick probe needs a five-hour "
+                    f"meter, which a weekly-only account no longer has.\n\n"
+                    f"What happens next: nothing is broken. {keeps}")
+        if "weekly-only" in hows and "weekly" not in hows:
+            # Another account was busy, so the probe waited the full time for it.
+            return (f"Outcome: SKIPPED. {kind} never started, because no account with a five-hour "
+                    f"limit was idle within the {MAX_WAIT_H}-hour wait. No measurement was "
+                    f"recorded.\n\n"
                     f"Why each account was skipped: {who}.{hint} A tick probe needs a five-hour "
                     f"meter, which a weekly-only account no longer has.\n\n"
                     f"What happens next: nothing is broken. {keeps}")
