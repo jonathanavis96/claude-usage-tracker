@@ -470,7 +470,9 @@ def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Pr
     raw = 0
     priced = True
     for model, tok in tokens.items():
-        if not isinstance(tok, dict):
+        # A bundle of no tokens (Claude Code's `<synthetic>` rows) is nothing to price, and
+        # tools/model_rates.py's `ok` column counts its stretch: skipped, not unpriced.
+        if not isinstance(tok, dict) or not raw_tokens(tok):
             continue
         at_in, at_out = input_side(tok, weight), tok.get("output", 0)
         raw += raw_tokens(tok)

@@ -44,5 +44,34 @@ class PooledValueSkipsEmptyBundleTests(unittest.TestCase):
                                  "<synthetic>": tok(input=10)}))
 
 
+class PriceTokensSkipsEmptyBundleTests(unittest.TestCase):
+    """`price_tokens(...).priced` must not go False for a bundle of no tokens.
+
+    `fits_as_of` says its selection is exactly the fit's `ok` column, which counts a stretch
+    whose only model outside the families is a zero-token `<synthetic>` row; `price_tokens`
+    marked it unpriced, so the fits' as-of date, the publisher's per-account newest priced
+    stretch and the Fable solve all skipped 39 such stretches of the fits' selection.
+    """
+
+    def test_a_zero_token_synthetic_row_leaves_the_stretch_priced(self):
+        priced = C.price_tokens({"claude-opus-5": tok(input=300, output=150), **SYNTHETIC},
+                                CREDITS, 0)
+        self.assertTrue(priced.priced)
+        self.assertAlmostEqual(priced.known, 300 * OPUS_IN + 150 * OPUS_OUT)
+        self.assertEqual((priced.raw, priced.charged), (450, 450))
+
+    def test_a_synthetic_row_that_carries_tokens_still_unprices(self):
+        self.assertFalse(C.price_tokens({"claude-opus-5": tok(input=300),
+                                         "<synthetic>": tok(input=10)}, CREDITS, 0).priced)
+
+    def test_fits_as_of_reads_the_newest_fitted_stretch_even_with_a_synthetic_row(self):
+        older = {"start": "2026-10-01T00:00:00+00:00", "end": "2026-10-01T02:00:00+00:00",
+                 "delta_pct": 10.0, "tokens": {"claude-opus-5": tok(input=1_000)}}
+        newer = {"start": "2026-10-02T00:00:00+00:00", "end": "2026-10-02T02:00:00+00:00",
+                 "delta_pct": 10.0, "tokens": {"claude-opus-5": tok(input=1_000), **SYNTHETIC}}
+        got = C.fits_as_of({"jwork": [older, newer]}, CREDITS, {"fits_pooled": ["jwork/post"]})
+        self.assertEqual(got, newer["end"])
+
+
 if __name__ == "__main__":
     unittest.main()
