@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tracker.meter_log import schema_problems
 from tracker.usage_api import parse_usage, read_usage
 
 BODY = {"five_hour": {"utilization": 24.0, "resets_at": "2026-09-06T02:00:00.3Z"},
@@ -46,10 +47,14 @@ class ParseTests(unittest.TestCase):
         # Code review round 3: the bucket was guarded but not the value in it.
         now = datetime(2026, 11, 2, tzinfo=timezone.utc)
         sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
-        for odd in ({"value": 7}, "n/a", [7]):
+        # Round 4: exactly what schema_problems calls a number is a reading; a bool, a numeric
+        # string or a non-finite value is not (NaN made every account read busy for ever).
+        for odd in ({"value": 7}, "n/a", [7], True, "12.5", float("nan"), float("inf")):
             u = parse_usage({"five_hour": {"utilization": odd, "resets_at": None}, "seven_day": sd}, now)
             self.assertEqual((u.five_hour, u.seven_day), (None, 47.0), odd)
-        self.assertEqual(parse_usage({"five_hour": {"utilization": "12.5"}, "seven_day": sd}, now).five_hour, 12.5)
+            self.assertIn("five_hour.utilization is not a number",
+                          schema_problems({"five_hour": {"utilization": odd, "resets_at": None}, "seven_day": sd}))
+        self.assertEqual(parse_usage({"five_hour": {"utilization": 7}, "seven_day": sd}, now).five_hour, 7.0)
 
     def test_read_uses_token_from_config_dir(self):
         with tempfile.TemporaryDirectory() as d:

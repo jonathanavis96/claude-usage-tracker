@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -27,15 +28,20 @@ class Utilization:
     weekly_only: bool = False
 
 
+def utilization_number(u: object) -> float | None:
+    """A bucket's `utilization` as a reading: a finite JSON number, else None. A bool, a string
+    or a NaN is a reshaped value, not a reading (meter_log.schema_problems names it): float()
+    would read True as 1%, and a NaN never equals itself, so the meter would read as moving."""
+    if isinstance(u, bool) or not isinstance(u, (int, float)) or not math.isfinite(u):
+        return None
+    return float(u)
+
+
 def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
     b = body.get(key)
     if not isinstance(b, dict):
         b = {}  # absent, null, or reshaped: no reading here (meter_log.schema_problems names it)
-    try:
-        u = float(b["utilization"]) if b.get("utilization") is not None else None
-    except (TypeError, ValueError):
-        u = None  # a reshaped value: no reading either (meter_log.schema_problems names it)
-    return (u, b.get("resets_at"))
+    return (utilization_number(b.get("utilization")), b.get("resets_at"))
 
 
 def parse_usage(body: dict, now: datetime) -> Utilization:

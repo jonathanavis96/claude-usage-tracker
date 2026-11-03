@@ -81,6 +81,7 @@ from .usage_api import (
     Utilization,
     _default_fetch,
     read_usage,
+    utilization_number,
 )
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
@@ -186,8 +187,7 @@ def schema_problems(body: dict) -> list[str]:
         for key in ("utilization", "resets_at"):
             if key not in b:
                 out.append(f"{bucket}.{key} missing")
-        u = b.get("utilization")
-        if u is not None and (isinstance(u, bool) or not isinstance(u, (int, float))):
+        if b.get("utilization") is not None and utilization_number(b["utilization"]) is None:
             out.append(f"{bucket}.utilization is not a number")
     return out
 
