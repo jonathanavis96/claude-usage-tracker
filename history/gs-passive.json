@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-03T10:00:06.204231+00:00",
+ "generated_at": "2026-11-03T10:30:07.087726+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -36921,7 +36921,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-03T09:57:07+00:00",
+    "last": "2026-11-03T10:28:15+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -66813,12 +66813,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 20611,
+    "reset_verified_samples": 20614,
     "since": null,
-    "samples": 23659,
+    "samples": 23673,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-03T10:01:09+00:00",
-    "five_hour_last": "2026-11-03T10:01:09+00:00",
+    "last": "2026-11-03T10:30:19+00:00",
+    "five_hour_last": "2026-11-03T10:30:19+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -72256,6 +72256,58 @@
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-02T22:44:05+00:00",
+     "end": "2026-11-03T10:28:14+00:00",
+     "seven_day": 30,
+     "five_hour_measured": true,
+     "d7": 1,
+     "d5": 3,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 264,
+       "output": 98220,
+       "cache_read": 24089011,
+       "cache_write": 362913,
+       "cache_write_1h": 48948
+      },
+      "claude-sonnet-5-5": {
+       "input": 16,
+       "output": 3362,
+       "cache_read": 176766,
+       "cache_write": 51733,
+       "cache_write_1h": 51733
+      },
+      "claude-haiku-5-5": {
+       "input": 2,
+       "output": 305,
+       "cache_read": 11382,
+       "cache_write": 37091,
+       "cache_write_1h": 37091
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 137,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "claude-sonnet-5-5": {
+       "input": 16,
+       "output": 3362,
+       "cache_read": 176766,
+       "cache_write": 51733,
+       "cache_write_1h": 51733
+      },
+      "claude-haiku-5-5": {
+       "input": 2,
+       "output": 305,
+       "cache_read": 11382,
+       "cache_write": 37091,
+       "cache_write_1h": 37091
+      }
+     },
+     "headless_turns": 9,
      "cloud_session": false
     }
    ],
@@ -78209,6 +78261,18 @@
      ],
      "pieces": 1,
      "reset_verified": true
+    },
+    {
+     "window_ending": "2026-11-03T10:30:19+00:00",
+     "windows": 5.0,
+     "five_hour_pct": 5.0,
+     "seven_day_pct": 1.0,
+     "rounding_interval": [
+      1.3341,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
     }
    ]
   }
@@ -78221,7 +78285,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-03T10:01:47.721433+00:00",
+  "generated_at": "2026-11-03T10:31:54.985815+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
