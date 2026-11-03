@@ -1462,7 +1462,8 @@ def main(argv: list[str] | None = None) -> int:
                          "frozen inputs) and stop")
     a = ap.parse_args(argv)
     started = time.time()
-    now = parse(a.now) if a.now else datetime.now(UTC)
+    # An instant with an offset runs as its UTC day: the runs are one per UTC day.
+    now = parse(a.now).astimezone(UTC) if a.now else datetime.now(UTC)
     today = now.date()
     until = datetime(today.year, today.month, today.day, tzinfo=UTC)
     prices_raw = json.loads(a.prices.read_text(encoding="utf-8"))
