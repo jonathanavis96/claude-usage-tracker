@@ -122,3 +122,18 @@ class HarnessRunsUnreadableLineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnlyEmptyBundlesStayAsOnMainTests(unittest.TestCase):
+    """Code review round 1: skipping a zero-token bundle is for a stretch with work beside it.
+    A stretch of nothing but `<synthetic>` rows priced as before this branch (unpriced: the
+    model has no family) instead of turning into a priced zero that the stretch-reading
+    paths (passive_dollar_readings, fit_output_weight) drop as a collection gap."""
+
+    def test_price_tokens_leaves_an_all_synthetic_stretch_unpriced(self):
+        self.assertFalse(C.price_tokens(dict(SYNTHETIC), CREDITS).priced)
+        self.assertTrue(C.price_tokens({"claude-opus-5": tok(input=1_000), **SYNTHETIC}, CREDITS).priced)
+
+    def test_the_pooled_value_leaves_an_all_synthetic_stretch_unpriced(self):
+        value = C.across_cut_value(CREDITS, model_rates=POOLED)
+        self.assertIsNone(value(dict(SYNTHETIC)))

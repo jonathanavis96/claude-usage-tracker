@@ -431,6 +431,19 @@ def raw_tokens(tok: dict) -> int:
     return sum(tok.get(c, 0) for c in ("input", "output", "cache_read", "cache_write"))
 
 
+def is_empty_bundle(tok) -> bool:
+    """A token bundle that holds no tokens: Claude Code's `<synthetic>` placeholder rows."""
+    return isinstance(tok, dict) and not raw_tokens(tok)
+
+
+def work_bundles(tokens: dict) -> dict:
+    """`tokens` less its zero-token bundles, when another bundle holds work: an empty
+    `<synthetic>` row beside real work hides none and must not unprice the stretch. A stretch
+    of nothing but empty bundles is returned as it is, so it reads exactly as it always has."""
+    work = {m: tok for m, tok in tokens.items() if not is_empty_bundle(tok)}
+    return work or tokens
+
+
 @dataclass(frozen=True)
 class Priced:
     """One stretch's tokens split into what a published rate prices and what it does not.
@@ -469,10 +482,10 @@ def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Pr
     known = fable_in = fable_out = charged = 0.0
     raw = 0
     priced = True
-    for model, tok in tokens.items():
-        # A bundle of no tokens (Claude Code's `<synthetic>` rows) is nothing to price, and
-        # tools/model_rates.py's `ok` column counts its stretch: skipped, not unpriced.
-        if not isinstance(tok, dict) or not raw_tokens(tok):
+    # A bundle of no tokens (Claude Code's `<synthetic>` rows) beside real work is nothing to
+    # price, and tools/model_rates.py's `ok` column counts its stretch: skipped, not unpriced.
+    for model, tok in work_bundles(tokens).items():
+        if not isinstance(tok, dict):
             continue
         at_in, at_out = input_side(tok, weight), tok.get("output", 0)
         raw += raw_tokens(tok)
@@ -1777,12 +1790,13 @@ def _pooled_stretch_credits(tokens: dict, credits: dict, fit: dict) -> float | N
     Input-equivalent tokens exactly as the fit's design matrix counts them -- input plus
     cache write, plus `output_multiplier` times output, at the family's rate -- and every
     cache read at the one fitted cache-read rate, whichever family it came from. A bundle of
-    no tokens (Claude Code's `<synthetic>` rows) is skipped, as the fit's `ok` column and
-    `comparison_value` skip it, rather than leaving the stretch unpriced.
+    no tokens (Claude Code's `<synthetic>` rows) beside real work is skipped (`work_bundles`),
+    as the fit's `ok` column and `comparison_value` skip it, rather than leaving the stretch
+    unpriced.
     """
     total = 0.0
-    for model, tok in tokens.items():
-        if not isinstance(tok, dict) or not raw_tokens(tok):
+    for model, tok in work_bundles(tokens).items():
+        if not isinstance(tok, dict):
             continue
         fam = family(model, credits)
         rate = fit["input"].get(fam) if fam else None

@@ -1056,7 +1056,7 @@ CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_tab
 
 def _empty(tok) -> bool:
     """A token bundle that holds no tokens (Claude Code's `<synthetic>` placeholder rows)."""
-    return isinstance(tok, dict) and not credit_model.raw_tokens(tok)
+    return credit_model.is_empty_bundle(tok)
 
 
 def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
