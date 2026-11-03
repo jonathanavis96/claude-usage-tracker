@@ -123,6 +123,25 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(st["incident_kinds"], ["lock", "meters/avis"])
         self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 9000)
 
+    def test_unwritable_pidfile_still_runs_and_alerts(self):
+        # A full disk refused the pid file's few bytes and the OSError escaped before the
+        # job ran: no run, no state, no alert, though the state and the run log both
+        # survive a full disk on purpose.
+        pidfile = self.lock.with_suffix(".pid")
+        real = Path.write_text
+
+        def full_disk(path, *a, **k):
+            if path == pidfile:
+                raise OSError(28, "No space left on device")
+            return real(path, *a, **k)
+
+        with mock.patch.object(Path, "write_text", full_disk):
+            for _ in range(3):
+                self.assertEqual(self.run_cmd(1, retries=0), 1)
+                self.t += 3600
+        self.assertEqual(self.st()["consecutive_failures"], 3)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+
     def test_stale_pidfile_is_cleared(self):
         self.lock.with_suffix(".pid").write_text("999999999")
         self.assertTrue(supervise.clear_stale_pidfile(self.lock.with_suffix(".pid")))

@@ -468,7 +468,14 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now())
             return 0
         clear_stale_pidfile(pidfile)
-        pidfile.write_text(str(os.getpid()))
+        try:
+            pidfile.write_text(str(os.getpid()))
+        except OSError as e:  # full disk: the pid file only serves the health check's lock age
+            print(f"cannot write pid file {pidfile} ({e}); running without it", file=sys.stderr)
+            try:
+                pidfile.unlink(missing_ok=True)  # an empty one would read as a stale lock
+            except OSError:
+                pass
         try:
             if log:
                 rotate_log(log, max_log_bytes, keep)
