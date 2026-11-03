@@ -32,9 +32,13 @@ def utilization_number(u: object) -> float | None:
     """A bucket's `utilization` as a reading: a finite JSON number, else None. A bool, a string
     or a NaN is a reshaped value, not a reading (meter_log.schema_problems names it): float()
     would read True as 1%, and a NaN never equals itself, so the meter would read as moving."""
-    if isinstance(u, bool) or not isinstance(u, (int, float)) or not math.isfinite(u):
+    if isinstance(u, bool) or not isinstance(u, (int, float)):
         return None
-    return float(u)
+    try:
+        f = float(u)  # an int too large for a float raises OverflowError
+    except OverflowError:
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:

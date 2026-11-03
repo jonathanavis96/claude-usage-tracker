@@ -55,6 +55,10 @@ class ParseTests(unittest.TestCase):
             self.assertIn("five_hour.utilization is not a number",
                           schema_problems({"five_hour": {"utilization": odd, "resets_at": None}, "seven_day": sd}))
         self.assertEqual(parse_usage({"five_hour": {"utilization": 7}, "seven_day": sd}, now).five_hour, 7.0)
+        # Round 5: an int too large for a float raised OverflowError from the guard itself.
+        huge = {"five_hour": {"utilization": 10 ** 400, "resets_at": None}, "seven_day": sd}
+        self.assertIsNone(parse_usage(huge, now).five_hour)
+        self.assertIn("five_hour.utilization is not a number", schema_problems(huge))
 
     def test_read_uses_token_from_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
