@@ -259,6 +259,18 @@ def _iso_week_ending(ts: str) -> str:
     return sunday.isoformat()
 
 
+def _probe_week_key(resets_at: str | None, ts: str) -> str:
+    """A probe row's week: its own seven-day reset through `_week_key` (not resets_at[:10]:
+    the reset's sub-second jitter crosses midnight for a reset at 00:00 and would split one
+    week into two), else, with no reset or one that does not parse, the ISO week of `ts`."""
+    if resets_at:
+        try:
+            return _week_key(resets_at)
+        except (TypeError, ValueError):
+            pass
+    return _iso_week_ending(ts)
+
+
 def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     """Same shape as weekly_windows, but derived from probe rows' whole-run deltas.
 
@@ -312,9 +324,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
         # A probe row records no five-hour reset id: it sits in one window by construction only.
         by_window.append(_window_point(r["ts"], d5, d7, reset_verified=False))
         resets_at = r.get("seven_day_resets_at")
-        # _week_key, not resets_at[:10]: the reset's sub-second jitter crosses midnight for a
-        # reset at 00:00 and would split one week into two.
-        week_key = _week_key(resets_at) if resets_at else _iso_week_ending(r["ts"])
+        week_key = _probe_week_key(resets_at, r["ts"])
         b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0})
         b["d5"] += d5
         b["d7"] += d7

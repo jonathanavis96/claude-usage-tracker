@@ -333,6 +333,13 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
              "partial": False},
         ])
 
+    def test_a_reset_stamp_that_does_not_parse_falls_back_to_the_iso_week(self):
+        # Code review round 1: _week_key parses where resets_at[:10] only sliced, and
+        # build_public_json calls this unguarded, so one odd stamp must not stop the publish.
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 20.0, "soon")]
+        result = probe_weekly_windows(rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual([h["week_ending"] for h in result["history"]], ["2026-09-06"])
+
     def test_falls_back_to_iso_week_ending_without_resets_at(self):
         # 2026-09-01 is a Tuesday in ISO week ending Sunday 2026-09-06.
         rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 20.0)]
