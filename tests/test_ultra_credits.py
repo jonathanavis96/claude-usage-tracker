@@ -3,8 +3,11 @@
 Every fixture here is built in memory; nothing reads data/, history/ or any live file except
 data/prices.json's `_credits` block, which the rest of the credits tests read the same way.
 """
+import json
+import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 
 from tracker import credits as C
 
@@ -100,6 +103,21 @@ class StamplessStretchTests(unittest.TestCase):
         at = datetime(2026, 9, 20, tzinfo=timezone.utc)
         split = C.split_at_candidate([self._stretch()], at, None, None, lambda t: 1_000.0)
         self.assertEqual(split["sides"], {"before": [], "after": []})
+
+
+class HarnessRunsUnreadableLineTests(unittest.TestCase):
+    """A run row that cannot be parsed still stops the read (a run that cannot be read cannot
+    be excluded), but the error names the file and line, so a cron publish says which."""
+
+    def test_a_truncated_last_line_raises_naming_the_file_and_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "harness-runs.jsonl"
+            path.write_text('{"account": "jwork", "start": "2026-09-09T11:00:00+00:00", '
+                            '"end": "2026-09-09T12:00:00+00:00", "kind": "probe"}\n'
+                            '{"account": "jwork", "start": "2026-09-10T1', encoding="utf-8")
+            with self.assertRaises(json.JSONDecodeError) as caught:
+                C.harness_runs(path)
+        self.assertIn(f"{path}:2", str(caught.exception))
 
 
 if __name__ == "__main__":

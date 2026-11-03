@@ -515,10 +515,15 @@ def harness_runs(path: Path | None = None) -> list[HarnessRun]:
     out: list[HarnessRun] = []
     if not p.exists():
         return out
-    for line in p.read_text(encoding="utf-8").splitlines():
+    for number, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            # A run that cannot be read cannot be excluded, so the read still stops; the
+            # error names the file and line, which a bare decode error from cron does not.
+            raise json.JSONDecodeError(f"{p}:{number}: {e.msg}", e.doc, e.pos) from e
         if not row.get("account") or not row.get("start") or not row.get("end"):
             continue
         out.append(HarnessRun(row["account"], datetime.fromisoformat(row["start"]),
