@@ -132,6 +132,18 @@ be given — no network calls, no spend):
 python3 -m tracker.rotate plan
 ```
 
+Use it or lose it: is this week's allowance on pace to be used before the
+seven-day reset, or will some of it expire? Reads a meter log (default
+`~/.moonlighter/usage_log.jsonl`; any `tracker.meter_log` JSONL works), never
+the network:
+
+```
+python3 -m tracker.pace                     # text report with a 7-day sparkline
+python3 -m tracker.pace --lookback 6        # pace over the last 6 hours instead of 24
+python3 -m tracker.pace --json              # for scripts
+python3 -m tracker.pace --now 2026-11-01T12:00:00+02:00   # replay an earlier moment
+```
+
 Running a probe directly spends real subscription allowance on whichever
 account it uses — it is not a no-op. See `tracker/probe.py`'s `argparse`
 setup for the full flag list; the required ones are `--model` and
