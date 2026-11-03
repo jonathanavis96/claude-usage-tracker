@@ -269,6 +269,8 @@ def run(prices_path: Path, stretch_paths: list[Path], *, fetcher=fetch, url: str
     try:
         text = prices_path.read_text(encoding="utf-8")
         prices = json.loads(text)
+        if not isinstance(prices, dict):
+            raise ValueError(f"expected a JSON object, found {type(prices).__name__}")
         credits = credit_model.load_credits(prices)
     except (OSError, ValueError) as exc:
         _warn(f"could not read {prices_path}: {exc}")

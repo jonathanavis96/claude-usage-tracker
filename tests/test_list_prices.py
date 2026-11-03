@@ -126,6 +126,15 @@ class RunTests(unittest.TestCase):
                         fetcher=fetcher or (lambda _url: page()), now=NOW)
         return added, err.getvalue()
 
+    def test_a_price_file_that_is_not_an_object_is_a_warning_not_a_crash(self):
+        # run() never raises (an advisory step of bin/daily.sh); valid JSON that is not an
+        # object, such as a list left by a bad hand edit, raised AttributeError.
+        self.prices.write_text("[1, 2]\n", encoding="utf-8")
+        added, err = self._run()
+        self.assertEqual(added, [])
+        self.assertIn("could not read", err)
+        self.assertEqual(self.prices.read_text(encoding="utf-8"), "[1, 2]\n")
+
     def test_adds_a_row_only_for_a_model_in_use_without_one(self):
         added, err = self._run()
         self.assertEqual(added, [SONNET_55])
