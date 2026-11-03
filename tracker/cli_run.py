@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,6 +29,13 @@ def build_argv(model: str, effort: str) -> list[str]:
     return ["claude", "-p", "--model", model, "--effort", effort, "--output-format", "json", "--restricted"]
 
 
+def _served_as_asked(key: str, model_hint: str) -> bool:
+    """Whether a modelUsage key is the model asked for: the same id, or a dated snapshot of it
+    (`claude-haiku-4-5-20251001` for `claude-haiku-4-5`). A bare prefix is not enough:
+    `claude-opus-5-5` starts with `claude-opus-5` and is another model."""
+    return key == model_hint or re.fullmatch(re.escape(model_hint) + r"-\d{8}", key) is not None
+
+
 def parse_result(stdout: str, model_hint: str) -> RunUsage:
     d = json.loads(stdout)
     if d.get("is_error"):
@@ -36,7 +44,7 @@ def parse_result(stdout: str, model_hint: str) -> RunUsage:
     if mu:
         # Take the entry for the model we asked for; a haiku sidecar can appear first.
         # Falling back to another model would silently measure the wrong one.
-        model = next((k for k in mu if k == model_hint or k.startswith(model_hint)), None)
+        model = model_hint if model_hint in mu else next((k for k in mu if _served_as_asked(k, model_hint)), None)
         if model is None:
             raise RuntimeError(f"no usage for {model_hint}: {list(mu)}")
         m = mu[model]

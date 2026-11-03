@@ -58,3 +58,23 @@ class ModelMismatchTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as e:
             parse_result(json.dumps(d), "claude-opus-5")
         self.assertIn("claude-opus-5", str(e.exception))
+
+    def test_a_newer_minor_version_is_not_the_model_asked_for(self):
+        # Asked for claude-opus-5, served by claude-opus-5-5: a different model whose id merely
+        # starts with the one asked for. Accepting it would measure the substitute.
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-opus-5-5": d["modelUsage"]["claude-sonnet-5"]}
+        with self.assertRaises(RuntimeError):
+            parse_result(json.dumps(d), "claude-opus-5")
+
+    def test_exact_id_wins_over_a_longer_one_listed_first(self):
+        d = json.loads(RESULT)
+        block = d["modelUsage"]["claude-sonnet-5"]
+        d["modelUsage"] = {"claude-sonnet-5-5": {**block, "outputTokens": 999}, "claude-sonnet-5": block}
+        self.assertEqual(parse_result(json.dumps(d), "claude-sonnet-5").output, 80)
+
+    def test_a_dated_snapshot_of_the_model_asked_for_still_counts(self):
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-sonnet-5-20260901": d["modelUsage"]["claude-sonnet-5"]}
+        u = parse_result(json.dumps(d), "claude-sonnet-5")
+        self.assertEqual((u.model, u.output), ("claude-sonnet-5-20260901", 80))
