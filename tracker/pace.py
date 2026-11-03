@@ -38,6 +38,9 @@ WEEK = timedelta(days=7)
 RESET_TOLERANCE = timedelta(hours=1)
 #: A projection landing at or above this counts as using the week's allowance.
 ON_TARGET = 95.0
+#: A latest reading older than this is called out: the collector may have stopped, so every
+#: figure assumes the meter has not moved since (the samplers read every 5 to 30 minutes).
+STALE_AFTER = timedelta(hours=2)
 SPARK = "▁▂▃▄▅▆▇█"
 DEFAULT_LOG = Path.home() / ".moonlighter/usage_log.jsonl"
 
@@ -53,7 +56,7 @@ class Pace:
     rate_since: datetime | None          # where that rate's span starts
     projected: float | None              # the meter at the reset if the rate holds, capped at 100
     full_at: datetime | None             # when the meter reaches 100% at that rate, if before the reset
-    needed_rate: float | None            # percent per hour from the reading that lands on 100% at the reset
+    needed_rate: float | None            # percent per hour from now that lands on 100% at the reset
     five_hour: float | None              # the five-hour meter at the latest reading (None: weekly-only)
     five_resets_at: datetime | None
     timeline: tuple[float | None, ...]   # the meter per slice of the window; None for slices still to come
@@ -61,6 +64,11 @@ class Pace:
     @property
     def window_over(self) -> bool:
         return self.now >= self.resets_at
+
+    @property
+    def stale(self) -> bool:
+        """The latest reading is old enough that the collector may have stopped."""
+        return self.now - self.reading_at > STALE_AFTER
 
     @property
     def unused(self) -> float | None:
@@ -170,8 +178,11 @@ def measure(samples: Iterable[Sample], now: datetime | None = None, lookback_hou
         rate_since = base[0]
     left = _hours(resets_at - at)
     projected = full_at = needed = None
+    # "From here" is from now, not from the reading: a stale log has fewer hours left than its
+    # last reading did, and the meter is assumed not to have moved since.
+    if resets_at > now:
+        needed = max(0.0, (100.0 - level) / _hours(resets_at - now))
     if left > 0:
-        needed = max(0.0, (100.0 - level) / left)
         if rate is not None:
             projected = min(100.0, level + rate * left)
             if level < 100 and rate > 0:
@@ -227,6 +238,9 @@ def render(p: Pace, tz: tzinfo | None = None) -> str:
         lines.append(_row("Verdict", f"RESET: the window reset {duration(p.now - p.resets_at)} ago; "
                           "no reading of the new one yet."))
         return "\n".join(lines)
+    if p.stale:
+        lines.append(_row("Latest reading", f"{duration(p.now - p.reading_at)} old: the figures assume "
+                          "nothing has changed since."))
     if p.rate is None or p.rate_since is None:
         lines.append(_row("Recent pace", "unknown: not enough readings in this window yet."))
     else:
@@ -262,7 +276,8 @@ def as_json(p: Pace) -> dict:
         return None if x is None else round(x, places)
 
     return {
-        "now": iso(p.now), "reading_at": iso(p.reading_at), "utilization": p.utilization,
+        "now": iso(p.now), "reading_at": iso(p.reading_at), "stale": p.stale,
+        "reading_age_hours": num(_hours(p.now - p.reading_at), 2), "utilization": p.utilization,
         "resets_at": iso(p.resets_at), "window_start": iso(p.window_start),
         "rate_per_hour": num(p.rate), "rate_since": iso(p.rate_since),
         "projected_at_reset": num(p.projected, 1), "unused_at_reset": num(p.unused, 1),
@@ -274,6 +289,11 @@ def as_json(p: Pace) -> dict:
 
 def summary(p: Pace, tz: tzinfo | None = None) -> str:
     """The verdict in one line, for `--each`."""
+    line = _summary(p, tz)
+    return f"{line} (latest reading {duration(p.now - p.reading_at)} old)" if p.stale and not p.window_over else line
+
+
+def _summary(p: Pace, tz: tzinfo | None) -> str:
     v = p.verdict
     if v == "RESET":
         return f"RESET {duration(p.now - p.resets_at)} ago, no reading since"

@@ -65,11 +65,11 @@ class MeasureTests(unittest.TestCase):
         self.assertAlmostEqual(p.projected, 50.0)
         self.assertAlmostEqual(p.unused, 50.0)
         self.assertIsNone(p.full_at)
-        self.assertAlmostEqual(p.needed_rate, 74.0 / 96)
+        self.assertAlmostEqual(p.needed_rate, 74.0 / (96 - 5 / 60))  # from now, 5 min after the reading
         self.assertEqual(p.verdict, "USE IT OR LOSE IT")
         text = render(p, tz=SAST)
         self.assertIn("USE IT OR LOSE IT: about 50% at the reset, so 50 points expire unused.", text)
-        self.assertIn("To use it all  0.77%/h from here (3.1x your pace), about 18 points a day.", text)
+        self.assertIn("To use it all  0.77%/h from here (3.1x your pace), about 19 points a day.", text)
         self.assertIn("resets Fri 6 Nov 06:00 (in 3d 23h)", text)
 
     def test_hot_week_runs_dry_before_the_reset(self):
@@ -135,6 +135,21 @@ class MeasureTests(unittest.TestCase):
         p = measure(samples(line(START + timedelta(days=1), 12.0, five=37.0, five_reset=five_reset)),
                     now=START + timedelta(days=1))
         self.assertIn("5-hour meter   37%, resets Sat 31 Oct 09:00", render(p, tz=SAST))
+
+    def test_a_stale_log_paces_from_now_and_says_how_old_the_reading_is(self):
+        # Code review round 1: the last reading is Monday's 40% and it is now Thursday
+        # afternoon, 12 h before the reset. "From here" must mean from now: 60 points in 12 h.
+        p = measure(samples(line(START + timedelta(days=3), 40.0)), now=RESET - timedelta(hours=12))
+        self.assertTrue(p.stale)
+        self.assertAlmostEqual(p.needed_rate, 5.0)
+        text = render(p, tz=SAST)
+        self.assertIn("Latest reading 3d 12h old: the figures assume nothing has changed since.", text)
+        self.assertIn("To use it all  5.00%/h from here", text)
+
+    def test_a_fresh_reading_is_not_stale(self):
+        p = measure(samples(*hourly(20.0, 0.25, 24)), now=START + timedelta(days=3, minutes=5))
+        self.assertFalse(p.stale)
+        self.assertNotIn("Latest reading", render(p, tz=SAST))
 
     def test_lookback_must_be_positive(self):
         with self.assertRaises(ValueError):
