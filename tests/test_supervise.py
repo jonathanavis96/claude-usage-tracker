@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -146,6 +147,24 @@ class SuperviseTest(unittest.TestCase):
         st = self.st()
         self.assertEqual(st["incident_kinds"], ["lock"])
         self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 600)
+
+    def test_a_hung_run_with_no_pid_file_is_still_raised_from_the_locks_age(self):
+        # Code review round 4: a run that could not write its pid file (full disk) ran on, and
+        # if it then hung, check_lock found no pid file and no hung incident was ever raised.
+        # Every run stamps the lock file when it takes the lock, which stands in for the pid file.
+        self.assertEqual(self.run_cmd(0), 0)
+        self.assertLess(abs(os.path.getmtime(self.lock) - time.time()), 60)
+        held = time.time() - 3 * 3600
+        os.utime(self.lock, (held, held))
+        self.assertFalse(self.lock.with_suffix(".pid").exists())
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock 3h00m", self.send.sent[0])
 
     def test_unwritable_pidfile_still_runs_and_alerts(self):
         # A full disk refused the pid file's few bytes and the OSError escaped before the

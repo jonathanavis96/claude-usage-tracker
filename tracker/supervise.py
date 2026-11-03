@@ -435,10 +435,20 @@ def _kuma_first(send: Sender, kuma_file: Path | None, state: dict) -> tuple[Send
 
 
 def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: Sender, label: str,
-                   t: float, stale_after: float = 3600.0) -> None:
+                   t: float, stale_after: float = 3600.0, lock: Path | None = None) -> None:
     """A run holding the lock past health's lock limit is an incident, raised from here:
     the hung run itself will never get to its own health check."""
-    reason = health.check_lock(health.Config(lock_pidfile=pidfile), time.time())
+    cfg = health.Config(lock_pidfile=pidfile)
+    reason = health.check_lock(cfg, time.time())
+    if reason is None and lock is not None and not pidfile.exists():
+        # A run that could not write its pid file (a full disk) still stamped the lock file
+        # when it took the lock (`supervise`), so the lock's age stands in for the pid file's.
+        try:
+            age = time.time() - lock.stat().st_mtime
+        except OSError:
+            age = 0.0
+        if age > cfg.lock_max_age_s:
+            reason = f"lock: a run with no pid file has held the lock {health._age(age)}"
     if reason is None:
         return
     state = health.read_state(state_path)
@@ -476,8 +486,10 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             print("skipped: previous run still going", file=sys.stderr)
-            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now(), stale_after)
+            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now(), stale_after, lock)
             return 0
+        with contextlib.suppress(OSError):
+            os.utime(lock)  # when this run took the lock: the hung check's fallback without a pid file
         clear_stale_pidfile(pidfile)
         try:
             pidfile.write_text(str(os.getpid()))
