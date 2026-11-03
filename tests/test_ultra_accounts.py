@@ -121,6 +121,15 @@ class RefineNeverLandsOnANeighbourTest(unittest.TestCase):
         self.assertGreaterEqual(t - carried, F.MIN_GAP_HOURS)
         self.assertGreaterEqual(span[0] - carried, F.MIN_GAP_HOURS)
 
+    def test_refine_hemmed_in_on_both_sides_keeps_its_grid_instant(self):
+        # Code review round 7: with every hour too near a neighbour, the grid instant must
+        # survive the float arithmetic of np.arange, and an empty list must not reach max().
+        prep = self.accounts([])
+        for grid in (480.0, 480.1):
+            t, span = F.refine(prep, "seven_day", grid, [grid - 30.0, grid + 30.0])
+            self.assertAlmostEqual(t, grid)
+            self.assertAlmostEqual(span[0], grid)
+
     def test_a_weak_change_never_widens_its_range_onto_a_neighbours_ground(self):
         # Code review round 4: hours too near a neighbour were kept as candidates at z 0, so
         # for a change with a best |z| at or under INSTANT_RANGE_Z they fell inside its range.

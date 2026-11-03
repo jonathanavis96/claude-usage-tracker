@@ -1041,7 +1041,11 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             groups.setdefault(key, []).append((s, sum(valued.values())))
         for ss in groups.values():
             usd = sum(v for _, v in ss)
-            out.append((datetime.fromisoformat(ss[-1][0]["end"]), usd / sum(s["delta_pct"] for s, _ in ss) * 100))
+            # A naive end is UTC, as `_utc_day` files it: left naive it would not sort against
+            # an aware one, and the whole series would fail on one hand-written stamp.
+            end = datetime.fromisoformat(ss[-1][0]["end"])
+            end = end if end.tzinfo else end.replace(tzinfo=timezone.utc)
+            out.append((end, usd / sum(s["delta_pct"] for s, _ in ss) * 100))
     return sorted(out)
 
 

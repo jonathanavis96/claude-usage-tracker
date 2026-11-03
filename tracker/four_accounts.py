@@ -895,13 +895,13 @@ def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) 
     for t in np.arange(grid_tau - REFINE_HOURS, grid_tau + REFINE_HOURS + 1e-9, 1.0):
         # A neighbour's ground, as in `search`, is no candidate at all (not even at z 0, which
         # would widen a weak change's range onto it); the grid instant the search chose stays.
-        if float(t) != grid_tau and _too_near(float(t), neighbours):
+        if abs(float(t) - grid_tau) > 1e-9 and _too_near(float(t), neighbours):
             continue
         r = step_at(prep, line, float(t), *sides(float(t), neighbours), n_perm=0)
         zs.append(abs(r["z"]) if r and r["k"] >= 2 else 0.0)
         ts.append(float(t))
     zs = np.array(zs)
-    if zs.max() <= 0:
+    if not zs.size or zs.max() <= 0:
         return grid_tau, [grid_tau, grid_tau]
     best = ts[int(np.argmax(zs))]
     close = [t for t, z in zip(ts, zs) if z >= zs.max() - INSTANT_RANGE_Z]

@@ -135,3 +135,18 @@ class MeterLogBadByteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NaiveStretchEndTests(unittest.TestCase):
+    def test_a_naive_end_beside_aware_ones_is_utc_not_a_crash(self):
+        # Code review round 7: one naive `end` made sorted() raise over the whole series.
+        from tracker.gs_passive import passive_dollar_readings
+        tok = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 400000}
+
+        def st(end):
+            return {"status": "accepted", "capture_status": "accepted", "reset_verified": True,
+                    "start": end, "end": end, "delta_pct": 10, "windows": 1, "tokens": {"claude-sonnet-5": tok}}
+        report = {"accounts": {"jwork": {"stretches": [st("2026-11-02T23:00:00"), st("2026-11-01T10:00:00+02:00")]}}}
+        got = passive_dollar_readings(report, PRICES)
+        self.assertEqual([ts.isoformat() for ts, _ in got],
+                         ["2026-11-01T10:00:00+02:00", "2026-11-02T23:00:00+00:00"])

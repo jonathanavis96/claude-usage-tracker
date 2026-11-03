@@ -665,10 +665,7 @@ def _masterrig_in_use(st: dict) -> bool:
     """Whether a masterrig stretch is from MASTERRIG_FROM on (`masterrig_excluded` without
     `whole_history`). One with no start stamp cannot be shown to be, so it is left out: the
     cut exists to keep masterrig's untrustworthy early history out of every fit."""
-    if not st.get("start"):
-        return False
-    start = datetime.fromisoformat(st["start"])  # without whole_history only the start counts
-    return not masterrig_excluded("masterrig", start, start, False)
+    return bool(st.get("start")) and datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM
 
 
 def spans_cut(st: dict) -> bool:
