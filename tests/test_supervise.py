@@ -363,7 +363,7 @@ class SuperviseTest(unittest.TestCase):
             try:
                 if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
                     break
-            except FileNotFoundError:  # reaped between the kill(0) and the read: gone
+            except (FileNotFoundError, ProcessLookupError):  # reaped between the kill(0) and the read: gone
                 break
             _t.sleep(0.05)
         else:
