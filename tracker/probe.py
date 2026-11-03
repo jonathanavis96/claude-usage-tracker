@@ -352,6 +352,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         before = read()
+        _refuse_weekly_only(before)
         if before.five_hour == 0:
             reset_start = True
             tick1 = 0

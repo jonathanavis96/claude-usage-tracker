@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from itertools import chain, repeat
 
 from tracker.cli_run import RunUsage
 from tracker.probe import ProbeAbort, Skip, run_tick_probe, skip_reason
@@ -53,6 +54,21 @@ class WeeklyOnlyAccountTests(unittest.TestCase):
                            max_prompts=80, expect_tokens_per_pct=600_000, payload_words=12_000)
         self.assertEqual(sent, [])
         self.assertIn("weekly-only", str(cm.exception))
+
+    def test_an_account_that_turns_weekly_only_at_the_awaited_reset_is_refused_before_any_prompt(self):
+        # The probe waits for a reset 10 minutes out; the window after it never opens.
+        it = chain([Utilization(T0, 50.0, 40.0, "2026-11-03T03:10:00+00:00")],
+                   repeat(Utilization(T0, None, 40.0, None, "2026-11-07T00:00:00+00:00", weekly_only=True)))
+        sent = []
+
+        def run(i):
+            sent.append(i)
+            return RunUsage("claude-sonnet-5", 2, 5, 11_473, 40_000, 0.001, 3.0)
+
+        with self.assertRaises(ProbeAbort):
+            run_tick_probe("claude-sonnet-5", "low", "p", lambda: next(it), run, sleep=lambda s: None,
+                           now=lambda: T0, expect_tokens_per_pct=600_000, payload_words=12_000)
+        self.assertEqual(sent, [])
 
     def test_a_null_reading_with_no_window_open_still_probes(self):
         # Not weekly-only: the bucket is there with a null utilization until a window opens.
