@@ -879,15 +879,23 @@ def _too_near(t: float, breaks: list[float]) -> bool:
     return any(abs(t - b) < MIN_GAP_HOURS for b in breaks)
 
 
+def _neighbours_ground(t: float, own: float, others: list[float]) -> bool:
+    """Whether hour `t` belongs to another change rather than to the change at `own`: within
+    MIN_GAP_HOURS of one (`_too_near`) and no nearer to `own` than to it. Changes carried from
+    a state written before the gap was kept can lie closer than MIN_GAP_HOURS, and the hours
+    nearer to such a change stay its own, so it can still be found again."""
+    return any(abs(t - b) < MIN_GAP_HOURS and abs(t - b) <= abs(t - own) for b in others)
+
+
 def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) -> tuple[float, list[float]]:
     """The change's instant: the hour with the largest |z| within REFINE_HOURS of its grid
     instant, on the line that found it, sides cut at the neighbouring changes; and the range of
     hours whose |z| is within INSTANT_RANGE_Z of it."""
     zs, ts = [], []
     for t in np.arange(grid_tau - REFINE_HOURS, grid_tau + REFINE_HOURS + 1e-9, 1.0):
-        if _too_near(float(t), neighbours):  # a neighbour's ground, as in `search`
-            zs.append(0.0)
-            ts.append(float(t))
+        # A neighbour's ground, as in `search`, is no candidate at all (not even at z 0, which
+        # would widen a weak change's range onto it); the grid instant the search chose stays.
+        if float(t) != grid_tau and _too_near(float(t), neighbours):
             continue
         r = step_at(prep, line, float(t), *sides(float(t), neighbours), n_perm=0)
         zs.append(abs(r["z"]) if r and r["k"] >= 2 else 0.0)
@@ -1265,7 +1273,7 @@ def retest(scanner: Scanner, taus: np.ndarray, c: dict, breaks: list[float]) -> 
     nearest when none flags); a found day adds to `held_days`."""
     others = [b for b in breaks if b != c["_h"]]
     near = [(float(t), scanner.at(c["found_on"], float(t), others)) for t in taus
-            if _near_carried(c, float(t)) and not _too_near(float(t), others)]
+            if _near_carried(c, float(t)) and not _neighbours_ground(float(t), c["_h"], others)]
     near = [(t, r) for t, r in near if r]
     hits = [(_rank(r), t, r) for t, r in near
             if flagged(r) and (1 if r["d"] > 0 else -1) == c["sign"]]

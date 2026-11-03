@@ -121,6 +121,16 @@ class RefineNeverLandsOnANeighbourTest(unittest.TestCase):
         self.assertGreaterEqual(t - carried, F.MIN_GAP_HOURS)
         self.assertGreaterEqual(span[0] - carried, F.MIN_GAP_HOURS)
 
+    def test_a_weak_change_never_widens_its_range_onto_a_neighbours_ground(self):
+        # Code review round 4: hours too near a neighbour were kept as candidates at z 0, so
+        # for a change with a best |z| at or under INSTANT_RANGE_Z they fell inside its range.
+        carried = 20 * 24.0
+        prep = self.accounts([])
+        with mock.patch.object(F, "step_at", return_value={"z": 0.5, "k": 5}):  # every |z| small
+            t, span = F.refine(prep, "seven_day", carried + F.MIN_GAP_HOURS, [carried])
+        self.assertGreaterEqual(span[0] - carried, F.MIN_GAP_HOURS)
+        self.assertGreaterEqual(t - carried, F.MIN_GAP_HOURS)
+
 
 class StateFromTheFutureTest(unittest.TestCase):
     """A daily run for a day before the state's newest run (a clock that went back, or --now in
@@ -176,8 +186,22 @@ class RetestNeverReadsANeighboursStepTest(unittest.TestCase):
              "sign": 1, "held_days": 7}
         F.retest(scanner, F.grid({"seven_day": prep}, None), c, [carried, neighbour])
         self.assertTrue(read)
-        self.assertTrue(all(abs(t - neighbour) >= F.MIN_GAP_HOURS for t in read), sorted(read))
+        # Round 4: within the gap, an instant is the neighbour's only when it is nearer to it.
+        self.assertTrue(all(abs(t - neighbour) > abs(t - carried) for t in read), sorted(read))
         self.assertTrue(c["found_today"])  # its own step, read clear of the neighbour, still counts
+
+    def test_a_carried_change_hemmed_in_by_close_neighbours_can_still_be_found_again(self):
+        # Code review round 4: a state from before the refine fix can hold changes under 48 h
+        # apart. With every instant near them dropped, such a change could never be found
+        # again and its held_days never grew. The instants nearer to it are still its own.
+        carried = 20 * 24.0
+        prep = RefineNeverLandsOnANeighbourTest.accounts([(carried, 0.4)], per_day=24)
+        c = {"found_on": "seven_day", "_h": carried, "instant_range": [carried, carried],
+             "sign": 1, "held_days": 7}
+        F.retest(F.Scanner({line: prep for line in F.LINES}), F.grid({"seven_day": prep}, None), c,
+                 [carried - 30.0, carried, carried + 30.0])
+        self.assertTrue(c["found_today"])
+        self.assertEqual(c["held_days"], 8)
 
 
 class LastChangeIsTheNewestInstantTest(unittest.TestCase):
