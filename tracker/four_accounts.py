@@ -1502,6 +1502,11 @@ def main(argv: list[str] | None = None) -> int:
         if start is None:
             print("four_accounts: fewer than two accounts with readings, nothing to run", file=sys.stderr)
             return 0
+        if start > today:
+            # No daily run to build yet: the state is left as it was, never written as null.
+            print(f"four_accounts: the first possible day is {start}, after {today}: nothing to run",
+                  file=sys.stderr)
+            return 0
         state = replay(readings, start, today, log=lambda s: print(s, file=sys.stderr, flush=True),
                        valued=valued)
     else:

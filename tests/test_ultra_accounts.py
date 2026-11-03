@@ -51,5 +51,34 @@ class NowIsAUtcInstantTest(unittest.TestCase):
             self.assertEqual(replay.call_args.args[2], date(2026, 10, 22))
 
 
+class NoDayToReplayTest(unittest.TestCase):
+    """A rebuild whose first possible day is after today has no run to build: it says so and
+    leaves the state as it was, never writing `null` over it or crashing on it."""
+
+    def test_replay_before_the_first_possible_day_keeps_the_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            state = tmp / "four-accounts.json"
+            F.write_state(state, F.advance(None, _block("2026-10-20")))
+            before = state.read_text(encoding="utf-8")
+            err = io.StringIO()
+            with mock.patch.object(F, "first_day", return_value=date(2026, 10, 25)), \
+                    redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = F.main(_argv(tmp, state, "2026-10-23T13:30:00+00:00", "--replay"))
+            self.assertEqual(code, 0)
+            self.assertEqual(state.read_text(encoding="utf-8"), before)
+            self.assertIn("2026-10-25", err.getvalue())
+
+    def test_a_missing_state_with_no_day_to_run_is_not_written_as_null(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            state = tmp / "four-accounts.json"
+            with mock.patch.object(F, "first_day", return_value=date(2026, 10, 25)), \
+                    redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                code = F.main(_argv(tmp, state, "2026-10-23T13:30:00+00:00"))
+            self.assertEqual(code, 0)
+            self.assertFalse(state.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
