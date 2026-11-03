@@ -6,7 +6,7 @@ from contextlib import redirect_stderr
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from tracker.pace import current_window, duration, main, measure, render, sparkline
+from tracker.pace import as_json, current_window, duration, main, measure, render, sparkline
 from tracker.samples import parse_meter_log
 
 UTC = timezone.utc
@@ -143,6 +143,16 @@ class MeasureTests(unittest.TestCase):
         p = measure(samples(line(START + timedelta(days=1), 12.0, five=37.0, five_reset=five_reset)),
                     now=START + timedelta(days=1))
         self.assertIn("5-hour meter   37%, resets Sat 31 Oct 09:00", render(p, tz=SAST))
+
+    def test_a_five_hour_window_that_reset_since_the_reading_is_not_shown_as_current(self):
+        # Code review round 6: 37% with a reset at 09:00, read at 06:00 and now 11:00, read
+        # as the current meter with a reset already behind it.
+        five_reset = START + timedelta(days=1, hours=3)
+        p = measure(samples(line(START + timedelta(days=1), 12.0, five=37.0, five_reset=five_reset)),
+                    now=START + timedelta(days=1, hours=5))
+        self.assertTrue(p.five_window_over)
+        self.assertIn("5-hour meter   reset Sat 31 Oct 09:00, no reading since", render(p, tz=SAST))
+        self.assertTrue(as_json(p)["five_hour_window_over"])
 
     def test_a_stale_log_paces_from_now_and_says_how_old_the_reading_is(self):
         # Code review round 1: the last reading is Monday's 40% and it is now Thursday

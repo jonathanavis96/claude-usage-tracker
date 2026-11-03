@@ -67,6 +67,11 @@ class Pace:
         return self.now >= self.resets_at
 
     @property
+    def five_window_over(self) -> bool:
+        """The five-hour window of the latest reading has reset by now: its figure is gone."""
+        return self.five_resets_at is not None and self.now >= self.five_resets_at
+
+    @property
     def stale(self) -> bool:
         """The latest reading is old enough that the collector may have stopped."""
         return self.now - self.reading_at > STALE_AFTER
@@ -255,6 +260,8 @@ def render(p: Pace, tz: tzinfo | None = None) -> str:
                           f"about {p.needed_rate * 24:.0f} points a day."))
     if p.five_hour is None:
         lines.append(_row("5-hour meter", "none at the latest reading (weekly-only: no 5-hour limit)"))
+    elif p.five_window_over:
+        lines.append(_row("5-hour meter", f"reset {_stamp(p.five_resets_at, tz)}, no reading since"))
     else:
         resets = f", resets {_stamp(p.five_resets_at, tz)}" if p.five_resets_at else ""
         lines.append(_row("5-hour meter", f"{p.five_hour:.0f}%{resets}"))
@@ -276,6 +283,7 @@ def as_json(p: Pace) -> dict:
         "projected_at_reset": num(p.projected, 1), "unused_at_reset": num(p.unused, 1),
         "full_at": iso(p.full_at), "needed_rate_per_hour": num(p.needed_rate),
         "five_hour": p.five_hour, "five_hour_resets_at": iso(p.five_resets_at),
+        "five_hour_window_over": p.five_window_over,
         "verdict": p.verdict, "timeline": list(p.timeline),
     }
 
