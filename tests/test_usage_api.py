@@ -42,6 +42,15 @@ class ParseTests(unittest.TestCase):
             u = parse_usage(body, now)
             self.assertEqual((u.five_hour, u.seven_day, u.weekly_only), (None, None, False))
 
+    def test_a_reshaped_utilization_reads_as_missing_instead_of_raising(self):
+        # Code review round 3: the bucket was guarded but not the value in it.
+        now = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
+        for odd in ({"value": 7}, "n/a", [7]):
+            u = parse_usage({"five_hour": {"utilization": odd, "resets_at": None}, "seven_day": sd}, now)
+            self.assertEqual((u.five_hour, u.seven_day), (None, 47.0), odd)
+        self.assertEqual(parse_usage({"five_hour": {"utilization": "12.5"}, "seven_day": sd}, now).five_hour, 12.5)
+
     def test_read_uses_token_from_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok123"}}))

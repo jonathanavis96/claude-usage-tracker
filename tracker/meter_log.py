@@ -186,6 +186,9 @@ def schema_problems(body: dict) -> list[str]:
         for key in ("utilization", "resets_at"):
             if key not in b:
                 out.append(f"{bucket}.{key} missing")
+        u = b.get("utilization")
+        if u is not None and (isinstance(u, bool) or not isinstance(u, (int, float))):
+            out.append(f"{bucket}.utilization is not a number")
     return out
 
 

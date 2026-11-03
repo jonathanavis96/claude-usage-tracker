@@ -177,6 +177,15 @@ class RefusalBackoffTests(Base):
         self.assertEqual(self.poll(StubFetch([])), "schema")
         self.assertIn("response is not an object", uc.read_cached("avis", self.cache, now=self.clock).last_error)
 
+    def test_a_utilization_that_is_no_longer_a_number_is_a_schema_change(self):
+        # Code review round 3: parse_usage now reads it as no reading, so the schema check
+        # must name it, or a reshaped value would be cached as an ordinary reading.
+        reshaped = {"five_hour": {"utilization": {"value": 7}, "resets_at": None},
+                    "seven_day": BODY["seven_day"]}
+        self.assertEqual(self.poll(StubFetch(reshaped)), "schema")
+        self.assertIn("five_hour.utilization is not a number",
+                      uc.read_cached("avis", self.cache, now=self.clock).last_error)
+
 
 class StaleCacheTests(Base):
     def test_old_reading_is_stale_with_its_age(self):

@@ -31,8 +31,11 @@ def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
     b = body.get(key)
     if not isinstance(b, dict):
         b = {}  # absent, null, or reshaped: no reading here (meter_log.schema_problems names it)
-    u = b.get("utilization")
-    return (float(u) if u is not None else None, b.get("resets_at"))
+    try:
+        u = float(b["utilization"]) if b.get("utilization") is not None else None
+    except (TypeError, ValueError):
+        u = None  # a reshaped value: no reading either (meter_log.schema_problems names it)
+    return (u, b.get("resets_at"))
 
 
 def parse_usage(body: dict, now: datetime) -> Utilization:
