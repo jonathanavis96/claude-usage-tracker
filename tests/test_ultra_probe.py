@@ -1,9 +1,12 @@
+import json
+import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from itertools import chain, repeat
 
 from tracker.cli_run import RunUsage
-from tracker.probe import ProbeAbort, Skip, run_tick_probe, skip_reason
+from tracker.probe import ProbeAbort, ProbeResult, Skip, append_result, run_tick_probe, skip_reason
 from tracker.usage_api import Utilization
 
 T0 = datetime(2026, 11, 3, 3, 0, tzinfo=timezone.utc)
@@ -84,6 +87,33 @@ class WeeklyOnlyAccountTests(unittest.TestCase):
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
                            ticks=1, skip=0)
         self.assertEqual((r.tick_from, r.tick_to), (1, 2))
+
+
+class AppendAfterUnterminatedLineTests(unittest.TestCase):
+    """A history whose last line has no newline (a hand edit, a torn write) must not have
+    the new row glued onto it: `{...}{...}` is one unparseable line, and load_probes then
+    refuses the whole file, which stops tracker.rotate and the publisher."""
+
+    def result(self):
+        return ProbeResult(T0, "claude-sonnet-5", "low", 40_000.0,
+                           {"input": 2, "output": 5, "cache_read": 0, "cache_write": 0}, 9, 11, 14, 600.0)
+
+    def test_the_new_row_starts_on_its_own_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "probes.jsonl")
+            p.write_text('{"ts": "2026-10-01T00:00:00+00:00", "model": "claude-opus-5"}', encoding="utf-8")
+            append_result(p, self.result(), account="dave")
+            rows = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([r["model"] for r in rows], ["claude-opus-5", "claude-sonnet-5"])
+
+    def test_a_terminated_or_missing_file_gets_no_blank_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "probes.jsonl")
+            append_result(p, self.result(), account="dave")
+            append_result(p, self.result(), account="jwork")
+            text = p.read_text(encoding="utf-8")
+        self.assertEqual(len(text.splitlines()), 2)
+        self.assertNotIn("\n\n", text)
 
 
 if __name__ == "__main__":

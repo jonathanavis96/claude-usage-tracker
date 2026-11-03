@@ -986,8 +986,15 @@ def append_result(path: Path, r: ProbeResult, account: str) -> None:
     row = asdict(r)
     row["ts"] = r.ts.isoformat()
     row["account"] = account
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row) + "\n")
+    # A last line with no newline (a hand edit, a torn write) would swallow this row into
+    # one unparseable line, and load_probes refuses the whole file over it.
+    with open(path, "a+b") as fh:
+        fh.seek(0, os.SEEK_END)
+        lead = b""
+        if fh.tell() > 0:
+            fh.seek(-1, os.SEEK_END)
+            lead = b"" if fh.read(1) == b"\n" else b"\n"
+        fh.write(lead + (json.dumps(row) + "\n").encode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
