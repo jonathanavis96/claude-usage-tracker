@@ -1293,6 +1293,8 @@ def fit_output_weight(rpt: dict, prices: dict) -> dict:
                 continue
             base = out = 0.0
             for m, tok in st["tokens"].items():
+                if _empty(tok):
+                    continue  # Claude Code's `<synthetic>` rows: no tokens and no price, no work
                 price = prices.get(m)
                 if price is None:
                     break

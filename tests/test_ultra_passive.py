@@ -45,5 +45,26 @@ class EmptySyntheticBundleTest(unittest.TestCase):
         self.assertEqual(passive_dollar_readings(report, PRICES, by="day"), [])
 
 
+class FitOutputWeightSyntheticTest(unittest.TestCase):
+    """The same empty `<synthetic>` bundle kept 60 of the 385 capture-accepted stretches on the
+    real 2026-11-02 record (49 of dave's 159) out of `fit_output_weight`."""
+
+    def test_an_empty_synthetic_bundle_does_not_drop_the_stretch_from_the_fit(self):
+        from tracker.gs_passive import fit_output_weight
+        cw = {"claude-sonnet-5": dict(EMPTY, cache_write=800_000)}  # $2 of cache_write
+        mixed = {"claude-sonnet-5": dict(EMPTY, output=100_000, cache_write=400_000)}  # $1 + $1
+        rpt = {"accounts": {"x": {"stretches": [
+            {"status": "accepted", "delta_pct": 10, "tokens": cw},
+            {"status": "accepted", "delta_pct": 10, "tokens": mixed},
+            {"status": "accepted", "delta_pct": 10, "tokens": {**mixed, "<synthetic>": dict(EMPTY)}},
+        ]}}}
+        fit = fit_output_weight(rpt, PRICES)
+        self.assertEqual(fit["n"], 3)
+        self.assertAlmostEqual(fit["output_weight"], 1.0, places=3)
+        # One with tokens in it still cannot be valued, so that stretch stays out.
+        rpt["accounts"]["x"]["stretches"][2]["tokens"]["<synthetic>"] = dict(EMPTY, output=5)
+        self.assertEqual(fit_output_weight(rpt, PRICES)["n"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
