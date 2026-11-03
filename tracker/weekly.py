@@ -272,7 +272,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     crossed a five-hour reset mid-probe, so the delta is not a true five-hour
     movement); d7 = seven_day_after - seven_day_before is discarded when < 0.
     Rows are bucketed by the row's own weekly reset date when present
-    (`seven_day_resets_at`, first 10 chars), else by the ISO week (Sunday) its
+    (`seven_day_resets_at`, through `_week_key`), else by the ISO week (Sunday) its
     `ts` falls in. windows = d5/d7 for weeks with d5 >= 20 and d7 >= 10 (a
     single tick-probe run rarely moves the five-hour meter by much, so the
     passive log's 50-point floor would empty this out entirely). The d7 floor
@@ -312,7 +312,9 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
         # A probe row records no five-hour reset id: it sits in one window by construction only.
         by_window.append(_window_point(r["ts"], d5, d7, reset_verified=False))
         resets_at = r.get("seven_day_resets_at")
-        week_key = resets_at[:10] if resets_at else _iso_week_ending(r["ts"])
+        # _week_key, not resets_at[:10]: the reset's sub-second jitter crosses midnight for a
+        # reset at 00:00 and would split one week into two.
+        week_key = _week_key(resets_at) if resets_at else _iso_week_ending(r["ts"])
         b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0})
         b["d5"] += d5
         b["d7"] += d7

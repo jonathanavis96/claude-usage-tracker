@@ -319,6 +319,20 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
         ])
         self.assertEqual(result["current"], 5.5)
 
+    def test_reset_jitter_across_midnight_stays_one_week(self):
+        # The endpoint jitters resets_at by under a second (real rows: 22:59:59.978794 and
+        # 23:00:00.500329). For a reset at midnight that jitter changes the date, and keying on
+        # resets_at[:10] split one week into two halves, each under the seven-day floor.
+        rows = [
+            probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 15.0, "2026-09-03T23:59:59.978794+00:00"),
+            probe_row("2026-09-02T00:00:00+00:00", 10.0, 35.0, 10.0, 15.0, "2026-09-04T00:00:00.500329+00:00"),
+        ]
+        result = probe_weekly_windows(rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual(result["history"], [
+            {"week_ending": "2026-09-04", "windows": 5.0, "five_hour_pct": 50.0, "seven_day_pct": 10.0,
+             "partial": False},
+        ])
+
     def test_falls_back_to_iso_week_ending_without_resets_at(self):
         # 2026-09-01 is a Tuesday in ISO week ending Sunday 2026-09-06.
         rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 20.0)]
