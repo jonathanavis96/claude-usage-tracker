@@ -142,6 +142,7 @@ python3 -m tracker.pace                     # text report with a 7-day sparkline
 python3 -m tracker.pace --lookback 6        # pace over the last 6 hours instead of 24
 python3 -m tracker.pace --json              # for scripts
 python3 -m tracker.pace --now 2026-11-01T12:00:00+02:00   # replay an earlier moment
+python3 -m tracker.pace --each ~/.paperclip/ops/claude-usage-meter-*.log   # one line per account
 ```
 
 Running a probe directly spends real subscription allowance on whichever

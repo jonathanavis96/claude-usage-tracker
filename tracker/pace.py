@@ -12,10 +12,13 @@ shape tracker.samples parses), takes the current seven-day window and answers:
     python3 -m tracker.pace path/to/meter.jsonl --lookback 12
     python3 -m tracker.pace --json
     python3 -m tracker.pace --now 2026-11-03T05:00:00+02:00   # replay an earlier moment
+    python3 -m tracker.pace --each ~/.paperclip/ops/claude-usage-meter-*.log   # one line per account
 
 Read-only: it never calls the usage endpoint and only reads what the logs already hold.
 Give it one account's logs; a meter log naming two accounts is refused
 (tracker.samples.MixedAccountLog), because two meters in one series make a nonsense pace.
+With `--each`, every log is its own account and gets one line: which seat has the most of
+its week left to spend.
 """
 from __future__ import annotations
 
@@ -269,15 +272,63 @@ def as_json(p: Pace) -> dict:
     }
 
 
+def summary(p: Pace, tz: tzinfo | None = None) -> str:
+    """The verdict in one line, for `--each`."""
+    v = p.verdict
+    if v == "RESET":
+        return f"RESET {duration(p.now - p.resets_at)} ago, no reading since"
+    if v == "MAXED":
+        return f"MAXED until the reset, {_stamp(p.resets_at, tz)}"
+    if v == "RUNNING HOT" and p.full_at is not None:
+        return f"RUNNING HOT: 100% {duration(p.resets_at - p.full_at)} before the reset"
+    if v == "ON TARGET" and p.projected is not None:
+        return f"ON TARGET: about {p.projected:.0f}% at the reset"
+    if v == "USE IT OR LOSE IT" and p.projected is not None and p.unused is not None:
+        need = f", needs {p.needed_rate:.2f}%/h" if p.needed_rate is not None else ""
+        return f"USE IT OR LOSE IT: about {p.projected:.0f}% at the reset, {p.unused:.0f} points unused{need}"
+    return "pace unknown: not enough readings yet"
+
+
+def _read(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def _each(paths: Sequence[Path], now: datetime | None, lookback: float, as_json_out: bool, out) -> int:
+    """One line per log, each its own account: which seat has the most week left to spend."""
+    rows: list[tuple[str, Pace | None, str | None]] = []
+    for path in paths:
+        try:
+            p = measure(parse_meter_log(_read(path), weekly=True), now=now, lookback_hours=lookback)
+            rows.append((str(path), p, None if p is not None else "no seven-day reading with a reset time"))
+        except OSError as e:
+            rows.append((str(path), None, f"cannot read: {e.strerror or e}"))
+        except MixedAccountLog as e:
+            rows.append((str(path), None, str(e)))
+    if as_json_out:
+        print(json.dumps([{"log": name, **(as_json(p) if p else {}), **({"error": err} if err else {})}
+                          for name, p, err in rows], indent=2), file=out)
+    else:
+        width = max(len(Path(name).name) for name, _, _ in rows)
+        for name, p, err in rows:
+            label = Path(name).name.ljust(width)
+            if p is None:
+                print(f"{label}   --  {err}", file=out)
+            else:
+                print(f"{label}  {p.utilization:>3.0f}%  {sparkline(p.timeline)}  {summary(p)}", file=out)
+    return 0 if any(p is not None for _, p, _ in rows) else 1
+
+
 def main(argv: Sequence[str] | None = None, out=None) -> int:
     out = out or sys.stdout
     ap = argparse.ArgumentParser(prog="python3 -m tracker.pace",
                                  description="Is this week's Claude allowance on pace to be used before the reset?")
     ap.add_argument("logs", nargs="*", type=Path,
-                    help=f"meter logs of one account (default: {DEFAULT_LOG})")
+                    help=f"meter logs of one account (default: {DEFAULT_LOG}); with --each, one per account")
     ap.add_argument("--now", help="evaluate at this ISO time instead of now (a naive time is UTC)")
     ap.add_argument("--lookback", type=float, default=24.0, help="hours of readings the pace is measured over")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the text report")
+    ap.add_argument("--each", action="store_true",
+                    help="read each log as its own account and print one line per log")
     args = ap.parse_args(argv)
     paths = args.logs or [DEFAULT_LOG]
     if args.lookback <= 0:
@@ -289,10 +340,12 @@ def main(argv: Sequence[str] | None = None, out=None) -> int:
         if now is None:
             print(f"pace: --now is not an ISO time: {args.now!r}", file=sys.stderr)
             return 2
+    if args.each:
+        return _each(paths, now, args.lookback, args.json, out)
     lines: list[str] = []
     for path in paths:
         try:
-            lines.extend(path.read_text(encoding="utf-8", errors="replace").splitlines())
+            lines.extend(_read(path))
         except OSError as e:
             print(f"pace: cannot read {path}: {e.strerror or e}", file=sys.stderr)
             return 2

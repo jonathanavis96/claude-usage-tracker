@@ -207,5 +207,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.run_main(str(self.log), "--lookback", "0")[0], 2)
 
 
+    def test_each_reads_every_log_as_its_own_account(self):
+        slow, hot, empty = (Path(self.dir.name) / n for n in ("meter-a.log", "meter-b.log", "meter-c.log"))
+        slow.write_text("\n".join(hourly(20.0, 0.25, 24)) + "\n")
+        hot.write_text("\n".join(hourly(60.0, 1.5, 24)) + "\n")
+        empty.write_text("")
+        now = (START + timedelta(days=3)).isoformat()
+        code, out, _ = self.run_main(str(slow), str(hot), str(empty), str(self.log), "--each", "--now", now)
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertRegex(lines[0], r"^meter-a\.log\s+26%  \S{28}  USE IT OR LOSE IT: about 50% at the reset, "
+                                   r"50 points unused, needs 0\.77%/h$")
+        self.assertRegex(lines[1], r"^meter-b\.log\s+96%  \S{28}  RUNNING HOT: 100% 3d 21h before the reset$")
+        self.assertIn("no seven-day reading", lines[2])
+        self.assertIn("cannot read", lines[3])
+
+    def test_each_as_json_names_every_log(self):
+        self.log.write_text("\n".join(hourly(20.0, 0.25, 24)) + "\n")
+        missing = Path(self.dir.name) / "absent.log"
+        code, out, _ = self.run_main(str(self.log), str(missing), "--each", "--json",
+                                     "--now", (START + timedelta(days=3)).isoformat())
+        self.assertEqual(code, 0)
+        rows = json.loads(out)
+        self.assertEqual([r["log"] for r in rows], [str(self.log), str(missing)])
+        self.assertEqual(rows[0]["verdict"], "USE IT OR LOSE IT")
+        self.assertIn("cannot read", rows[1]["error"])
+
+    def test_each_with_nothing_measurable_fails(self):
+        self.log.write_text("")
+        self.assertEqual(self.run_main(str(self.log), "--each")[0], 1)
+
 if __name__ == "__main__":
     unittest.main()
