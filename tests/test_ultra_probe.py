@@ -220,14 +220,18 @@ class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
             reads.append(1)
             return Utilization(T0, None, 40.0, None, weekly_only=True)
         rd = {"jwork": weekly_only, "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}
-        slept, skipped = [], {}
+        slept, skipped, history, logged = [], {}, [], []
         acc = choose_account([("jwork", self.JWORK), ("dave", self.DAVE)], lambda n: rd[n], slept.append,
                              max_wait_s=1800, retry_s=900, now=lambda: T0,
-                             processes=lambda: [(491402, self.DAVE)], log=lambda line: None, skipped=skipped)
+                             processes=lambda: [(491402, self.DAVE)], log=logged.append, skipped=skipped,
+                             history=history)
         self.assertIsNone(acc)
         self.assertEqual(slept, [900, 900])  # three rounds, waiting for the busy one
         self.assertEqual(len(reads), 1)
         self.assertEqual(skipped["jwork"].kind, "weekly-only")
+        # Round 13: logged and counted once, not once a round for the whole wait.
+        self.assertEqual(sum(1 for line in logged if line.startswith("jwork weekly-only")), 1)
+        self.assertEqual([s.kind for s in history].count("weekly-only"), 1)
 
     def test_a_busy_account_with_a_five_hour_limit_is_still_busy(self):
         reads = {"jwork": lambda: Utilization(T0, 7.0, 40.0, "r1"), "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}

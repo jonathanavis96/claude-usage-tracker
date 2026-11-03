@@ -997,14 +997,16 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
         for name, cfg in accounts:
             # Waiting cannot give a weekly-only account its limit back, so it is not read again:
             # a re-read is an endpoint call, whose 429 backoff would spend the wait's budget.
-            skip = known_weekly_only.get(name) or skip_reason(
+            if name in known_weekly_only:  # already logged and counted in an earlier round
+                continue
+            skip = skip_reason(
                 read_for(name), sleep, cfg=cfg, processes=processes, session_status=session_status,
                 weekly_max_pct=weekly_max_pct, note=lambda line, name=name: log(f"{name} {line}"),
                 peek=lambda name=name: peek(name))
-            if skip is not None and skip.kind == "weekly-only":
-                known_weekly_only[name] = skip
             if skip is None:
                 return (name, cfg)
+            if skip.kind == "weekly-only":
+                known_weekly_only[name] = skip
             if skipped is not None:
                 skipped[name] = skip
             if history is not None:
