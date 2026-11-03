@@ -153,6 +153,26 @@ class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
         self.assertEqual({s.kind for s in skipped.values()}, {"weekly-only"})
         self.assertEqual([s.kind for s in history], ["weekly-only", "weekly-only"])
 
+    def test_a_failed_read_on_a_busy_account_leaves_it_busy_and_tries_the_next(self):
+        # Code review round 6: the read that tells a weekly-only account apart is extra for
+        # a busy one; when it fails (a 401, a 429 at the deadline) the account stays a plain
+        # busy skip, as before that read existed, and the next account is still tried.
+        from tracker.probe import ProbeAbort
+
+        def failing(exc):
+            def read():
+                raise exc
+            return read
+        for exc in (OSError("HTTP Error 429"), ProbeAbort("deadline"), ValueError("no utilization")):
+            reads = {"dave": failing(exc), "jwork": lambda: Utilization(T0, 7.0, 40.0, "r1")}
+            skipped = {}
+            acc = choose_account([("dave", self.DAVE), ("jwork", self.JWORK)], lambda n: reads[n],
+                                 lambda s: None, max_wait_s=0, retry_s=900, now=lambda: T0,
+                                 processes=lambda: [(491402, self.DAVE)], log=lambda line: None,
+                                 skipped=skipped)
+            self.assertEqual(acc, ("jwork", self.JWORK), exc)
+            self.assertEqual(skipped["dave"].kind, "busy")
+
     def test_a_busy_account_with_a_five_hour_limit_is_still_busy(self):
         reads = {"jwork": lambda: Utilization(T0, 7.0, 40.0, "r1"), "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}
         skipped = {}

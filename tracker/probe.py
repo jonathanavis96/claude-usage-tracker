@@ -67,7 +67,7 @@ from pathlib import Path
 
 from .cli_run import RunUsage
 from .publish import class_weight, meter_usd, tokens_usd
-from .usage_api import Utilization, same_reset
+from .usage_api import AuthExpired, Utilization, same_reset
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
 
@@ -914,7 +914,12 @@ def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
         if reason is not None:
             if weekly_max_pct is None:
                 return Skip("busy", reason)
-            a = read()
+            try:
+                a = read()
+            except (OSError, ValueError, AuthExpired, ProbeAbort):
+                # Only an extra read for a busy account: when it fails the account is the
+                # plain busy skip it was before this read, and the next account is tried.
+                return Skip("busy", reason)
             if not a.weekly_only:
                 return Skip("busy", reason)
     a = a or read()
