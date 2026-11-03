@@ -348,7 +348,8 @@ def _parts_for(kinds: set[str], health_reason: str | None, state: dict, failing:
 
 
 def decide_alert(state: dict, now: float, health_reason: str | None, fail_threshold: int,
-                 stale_after: float, send: Sender, label: str, send_up: Sender | None = None) -> None:
+                 stale_after: float, send: Sender, label: str, send_up: Sender | None = None,
+                 immediate_kinds: frozenset[str] = frozenset()) -> None:
     """Open or close an incident, sending at most one message per transition.
 
     `health_reason` is every failing check (health.all_failures, joined with " | "); each
@@ -356,7 +357,9 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
     failed for `stale_after`, so a brief fault of one kind beside a long one of another is
     neither a further problem nor, when it clears, a recovery.
 
-    `send` carries the opening message, `send_up` (default `send`) the recovery."""
+    `send` carries the opening message, `send_up` (default `send`) the recovery.
+    `immediate_kinds` count at once, a check that already failed past its own limit (a lock
+    held past health's lock limit): their clocks read as `stale_after` old."""
     current = health_kinds(health_reason)
     since = state.get("kinds_since") if isinstance(state.get("kinds_since"), dict) else None
     if since is None:
@@ -364,6 +367,8 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
         legacy = state.get("unhealthy_since")
         since = {k: legacy for k in current} if isinstance(legacy, (int, float)) else {}
     since = {k: since.get(k, now) for k in sorted(current)}
+    for k in immediate_kinds & current:
+        since[k] = min(since[k], now - stale_after)
     state.pop("unhealthy_since", None)
     if since:
         state["kinds_since"] = since
@@ -444,22 +449,15 @@ def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: S
     if reason is None:
         return
     state = health.read_state(state_path)
-    lock_kinds = health_kinds(reason)
+    lock_kinds = frozenset(health_kinds(reason))
     # Only the lock was checked here: the last finished run's health stands for the rest, so
     # an open incident's other kinds neither read as recovered nor lose their clocks, and each
-    # still counts only once it has failed for `stale_after`, as in a finished run.
+    # still counts only once it has failed for `stale_after`, as in a finished run. The lock is
+    # already past its own limit, so it counts at once.
     last = state.get("last_health")
     if isinstance(last, str) and last != "ok":
         reason = " | ".join([reason, *(p.strip() for p in last.split(" | ") if p.strip())])
-    # The lock is already past its own limit, so it counts at once: its clock reads as stale.
-    since = state.get("kinds_since")
-    if not isinstance(since, dict):
-        legacy = state.get("unhealthy_since")  # decide_alert's migration of an older state
-        since = {k: legacy for k in health_kinds(reason)} if isinstance(legacy, (int, float)) else {}
-    for k in lock_kinds:
-        since[k] = min(since.get(k, t), t - stale_after)
-    state["kinds_since"] = since
-    decide_alert(state, t, reason, fail_threshold, stale_after, send, label)
+    decide_alert(state, t, reason, fail_threshold, stale_after, send, label, immediate_kinds=lock_kinds)
     write_state(state_path, state)
 
 

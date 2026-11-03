@@ -166,6 +166,17 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(len(self.send.sent), 1, self.send.sent)
         self.assertIn("has held the lock 3h00m", self.send.sent[0])
 
+    def test_an_immediate_kind_counts_at_once_and_the_rest_keep_their_clocks(self):
+        # Code review round 8: the hung path backdated the lock's clock by hand and copied
+        # decide_alert's migration of an older state; decide_alert now takes the kind itself.
+        state = {"unhealthy_since": self.t - 60}  # an older state: one clock for every kind
+        reason = "lock: run pid 1 has held the lock 3h00m | meters: claude-usage-meter-avis.log is 25m old"
+        supervise.decide_alert(state, self.t, reason, 3, 3600.0, self.send, "masterrig",
+                               immediate_kinds=frozenset({"lock"}))
+        self.assertEqual(state["incident_kinds"], ["lock"])
+        self.assertEqual(state["kinds_since"]["lock"], self.t - 3600.0)
+        self.assertEqual(state["kinds_since"]["meters/avis"], self.t - 60)
+
     def test_unwritable_pidfile_still_runs_and_alerts(self):
         # A full disk refused the pid file's few bytes and the OSError escaped before the
         # job ran: no run, no state, no alert, though the state and the run log both
