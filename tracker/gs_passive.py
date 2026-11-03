@@ -1297,7 +1297,7 @@ def fit_output_weight(rpt: dict, prices: dict) -> dict:
                 continue  # only `<synthetic>` rows, or no bundle: a collection gap, not a zero row
             for m, tok in work.items():
                 price = prices.get(m)
-                if price is None:
+                if price is None or not isinstance(tok, dict):  # unpriced, or no bundle at all
                     break
                 base += (tok.get("input", 0) * price["input"] + tok.get("cache_write", 0) * price["cache_write"]) / 1e6
                 out += tok.get("output", 0) * price["output"] / 1e6

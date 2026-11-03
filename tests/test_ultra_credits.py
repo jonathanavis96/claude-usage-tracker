@@ -167,9 +167,21 @@ class EmptyBundleRuleTests(unittest.TestCase):
         self.assertEqual(C.bundles_with_work({"m": self.WORK, "<synthetic>": self.EMPTY}), {"m": self.WORK})
         self.assertEqual(C.bundles_with_work({"<synthetic>": self.EMPTY}), {})
         self.assertEqual(C.bundles_with_work(None), {})
-        # Code review round 8: a value that is no bundle (a null, a number) is no work either,
-        # as holds_work and pricing read it, never passed on to bundle_meter_usd's .get.
-        self.assertEqual(C.bundles_with_work({"m": self.WORK, "x": None, "y": 7}), {"m": self.WORK})
+        # Code review rounds 8 and 9: a value that is no bundle (a null, a number) is kept, so
+        # its stretch is refused whole, neither crashing bundle_meter_usd's .get nor read
+        # without that model's work.
+        self.assertEqual(C.bundles_with_work({"m": self.WORK, "x": None, "y": 7}), {"m": self.WORK, "x": None, "y": 7})
+
+    def test_a_stretch_with_a_malformed_bundle_is_no_passive_reading(self):
+        from tracker.gs_passive import passive_dollar_readings
+        from tracker.join import bundle_meter_usd
+        prices = {"claude-sonnet-5": {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}}
+        self.assertIsNone(bundle_meter_usd("claude-sonnet-5", None, prices))
+        st = {"status": "accepted", "capture_status": "accepted", "reset_verified": True,
+              "start": "2026-11-01T10:00:00+00:00", "end": "2026-11-01T11:00:00+00:00", "delta_pct": 10,
+              "windows": 1, "tokens": {"claude-sonnet-5": {**self.WORK, "cache_write": 400000},
+                                       "claude-sonnet-5-20251001": "garbage"}}
+        self.assertEqual(passive_dollar_readings({"accounts": {"jwork": {"stretches": [st]}}}, prices), [])
 
     def test_pricing_keeps_an_all_empty_stretch_as_it_was(self):
         self.assertEqual(C.work_bundles({"m": self.WORK, "<synthetic>": self.EMPTY}), {"m": self.WORK})

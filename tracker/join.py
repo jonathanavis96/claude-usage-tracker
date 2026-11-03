@@ -162,7 +162,7 @@ def bundle_meter_usd(model: str, tokens: dict, prices: dict) -> float | None:
     """
     m = priced_model(model, prices)
     price = prices.get(m) if m else None
-    if price is None:
+    if price is None or not isinstance(tokens, dict):  # a value that is no bundle: unpriced
         return None
     weights = price.get("class_weight", {})
     value = sum(tokens.get(c, 0) * price[c] * weights.get(c, 1.0) / 1e6 for c in CLASSES)

@@ -439,13 +439,14 @@ def holds_work(tok) -> bool:
 
 
 def bundles_with_work(tokens: dict | None) -> dict:
-    """`tokens` less every bundle that holds no work (`holds_work`): the zero-token `<synthetic>`
-    rows, and a value that is no bundle at all, which pricing skips too. Empty when
-    nothing is left: every reader of a stretch's work (the passive dollar series, the
-    output-weight fit, the evidence beside a rate) reads that as no reading through this, so
-    the evidence counts exactly the stretches the series reads. Pricing differs on purpose
+    """`tokens` less its zero-token `<synthetic>` rows, which hide no work. Empty when nothing
+    is left: every reader of a stretch's work (the passive dollar series, the output-weight
+    fit, the evidence beside a rate) reads that as no reading through this, so the evidence
+    counts exactly the stretches the series reads. A value that is no bundle at all is kept:
+    it cannot be valued (`join.bundle_meter_usd` reads it as unpriced), so its stretch is
+    refused whole rather than read without that model's work. Pricing differs on purpose
     (`work_bundles`): a stretch of nothing but empty bundles stays unpriced, not priced at 0."""
-    return {m: tok for m, tok in (tokens or {}).items() if holds_work(tok)}
+    return {m: tok for m, tok in (tokens or {}).items() if not (isinstance(tok, dict) and not holds_work(tok))}
 
 
 def work_bundles(tokens: dict) -> dict:
