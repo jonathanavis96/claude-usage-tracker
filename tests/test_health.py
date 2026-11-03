@@ -188,7 +188,10 @@ class HealthTest(unittest.TestCase):
         fd = os.open(lock, os.O_RDWR)
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
-            self.assertIn("a run with no pid file has held the lock 3h00m", self.reasons()["lock"])
+            # Round 6: the check reads /proc/locks and never takes a lock of its own, which
+            # would make a supervised run starting in the same instant skip itself.
+            with mock.patch("fcntl.flock", side_effect=AssertionError("health took a lock")):
+                self.assertIn("a run with no pid file has held the lock 3h00m", self.reasons()["lock"])
             os.utime(lock, (NOW - 600, NOW - 600))
             self.assertIsNone(self.reasons().get("lock"))
         finally:

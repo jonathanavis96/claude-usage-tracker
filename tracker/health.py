@@ -64,7 +64,6 @@ Timestamps are parsed, never compared as strings.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import subprocess
@@ -410,24 +409,38 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _flock_held(lock: Path) -> bool | None:
+    """Whether some process holds a flock on `lock`, read from /proc/locks so the check never
+    takes a lock itself (a shared one, even for an instant, makes a supervised run starting
+    in the same moment skip as "previous run still going"). None when it cannot tell."""
+    try:
+        st = os.stat(lock)
+        table = Path("/proc/locks").read_text()
+    except OSError:
+        return None
+    for row in table.splitlines():
+        parts = row.split()
+        if "->" in parts or "FLOCK" not in parts:  # "->" marks a waiter, not a holder
+            continue
+        try:
+            dev_major, dev_minor, inode = parts[parts.index("FLOCK") + 4].split(":")
+            if (int(inode) == st.st_ino and int(dev_major, 16) == os.major(st.st_dev)
+                    and int(dev_minor, 16) == os.minor(st.st_dev)):
+                return True
+        except (IndexError, ValueError):
+            continue
+    return False
+
+
 def _held_lock_age(lock: Path, now: float) -> float | None:
     """How long the supervisor's flock `lock` has been held, from the stamp each run puts on
     it as it takes the lock (tracker.supervise); None when nothing holds it."""
+    if not _flock_held(lock):
+        return None
     try:
-        fd = os.open(lock, os.O_RDONLY)
+        return now - lock.stat().st_mtime
     except OSError:
         return None
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return now - os.fstat(fd).st_mtime
-        except OSError:
-            return None
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        return None
-    finally:
-        os.close(fd)
 
 
 def check_lock(c: Config, now: float) -> str | None:
