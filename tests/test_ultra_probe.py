@@ -142,34 +142,54 @@ class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
         # Code review round 5: the free pid check came first, so a weekly-only account with a
         # session open read as busy, and choose_account waited four hours for an account it
         # could never probe. Its meter is read too, so it is known for what it is.
+        # Round 7: through a quick peek (no 429 retries), not the probe's retrying read.
         read = lambda: Utilization(T0, None, 40.0, None, weekly_only=True)  # noqa: E731
         slept, skipped, history = [], {}, []
         acc = choose_account([("jwork", self.JWORK), ("dave", self.DAVE)], lambda n: read, slept.append,
                              max_wait_s=4 * 3600, retry_s=900, now=lambda: T0,
                              processes=lambda: [(491402, self.DAVE)], log=lambda line: None,
-                             skipped=skipped, history=history)
+                             skipped=skipped, history=history, peek_for=lambda n: read)
         self.assertIsNone(acc)
         self.assertEqual(slept, [])
         self.assertEqual({s.kind for s in skipped.values()}, {"weekly-only"})
         self.assertEqual([s.kind for s in history], ["weekly-only", "weekly-only"])
 
-    def test_a_failed_read_on_a_busy_account_leaves_it_busy_and_tries_the_next(self):
-        # Code review round 6: the read that tells a weekly-only account apart is extra for
-        # a busy one; when it fails (a 401, a 429 at the deadline) the account stays a plain
-        # busy skip, as before that read existed, and the next account is still tried.
+    def test_a_busy_account_is_peeked_at_most_once_and_never_with_the_retrying_read(self):
+        # Code review round 7: the probe's read retries a 429 until the run's deadline, so a
+        # busy account's extra read could spend the whole budget; and it cost a call a round.
+        def retrying():
+            raise AssertionError("the retrying read was used for a busy account")
+        peeks = []
+
+        def peek():
+            peeks.append(1)
+            return Utilization(T0, 7.0, 40.0, "r1")
+        skipped = {}
+        choose_account([("dave", self.DAVE)], lambda n: retrying, lambda s: None, max_wait_s=1800,
+                       retry_s=900, now=lambda: T0, processes=lambda: [(491402, self.DAVE)],
+                       log=lambda line: None, skipped=skipped, peek_for=lambda n: peek)
+        self.assertEqual(skipped["dave"].kind, "busy")
+        self.assertEqual(len(peeks), 1)  # three rounds, one peek
+
+    def test_a_failed_peek_on_a_busy_account_leaves_it_busy_and_tries_the_next(self):
+        # Code review rounds 6 and 7: the peek is best effort; whatever it raises (a 429, a
+        # 401, a reply cut short) the account stays a plain busy skip and the next is tried.
+        import http.client
+
         from tracker.probe import ProbeAbort
 
         def failing(exc):
             def read():
                 raise exc
             return read
-        for exc in (OSError("HTTP Error 429"), ProbeAbort("deadline"), ValueError("no utilization")):
-            reads = {"dave": failing(exc), "jwork": lambda: Utilization(T0, 7.0, 40.0, "r1")}
+        for exc in (OSError("HTTP Error 429"), ProbeAbort("deadline"), ValueError("no utilization"),
+                    http.client.IncompleteRead(b"")):
+            reads = {"jwork": lambda: Utilization(T0, 7.0, 40.0, "r1"), "dave": failing(AssertionError("read"))}
             skipped = {}
             acc = choose_account([("dave", self.DAVE), ("jwork", self.JWORK)], lambda n: reads[n],
                                  lambda s: None, max_wait_s=0, retry_s=900, now=lambda: T0,
                                  processes=lambda: [(491402, self.DAVE)], log=lambda line: None,
-                                 skipped=skipped)
+                                 skipped=skipped, peek_for=lambda n, exc=exc: failing(exc))
             self.assertEqual(acc, ("jwork", self.JWORK), exc)
             self.assertEqual(skipped["dave"].kind, "busy")
 

@@ -798,7 +798,7 @@ class PayloadCliTests(unittest.TestCase):
         captured = {}
 
         def fake_choose_account(accounts, read_for, sleep, max_wait_s=None, retry_s=None,
-                                now=None, deadline=None, skipped=None, history=None):
+                                now=None, deadline=None, skipped=None, history=None, peek_for=None):
             return accounts[0]
 
         def fake_read_usage(cfg, fetch=None):
