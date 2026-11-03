@@ -951,7 +951,8 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
                    session_status: Callable[[Path, int], SessionState] = read_session_status,
                    log: Callable[[str], None] = _log_stderr, weekly_max_pct: float = WEEKLY_MAX_PCT,
                    skipped: dict[str, Skip] | None = None):
-    """Return the first account fit to probe, or None once the wait or the deadline runs out.
+    """Return the first account fit to probe, or None once the wait or the deadline runs out,
+    or at once when every account was passed over as weekly-only (waiting cannot clear that).
 
     An account is passed over when it is busy (busy_reason's checks) or when its
     seven-day meter reads above `weekly_max_pct` (issue #38), and each is logged as
@@ -970,6 +971,7 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
     while True:
         if deadline is not None and now is not None and now() >= deadline:
             return None
+        may_clear = False  # a weekly-only account does not get its five-hour limit back by waiting
         for name, cfg in accounts:
             skip = skip_reason(read_for(name), sleep, cfg=cfg, processes=processes,
                                session_status=session_status, weekly_max_pct=weekly_max_pct,
@@ -979,7 +981,8 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
             if skipped is not None:
                 skipped[name] = skip
             log(f"{name} {skip.kind}: {skip.why}")
-        if waited >= max_wait_s:
+            may_clear = may_clear or skip.kind != "weekly-only"
+        if not may_clear or waited >= max_wait_s:
             return None
         if deadline is not None and now is not None and now() >= deadline:
             return None

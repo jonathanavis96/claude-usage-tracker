@@ -116,6 +116,28 @@ class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
         self.assertIn("jwork weekly-only: no five-hour limit, so no tick to measure", logged)
         self.assertEqual(slept, [120])  # dave's idle window only: the weekly-only skip spends none
 
+    def test_when_every_account_is_weekly_only_it_gives_up_at_once(self):
+        # Waiting cannot give an account its five-hour limit back, and bin/probe.sh holds the
+        # tracker lock while it waits: four hours of retries would starve the daily publisher.
+        read = lambda: Utilization(T0, None, 40.0, None, weekly_only=True)  # noqa: E731
+        slept, skipped = [], {}
+        acc = choose_account([("jwork", self.JWORK), ("dave", self.DAVE)], lambda n: read, slept.append,
+                             max_wait_s=4 * 3600, retry_s=900, now=lambda: T0, processes=list,
+                             log=lambda line: None, skipped=skipped)
+        self.assertIsNone(acc)
+        self.assertEqual(slept, [])
+        self.assertEqual({s.kind for s in skipped.values()}, {"weekly-only"})
+
+    def test_a_busy_account_beside_a_weekly_only_one_is_still_waited_for(self):
+        reads = {"jwork": lambda: Utilization(T0, None, 40.0, None, weekly_only=True),
+                 "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}
+        slept = []
+        acc = choose_account([("jwork", self.JWORK), ("dave", self.DAVE)], lambda n: reads[n], slept.append,
+                             max_wait_s=900, retry_s=900, now=lambda: T0,
+                             processes=lambda: [(491402, self.DAVE)], log=lambda line: None)
+        self.assertIsNone(acc)
+        self.assertEqual(slept, [900])
+
     def test_busy_reason_alone_still_reads_a_flat_weekly_only_meter_as_idle(self):
         from tracker.probe import busy_reason
         read = lambda: Utilization(T0, None, 40.0, None, weekly_only=True)  # noqa: E731
