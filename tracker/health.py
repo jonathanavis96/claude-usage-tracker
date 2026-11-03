@@ -409,13 +409,37 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _proc_locks() -> str:
+    return Path("/proc/locks").read_text()
+
+
+def _holds_open(pid: str, st: os.stat_result) -> bool | None:
+    """Whether process `pid` has the file `st` open; None when its fds cannot be read."""
+    try:
+        fds = os.listdir(f"/proc/{pid}/fd")
+    except OSError:
+        return None
+    for fd in fds:
+        try:
+            other = os.stat(f"/proc/{pid}/fd/{fd}")
+        except OSError:
+            continue
+        if (other.st_dev, other.st_ino) == (st.st_dev, st.st_ino):
+            return True
+    return False
+
+
 def _flock_held(lock: Path) -> bool | None:
     """Whether some process holds a flock on `lock`, read from /proc/locks so the check never
     takes a lock itself (a shared one, even for an instant, makes a supervised run starting
-    in the same moment skip as "previous run still going"). None when it cannot tell."""
+    in the same moment skip as "previous run still going"). None when it cannot tell.
+
+    A row is matched by inode, then confirmed through the holder's open files: the device
+    /proc/locks prints is the superblock's, which differs from stat's on btrfs subvolumes and
+    overlayfs. Where the holder's files cannot be read, the device must match as well."""
     try:
         st = os.stat(lock)
-        table = Path("/proc/locks").read_text()
+        table = _proc_locks()
     except OSError:
         return None
     for row in table.splitlines():
@@ -423,24 +447,37 @@ def _flock_held(lock: Path) -> bool | None:
         if "->" in parts or "FLOCK" not in parts:  # "->" marks a waiter, not a holder
             continue
         try:
-            dev_major, dev_minor, inode = parts[parts.index("FLOCK") + 4].split(":")
-            if (int(inode) == st.st_ino and int(dev_major, 16) == os.major(st.st_dev)
-                    and int(dev_minor, 16) == os.minor(st.st_dev)):
-                return True
+            i = parts.index("FLOCK")
+            pid = parts[i + 3]
+            dev_major, dev_minor, inode = parts[i + 4].split(":")
+            if int(inode) != st.st_ino:
+                continue
+            same_dev = int(dev_major, 16) == os.major(st.st_dev) and int(dev_minor, 16) == os.minor(st.st_dev)
         except (IndexError, ValueError):
             continue
+        opened = _holds_open(pid, st)
+        if opened or (opened is None and same_dev):
+            return True
     return False
 
 
-def _held_lock_age(lock: Path, now: float) -> float | None:
-    """How long the supervisor's flock `lock` has been held, from the stamp each run puts on
-    it as it takes the lock (tracker.supervise); None when nothing holds it."""
+def _held_lock_age(c: Config, now: float) -> float | None:
+    """How long the supervisor's flock (`<name>.lock` beside the pid file) has been held, from
+    the stamp each run puts on it as it takes the lock (tracker.supervise); None when nothing
+    holds it, or when the stamp is older than the last finished run, so it was not this run's
+    (the stamp could not be written: a read-only disk) and cannot age it."""
+    lock = c.lock_pidfile.with_suffix(".lock")
     if not _flock_held(lock):
         return None
     try:
-        return now - lock.stat().st_mtime
+        mtime = lock.stat().st_mtime
     except OSError:
         return None
+    st = read_state(c.state)
+    finished = [t for t in (st.get("last_ok"), st.get("last_fail")) if isinstance(t, (int, float))]
+    if finished and max(finished) > mtime:
+        return None
+    return now - mtime
 
 
 def check_lock(c: Config, now: float) -> str | None:
@@ -450,7 +487,7 @@ def check_lock(c: Config, now: float) -> str | None:
     except OSError:
         # No pid file: a run on a full disk goes on without one (tracker.supervise), so a held
         # lock (`<name>.lock` beside `<name>.pid`) is aged by its own stamp instead.
-        age = _held_lock_age(c.lock_pidfile.with_suffix(".lock"), now)
+        age = _held_lock_age(c, now)
         if age is not None and age > c.lock_max_age_s:
             return f"lock: a run with no pid file has held the lock {_age(age)}"
         return None

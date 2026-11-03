@@ -440,7 +440,7 @@ def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: S
     the hung run itself will never get to its own health check."""
     # With no pid file (a run on a full disk goes on without one), check_lock ages the held
     # lock by the stamp `supervise` puts on it as it takes it.
-    reason = health.check_lock(health.Config(lock_pidfile=pidfile), time.time())
+    reason = health.check_lock(health.Config(lock_pidfile=pidfile, state=state_path), time.time())
     if reason is None:
         return
     state = health.read_state(state_path)
