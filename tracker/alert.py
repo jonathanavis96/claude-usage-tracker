@@ -112,7 +112,12 @@ def _default_post(url: str, headers: Mapping[str, str], body: bytes) -> tuple[in
             return r.status, r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         with e:
-            return e.code, e.read().decode("utf-8", "replace")
+            try:
+                return e.code, e.read().decode("utf-8", "replace")
+            except http.client.IncompleteRead as cut:  # an error reply cut short: its status stands
+                return e.code, cut.partial.decode("utf-8", "replace")
+            except http.client.HTTPException as bad:
+                raise OSError(f"HTTP {e.code}, reply {type(bad).__name__}: {bad}") from bad
     except http.client.HTTPException as e:  # a reply cut short or garbled
         raise OSError(f"{type(e).__name__}: {e}") from e
 

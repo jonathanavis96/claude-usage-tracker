@@ -271,3 +271,26 @@ class DefaultPostErrorTests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", side_effect=http.client.IncompleteRead(b"")):
             with self.assertRaises(OSError):
                 _default_post(SEND_URL, {}, b"{}")
+
+    def test_an_error_reply_cut_short_keeps_its_status_not_a_crash(self):
+        # Code review round 3: an error status whose body is cut short raised IncompleteRead
+        # from inside the HTTPError handler, past the sibling HTTPException clause. The
+        # status arrived, so it is the reply; anything else garbled there is an OSError.
+        import http.client
+        import urllib.error
+        from unittest import mock
+
+        class Torn(io.BytesIO):
+            def read(self, *a):
+                raise http.client.IncompleteRead(b"par", 10)
+        err = urllib.error.HTTPError(SEND_URL, 502, "Bad Gateway", {}, Torn())
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            self.assertEqual(_default_post(SEND_URL, {}, b"{}"), (502, "par"))
+
+        class Garbled(io.BytesIO):
+            def read(self, *a):
+                raise http.client.HTTPException("garbled")
+        err = urllib.error.HTTPError(SEND_URL, 502, "Bad Gateway", {}, Garbled())
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(OSError):
+                _default_post(SEND_URL, {}, b"{}")
