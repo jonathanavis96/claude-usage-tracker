@@ -255,6 +255,8 @@ def render(p: Pace, tz: tzinfo | None = None) -> str:
     elif v == "USE IT OR LOSE IT" and p.projected is not None and p.unused is not None:
         lines.append(_row("Verdict", f"USE IT OR LOSE IT: about {p.projected:.0f}% at the reset, "
                           f"so {p.unused:.0f} points expire unused."))
+    elif v == "UNKNOWN":
+        lines.append(_row("Verdict", "UNKNOWN: not enough readings in this window to tell where it lands."))
     if p.needed_rate is not None and v in ("USE IT OR LOSE IT", "UNKNOWN"):
         times = f" ({p.needed_rate / p.rate:.1f}x your pace)" if p.rate else ""
         lines.append(_row("To use it all", f"{p.needed_rate:.2f}%/h from here{times}, "
@@ -373,6 +375,11 @@ def main(argv: Sequence[str] | None = None, out=None) -> int:
     except MixedAccountLog as e:
         print(f"pace: {e}", file=sys.stderr)
         return 2
+    if len(paths) > 1:
+        # A meter log's rows may carry no account identity (moonlighter's do not), so two
+        # accounts' logs cannot be told apart from one account's rotated logs: say so.
+        print(f"pace: {len(paths)} logs read as one account; for one line per account use --each",
+              file=sys.stderr)
     p = measure(samples, now=now, lookback_hours=args.lookback)
     if p is None:
         print("pace: no seven-day reading with a reset time in " + ", ".join(map(str, paths)), file=sys.stderr)

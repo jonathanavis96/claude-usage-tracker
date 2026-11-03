@@ -89,6 +89,13 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(p.verdict, "ON TARGET")
         self.assertNotIn("To use it all", render(p, tz=SAST))
 
+    def test_unknown_still_has_a_verdict_row(self):
+        # Code review round 4: the one reading sits at the window's start, so there is no pace;
+        # the text report gave every other verdict a row but not this one.
+        p = measure(samples(line(START, 0.0)), now=START + timedelta(hours=1))
+        self.assertEqual(p.verdict, "UNKNOWN")
+        self.assertIn("Verdict        UNKNOWN: not enough readings in this window", render(p, tz=SAST))
+
     def test_maxed(self):
         p = measure(samples(line(START + timedelta(days=5), 100.0)), now=START + timedelta(days=5))
         self.assertEqual(p.verdict, "MAXED")
@@ -243,6 +250,18 @@ class CliTests(unittest.TestCase):
         code, _, err = self.run_main(str(self.log))
         self.assertEqual(code, 2)
         self.assertIn("2 accounts", err)
+
+    def test_several_logs_without_each_say_they_are_read_as_one_account(self):
+        # Code review round 4: moonlighter rows carry no identity, so two accounts' logs were
+        # merged without a word. Several logs of one account (a rotated log) are still read.
+        other = Path(self.dir.name) / "other.log"
+        self.log.write_text(line(START + timedelta(days=1), 10.0) + "\n")
+        other.write_text(line(START + timedelta(days=2), 20.0) + "\n")
+        code, out, err = self.run_main(str(self.log), str(other), "--now", (START + timedelta(days=2)).isoformat())
+        self.assertEqual(code, 0)
+        self.assertIn("2 logs read as one account", err)
+        self.assertIn("--each", err)
+        self.assertEqual(self.run_main(str(self.log), "--now", (START + timedelta(days=2)).isoformat())[2], "")
 
     def test_bad_arguments(self):
         self.log.write_text(line(START + timedelta(days=1), 10.0) + "\n")
