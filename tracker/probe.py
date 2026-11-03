@@ -286,6 +286,13 @@ def _seconds_until_reset(u: Utilization, now: datetime) -> float | None:
         return None
 
 
+def _refuse_weekly_only(u: Utilization) -> None:
+    """Abort on a reading of an account with no five-hour limit (weekly_only, ADR 0001
+    rule 24): its five-hour meter never ticks, so every further prompt is spent for nothing."""
+    if u.weekly_only:
+        raise ProbeAbort("account is weekly-only (no five-hour limit): no five-hour tick to measure")
+
+
 def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Utilization],
                    run: Callable[[int], RunUsage], sleep: Callable[[float], None],
                    now: Callable[[], datetime], max_prompts: int = 80, settle_s: float = 60,
@@ -334,6 +341,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     """
     start = now()
     before = read()
+    _refuse_weekly_only(before)
     reset_start = False
     tick1: int | None = None
     tick_from: int | None = None  # the tick at which measurement started
@@ -382,6 +390,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         cur = read()
+        _refuse_weekly_only(cur)
         reading = {"prompt": prompts, "five_hour": cur.five_hour, "tokens": batch}
         if k > 1:
             reading["burst"] = k
