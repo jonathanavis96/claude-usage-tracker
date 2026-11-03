@@ -30,6 +30,18 @@ class ParseTests(unittest.TestCase):
         self.assertFalse(parse_usage({"seven_day": sd}, now).weekly_only)  # missing key: schema change
         self.assertFalse(parse_usage({"five_hour": None, "seven_day": None}, now).weekly_only)
 
+    def test_a_reshaped_bucket_or_body_reads_as_missing_instead_of_raising(self):
+        # A schema change (meter_log.schema_problems: "no five_hour bucket") must reach the
+        # callers' schema check, not die in parsing with an AttributeError.
+        now = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
+        u = parse_usage({"five_hour": "unavailable", "seven_day": sd}, now)
+        self.assertEqual((u.five_hour, u.five_hour_resets_at, u.seven_day), (None, None, 47.0))
+        self.assertFalse(u.weekly_only)
+        for body in ([], None, "rate limited"):
+            u = parse_usage(body, now)
+            self.assertEqual((u.five_hour, u.seven_day, u.weekly_only), (None, None, False))
+
     def test_read_uses_token_from_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok123"}}))

@@ -28,12 +28,16 @@ class Utilization:
 
 
 def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
-    b = body.get(key) or {}
+    b = body.get(key)
+    if not isinstance(b, dict):
+        b = {}  # absent, null, or reshaped: no reading here (meter_log.schema_problems names it)
     u = b.get("utilization")
     return (float(u) if u is not None else None, b.get("resets_at"))
 
 
 def parse_usage(body: dict, now: datetime) -> Utilization:
+    if not isinstance(body, dict):
+        body = {}  # not an object at all: a schema change for the caller to report, not a crash
     fh, fh_reset = _bucket(body, "five_hour")
     sd, sd_reset = _bucket(body, "seven_day")
     # Only an explicit null is "no five-hour limit"; a missing key is a schema change.
