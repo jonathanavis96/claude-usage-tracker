@@ -871,6 +871,12 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     return skip.why if skip is not None else None
 
 
+def _five_hour_text(u: Utilization) -> str:
+    """`7%`, or `no reading` while the endpoint reports no five-hour figure (no window
+    open): a meter that moves from no reading to one is busy, not a format error."""
+    return f"{u.five_hour:g}%" if u.five_hour is not None else "no reading"
+
+
 def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
                 cfg: Path | None = None,
                 processes: Callable[[], list[tuple[int, Path]]] | None = None,
@@ -905,7 +911,7 @@ def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     if not _same_window(a, b):
         return Skip("busy", "window reset")
     if a.five_hour != b.five_hour:
-        return Skip("busy", f"meter moved {a.five_hour:g}% -> {b.five_hour:g}%")
+        return Skip("busy", f"meter moved {_five_hour_text(a)} -> {_five_hour_text(b)}")
     reason = watch.check() if watch is not None else None
     return Skip("busy", reason) if reason is not None else None
 
