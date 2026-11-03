@@ -1032,7 +1032,8 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             # cheaper meter, and the stretch's percent is spent on it all the same.
             # A bundle of no tokens (Claude Code's `<synthetic>` rows) hides no work and is
             # skipped, as `passive_credit_points` skips it; with nothing else left, no reading.
-            valued = {m: bundle_meter_usd(m, tok, prices) for m, tok in s["tokens"].items() if not _empty(tok)}
+            valued = {m: bundle_meter_usd(m, tok, prices)
+                      for m, tok in credit_model.bundles_with_work(s["tokens"]).items()}
             if not valued or any(v is None for v in valued.values()):
                 continue
             # Per UTC day, as the docstring says: a +02:00 stretch's own date is not its UTC date.
@@ -1052,11 +1053,6 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
 #: at least one family whose rate was fitted; one that reads `anchor` was pure Opus.
 CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_table",
                        "inferred_list_price")
-
-
-def _empty(tok) -> bool:
-    """A token bundle that holds no tokens (Claude Code's `<synthetic>` placeholder rows)."""
-    return credit_model.is_empty_bundle(tok)
 
 
 def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
@@ -1177,8 +1173,8 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0 or not s.get("tokens"):
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
-                   if not _empty(tok)):
+            if any(bundle_meter_usd(m, tok, prices) is None
+                   for m, tok in credit_model.bundles_with_work(s["tokens"]).items()):
                 continue
             value, _source = stretch_credits(s["tokens"], credits, model_rates, prices)
             if value is None or not s.get("delta_pct"):
@@ -1228,8 +1224,8 @@ def credit_rate_sources(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0:
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
-                   if not _empty(tok)):
+            if any(bundle_meter_usd(m, tok, prices) is None
+                   for m, tok in credit_model.bundles_with_work(s["tokens"]).items()):
                 continue
             value, source = stretch_credits(s["tokens"], credits, model_rates, prices)
             # The same admission rule as passive_credit_points: priced and charged.
@@ -1292,7 +1288,7 @@ def fit_output_weight(rpt: dict, prices: dict) -> dict:
             if st.get("capture_status", st["status"]) != ACCEPTED:
                 continue
             base = out = 0.0
-            work = {m: tok for m, tok in st["tokens"].items() if not _empty(tok)}
+            work = credit_model.bundles_with_work(st["tokens"])
             if not work:
                 continue  # only `<synthetic>` rows, or no bundle: a collection gap, not a zero row
             for m, tok in work.items():

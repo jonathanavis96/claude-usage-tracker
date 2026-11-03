@@ -436,12 +436,19 @@ def is_empty_bundle(tok) -> bool:
     return isinstance(tok, dict) and not raw_tokens(tok)
 
 
+def bundles_with_work(tokens: dict | None) -> dict:
+    """`tokens` less its zero-token bundles (`<synthetic>` rows), which hide no work. Empty when
+    nothing is left: every reader of a stretch's work (the passive dollar series, the
+    output-weight fit, the evidence beside a rate) reads that as no reading, through this one
+    rule, so the evidence counts exactly the stretches the series reads."""
+    return {m: tok for m, tok in (tokens or {}).items() if not is_empty_bundle(tok)}
+
+
 def work_bundles(tokens: dict) -> dict:
     """`tokens` less its zero-token bundles, when another bundle holds work: an empty
     `<synthetic>` row beside real work hides none and must not unprice the stretch. A stretch
-    of nothing but empty bundles is returned as it is, so it reads exactly as it always has."""
-    work = {m: tok for m, tok in tokens.items() if not is_empty_bundle(tok)}
-    return work or tokens
+    of nothing but empty bundles is returned as it is, so it is priced exactly as it always was."""
+    return bundles_with_work(tokens) or tokens
 
 
 @dataclass(frozen=True)

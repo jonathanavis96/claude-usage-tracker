@@ -249,8 +249,7 @@ def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_u
                 continue
             # As passive_dollar_readings selects: a zero-token bundle (`<synthetic>`) is skipped,
             # and a stretch with no bundle left holds no captured work.
-            bundles = {m: tok for m, tok in (st.get("tokens") or {}).items()
-                       if not credit_model.is_empty_bundle(tok)}
+            bundles = credit_model.bundles_with_work(st.get("tokens"))
             if not bundles or any(bundle_meter_usd(m, tok, prices) is None for m, tok in bundles.items()):
                 continue
             out.append({**st, "_account": acct.get("account")})

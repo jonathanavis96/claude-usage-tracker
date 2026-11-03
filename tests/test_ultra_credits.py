@@ -145,3 +145,20 @@ class OnlyEmptyBundlesStayAsOnMainTests(unittest.TestCase):
     def test_the_pooled_value_leaves_an_all_synthetic_stretch_unpriced(self):
         value = C.across_cut_value(CREDITS, model_rates=POOLED)
         self.assertIsNone(value(dict(SYNTHETIC)))
+
+
+class EmptyBundleRuleTests(unittest.TestCase):
+    """Code review round 3: one rule for every reader of a stretch's work, and the pricing
+    rule built on it, so the copies cannot drift apart again."""
+
+    WORK = {"input": 10, "output": 5, "cache_read": 0, "cache_write": 0}
+    EMPTY = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+
+    def test_readers_drop_empty_bundles_and_see_nothing_left_as_no_work(self):
+        self.assertEqual(C.bundles_with_work({"m": self.WORK, "<synthetic>": self.EMPTY}), {"m": self.WORK})
+        self.assertEqual(C.bundles_with_work({"<synthetic>": self.EMPTY}), {})
+        self.assertEqual(C.bundles_with_work(None), {})
+
+    def test_pricing_keeps_an_all_empty_stretch_as_it_was(self):
+        self.assertEqual(C.work_bundles({"m": self.WORK, "<synthetic>": self.EMPTY}), {"m": self.WORK})
+        self.assertEqual(C.work_bundles({"<synthetic>": self.EMPTY}), {"<synthetic>": self.EMPTY})
