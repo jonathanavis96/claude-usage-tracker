@@ -16,7 +16,7 @@ from .gs_passive import credit_rate_sources, passive_dollar_readings, unpriced_c
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
-from .usage_api import _as_utc, parse_instant
+from .usage_api import as_utc, parse_instant
 from .speed import load_history as load_speed_history
 from .speed import speed_block
 from . import five_hour_end, five_hour_weight, weekly_meter
@@ -344,7 +344,7 @@ def flag_provisional_levels(changes: list[dict], credits_block: dict, weekly: di
 
 def _in_utc(readings: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
     # A naive stamp is UTC, as gs_passive._utc_day reads it, never the host's local time.
-    return [(_as_utc(ts).astimezone(timezone.utc), v) for ts, v in readings]
+    return [(as_utc(ts).astimezone(timezone.utc), v) for ts, v in readings]
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,

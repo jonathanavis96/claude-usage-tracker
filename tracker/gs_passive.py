@@ -102,6 +102,7 @@ from .rows import usable_rows
 from .samples import Sample, infer_resets, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 from .unclaimed import airlock_record
+from .usage_api import as_utc
 from .unclaimed import attribute as attribute_unclaimed
 from .weekly_meter import seven_day_steps
 
@@ -1043,8 +1044,7 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             usd = sum(v for _, v in ss)
             # A naive end is UTC, as `_utc_day` files it: left naive it would not sort against
             # an aware one, and the whole series would fail on one hand-written stamp.
-            end = datetime.fromisoformat(ss[-1][0]["end"])
-            end = end if end.tzinfo else end.replace(tzinfo=timezone.utc)
+            end = as_utc(datetime.fromisoformat(ss[-1][0]["end"]))
             out.append((end, usd / sum(s["delta_pct"] for s, _ in ss) * 100))
     return sorted(out)
 
@@ -1330,9 +1330,7 @@ def _utc_arg(value: str, *, end_of_day: bool = False) -> datetime:
     on comparison. A bare date means the whole day: its start for --since, its
     last second for --until, so `--since 2026-09-05 --until 2026-09-15` spans
     both days inclusive."""
-    t = datetime.fromisoformat(value)
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
+    t = as_utc(datetime.fromisoformat(value))
     if end_of_day and len(value) == 10:
         t = t.replace(hour=23, minute=59, second=59)
     return t

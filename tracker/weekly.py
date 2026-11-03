@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import median
 
 from .detect import ratio_interval
+from .usage_api import as_utc
 
 _FIVE_HOUR_TOLERANCE = timedelta(seconds=120)
 _MIN_FIVE_HOUR_PCT = 50.0
@@ -80,7 +81,7 @@ def parse_row(d: dict) -> dict | None:
         for k in ("ts", "five_resets_at", "seven_resets_at"):
             dt = datetime.fromisoformat(row[k])
             if dt.tzinfo is None:
-                row[k] = dt.replace(tzinfo=timezone.utc).isoformat()
+                row[k] = as_utc(dt).isoformat()
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
     return row

@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 from .samples import MixedAccountLog, Sample, parse_meter_log
-from .usage_api import _as_utc, parse_instant
+from .usage_api import as_utc, parse_instant
 
 WEEK = timedelta(days=7)
 #: Readings of one weekly window carry the same `resets_at` up to sub-second jitter
@@ -97,7 +97,7 @@ class Pace:
 
 
 #: A naive stamp is taken as UTC, so naive and aware readings compare instead of raising.
-_aware = _as_utc
+_aware = as_utc
 _when = parse_instant
 
 

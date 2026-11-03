@@ -80,6 +80,7 @@ from pathlib import Path
 from statistics import median
 
 from .detect import ratio_interval
+from .usage_api import as_utc
 
 PRICES_PATH = Path(__file__).resolve().parent.parent / "data" / "prices.json"
 #: The meter's own per-model rates, fitted from the passive stretches by
@@ -661,7 +662,8 @@ def _masterrig_in_use(st: dict) -> bool:
     """Whether a masterrig stretch is from MASTERRIG_FROM on (`masterrig_excluded` without
     `whole_history`). One with no start stamp cannot be shown to be, so it is left out: the
     cut exists to keep masterrig's untrustworthy early history out of every fit."""
-    return bool(st.get("start")) and datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM
+    # A naive stamp is UTC, as everywhere else: compared naive, it raised TypeError.
+    return bool(st.get("start")) and as_utc(datetime.fromisoformat(st["start"])) >= MASTERRIG_FROM
 
 
 def spans_cut(st: dict) -> bool:
