@@ -31,6 +31,12 @@ dave busy: meter moved 7% -> 8%
 probe skipped: no idle account within max wait
 """
 
+# 2026-11: dave has no five-hour limit (weekly-only, ADR 0001 rule 24), jwork is mid-turn.
+WEEKLY_ONLY_SKIP_LOG = """00:00:01Z jwork busy: pid 1942517
+00:00:02Z dave weekly-only: no five-hour limit, so no tick to measure
+probe skipped: no usable account within max wait (jwork busy: pid 1942517; dave weekly-only: no five-hour limit, so no tick to measure)
+"""
+
 # Issue #38: dave passed over for its weekly meter, jwork for a session mid-turn.
 WEEKLY_SKIP_LOG = """00:00:01Z jwork busy: pid 1942517
 00:00:02Z dave weekly meter 99%
@@ -94,6 +100,15 @@ class TestSummary(unittest.TestCase):
         self.assertIn("dave was busy (meter moved 7% -> 8%)", s)
         self.assertIn("jwork was busy (pid 1942517, 2355887)", s)
         self.assertIn("nothing is broken", s)
+
+    def test_skipped_names_a_weekly_only_account_rather_than_saying_none_were_checked(self):
+        s = summary("claude-opus-5", 3, "Rotation run", WEEKLY_ONLY_SKIP_LOG)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because no "
+                                     "idle account still has a five-hour limit to measure."), s)
+        self.assertIn("dave has no five-hour limit (no five-hour limit, so no tick to measure)", s)
+        self.assertIn("jwork was busy (pid 1942517)", s)
+        self.assertNotIn("does not say which accounts", s)
+        self.assertNotIn("Who was busy", s)
 
     def test_skipped_tells_a_weekly_meter_apart_from_a_busy_account(self):
         s = summary("claude-opus-5", 3, "Rotation run", WEEKLY_SKIP_LOG)

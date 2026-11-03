@@ -34,6 +34,8 @@ BUSY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) busy: (?P<why>.+)$")
 # An account passed over for its seven-day meter (issue #38). The `<name> weekly meter N%`
 # figure lines have no colon after "weekly" and are not skips.
 WEEKLY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) weekly: (?P<why>.+)$")
+# tracker.probe's `weekly-only` skip: an account with no five-hour limit (ADR 0001 rule 24).
+WEEKLY_ONLY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) weekly-only: (?P<why>.+)$")
 ABORT_RE = re.compile(r"^(?:\S+Z )?probe aborted on (?P<name>\w+): (?P<why>.+)$")
 WAIT_RE = re.compile(r"^(?:\S+Z )?window resets in (?P<s>\d+)s: waiting for it")
 # A traceback ends with the exception line: the first unindented line after the
@@ -81,6 +83,8 @@ def _parse(log_text: str) -> dict:
             skips.append((m.group("name"), "busy", m.group("why")))
         elif (m := WEEKLY_RE.match(line)):
             skips.append((m.group("name"), "weekly", m.group("why")))
+        elif (m := WEEKLY_ONLY_RE.match(line)):
+            skips.append((m.group("name"), "weekly-only", m.group("why")))
         elif (m := ABORT_RE.match(line)):
             abort = (m.group("name"), m.group("why"))
         elif (m := WAIT_RE.match(line)):
@@ -157,12 +161,20 @@ def summary(model: str, rc: int, what: str, log_text: str, payload: str = "prose
 
     if rc == 3:
         last = {n: (how, why) for n, how, why in parsed["skips"]}
-        said = {"busy": "was busy", "weekly": "was too close to its weekly limit"}
-        who = "; ".join(f"{n} {said[last[n][0]]} ({last[n][1]})" for n in sorted(last)) if last else \
+        said = {"busy": "was busy", "weekly": "was too close to its weekly limit",
+                "weekly-only": "has no five-hour limit"}
+        who = "; ".join(f"{n} {said.get(last[n][0], last[n][0])} ({last[n][1]})" for n in sorted(last)) if last else \
             "the log does not say which accounts were checked"
         pids = any(how == "busy" and "pid" in why for _, how, why in parsed["skips"])
         hint = (" A `pid` reason means a Claude session was running on that account; if "
                 "those sessions are stale, closing them frees the account." if pids else "")
+        if any(how == "weekly-only" for how, _ in last.values()) and not any(
+                how == "weekly" for how, _ in last.values()):
+            return (f"Outcome: SKIPPED. {kind} never started, because no idle account still has a "
+                    f"five-hour limit to measure. No measurement was recorded.\n\n"
+                    f"Why each account was skipped: {who}.{hint} A tick probe needs a five-hour "
+                    f"meter, which a weekly-only account no longer has.\n\n"
+                    f"What happens next: nothing is broken. {keeps}")
         if any(how == "weekly" for how, _ in last.values()):
             # Issue #38: a spent week must not read as the no-idle-account blackout of #21.
             return (f"Outcome: SKIPPED. {kind} never started, because no account was both idle "
