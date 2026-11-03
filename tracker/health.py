@@ -93,6 +93,9 @@ class Config:
     credentials: Path = HOME / ".claude" / ".credentials.json"
     token_grace_s: int = 12 * 60 * 60
     lock_pidfile: Path = ROOT / ".supervise.pid"
+    #: The supervisor's flock file, for a run with no pid file; None is `<pid file>.lock`, the
+    #: name the default locks carry (tracker.supervise names its pid file `<lock>.pid`).
+    lock_file: Path | None = None
     lock_max_age_s: int = 2 * 60 * 60
     logs: tuple[Path, ...] = ()
     max_log_bytes: int = 5 * 1024 * 1024
@@ -133,10 +136,10 @@ LIVE_PAGE_URL = "https://alldonesites.com/data/claude-usage.json"
 
 
 def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path = GS_OPS,
-              repo: Path = ROOT, site: Path = GS_SITE) -> Config:
+              repo: Path = ROOT, site: Path = GS_SITE, lock_file: Path | None = None) -> Config:
     """Health on gs: the supervised publisher run every 30 min, the age of the JSON it
     published, the three meter timers and the advisory steps of bin/daily.sh."""
-    return Config(state=state, run_interval_s=30 * 60, lock_pidfile=pidfile, logs=logs, repo=repo,
+    return Config(state=state, run_interval_s=30 * 60, lock_pidfile=pidfile, lock_file=lock_file, logs=logs, repo=repo,
                   history_dir=repo / "history",
                   meter_logs=tuple(ops / f"claude-usage-meter-{a}.log" for a in GS_METER_ACCOUNTS),
                   passive_record=repo / "history" / "gs-passive.json",
@@ -468,7 +471,7 @@ def _held_lock_age(c: Config, now: float) -> float | None:
     the stamp each run puts on it as it takes the lock (tracker.supervise); None when nothing
     holds it, or when the stamp is older than the last finished run, so it was not this run's
     (the stamp could not be written: a read-only disk) and cannot age it."""
-    lock = c.lock_pidfile.with_suffix(".lock")
+    lock = c.lock_file or c.lock_pidfile.with_suffix(".lock")
     if not _flock_held(lock):
         return None
     try:

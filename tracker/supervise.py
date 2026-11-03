@@ -440,12 +440,12 @@ def _kuma_first(send: Sender, kuma_file: Path | None, state: dict) -> tuple[Send
 
 
 def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: Sender, label: str,
-                   t: float, stale_after: float = 3600.0) -> None:
+                   t: float, stale_after: float = 3600.0, lock: Path | None = None) -> None:
     """A run holding the lock past health's lock limit is an incident, raised from here:
     the hung run itself will never get to its own health check."""
     # With no pid file (a run on a full disk goes on without one), check_lock ages the held
     # lock by the stamp `supervise` puts on it as it takes it.
-    reason = health.check_lock(health.Config(lock_pidfile=pidfile, state=state_path), time.time())
+    reason = health.check_lock(health.Config(lock_pidfile=pidfile, state=state_path, lock_file=lock), time.time())
     if reason is None:
         return
     state = health.read_state(state_path)
@@ -476,7 +476,7 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             print("skipped: previous run still going", file=sys.stderr)
-            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now(), stale_after)
+            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now(), stale_after, lock)
             return 0
         with contextlib.suppress(OSError):
             os.utime(lock)  # when this run took the lock: health.check_lock's age without a pid file
@@ -502,7 +502,7 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
                 state["last_fail"] = t
                 state["last_reason"] = EXIT_REASONS.get(code, f"exit {code} after {retries + 1} attempts")
                 state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-            cfg = health_cfg or health.masterrig_config(state=state_path, lock_pidfile=pidfile,
+            cfg = health_cfg or health.masterrig_config(state=state_path, lock_pidfile=pidfile, lock_file=lock,
                                                         logs=(log,) if log else ())
             if not write_state(state_path, state):  # the run check reads it
                 # Nothing persists, so the in-a-row count cannot grow: alert on this run.
@@ -550,8 +550,9 @@ def main(argv: list[str] | None = None) -> int:
     lock = a.lock or (health.GS_LOCK if gs else ROOT / ".supervise.lock")
     state = a.state or (health.GS_STATE if gs else ROOT / ".supervise-state.json")
     log = a.log or (health.GS_LOG if gs else None)
-    cfg = (health.gs_config(state=state, pidfile=lock.with_suffix(".pid"), logs=(log,) if log else ()) if gs
-           else health.masterrig_config(state=state, lock_pidfile=lock.with_suffix(".pid"), logs=(log,) if log else ()))
+    cfg = (health.gs_config(state=state, pidfile=lock.with_suffix(".pid"), lock_file=lock, logs=(log,) if log else ())
+           if gs else health.masterrig_config(state=state, lock_pidfile=lock.with_suffix(".pid"), lock_file=lock,
+                                              logs=(log,) if log else ()))
     return supervise(cmd, lock=lock, state_path=state, log=log,
                      retries=a.retries if a.retries is not None else (0 if gs else 2), backoff=a.backoff,
                      max_log_bytes=a.max_log_bytes, keep=a.keep,

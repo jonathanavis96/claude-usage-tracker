@@ -177,6 +177,23 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(state["kinds_since"]["lock"], self.t - 3600.0)
         self.assertEqual(state["kinds_since"]["meters/avis"], self.t - 60)
 
+    def test_a_hung_run_with_no_pid_file_is_raised_whatever_the_locks_suffix(self):
+        # Code review round 9: health found the flock file by turning the pid file back into
+        # `<name>.lock`, so a lock named anything else was never found.
+        self.lock = self.tmp / "tracker.flock"
+        self.assertEqual(self.run_cmd(0), 0)
+        held = time.time() - 3 * 3600
+        os.utime(self.lock, (held, held))
+        self.state.write_text(json.dumps({"last_ok": held - 600}))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock 3h00m", self.send.sent[0])
+
     def test_unwritable_pidfile_still_runs_and_alerts(self):
         # A full disk refused the pid file's few bytes and the OSError escaped before the
         # job ran: no run, no state, no alert, though the state and the run log both
