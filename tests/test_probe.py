@@ -1371,6 +1371,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(last, "probe skipped: no usable account within max wait (jwork busy: pid 1942517; "
                                "dave weekly: 99% of the seven-day limit used, above 90%)")
 
+    def test_every_account_weekly_only_does_not_claim_a_wait(self):
+        # choose_account gives up at once when every account is weekly-only (5f83b251), so
+        # "within max wait" described a wait that never happened.
+        from tracker.probe import Skip
+        why = "no five-hour limit, so no tick to measure"
+        rc, last = self._skipped({"jwork": Skip("weekly-only", why), "dave": Skip("weekly-only", why)})
+        self.assertEqual(rc, 3)
+        self.assertEqual(last, f"probe skipped: every account is weekly-only, nothing to wait for "
+                               f"(jwork weekly-only: {why}; dave weekly-only: {why})")
+
     def test_every_account_busy_keeps_the_no_idle_account_line(self):
         from tracker.probe import Skip
         rc, last = self._skipped({"jwork": Skip("busy", "pid 1942517"), "dave": Skip("busy", "pid 491402")})

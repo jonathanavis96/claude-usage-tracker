@@ -1111,7 +1111,12 @@ def main(argv: list[str] | None = None) -> int:
         # names each account's, so neither reads as the "no idle account" blackout of issue #21.
         if any(s.kind != "busy" for s in skipped.values()):
             why = "; ".join(f"{n} {s.kind}: {s.why}" for n, s in skipped.items())
-            print(f"probe skipped: no usable account within max wait ({why})", file=sys.stderr)
+            if all(s.kind == "weekly-only" for s in skipped.values()):
+                # choose_account gave up at once: no wait happened, so the line claims none.
+                print(f"probe skipped: every account is weekly-only, nothing to wait for ({why})",
+                      file=sys.stderr)
+            else:
+                print(f"probe skipped: no usable account within max wait ({why})", file=sys.stderr)
         else:
             print("probe skipped: no idle account within max wait", file=sys.stderr)
         return 3
