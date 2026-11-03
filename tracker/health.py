@@ -434,9 +434,9 @@ def _flock_held(lock: Path) -> bool | None:
     takes a lock itself (a shared one, even for an instant, makes a supervised run starting
     in the same moment skip as "previous run still going"). None when it cannot tell.
 
-    A row is matched by inode, then confirmed through the holder's open files: the device
-    /proc/locks prints is the superblock's, which differs from stat's on btrfs subvolumes and
-    overlayfs. Where the holder's files cannot be read, the device must match as well."""
+    A row is matched by inode and device, or, where the device /proc/locks prints (the
+    superblock's) reads differently from stat's (btrfs subvolumes, overlayfs), by inode and the
+    holder's open files."""
     try:
         st = os.stat(lock)
         table = _proc_locks()
@@ -455,8 +455,10 @@ def _flock_held(lock: Path) -> bool | None:
             same_dev = int(dev_major, 16) == os.major(st.st_dev) and int(dev_minor, 16) == os.minor(st.st_dev)
         except (IndexError, ValueError):
             continue
-        opened = _holds_open(pid, st)
-        if opened or (opened is None and same_dev):
+        # The device and inode agreeing is enough (the holder may sit in another pid namespace,
+        # where its pid names some other process); the holder's files settle only a device
+        # that reads differently.
+        if same_dev or _holds_open(pid, st):
             return True
     return False
 

@@ -231,6 +231,13 @@ class HealthTest(unittest.TestCase):
             with mock.patch.object(health, "_proc_locks", return_value=other), \
                     mock.patch.object(health, "_holds_open", return_value=False):
                 self.assertIsNone(self.reasons().get("lock"))  # the same inode on another device
+            # Round 8: device and inode agreeing is enough, though the holder's pid shows no
+            # such file (another pid namespace).
+            st = os.stat(lock)
+            same = f"1: FLOCK  ADVISORY  WRITE 1 {os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino} 0 EOF\n"
+            with mock.patch.object(health, "_proc_locks", return_value=same), \
+                    mock.patch.object(health, "_holds_open", return_value=False):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
         finally:
             os.close(fd)
 
