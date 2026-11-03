@@ -1107,8 +1107,8 @@ def main(argv: list[str] | None = None) -> int:
                             now=clock, deadline=deadline, skipped=skipped)
     if picked is None:
         # Every account passed over. Busy alone keeps the line it has always had; once a
-        # weekly meter is among the reasons the line says so and names each account's,
-        # so a spent week does not read as the "no idle account" blackout of issue #21.
+        # weekly meter (or a weekly-only account) is among the reasons the line says so and
+        # names each account's, so neither reads as the "no idle account" blackout of issue #21.
         if any(s.kind != "busy" for s in skipped.values()):
             why = "; ".join(f"{n} {s.kind}: {s.why}" for n, s in skipped.items())
             print(f"probe skipped: no usable account within max wait ({why})", file=sys.stderr)
