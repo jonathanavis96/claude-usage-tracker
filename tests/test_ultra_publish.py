@@ -1,10 +1,28 @@
 """Defects in tracker/publish.py found by the 2026-11-03 sweep, each pinned by a test."""
+import os
+import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 from tests.test_publish import (EFFORT, PASSIVE, PRICES, _detector_change, _detector_size,
                                 detector_run)
 from tracker.publish import build_public_json
+
+
+class NaiveReadingStampTests(unittest.TestCase):
+    def test_a_naive_reading_stamp_is_utc_not_the_hosts_local_time(self):
+        # Code review round 6: gs_passive files a naive stamp under its UTC day, so _in_utc
+        # must not read it in the host's zone.
+        from tracker.publish import _in_utc
+        with mock.patch.dict(os.environ, {"TZ": "Africa/Johannesburg"}):
+            time.tzset()
+            try:
+                got = _in_utc([(datetime(2026, 11, 3, 1, 0), 1.0)])
+            finally:
+                os.environ.pop("TZ", None)
+        time.tzset()
+        self.assertEqual(got, [(datetime(2026, 11, 3, 1, 0, tzinfo=timezone.utc), 1.0)])
 
 
 class EvidencePastTheFiveHourEndTests(unittest.TestCase):
@@ -64,6 +82,25 @@ class EvidencePastTheFiveHourEndTests(unittest.TestCase):
         gs["accounts"]["jwork"]["stretches"] = [
             self._stretch((self.END - timedelta(minutes=30, days=d)).astimezone(sast)) for d in (0, 1, 2)]
         self._check_change_after_the_end(timedelta(hours=2), gs=gs)
+
+    def test_the_evidence_counts_stretches_by_their_utc_day_too(self):
+        # Code review round 6: `since` is a UTC day now, but stretches were still filtered by
+        # their own offset's date, so a +02:00 stretch from the UTC day before was counted.
+        # The 30 Oct 23:07Z stretch, written +02:00 as 31 Oct, is the evidence's first reading;
+        # one 23:30Z on 29 Oct, written as 30 Oct 01:30+02:00, is not inside it.
+        sast = timezone(timedelta(hours=2))
+        gs = self._gs()
+        recent = [self._stretch((self.END - timedelta(minutes=30, hours=h)).astimezone(sast)) for h in (0, 2)]
+        before = self._stretch(datetime(2026, 10, 29, 23, 30, tzinfo=timezone.utc).astimezone(sast))
+        gs["accounts"]["jwork"]["stretches"] = [before, *recent]
+        change = _detector_change(datetime(2026, 10, 30, 6, tzinfo=timezone.utc).isoformat(), "seven_day",
+                                  "measured", {"seven_day": _detector_size(-30.0, -36.0, -24.0),
+                                               "five_hour": _detector_size(-30.0, -38.0, -21.0),
+                                               "ratio": _detector_size(1.0, -4.0, 6.0)})
+        out = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=gs,
+                                four_accounts_run=detector_run(change))
+        ev = out["rates"]["claude-sonnet-5"]["evidence"]
+        self.assertEqual((ev["readings"], ev["stretches"]), (1, 2), ev)
 
     def _check_change_after_the_end(self, delay, gs=None):
         before = _detector_change((self.END - timedelta(days=20)).isoformat(), "seven_day", "measured",

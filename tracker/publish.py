@@ -16,7 +16,7 @@ from .gs_passive import credit_rate_sources, passive_dollar_readings, unpriced_c
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
-from .usage_api import parse_instant
+from .usage_api import _as_utc, parse_instant
 from .speed import load_history as load_speed_history
 from .speed import speed_block
 from . import five_hour_end, five_hour_weight, weekly_meter
@@ -343,7 +343,8 @@ def flag_provisional_levels(changes: list[dict], credits_block: dict, weekly: di
 
 
 def _in_utc(readings: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
-    return [(ts.astimezone(timezone.utc), v) for ts, v in readings]
+    # A naive stamp is UTC, as gs_passive._utc_day reads it, never the host's local time.
+    return [(_as_utc(ts).astimezone(timezone.utc), v) for ts, v in readings]
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
@@ -504,7 +505,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     stretches = _eligible_stretches(gs_passive, prices, allow_legacy_unverified=evidence_status == "conditional")
     if current:
         since = current[0][0].date().isoformat()
-        stretches = [st for st in stretches if st["end"][:10] >= since]
+        # By UTC day on both sides, as the readings are (`_in_utc`): a +02:00 stretch's own
+        # date string is the next day's for its first two hours.
+        stretches = [st for st in stretches if (_utc(st["end"]) or "")[:10] >= since]
     else:
         stretches = []
     movement = sum(float(st.get("delta_pct", 0)) for st in stretches)

@@ -102,6 +102,12 @@ class StamplessStretchTests(unittest.TestCase):
         kept = C.announced_change_stretches({"masterrig": [self._stretch()]}, [])
         self.assertEqual(kept["masterrig"], [])
 
+    def test_the_masterrig_cut_reads_only_the_start(self):
+        # Code review round 6: _masterrig_in_use parsed `end` too, which masterrig_excluded
+        # never reads without whole_history. (clean_stretches parses both stamps before it.)
+        self.assertTrue(C._masterrig_in_use({"start": "2026-09-10T00:00:00+00:00", "end": "not a time"}))
+        self.assertFalse(C._masterrig_in_use({"start": "2026-09-03T00:00:00+00:00"}))
+
     def test_masterrig_before_the_cut_is_still_left_out(self):
         early = self._stretch(start="2026-09-03T00:00:00+00:00", end="2026-09-03T02:00:00+00:00")
         for select in (C.rate_fit_stretches, C.window_stretches, C.announced_change_stretches):
