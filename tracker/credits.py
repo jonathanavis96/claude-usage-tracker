@@ -647,6 +647,15 @@ def masterrig_excluded(account: str, start: datetime, end: datetime, whole_histo
     return start < hi and end > lo
 
 
+def _masterrig_in_use(st: dict) -> bool:
+    """Whether a masterrig stretch is from MASTERRIG_FROM on (`masterrig_excluded` without
+    `whole_history`). One with no start stamp cannot be shown to be, so it is left out: the
+    cut exists to keep masterrig's untrustworthy early history out of every fit."""
+    start = st.get("start")
+    return bool(start) and not masterrig_excluded("masterrig", datetime.fromisoformat(start),
+                                                  datetime.fromisoformat(st.get("end") or start), False)
+
+
 def spans_cut(st: dict) -> bool:
     """True when a stretch starts before CUT_AT and ends after it.
 
@@ -669,9 +678,7 @@ def rate_fit_stretches(by_account: dict[str, list[dict]],
     """
     kept = clean_stretches(by_account, runs, require="capture_status")
     if "masterrig" in kept:
-        kept["masterrig"] = [st for st in kept["masterrig"]
-                             if not st.get("start")
-                             or datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+        kept["masterrig"] = [st for st in kept["masterrig"] if _masterrig_in_use(st)]
     return {account: [st for st in rows if not spans_cut(st)] for account, rows in kept.items()}
 
 
@@ -689,10 +696,7 @@ def window_stretches(by_account: dict[str, list[dict]],
     A stretch spanning the cut stays in: `cut_side` files it by its start, as before.
     """
     kept = clean_stretches(by_account, runs, require="capture_status")
-    return {account: [st for st in rows
-                      if not (st.get("start") and st.get("end")
-                              and masterrig_excluded(account, datetime.fromisoformat(st["start"]),
-                                                     datetime.fromisoformat(st["end"]), False))]
+    return {account: [st for st in rows if account != "masterrig" or _masterrig_in_use(st)]
             for account, rows in kept.items()}
 
 
@@ -2235,9 +2239,7 @@ def announced_change_stretches(by_account: dict[str, list[dict]],
     """
     kept = clean_stretches(by_account, runs, require="status")
     if "masterrig" in kept:
-        kept["masterrig"] = [st for st in kept["masterrig"]
-                             if not st.get("start")
-                             or datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+        kept["masterrig"] = [st for st in kept["masterrig"] if _masterrig_in_use(st)]
     return kept
 
 

@@ -88,16 +88,24 @@ class StamplessStretchTests(unittest.TestCase):
         return {"delta_pct": 10.0, "tokens": {"claude-opus-5": tok(input=1_000)},
                 "status": "accepted", "capture_status": "accepted", **extra}
 
-    def test_the_rate_fit_selection_keeps_a_stampless_masterrig_stretch(self):
+    # Code review round 3: a masterrig stretch with no start cannot be shown to be from
+    # MASTERRIG_FROM on, so every selection leaves it out (01267da8 had kept it), without
+    # crashing; another account's stamp-less stretch is kept as before.
+    def test_the_rate_fit_selection_leaves_out_a_stampless_masterrig_stretch(self):
         dated = self._stretch(start="2026-09-10T00:00:00+00:00", end="2026-09-10T02:00:00+00:00")
-        kept = C.rate_fit_stretches({"masterrig": [self._stretch(), dated]}, [])
-        self.assertEqual(len(kept["masterrig"]), 2)
-        self.assertEqual(len(C.window_stretches({"masterrig": [self._stretch(), dated]}, [])
-                             ["masterrig"]), 2)
+        kept = C.rate_fit_stretches({"masterrig": [self._stretch(), dated], "jwork": [self._stretch()]}, [])
+        self.assertEqual(kept["masterrig"], [dated])
+        self.assertEqual(len(kept["jwork"]), 1)
+        self.assertEqual(C.window_stretches({"masterrig": [self._stretch(), dated]}, [])["masterrig"], [dated])
 
-    def test_the_known_date_selection_keeps_a_stampless_masterrig_stretch(self):
+    def test_the_known_date_selection_leaves_out_a_stampless_masterrig_stretch(self):
         kept = C.announced_change_stretches({"masterrig": [self._stretch()]}, [])
-        self.assertEqual(len(kept["masterrig"]), 1)
+        self.assertEqual(kept["masterrig"], [])
+
+    def test_masterrig_before_the_cut_is_still_left_out(self):
+        early = self._stretch(start="2026-09-03T00:00:00+00:00", end="2026-09-03T02:00:00+00:00")
+        for select in (C.rate_fit_stretches, C.window_stretches, C.announced_change_stretches):
+            self.assertEqual(select({"masterrig": [early]}, [])["masterrig"], [], select.__name__)
 
     def test_a_stampless_stretch_is_on_neither_side_of_a_candidate(self):
         at = datetime(2026, 9, 20, tzinfo=timezone.utc)
