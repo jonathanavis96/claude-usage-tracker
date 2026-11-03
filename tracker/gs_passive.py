@@ -1100,7 +1100,7 @@ def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
         # rows carry the model id `<synthetic>` and zero tokens, belong to no family, and
         # would otherwise drop the whole stretch as unpriced. One that ever carries tokens
         # is not skipped, and lands in `unpriced_credit_models`.
-        if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
+        if not credit_model.holds_work(tok):
             continue
         fam = credit_model.family(model, credits)
         if fam is None:
@@ -1203,7 +1203,7 @@ def unpriced_credit_models(report: dict, prices: dict, credits: dict,
         for s in account.get("stretches") or []:
             for model, tok in (s.get("tokens") or {}).items():
                 # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows).
-                if not isinstance(tok, dict) or model in out or not credit_model.raw_tokens(tok):
+                if model in out or not credit_model.holds_work(tok):
                     continue
                 if (bundle_meter_usd(model, tok, prices) is None
                         or stretch_credits({model: tok}, credits, model_rates, prices)[0] is None):

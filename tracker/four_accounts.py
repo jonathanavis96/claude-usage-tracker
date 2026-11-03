@@ -245,7 +245,7 @@ def family_parts(credits: dict, model_rates: dict):
     def parts(tokens: dict) -> dict[str, float]:
         out: dict[str, float] = {}
         for model, tok in (tokens or {}).items():
-            if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
+            if not credit_model.holds_work(tok):
                 continue
             fam = credit_model.family(model, credits)
             if fam is None:

@@ -436,11 +436,18 @@ def is_empty_bundle(tok) -> bool:
     return isinstance(tok, dict) and not raw_tokens(tok)
 
 
+def holds_work(tok) -> bool:
+    """A token bundle with tokens in it: neither a `<synthetic>` placeholder (`is_empty_bundle`)
+    nor a value that is no bundle at all. What every per-bundle loop counts."""
+    return isinstance(tok, dict) and bool(raw_tokens(tok))
+
+
 def bundles_with_work(tokens: dict | None) -> dict:
     """`tokens` less its zero-token bundles (`<synthetic>` rows), which hide no work. Empty when
     nothing is left: every reader of a stretch's work (the passive dollar series, the
-    output-weight fit, the evidence beside a rate) reads that as no reading, through this one
-    rule, so the evidence counts exactly the stretches the series reads."""
+    output-weight fit, the evidence beside a rate) reads that as no reading through this, so
+    the evidence counts exactly the stretches the series reads. Pricing differs on purpose
+    (`work_bundles`): a stretch of nothing but empty bundles stays unpriced, not priced at 0."""
     return {m: tok for m, tok in (tokens or {}).items() if not is_empty_bundle(tok)}
 
 
@@ -1927,7 +1934,7 @@ def comparison_value(credits: dict, model_rates: dict | None = None,
     def value(tokens: dict) -> float | None:
         total = 0.0
         for model, tok in tokens.items():
-            if not isinstance(tok, dict) or not raw_tokens(tok):
+            if not holds_work(tok):
                 continue
             fam = family(model, credits)
             if fam is None:
