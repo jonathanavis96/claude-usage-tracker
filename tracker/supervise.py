@@ -471,7 +471,10 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
         try:
             pidfile.write_text(str(os.getpid()))
         except OSError as e:  # full disk: the pid file only serves the health check's lock age
-            print(f"cannot write pid file {pidfile} ({e}); running without it", file=sys.stderr)
+            try:  # stderr is a log on the same disk under cron, so the warning can fail too
+                print(f"cannot write pid file {pidfile} ({e}); running without it", file=sys.stderr)
+            except OSError:
+                pass
             try:
                 pidfile.unlink(missing_ok=True)  # an empty one would read as a stale lock
             except OSError:

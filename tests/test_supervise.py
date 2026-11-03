@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import os
 import sys
@@ -141,6 +142,25 @@ class SuperviseTest(unittest.TestCase):
                 self.t += 3600
         self.assertEqual(self.st()["consecutive_failures"], 3)
         self.assertEqual(len(self.send.sent), 1, self.send.sent)
+
+    def test_unwritable_pidfile_still_runs_when_stderr_is_on_the_same_full_disk(self):
+        # cron appends the supervisor's stderr to a log on the same disk, so the warning
+        # about the pid file can hit ENOSPC too; it must not stop the run either.
+        pidfile = self.lock.with_suffix(".pid")
+        real = Path.write_text
+
+        def full_disk(path, *a, **k):
+            if path == pidfile:
+                raise OSError(28, "No space left on device")
+            return real(path, *a, **k)
+
+        class FullStderr(io.StringIO):
+            def write(self, s):
+                raise OSError(28, "No space left on device")
+
+        with mock.patch.object(Path, "write_text", full_disk), mock.patch("sys.stderr", FullStderr()):
+            self.assertEqual(self.run_cmd(1, retries=0), 1)
+        self.assertEqual(self.st()["consecutive_failures"], 1)
 
     def test_stale_pidfile_is_cleared(self):
         self.lock.with_suffix(".pid").write_text("999999999")
