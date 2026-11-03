@@ -78,3 +78,23 @@ class ModelMismatchTests(unittest.TestCase):
         d["modelUsage"] = {"claude-sonnet-5-20260901": d["modelUsage"]["claude-sonnet-5"]}
         u = parse_result(json.dumps(d), "claude-sonnet-5")
         self.assertEqual((u.model, u.output), ("claude-sonnet-5-20260901", 80))
+
+    def test_the_1m_context_marker_is_the_same_model(self):
+        # Review round 1: the old prefix match accepted "claude-opus-5-5[1m]"; the exact-or-dated
+        # rule refused it, failing every run on a model the CLI reports with the marker.
+        d = json.loads(RESULT)
+        block = d["modelUsage"]["claude-sonnet-5"]
+        d["modelUsage"] = {"claude-opus-5-5[1m]": block}
+        self.assertEqual(parse_result(json.dumps(d), "claude-opus-5-5").output, 80)
+        d["modelUsage"] = {"claude-opus-5-5-20261001[1m]": block}
+        self.assertEqual(parse_result(json.dumps(d), "claude-opus-5-5").output, 80)
+        with self.assertRaises(RuntimeError):  # still another model when asked for Opus 5
+            parse_result(json.dumps(d), "claude-opus-5")
+
+    def test_an_aliased_older_model_is_not_the_one_asked_for(self):
+        # turns.MODEL_ALIASES prices claude-fable-5 as claude-fable-5-1; a probe of 5.1 served
+        # by 5 is still the wrong model.
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-fable-5": d["modelUsage"]["claude-sonnet-5"]}
+        with self.assertRaises(RuntimeError):
+            parse_result(json.dumps(d), "claude-fable-5-1")

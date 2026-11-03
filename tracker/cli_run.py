@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from .turns import _1M_MARKER, _DATE_SUFFIX
 
 
 @dataclass(frozen=True)
@@ -29,11 +30,17 @@ def build_argv(model: str, effort: str) -> list[str]:
     return ["claude", "-p", "--model", model, "--effort", effort, "--output-format", "json", "--restricted"]
 
 
+def _base_id(model: str) -> str:
+    """A model id without its presentation suffixes: the `[1m]` context marker and a dated
+    snapshot. Not tracker.turns.normalized_raw_model, whose aliases price an older model as a
+    newer one; that is right for pricing and wrong for asking which model served a run."""
+    return _DATE_SUFFIX.sub("", _1M_MARKER.sub("", model))
+
+
 def _served_as_asked(key: str, model_hint: str) -> bool:
-    """Whether a modelUsage key is the model asked for: the same id, or a dated snapshot of it
-    (`claude-haiku-4-5-20251001` for `claude-haiku-4-5`). A bare prefix is not enough:
-    `claude-opus-5-5` starts with `claude-opus-5` and is another model."""
-    return key == model_hint or re.fullmatch(re.escape(model_hint) + r"-\d{8}", key) is not None
+    """Whether a modelUsage key is the model asked for, up to presentation suffixes. A bare
+    prefix is not enough: `claude-opus-5-5` starts with `claude-opus-5` and is another model."""
+    return _base_id(key) == _base_id(model_hint)
 
 
 def parse_result(stdout: str, model_hint: str) -> RunUsage:
