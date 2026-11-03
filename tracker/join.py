@@ -56,35 +56,34 @@ class DailyRate:
     split: dict
 
 
+def _window_end(resets_at: str | None) -> datetime | None:
+    """A reading's `resets_at` as an aware instant (naive is UTC); None when absent or unparsable."""
+    if not resets_at:
+        return None
+    try:
+        end = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return end if end.tzinfo is not None else end.replace(tzinfo=timezone.utc)
+
+
 def _is_reset(a: Sample, b: Sample) -> bool:
     if not same_reset(a.resets_at, b.resets_at):
         return True
     # `a` says when its window ends; `b` (often a ceiling reading, which carries no reset
     # id) is at or past that instant, so they belong to different windows even if `b` is
     # higher. Parsed, with 5 s for the seconds of jitter resets_at carries.
-    if a.resets_at and b.resets_at is None:
-        try:
-            end = datetime.fromisoformat(a.resets_at.replace("Z", "+00:00"))
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            if b.ts > end + timedelta(seconds=5):
-                return True
-        except ValueError:
-            pass
+    if b.resets_at is None and (end := _window_end(a.resets_at)) is not None:
+        if b.ts > end + timedelta(seconds=5):
+            return True
     # The mirror case: `b` names its window and `a` (a reset-less reading above 0%) was
     # taken before that window began (five hours before its reset), so the meter fell to
     # 0 between them even when `b` has already climbed past `a`. A 0% reading with no
     # reset id is a meter with no window open, which the next window starts from. A
     # minute of slack, as same_reset allows, for the stamp's rounding and jitter.
-    if b.resets_at and a.resets_at is None and a.five_hour > 0:
-        try:
-            end = datetime.fromisoformat(b.resets_at.replace("Z", "+00:00"))
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            if a.ts < end - FIVE_HOURS - timedelta(seconds=60):
-                return True
-        except ValueError:
-            pass
+    if a.resets_at is None and a.five_hour > 0 and (end := _window_end(b.resets_at)) is not None:
+        if a.ts < end - FIVE_HOURS - timedelta(seconds=60):
+            return True
     return b.five_hour < a.five_hour
 
 
