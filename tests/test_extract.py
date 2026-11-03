@@ -183,6 +183,18 @@ class ClaimTests(unittest.TestCase):
                 self.assertGreater(got[p], old + 86400, f"{p.name} fell back to its mtime")
 
 
+    def test_a_name_that_is_not_utf8_neither_crashes_nor_loses_its_time(self):
+        # Code review round 1: with %n in the format, stat's stdout carries the names, and a
+        # strict decode of a Latin-1 byte raised UnicodeDecodeError out of _births.
+        with tempfile.TemporaryDirectory() as d:
+            odd = Path(os.fsdecode(os.path.join(os.fsencode(d), b"caf\xe9")))
+            odd.mkdir()
+            plain = Path(d, "plain")
+            plain.mkdir()
+            got = X._births([odd, plain])
+            self.assertIn(odd, got)
+            self.assertIn(plain, got)
+
 class ExtractTests(unittest.TestCase):
     """masterrig's layout on 2026-10-22, in miniature: a1 in ~/.claude, avis linking one of a1's
     project directories into its own tree, jwork on its own, dave on a token file."""

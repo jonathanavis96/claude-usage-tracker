@@ -218,8 +218,11 @@ def _births(paths: list[Path]) -> dict[Path, float]:
     for i in range(0, len(paths), 500):
         chunk = paths[i:i + 500]
         try:
+            # Decoded as Python decodes file names, so a name that is not UTF-8 neither raises
+            # nor fails to match its own str(path) below.
             res = subprocess.run(["stat", "-c", "%W %Y %n", "--", *map(str, chunk)], capture_output=True,
-                                 text=True, timeout=60)
+                                 encoding=sys.getfilesystemencoding(),
+                                 errors=sys.getfilesystemencodeerrors(), timeout=60)
             rows = res.stdout.splitlines()
         except (OSError, subprocess.SubprocessError):
             rows = []
