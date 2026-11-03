@@ -244,3 +244,30 @@ class AlertEdgeTests(unittest.TestCase):
             p = Path(d, "env")
             p.write_bytes(b"NOTIFY_ALERT_TO=\xff\xfe\n")
             self.assertIsInstance(read_env_file(p), dict)
+
+
+class DefaultPostErrorTests(unittest.TestCase):
+    """_default_post raises OSError, and only OSError, when no usable reply came back:
+    every caller (main, supervise.email_sender) catches exactly that."""
+
+    def test_endpoint_with_no_scheme_is_an_oserror_not_a_crash(self):
+        # A NOTIFY_SEND_URL missing its https:// raised ValueError, which main and
+        # supervise.email_sender let through: the supervisor died before its state write.
+        with self.assertRaises(OSError):
+            _default_post("alldonesites.com/api/notify/send", {}, b"{}")
+        out, err = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            p = env_file(d, "NOTIFY_SEND_SECRET=s3cr3t\nNOTIFY_ALERT_TO=inbox\n")
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = main(["--env-file", str(p), "--source", "gs", "--subject", "x", "--text", "y",
+                           "--endpoint", "alldonesites.com/api/notify/send"], environ={})
+        self.assertEqual(rc, 1)
+        self.assertIn("warning: alert 'x' not sent", err.getvalue())
+        self.assertNotIn("s3cr3t", out.getvalue() + err.getvalue())
+
+    def test_reply_cut_short_is_an_oserror(self):
+        import http.client
+        from unittest import mock
+        with mock.patch("urllib.request.urlopen", side_effect=http.client.IncompleteRead(b"")):
+            with self.assertRaises(OSError):
+                _default_post(SEND_URL, {}, b"{}")

@@ -29,6 +29,7 @@ tests and a dry run point the helper at a local server.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import socket
@@ -101,13 +102,19 @@ def alert_config(env_file: Path = ENV_FILE, environ: Mapping[str, str] | None = 
 
 
 def _default_post(url: str, headers: Mapping[str, str], body: bytes) -> tuple[int, str]:
-    req = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
+    # Every failure to get a usable reply is an OSError, the one exception callers catch.
+    try:
+        req = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
+    except ValueError as e:  # no scheme or host (a NOTIFY_SEND_URL typo): nothing to reach
+        raise OSError(f"bad endpoint URL: {e}") from e
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         with e:
             return e.code, e.read().decode("utf-8", "replace")
+    except http.client.HTTPException as e:  # a reply cut short or garbled
+        raise OSError(f"{type(e).__name__}: {e}") from e
 
 
 def alert_body(subject: str, text: str, to: str, *, source: str, now: datetime) -> dict:
