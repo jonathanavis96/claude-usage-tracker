@@ -6,7 +6,15 @@ from pathlib import Path
 from itertools import chain, repeat
 
 from tracker.cli_run import RunUsage
-from tracker.probe import ProbeAbort, ProbeResult, Skip, append_result, run_tick_probe, skip_reason
+from tracker.probe import (
+    ProbeAbort,
+    ProbeResult,
+    Skip,
+    append_result,
+    choose_account,
+    run_tick_probe,
+    skip_reason,
+)
 from tracker.usage_api import Utilization
 
 T0 = datetime(2026, 11, 3, 3, 0, tzinfo=timezone.utc)
@@ -87,6 +95,31 @@ class WeeklyOnlyAccountTests(unittest.TestCase):
         r = run_tick_probe("claude-sonnet-5", "low", "p", read, run, sleep=lambda s: None, now=lambda: T0,
                            ticks=1, skip=0)
         self.assertEqual((r.tick_from, r.tick_to), (1, 2))
+
+
+class ChooseAccountWeeklyOnlyTests(unittest.TestCase):
+    """While the probe accounts lose the five-hour limit one at a time, an idle weekly-only
+    account must be passed over for one that still has a five-hour meter, not picked
+    first every slot (its flat null meter reads as idle) and aborted."""
+
+    DAVE = Path("/h/.claude-dave")
+    JWORK = Path("/h/.claude-javiswork")
+
+    def test_a_weekly_only_account_falls_through_to_the_next(self):
+        reads = {"jwork": lambda: Utilization(T0, None, 40.0, None, "2026-11-07T00:00:00+00:00", weekly_only=True),
+                 "dave": lambda: Utilization(T0, 7.0, 40.0, "r1")}
+        logged, skipped, slept = [], {}, []
+        acc = choose_account([("jwork", self.JWORK), ("dave", self.DAVE)], lambda n: reads[n], slept.append,
+                             max_wait_s=0, retry_s=900, processes=list, log=logged.append, skipped=skipped)
+        self.assertEqual(acc, ("dave", self.DAVE))
+        self.assertEqual(skipped, {"jwork": Skip("weekly-only", "no five-hour limit, so no tick to measure")})
+        self.assertIn("jwork weekly-only: no five-hour limit, so no tick to measure", logged)
+        self.assertEqual(slept, [120])  # dave's idle window only: the weekly-only skip spends none
+
+    def test_busy_reason_alone_still_reads_a_flat_weekly_only_meter_as_idle(self):
+        from tracker.probe import busy_reason
+        read = lambda: Utilization(T0, None, 40.0, None, weekly_only=True)  # noqa: E731
+        self.assertIsNone(busy_reason(read, lambda s: None))
 
 
 class AppendAfterUnterminatedLineTests(unittest.TestCase):

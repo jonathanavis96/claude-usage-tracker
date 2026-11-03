@@ -829,8 +829,9 @@ WEEKLY_MAX_PCT = 90
 @dataclass(frozen=True)
 class Skip:
     """Why choose_account passed over an account. `kind` is `busy` (someone is using it,
-    by busy_reason's checks) or `weekly` (its seven-day meter is too near the cap to
-    spend a run on); `why` is the detail the log line carries after it."""
+    by busy_reason's checks), `weekly` (its seven-day meter is too near the cap to
+    spend a run on) or `weekly-only` (it has no five-hour limit, ADR 0001 rule 24); `why`
+    is the detail the log line carries after it."""
     kind: str
     why: str
 
@@ -913,6 +914,10 @@ def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     a = read()
     if weekly_max_pct is not None:
         note(f"weekly meter {a.seven_day:g}%" if a.seven_day is not None else "weekly meter not reported")
+        if a.weekly_only:
+            # Its null five-hour meter is flat, so it reads idle, but run_tick_probe would
+            # only refuse it: pass it over for an account that still has a five-hour limit.
+            return Skip("weekly-only", "no five-hour limit, so no tick to measure")
         why = weekly_reason(a, weekly_max_pct)
         if why is not None:
             return Skip("weekly", why)
@@ -1101,7 +1106,7 @@ def main(argv: list[str] | None = None) -> int:
         # Every account passed over. Busy alone keeps the line it has always had; once a
         # weekly meter is among the reasons the line says so and names each account's,
         # so a spent week does not read as the "no idle account" blackout of issue #21.
-        if any(s.kind == "weekly" for s in skipped.values()):
+        if any(s.kind != "busy" for s in skipped.values()):
             why = "; ".join(f"{n} {s.kind}: {s.why}" for n, s in skipped.items())
             print(f"probe skipped: no usable account within max wait ({why})", file=sys.stderr)
         else:
