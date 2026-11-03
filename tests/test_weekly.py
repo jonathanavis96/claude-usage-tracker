@@ -362,3 +362,17 @@ class MalformedRowTests(unittest.TestCase):
         self.assertEqual(weekly_windows(parse_rows(['{"ts": "x", "five_hour": {"utilization": 1, "resets_at": "y"},'
                                                     ' "seven_day": {"utilization": 1, "resets_at": "z"}}'])),
                          weekly_windows([]))
+
+    def test_a_naive_stamp_is_read_as_utc_not_a_crash(self):
+        # contrib/sample.py writes UTC; one naive row among aware ones raised TypeError
+        # ("can't subtract offset-naive and offset-aware datetimes") and took the whole
+        # weekly figure down with it.
+        import json
+        def line(ts, f, fr, s, sr):
+            return json.dumps({"ts": ts, "five_hour": {"utilization": f, "resets_at": fr},
+                               "seven_day": {"utilization": s, "resets_at": sr}})
+        aware = [line("2026-09-01T10:00:00+00:00", 5, "2026-09-01T12:00:00+00:00", 9, "2026-09-05T04:00:00+00:00"),
+                 line("2026-09-01T10:30:00+00:00", 9, "2026-09-01T12:00:00+00:00", 10, "2026-09-05T04:00:00+00:00")]
+        naive = [aware[0], line("2026-09-01T10:30:00", 9, "2026-09-01T12:00:00", 10, "2026-09-05T04:00:00")]
+        now = datetime(2026, 9, 20, tzinfo=timezone.utc)
+        self.assertEqual(weekly_windows(parse_rows(naive), now=now), weekly_windows(parse_rows(aware), now=now))

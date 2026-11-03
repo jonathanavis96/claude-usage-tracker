@@ -75,8 +75,12 @@ def parse_row(d: dict) -> dict | None:
             "seven_resets_at": sd["resets_at"],
         }
         # Every stamp is parsed downstream; a row that cannot be is a gap, not a crash.
+        # A naive stamp is UTC (contrib/sample.py writes UTC, tracker/contributed.py reads
+        # it so): left naive, it raised TypeError against every aware stamp it met.
         for k in ("ts", "five_resets_at", "seven_resets_at"):
-            datetime.fromisoformat(row[k])
+            dt = datetime.fromisoformat(row[k])
+            if dt.tzinfo is None:
+                row[k] = dt.replace(tzinfo=timezone.utc).isoformat()
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
     return row
