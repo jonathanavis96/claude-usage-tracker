@@ -120,6 +120,9 @@ def _default_post(url: str, headers: Mapping[str, str], body: bytes) -> tuple[in
                 raise OSError(f"HTTP {e.code}, reply {type(bad).__name__}: {bad}") from bad
     except http.client.HTTPException as e:  # a reply cut short or garbled
         raise OSError(f"{type(e).__name__}: {e}") from e
+    except ValueError as e:  # UnicodeEncodeError too: a header value http refuses to send
+        # http.client quotes the offending value, which may be the secret: never chain it.
+        raise OSError(f"request refused before sending: {type(e).__name__} in a header or URL") from None
 
 
 def alert_body(subject: str, text: str, to: str, *, source: str, now: datetime) -> dict:

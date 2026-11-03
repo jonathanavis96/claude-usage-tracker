@@ -272,6 +272,15 @@ class DefaultPostErrorTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 _default_post(SEND_URL, {}, b"{}")
 
+    def test_a_header_value_http_refuses_is_an_oserror(self):
+        # Code review round 5: a secret with a trailing newline (environ values are not
+        # stripped) or a character latin-1 cannot hold raised ValueError or
+        # UnicodeEncodeError from inside urlopen, past callers that catch only OSError.
+        for bad in ("s3cr3t\n", "s3cr3t\u2603"):
+            with self.assertRaises(OSError) as caught:
+                _default_post("http://127.0.0.1:9/send", {"authorization": f"Bearer {bad}"}, b"{}")
+            self.assertNotIn("s3cr3t", str(caught.exception))
+
     def test_an_error_reply_cut_short_keeps_its_status_not_a_crash(self):
         # Code review round 3: an error status whose body is cut short raised IncompleteRead
         # from inside the HTTPError handler, past the sibling HTTPException clause. The
