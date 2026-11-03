@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-03T06:30:06.498170+00:00",
+ "generated_at": "2026-11-03T07:00:06.055111+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -39,11 +39,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 4975,
-     "dropped": 5246,
+     "dropped": 5247,
      "subagent_files": 1680,
      "dropped_to": {
       ".claude": 558,
-      ".claude-avis": 2251,
+      ".claude-avis": 2252,
       ".claude-dave": 8
      },
      "attributed_by_record": {
@@ -36921,7 +36921,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-03T06:29:35+00:00",
+    "last": "2026-11-03T06:55:40+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -66813,12 +66813,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 20599,
+    "reset_verified_samples": 20611,
     "since": null,
-    "samples": 23571,
+    "samples": 23583,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-03T06:28:29+00:00",
-    "five_hour_last": "2026-11-03T06:28:29+00:00",
+    "last": "2026-11-03T06:59:59+00:00",
+    "five_hour_last": "2026-11-03T06:59:59+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -78221,7 +78221,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-03T06:31:51.431567+00:00",
+  "generated_at": "2026-11-03T07:01:49.575773+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
