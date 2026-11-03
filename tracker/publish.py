@@ -341,6 +341,10 @@ def flag_provisional_levels(changes: list[dict], credits_block: dict, weekly: di
             rows(block.get("regimes"), "windows_per_week", "opened_by")
 
 
+def _in_utc(readings: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
+    return [(ts.astimezone(timezone.utc), v) for ts, v in readings]
+
+
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
                       effort_usd: dict | None = None, gs_passive: dict | None = None,
                       reference_mix: dict | None = None, *, masterrig_passive: dict | None = None,
@@ -445,8 +449,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     probe_rows = usable_rows(probe_rows)
     credits = credits or CREDITS
 
-    all_readings = passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True) if gs_passive else []
-    verified_readings = passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else []
+    # In UTC: each reading is one UTC day's (passive_dollar_readings groups by `_utc_day`) but
+    # keeps its last stretch's own offset, and every regime, history day and evidence bound
+    # below is a `.date()`, compared with the detector's UTC change instants: a +02:00 reading
+    # just after midnight read as the next day and fell after a change it preceded.
+    all_readings = _in_utc(passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True)
+                           if gs_passive else [])
+    verified_readings = _in_utc(passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else [])
     evidence_status = "measured" if verified_readings else ("conditional" if all_readings else "unavailable")
     series = sorted(verified_readings if verified_readings else all_readings)
     # The measured per-family credit rates, needed here and again for the credits block.

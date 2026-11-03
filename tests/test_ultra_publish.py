@@ -55,16 +55,26 @@ class EvidencePastTheFiveHourEndTests(unittest.TestCase):
         self.assertEqual(ev["readings"], 1)
         self.assertTrue(ev["observed_from"].startswith(self.END.date().isoformat()), ev["observed_from"])
 
-    def _check_change_after_the_end(self, delay):
+    def test_a_reading_in_another_offset_is_dated_by_its_utc_day(self):
+        # Code review round 5: the last stretch ends 2026-10-31T01:07+02:00, which is 30 Oct in
+        # UTC, the day passive_dollar_readings filed it under. Dated by its own offset it fell
+        # after a change at 31 Oct 01:37Z that it preceded, and the evidence shrank to it alone.
+        sast = timezone(timedelta(hours=2))
+        gs = self._gs()
+        gs["accounts"]["jwork"]["stretches"] = [
+            self._stretch((self.END - timedelta(minutes=30, days=d)).astimezone(sast)) for d in (0, 1, 2)]
+        self._check_change_after_the_end(timedelta(hours=2), gs=gs)
+
+    def _check_change_after_the_end(self, delay, gs=None):
         before = _detector_change((self.END - timedelta(days=20)).isoformat(), "seven_day", "measured",
                                   {"seven_day": _detector_size(-30.0, -36.0, -24.0),
                                    "five_hour": _detector_size(-30.0, -38.0, -21.0),
                                    "ratio": _detector_size(1.0, -4.0, 6.0)})
         after = _detector_change((self.END + delay).isoformat(), "seven_day", "provisional",
                                  {"seven_day": _detector_size(12.0, 5.0, 19.0)})
-        without = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self._gs(),
+        without = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=gs or self._gs(),
                                     four_accounts_run=detector_run(before))
-        with_after = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=self._gs(),
+        with_after = build_public_json([], PASSIVE, EFFORT, PRICES, self.NOW, gs_passive=gs or self._gs(),
                                        four_accounts_run=detector_run(before, after))
         model = "claude-sonnet-5"
         ev, ref = with_after["rates"][model]["evidence"], without["rates"][model]["evidence"]
