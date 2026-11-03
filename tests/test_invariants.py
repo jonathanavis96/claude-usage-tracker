@@ -369,6 +369,20 @@ class LastChangeIsNewestMeasuredTest(unittest.TestCase):
         (msg,) = I.last_change_is_newest_measured(doc)
         self.assertIn("no last_change", msg)
 
+    def test_a_record_with_no_whole_percent_is_named_not_a_crash(self):
+        # `percent` missing made the message's `{said:+d}` raise TypeError, so the check
+        # reported only "could not run" and every other figure it held was lost.
+        doc = _good()
+        del doc["last_change"]["percent"]
+        msgs = I.last_change_is_newest_measured(doc)
+        self.assertTrue(any("whole percent is none" in m and "+34%" in m for m in msgs), msgs)
+        doc = _good()
+        del doc["events"][1]["percent"]
+        doc["events"][0]["change_pct"] = 99.0
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("An event says none" in m and SEP24 in m for m in msgs), msgs)
+        self.assertTrue(any("99.0" in m and SEP14 in m for m in msgs), msgs)
+
 
 class EveryChangeDrawnTest(unittest.TestCase):
     def test_passes_when_each_change_steps_its_own_line(self):

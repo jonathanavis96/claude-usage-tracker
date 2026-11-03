@@ -244,6 +244,11 @@ def _signed(change: dict) -> int | None:
     return -_page_round(pct) if change.get("direction") == "decreased" else _page_round(pct)
 
 
+def _whole(x: int | None) -> str:
+    """A signed whole percent for a message, or "none" when the record carries none."""
+    return "none" if x is None else f"{x:+d}%"
+
+
 def _same_figure(step: float, size: float) -> bool:
     """Whether a drawn step states the same whole percent as a published one-decimal size.
 
@@ -403,7 +408,7 @@ def last_change_is_newest_measured(doc: dict) -> list[str]:
                    f"{newest.get('change_pct')}%.")
     said = _signed(c)
     if newest.get("change_pct") is not None and said != _page_round(newest["change_pct"]):
-        out.append(f"The headline's whole percent is {said:+d}% but the detector's "
+        out.append(f"The headline's whole percent is {_whole(said)} but the detector's "
                    f"{newest['change_pct']:+g}% reads {_page_round(newest['change_pct']):+d}%.")
     if c.get("state") != "measured":
         out.append(f"The headline's state is {c.get('state')}, not measured.")
@@ -579,7 +584,7 @@ def one_figure_per_change(doc: dict) -> list[str]:
                 continue
             size = c.get("change_pct")
             if size is not None and (_signed(rec) != _page_round(size) or rec.get("change_pct") != size):
-                out.append(f"{where.capitalize()} says {_signed(rec):+d}% ({rec.get('change_pct')}) at "
+                out.append(f"{where.capitalize()} says {_whole(_signed(rec))} ({rec.get('change_pct')}) at "
                            f"{at}, but the detector measured {size:+g}% on the {c['found_on']} line.")
             for line, key in (("five_hour", "five_hour_limit_change_pct"),
                               ("seven_day", "weekly_limit_change_pct"),
