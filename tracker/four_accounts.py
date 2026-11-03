@@ -1516,6 +1516,12 @@ def main(argv: list[str] | None = None) -> int:
         state = replay(readings, start, today, log=lambda s: print(s, file=sys.stderr, flush=True),
                        valued=valued)
     else:
+        if state["latest"]["day"] > today.isoformat():
+            # A day before the newest run (a clock that went back, or --now in the past) has
+            # no previous run to hold from; running it would put an older run in `latest`.
+            print(f"four_accounts: the newest run in {a.state} is {state['latest']['day']}, after "
+                  f"{today}: nothing to run (--replay rebuilds the hold)", file=sys.stderr)
+            return 0
         if state["latest"]["day"] == today.isoformat() and not a.force:
             print(f"four_accounts: the run for {today} is already in {a.state}", file=sys.stderr)
             return 0

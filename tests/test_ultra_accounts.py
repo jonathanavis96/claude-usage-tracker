@@ -112,5 +112,26 @@ class RefineNeverLandsOnANeighbourTest(unittest.TestCase):
         self.assertLessEqual(abs(t - second), 6.0)
 
 
+class StateFromTheFutureTest(unittest.TestCase):
+    """A daily run for a day before the state's newest run (a clock that went back, or --now in
+    the past) has no previous run to carry: it leaves the state as it was rather than holding
+    from a later day's run and putting an older run in `latest`."""
+
+    def test_a_day_before_the_newest_run_leaves_the_state_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            state = tmp / "four-accounts.json"
+            F.write_state(state, F.advance(None, _block("2026-10-25")))
+            before = state.read_text(encoding="utf-8")
+            err = io.StringIO()
+            with mock.patch.object(F, "run", return_value=_block("2026-10-23")) as run, \
+                    redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = F.main(_argv(tmp, state, "2026-10-23T13:30:00+00:00"))
+            run.assert_not_called()
+            self.assertEqual(code, 0)
+            self.assertEqual(state.read_text(encoding="utf-8"), before)
+            self.assertIn("2026-10-25", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
