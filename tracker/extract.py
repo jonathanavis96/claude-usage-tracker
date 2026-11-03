@@ -218,15 +218,14 @@ def _births(paths: list[Path]) -> dict[Path, float]:
     for i in range(0, len(paths), 500):
         chunk = paths[i:i + 500]
         try:
-            # Decoded as Python decodes file names, so a name that is not UTF-8 neither raises
-            # nor fails to match its own str(path) below.
-            res = subprocess.run(["stat", "--printf", "%W %Y %n\\0", "--", *map(str, chunk)], capture_output=True,
-                                 encoding=sys.getfilesystemencoding(),
-                                 errors=sys.getfilesystemencodeerrors(), timeout=60)
-            # Rows end in NUL, the one byte no path holds: split on newlines, a name holding
-            # one became two rows, and a fragment equal to another path in the chunk took over
-            # that path's times (splitlines() also split on U+2028, U+0085 and their kind).
-            rows = res.stdout.split("\0")
+            # Bytes, decoded name by name as Python decodes file names: a name that is not
+            # UTF-8 neither raises nor fails to match its own str(path), and no newline
+            # translation turns a carriage return in a name into a newline. Rows end in NUL,
+            # the one byte no path holds: split on newlines, a name holding one became two rows,
+            # and a fragment equal to another path in the chunk took over that path's times.
+            res = subprocess.run(["stat", "--printf", "%W %Y %n\\0", "--", *map(str, chunk)],
+                                 capture_output=True, timeout=60)
+            rows = [os.fsdecode(r) for r in res.stdout.split(b"\0")]
         except (OSError, subprocess.SubprocessError):
             rows = []
         # Each row names its path, so a path that vanished mid-call (stat prints no row for

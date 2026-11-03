@@ -217,7 +217,7 @@ class ClaimTests(unittest.TestCase):
         # Code review round 5: splitlines() also splits on U+2028, U+0085 and their kind, so
         # such a name never matched its stat row and lost its birth time to the fallback.
         with tempfile.TemporaryDirectory() as d:
-            odd = [Path(d, f"a{sep}b") for sep in ("\u2028", "\x85", "\x0c", "\x1e", "", "\n")]
+            odd = [Path(d, f"a{sep}b") for sep in ("\u2028", "\x85", "\x0c", "\x1e", "", "\n", "\r", "\r\n")]
             for p in odd:
                 p.mkdir()
             with mock.patch.object(Path, "stat", side_effect=OSError("fallback not wanted")):
