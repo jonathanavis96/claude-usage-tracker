@@ -166,6 +166,22 @@ class ClaimTests(unittest.TestCase):
             self.assertIn(started, claims["s1"])
             self.assertIn(prompt, claims["s1"])
 
+    def test_a_path_that_vanished_costs_only_its_own_birth_time(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            kept = [Path(d, "s1"), Path(d, "s2")]
+            old = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+            for p in kept:
+                p.mkdir()
+                os.utime(p, (old, old))  # an mtime far from the birth time
+            w = subprocess.run(["stat", "-c", "%W", "--", str(kept[0])], capture_output=True, text=True).stdout.strip()
+            if not w.isdigit() or int(w) <= 0:
+                self.skipTest("this filesystem keeps no birth time")
+            got = X._births([kept[0], Path(d, "gone"), kept[1]])
+            self.assertNotIn(Path(d, "gone"), got)
+            for p in kept:
+                self.assertGreater(got[p], old + 86400, f"{p.name} fell back to its mtime")
+
 
 class ExtractTests(unittest.TestCase):
     """masterrig's layout on 2026-10-22, in miniature: a1 in ~/.claude, avis linking one of a1's
