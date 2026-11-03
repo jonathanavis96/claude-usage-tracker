@@ -223,7 +223,9 @@ def _births(paths: list[Path]) -> dict[Path, float]:
             res = subprocess.run(["stat", "-c", "%W %Y %n", "--", *map(str, chunk)], capture_output=True,
                                  encoding=sys.getfilesystemencoding(),
                                  errors=sys.getfilesystemencodeerrors(), timeout=60)
-            rows = res.stdout.splitlines()
+            # Rows end in "\n" only: splitlines() would also split a name holding U+2028,
+            # U+0085, a form feed and their kind, which then never matched its own path.
+            rows = res.stdout.split("\n")
         except (OSError, subprocess.SubprocessError):
             rows = []
         # Each row names its path, so a path that vanished mid-call (stat prints no row for

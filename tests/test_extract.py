@@ -6,6 +6,7 @@ import shutil
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -194,6 +195,17 @@ class ClaimTests(unittest.TestCase):
             got = X._births([odd, plain])
             self.assertIn(odd, got)
             self.assertIn(plain, got)
+
+    def test_a_name_holding_a_unicode_line_break_is_still_matched_to_its_row(self):
+        # Code review round 5: splitlines() also splits on U+2028, U+0085 and their kind, so
+        # such a name never matched its stat row and lost its birth time to the fallback.
+        with tempfile.TemporaryDirectory() as d:
+            odd = [Path(d, f"a{sep}b") for sep in ("\u2028", "\x85", "\x0c", "\x1e", "")]
+            for p in odd:
+                p.mkdir()
+            with mock.patch.object(Path, "stat", side_effect=OSError("fallback not wanted")):
+                got = X._births(odd)
+            self.assertEqual(sorted(got), sorted(odd))
 
 class ExtractTests(unittest.TestCase):
     """masterrig's layout on 2026-10-22, in miniature: a1 in ~/.claude, avis linking one of a1's
