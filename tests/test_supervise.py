@@ -124,6 +124,29 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual(st["incident_kinds"], ["lock", "meters/avis"])
         self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 9000)
 
+    def test_hung_run_alert_does_not_hurry_another_kinds_own_clock(self):
+        # Code review round 3: the last run's other kinds ride along with the lock, but each
+        # keeps its own stale_after. A meter only 10 minutes stale must not alert from here.
+        meters = "meters: newest usable reading in claude-usage-meter-avis.log is 25m old (limit 15m)"
+        self.state.write_text(json.dumps({
+            "kinds_since": {"meters/avis": self.t - 600}, "last_health": meters,
+            "consecutive_failures": 0, "last_exit": 0, "last_ok": self.t - 600}))
+        pidfile = self.lock.with_suffix(".pid")
+        pidfile.write_text(str(os.getpid()))
+        held = os.path.getmtime(pidfile) - 3 * 3600
+        os.utime(pidfile, (held, held))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock", self.send.sent[0])
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["lock"])
+        self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 600)
+
     def test_unwritable_pidfile_still_runs_and_alerts(self):
         # A full disk refused the pid file's few bytes and the OSError escaped before the
         # job ran: no run, no state, no alert, though the state and the run log both

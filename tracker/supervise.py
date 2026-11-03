@@ -435,19 +435,29 @@ def _kuma_first(send: Sender, kuma_file: Path | None, state: dict) -> tuple[Send
 
 
 def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: Sender, label: str,
-                   t: float) -> None:
+                   t: float, stale_after: float = 3600.0) -> None:
     """A run holding the lock past health's lock limit is an incident, raised from here:
     the hung run itself will never get to its own health check."""
     reason = health.check_lock(health.Config(lock_pidfile=pidfile), time.time())
     if reason is None:
         return
     state = health.read_state(state_path)
+    lock_kinds = health_kinds(reason)
     # Only the lock was checked here: the last finished run's health stands for the rest, so
-    # an open incident's other kinds neither read as recovered nor lose their clocks.
+    # an open incident's other kinds neither read as recovered nor lose their clocks, and each
+    # still counts only once it has failed for `stale_after`, as in a finished run.
     last = state.get("last_health")
     if isinstance(last, str) and last != "ok":
         reason = " | ".join([reason, *(p.strip() for p in last.split(" | ") if p.strip())])
-    decide_alert(state, t, reason, fail_threshold, 0.0, send, label)
+    # The lock is already past its own limit, so it counts at once: its clock reads as stale.
+    since = state.get("kinds_since")
+    if not isinstance(since, dict):
+        legacy = state.get("unhealthy_since")  # decide_alert's migration of an older state
+        since = {k: legacy for k in health_kinds(reason)} if isinstance(legacy, (int, float)) else {}
+    for k in lock_kinds:
+        since[k] = min(since.get(k, t), t - stale_after)
+    state["kinds_since"] = since
+    decide_alert(state, t, reason, fail_threshold, stale_after, send, label)
     write_state(state_path, state)
 
 
@@ -466,7 +476,7 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             print("skipped: previous run still going", file=sys.stderr)
-            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now())
+            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now(), stale_after)
             return 0
         clear_stale_pidfile(pidfile)
         try:
