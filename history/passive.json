@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-03T18:16:29.483710+00:00",
+ "generated_at": "2026-11-04T15:16:36.837079+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -387,7 +387,7 @@
  },
  "session_tokens": {
   "claude-sonnet-4-6": 219922,
-  "claude-opus-5-5": 620179,
+  "claude-opus-5-5": 621206,
   "claude-opus-4-8": 10309
  },
  "weekly_windows": {

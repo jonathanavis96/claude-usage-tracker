@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-03T18:16:29.604920+00:00",
+ "generated_at": "2026-11-04T15:16:36.971642+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -31,7 +31,7 @@
     "since": null,
     "samples": 24641,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-11-03T18:15:30+00:00",
+    "last": "2026-11-04T15:16:35+00:00",
     "five_hour_last": "2026-10-31T11:20:00+00:00",
     "weekly_only_since": "2026-10-31T13:30:02.334304+02:00"
    },
@@ -39,11 +39,11 @@
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 8454,
-    "turns": 211600,
+    "files": 8456,
+    "turns": 212480,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 8454,
+     "kept": 8456,
      "dropped": 215,
      "subagent_files": 3095,
      "dropped_to": {
@@ -60,8 +60,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 8454,
-      "turns": 211600
+      "files": 8456,
+      "turns": 212480
      }
     ]
    },
@@ -21877,6 +21877,90 @@
      },
      "unpriced_tokens": 0,
      "turns": 431,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-03T14:07:05+00:00",
+     "end": "2026-11-03T19:56:11+00:00",
+     "seven_day": 33,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 812,
+       "output": 174402,
+       "cache_read": 109720559,
+       "cache_write": 552037,
+       "cache_write_1h": 527169
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 353,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-03T19:56:11+00:00",
+     "end": "2026-11-04T06:15:40+00:00",
+     "seven_day": 34,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 828,
+       "output": 157984,
+       "cache_read": 106359621,
+       "cache_write": 555998,
+       "cache_write_1h": 555998
+      },
+      "claude-sonnet-4-6": {
+       "input": 8,
+       "output": 2643,
+       "cache_read": 205001,
+       "cache_write": 28474,
+       "cache_write_1h": 28474
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 342,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 8,
+       "output": 2643,
+       "cache_read": 205001,
+       "cache_write": 28474,
+       "cache_write_1h": 28474
+      }
+     },
+     "headless_turns": 6,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-04T06:15:40+00:00",
+     "end": "2026-11-04T13:16:30+00:00",
+     "seven_day": 35,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 944,
+       "output": 177073,
+       "cache_read": 106440279,
+       "cache_write": 673459,
+       "cache_write_1h": 673459
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 385,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
