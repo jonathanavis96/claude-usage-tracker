@@ -452,8 +452,9 @@ def bundles_with_work(tokens: dict | None) -> dict:
 def work_bundles(tokens: dict) -> dict:
     """`tokens` less its zero-token bundles, when another bundle holds work: an empty
     `<synthetic>` row beside real work hides none and must not unprice the stretch. A stretch
-    of nothing but empty bundles is returned as it is, so it is priced exactly as it always was."""
-    return bundles_with_work(tokens) or tokens
+    of nothing but empty bundles is returned as it is, so it is priced exactly as it always was;
+    so is one whose only other value is no bundle at all, which holds no work either."""
+    return bundles_with_work(tokens) if any(holds_work(t) for t in tokens.values()) else tokens
 
 
 @dataclass(frozen=True)
@@ -553,8 +554,9 @@ def harness_runs(path: Path | None = None) -> list[HarnessRun]:
             raise ValueError(f"{p}:{number}: a run row is not a JSON object")
         if not row.get("account") or not row.get("start") or not row.get("end"):
             continue
-        out.append(HarnessRun(row["account"], datetime.fromisoformat(row["start"]),
-                              datetime.fromisoformat(row["end"]), run_reason(row)))
+        # A naive stamp is UTC, as a stretch's is (`stretch_span`), so the two always compare.
+        out.append(HarnessRun(row["account"], as_utc(datetime.fromisoformat(row["start"])),
+                              as_utc(datetime.fromisoformat(row["end"])), run_reason(row)))
     return sorted(out, key=lambda r: (r.account, r.start))
 
 

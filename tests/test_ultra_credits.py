@@ -231,3 +231,29 @@ class HarnessRunsNonObjectLineTests(unittest.TestCase):
             with self.assertRaises(ValueError) as caught:
                 C.harness_runs(path)
         self.assertIn(f"{path}:2", str(caught.exception))
+
+
+class NaiveHarnessRunTests(unittest.TestCase):
+    def test_a_naive_run_is_read_as_utc_against_a_stretch(self):
+        # PR #155 review, final round 2: stretch_span made every span aware, but a run row
+        # with no offset stayed naive, and overlapping_run raised TypeError between them.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "harness-runs.jsonl"
+            path.write_text('{"account": "jwork", "start": "2026-09-01T00:00:00", '
+                            '"end": "2026-09-02T00:00:00", "kind": "probe"}\n', encoding="utf-8")
+            runs = C.harness_runs(path)
+        self.assertEqual(runs[0].start, datetime(2026, 9, 1, tzinfo=timezone.utc))
+        st = {"delta_pct": 10.0, "tokens": {"claude-opus-5": tok(input=1_000)},
+              "capture_status": "accepted", "start": "2026-09-01T10:00:00", "end": "2026-09-01T11:00:00"}
+        self.assertEqual(C.clean_stretches({"jwork": [st]}, runs)["jwork"], [])
+
+
+class EmptyBundleBesideNoBundleTests(unittest.TestCase):
+    def test_an_empty_row_beside_a_value_that_is_no_bundle_still_unprices(self):
+        # PR #155 review, final round 2: work_bundles dropped the empty <synthetic> row because
+        # a malformed value counted as "another bundle", and the readers then skipped that
+        # value, so a stretch of no work priced at 0 instead of unpriced as on main.
+        tokens = {**SYNTHETIC, "claude-sonnet-5": None}
+        self.assertFalse(C.price_tokens(tokens, CREDITS, 0).priced)
+        self.assertIsNone(C.across_cut_value(CREDITS, model_rates=POOLED)(tokens))
+        self.assertEqual(C.work_bundles(tokens), tokens)
