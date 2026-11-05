@@ -134,6 +134,32 @@ class TestSummary(unittest.TestCase):
                                      "account still has a five-hour limit to measure."), s)
         self.assertNotIn("wait", s.split("\n\n")[0])
 
+    def test_skipped_for_a_malformed_response_says_something_is_broken(self):
+        # Codex on PR #155: dave's response was unreadable for the whole wait while jwork is
+        # weekly-only; the summary said no account has a five-hour limit and nothing is broken.
+        log = ("00:00:02Z jwork weekly-only: no five-hour limit, so no tick to measure\n"
+               "00:00:03Z dave malformed: five_hour.utilization is not a number\n"
+               "04:00:03Z dave malformed: five_hour.utilization is not a number\n"
+               "probe skipped: no usable account within max wait (jwork weekly-only: no five-hour "
+               "limit, so no tick to measure; dave malformed: five_hour.utilization is not a number)\n")
+        s = summary("claude-opus-5", 3, "Rotation run", log)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because the "
+                                     "usage endpoint returned a response this collector cannot read."), s)
+        self.assertIn("dave returned a malformed usage response (five_hour.utilization is not a number)", s)
+        self.assertIn("jwork has no five-hour limit", s)
+        self.assertNotIn("nothing is broken", s)
+        self.assertIn("this needs a look", s)
+
+    def test_an_abort_on_a_malformed_response_needs_a_look(self):
+        log = ("00:01:00Z prompt 1: five_hour=10.0 resets_at=2026-09-13T12:30:00+00:00 spent=input=2 "
+               "output=5 cache_read=0 cache_write=0\n"
+               "00:02:00Z probe aborted on dave: usage response malformed: five_hour.utilization is not a number\n")
+        s = summary("claude-opus-5", 4, "Rotation run", log)
+        self.assertIn("five_hour.utilization is not a number", s)
+        self.assertIn("no longer has the shape", s)
+        self.assertNotIn("nothing needs fixing by hand", s)
+        self.assertIn("this needs a look", s)
+
     def test_skipped_tells_a_weekly_meter_apart_from_a_busy_account(self):
         s = summary("claude-opus-5", 3, "Rotation run", WEEKLY_SKIP_LOG)
         self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because no "
