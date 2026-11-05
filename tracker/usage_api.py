@@ -45,7 +45,10 @@ def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
     b = body.get(key)
     if not isinstance(b, dict):
         b = {}  # absent, null, or reshaped: no reading here (meter_log.schema_problems names it)
-    return (utilization_number(b.get("utilization")), b.get("resets_at"))
+    reset = b.get("resets_at")
+    # Only a string is a stamp; a reshaped one (an epoch number) is none, and
+    # meter_log.schema_problems names it, as for a reshaped utilization.
+    return (utilization_number(b.get("utilization")), reset if isinstance(reset, str) else None)
 
 
 def parse_usage(body: dict, now: datetime) -> Utilization:
@@ -180,8 +183,7 @@ def same_reset(a: str | None, b: str | None, tol_s: float = 60) -> bool:
     """
     if not a or not b:
         return True
-    try:
-        da, db = (as_utc(datetime.fromisoformat(x)) for x in (a, b))
-    except ValueError:
+    da, db = parse_instant(a), parse_instant(b)
+    if da is None or db is None:
         return a == b
     return abs((da - db).total_seconds()) <= tol_s

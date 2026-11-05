@@ -995,8 +995,7 @@ def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict
 
 
 def _utc_day(stamp: str) -> str:
-    at = datetime.fromisoformat(stamp)
-    return (at.astimezone(timezone.utc) if at.tzinfo else at).date().isoformat()
+    return as_utc(datetime.fromisoformat(stamp)).astimezone(timezone.utc).date().isoformat()
 
 
 def passive_dollar_readings(report: dict, prices: dict, by: str = "day",

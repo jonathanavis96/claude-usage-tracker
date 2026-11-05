@@ -549,6 +549,8 @@ def harness_runs(path: Path | None = None) -> list[HarnessRun]:
             # A run that cannot be read cannot be excluded, so the read still stops; the
             # error names the file and line, which a bare decode error from cron does not.
             raise json.JSONDecodeError(f"{p}:{number}: {e.msg}", e.doc, e.pos) from e
+        if not isinstance(row, dict):
+            raise ValueError(f"{p}:{number}: a run row is not a JSON object")
         if not row.get("account") or not row.get("start") or not row.get("end"):
             continue
         out.append(HarnessRun(row["account"], datetime.fromisoformat(row["start"]),
@@ -563,6 +565,16 @@ def run_reason(row: dict) -> str:
     ended = row.get("outcome") or "ran"
     detail = f": {row['detail']}" if row.get("detail") else ""
     return f"{what} {ended}{detail} from {str(row['start'])[:19]}Z"
+
+
+def stretch_span(st: dict) -> tuple[datetime, datetime] | None:
+    """A stretch's [start, end] as aware instants (a naive stamp is UTC), or None when it lacks
+    either stamp. Every filter reads a stretch's span through this, so none compares naive
+    with aware."""
+    start, end = st.get("start"), st.get("end")
+    if not start or not end:
+        return None
+    return as_utc(datetime.fromisoformat(start)), as_utc(datetime.fromisoformat(end))
 
 
 def overlapping_run(runs: list[HarnessRun], account: str, start: datetime,
@@ -615,9 +627,8 @@ def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *
             # A record with no span cannot be tested against a harness run. Every real
             # stretch carries both stamps; a fixture may not, and a missing stamp must
             # not be read as "overlaps nothing" in one place and crash in another.
-            start, end = st.get("start"), st.get("end")
-            if start and end and overlapping_run(runs, account, datetime.fromisoformat(start),
-                                                 datetime.fromisoformat(end)) is not None:
+            span = stretch_span(st)
+            if span is not None and overlapping_run(runs, account, *span) is not None:
                 continue
             # Cloud-session work (tracker/cloud_sessions.py) is left out like a harness run:
             # its turns ran in Anthropic's cloud, teleported back or never seen here, so the
@@ -673,8 +684,8 @@ def spans_cut(st: dict) -> bool:
     Such a stretch belongs to neither side of the change: its meter movement is part one
     regime and part the other, so it is dropped from both rather than filed by its start.
     """
-    start, end = st.get("start"), st.get("end")
-    return bool(start and end and datetime.fromisoformat(start) < CUT_AT < datetime.fromisoformat(end))
+    span = stretch_span(st)
+    return span is not None and span[0] < CUT_AT < span[1]
 
 
 def rate_fit_stretches(by_account: dict[str, list[dict]],
@@ -2272,10 +2283,10 @@ def candidate_bounds(at: datetime, cands: list[dict]) -> tuple[datetime | None, 
 def _side_of(st: dict, at: datetime, lo: datetime | None, hi: datetime | None) -> str | None:
     """Which side of `at` a stretch lies wholly on, within (lo, hi), or None if it spans one
     or has no span to place (`clean_stretches` keeps a stretch missing a stamp)."""
-    if not st.get("start") or not st.get("end"):
+    span = stretch_span(st)
+    if span is None:
         return None
-    start = as_utc(datetime.fromisoformat(st["start"]))  # a naive stamp is UTC, as in the filters
-    end = as_utc(datetime.fromisoformat(st["end"]))
+    start, end = span
     if (lo is None or start >= lo) and end <= at:
         return "before"
     if start >= at and (hi is None or end <= hi):

@@ -266,6 +266,19 @@ class SameResetTests(unittest.TestCase):
         self.assertTrue(same_reset("2026-09-06T02:00:00", "2026-09-06T02:00:00.4+00:00"))
         self.assertFalse(same_reset("2026-09-06T02:00:00", "2026-09-06T07:00:00Z"))
 
+    def test_a_reset_stamp_that_is_no_string_is_no_stamp_and_no_crash(self):
+        # PR #155 review, final round 1: an epoch-int resets_at went through parse_usage and
+        # raised TypeError from fromisoformat in same_reset, crashing choose_account.
+        from tracker.usage_api import same_reset
+        self.assertFalse(same_reset(1_789_000_000, "2026-09-06T02:00:00Z"))
+        self.assertTrue(same_reset(1_789_000_000, 1_789_000_000))
+        now = datetime(2026, 9, 5, 20, 0, tzinfo=timezone.utc)
+        body = {"five_hour": {"utilization": 7, "resets_at": 1_789_000_000},
+                "seven_day": {"utilization": 30, "resets_at": "2026-09-10T00:00:00Z"}}
+        self.assertIsNone(parse_usage(body, now).five_hour_resets_at)
+        self.assertIn("five_hour.resets_at is not a string", schema_problems(body))
+        self.assertEqual(schema_problems({**body, "five_hour": {"utilization": 7, "resets_at": None}}), [])
+
     def test_jitter_within_tolerance_is_the_same_reset(self):
         from tracker.usage_api import same_reset
         self.assertTrue(same_reset("2026-09-06T01:59:59.8Z", "2026-09-06T02:00:00.3Z"))

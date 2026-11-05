@@ -68,6 +68,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .atomic import append_line
 from .header_usage import (
     DEFAULT_ENV_FILE,
     DEFAULT_MODEL,
@@ -189,6 +190,8 @@ def schema_problems(body: dict) -> list[str]:
                 out.append(f"{bucket}.{key} missing")
         if b.get("utilization") is not None and utilization_number(b["utilization"]) is None:
             out.append(f"{bucket}.utilization is not a number")
+        if b.get("resets_at") is not None and not isinstance(b["resets_at"], str):
+            out.append(f"{bucket}.resets_at is not a string")
     return out
 
 
@@ -201,6 +204,8 @@ def log_owner(log: Path) -> str | None:
     try:
         with open(log, encoding="utf-8", errors="replace") as fh:
             for line in fh:
+                if "\ufffd" in line:
+                    continue  # a bad byte: its identity could be the corrupted one
                 try:
                     ident = json.loads(line).get("identity")
                 except (ValueError, AttributeError):
@@ -218,15 +223,8 @@ def _append(log: Path, line: dict) -> bool:
     A run killed mid-write leaves a partial last line with no newline; a newline goes
     first in that case so this line starts on its own and is not glued onto the fragment.
     """
-    data = (json.dumps(line) + "\n").encode("utf-8")
     try:
-        log.parent.mkdir(parents=True, exist_ok=True)
-        with open(log, "ab+") as fh:
-            if fh.tell() > 0:
-                fh.seek(-1, 2)
-                if fh.read(1) != b"\n":
-                    data = b"\n" + data
-            fh.write(data)
+        append_line(log, (json.dumps(line) + "\n").encode("utf-8"))
         return True
     except OSError as e:
         print(f"cannot write {log}: {type(e).__name__}: {e}", file=sys.stderr)

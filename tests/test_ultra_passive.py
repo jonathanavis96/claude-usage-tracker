@@ -133,6 +133,22 @@ class MeterLogBadByteTest(unittest.TestCase):
             self.assertEqual(log.read_bytes(), before)
 
 
+    def test_a_bad_byte_inside_the_identity_costs_its_line_not_every_tick(self):
+        # PR #155 review, final round 1: decoded with errors="replace", the line still parsed and
+        # log_owner returned an identity holding U+FFFD, so every tick refused the log as another
+        # account's.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cfg = self._cfg(root)
+            ident = hashlib.sha256(b"uuid-dave").hexdigest()[:12]
+            first = {"ts": (self.NOW - timedelta(hours=1)).isoformat(), "account": "dave",
+                     "identity": ident, **self.BODY}
+            line = json.dumps(first).encode().replace(ident.encode(), ident[:6].encode() + b"\xff" + ident[7:].encode())
+            log = root / "meter.log"
+            log.write_bytes(line + b"\n")
+            code = sample(cfg, "dave", log, fetch=lambda url, headers: self.BODY, now=lambda: self.NOW)
+            self.assertEqual(code, EXIT_OK)
+
 if __name__ == "__main__":
     unittest.main()
 

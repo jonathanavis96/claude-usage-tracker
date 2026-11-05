@@ -122,6 +122,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([value(s["tokens"]) for s in whole["jwork"]], [6])
         self.assertEqual([value(s["tokens"]) for s in W.clean_steps(by, [])["masterrig"]], [5])
 
+    def test_a_naive_withheld_stretch_is_read_as_utc(self):
+        # PR #155 review, final round 1: a naive stretch stamp is UTC everywhere else, but here
+        # it was compared naive with an aware step and raised TypeError.
+        day = datetime(2026, 9, 10, tzinfo=timezone.utc)
+        withheld = {"jwork": [{"start": "2026-09-10T01:00:00", "end": "2026-09-10T02:00:00",
+                               "status": "withheld"}]}
+        by = {"jwork": [step(day, 1), step(day + timedelta(hours=1), 2)]}
+        kept = W.clean_steps(by, [], withheld)
+        self.assertEqual([value(s["tokens"]) for s in kept["jwork"]], [1])
+
     def test_a_step_over_work_the_transcripts_did_not_see_is_left_out(self):
         # The capture check withheld the stretch (status not accepted): the meter moved with
         # work no transcript on this host holds, so its steps read too few credits per point.

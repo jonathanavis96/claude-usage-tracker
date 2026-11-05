@@ -194,3 +194,40 @@ class EmptyBundleRuleTests(unittest.TestCase):
     def test_pricing_keeps_an_all_empty_stretch_as_it_was(self):
         self.assertEqual(C.work_bundles({"m": self.WORK, "<synthetic>": self.EMPTY}), {"m": self.WORK})
         self.assertEqual(C.work_bundles({"<synthetic>": self.EMPTY}), {"<synthetic>": self.EMPTY})
+
+
+class NaiveStampEverySelectionTests(unittest.TestCase):
+    """PR #155 review, final round 1: `_masterrig_in_use` and `_side_of` read a naive stamp as
+    UTC, but `spans_cut` and `clean_stretches` (via `overlapping_run`) still compared it naive
+    with an aware instant, so the stretch crashed one filter further on."""
+
+    @staticmethod
+    def _stretch(**extra) -> dict:
+        return {"delta_pct": 10.0, "tokens": {"claude-opus-5": tok(input=1_000)},
+                "status": "accepted", "capture_status": "accepted", **extra}
+
+    def test_a_naive_masterrig_stretch_passes_the_cut_test_without_a_crash(self):
+        naive = self._stretch(start="2026-09-20T10:00:00", end="2026-09-20T12:00:00")
+        self.assertEqual(C.rate_fit_stretches({"masterrig": [naive]}, [])["masterrig"], [naive])
+        spanning = self._stretch(start="2026-09-14T11:00:00", end="2026-09-14T13:00:00")
+        self.assertTrue(C.spans_cut(spanning))
+
+    def test_a_naive_stretch_is_tested_against_the_harness_runs_as_utc(self):
+        run = C.HarnessRun("jwork", datetime(2026, 9, 20, 11, tzinfo=timezone.utc),
+                           datetime(2026, 9, 20, 11, 30, tzinfo=timezone.utc), "probe")
+        inside = self._stretch(start="2026-09-20T10:00:00", end="2026-09-20T12:00:00")
+        clear = self._stretch(start="2026-09-20T13:00:00", end="2026-09-20T14:00:00")
+        kept = C.clean_stretches({"jwork": [inside, clear]}, [run])
+        self.assertEqual(kept["jwork"], [clear])
+
+
+class HarnessRunsNonObjectLineTests(unittest.TestCase):
+    def test_a_line_that_is_no_object_raises_naming_the_file_and_line(self):
+        # Round 1: `[]` parsed, then crashed on row.get with no file or line named.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "harness-runs.jsonl"
+            path.write_text('{"account": "jwork", "start": "2026-09-09T11:00:00+00:00", '
+                            '"end": "2026-09-09T12:00:00+00:00", "kind": "probe"}\n[]\n', encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                C.harness_runs(path)
+        self.assertIn(f"{path}:2", str(caught.exception))

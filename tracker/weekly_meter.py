@@ -38,6 +38,7 @@ from .crossings import crossings
 from .join import Stretch
 from .samples import Sample
 from .turns import Turn
+from .usage_api import as_utc
 
 #: Bootstrap draws behind every interval here, and the seed every draw's stream starts from
 #: (a publish is reproducible: the same history gives the same intervals).
@@ -133,14 +134,13 @@ def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.Harne
     """
     withheld: dict[str, list[tuple[datetime, datetime]]] = {}
     for account, rows in (stretches or {}).items():
-        withheld[account] = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
-                             for s in rows if s.get("start") and s.get("end")
-                             and s.get("status") != "accepted"]
+        withheld[account] = [span for s in rows if s.get("status") != "accepted"
+                             and (span := credit_model.stretch_span(s)) is not None]
     kept: dict[str, list[dict]] = {}
     for account, steps in by_account.items():
         rows = []
         for st in steps:
-            start, end = datetime.fromisoformat(st["start"]), datetime.fromisoformat(st["end"])
+            start, end = (as_utc(datetime.fromisoformat(st[k])) for k in ("start", "end"))
             # A withheld stretch past the five-hour limit's end is dropped, and marks the steps
             # it overlapped instead (tracker/five_hour_end.py).
             if st.get("cloud_session") or st.get("withheld_by_stretch"):

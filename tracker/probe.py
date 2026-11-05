@@ -65,6 +65,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .atomic import append_line
 from .cli_run import RunUsage
 from .publish import class_weight, meter_usd, tokens_usd
 from .usage_api import Utilization, same_reset
@@ -1041,14 +1042,9 @@ def append_result(path: Path, r: ProbeResult, account: str) -> None:
     row["ts"] = r.ts.isoformat()
     row["account"] = account
     # A last line with no newline (a hand edit, a torn write) would swallow this row into
-    # one unparseable line, and load_probes refuses the whole file over it.
-    with open(path, "a+b") as fh:
-        fh.seek(0, os.SEEK_END)
-        lead = b""
-        if fh.tell() > 0:
-            fh.seek(-1, os.SEEK_END)
-            lead = b"" if fh.read(1) == b"\n" else b"\n"
-        fh.write(lead + (json.dumps(row) + "\n").encode("utf-8"))
+    # one unparseable line, and load_probes refuses the whole file over it: append_line
+    # starts the row on its own line.
+    append_line(path, (json.dumps(row) + "\n").encode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
