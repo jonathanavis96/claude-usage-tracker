@@ -162,8 +162,8 @@ def as_utc(d: datetime) -> datetime:
 
 def parse_instant(stamp: object) -> datetime | None:
     """An ISO stamp as an aware instant: a 'Z' suffix is UTC and so is a stamp with no offset.
-    None for anything that is not a parseable stamp. The one parser of this rule for join,
-    pace and publish."""
+    None for anything that is not a parseable stamp. The one parser of this rule for join
+    and publish."""
     if not isinstance(stamp, str) or not stamp:
         return None
     try:

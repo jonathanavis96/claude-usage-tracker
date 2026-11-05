@@ -61,7 +61,7 @@ class ParseTests(unittest.TestCase):
         self.assertIn("five_hour.utilization is not a number", schema_problems(huge))
 
     def test_parse_instant_is_the_one_stamp_rule(self):
-        # Code review round 5: join, pace and publish each parsed stamps their own way.
+        # Code review round 5: join and publish each parsed stamps their own way.
         from tracker.usage_api import parse_instant
         utc = timezone.utc
         self.assertEqual(parse_instant("2026-11-02T04:00:00Z"), datetime(2026, 11, 2, 4, tzinfo=utc))
