@@ -5,12 +5,31 @@ os.replace, so a killed run never leaves a truncated file. The temporary file is
 uniquely named: a fixed `<stem>.tmp` let two overlapping runs (cron ticks, a
 hand run beside the timer) write into one temp file and publish a torn one, or
 fail when the other had already moved it.
+
+`append_line` is the one appender for the JSONL logs (the meter log, probes.jsonl).
 """
 from __future__ import annotations
 
 import os
 import tempfile
 from pathlib import Path
+
+
+def append_line(path: Path, data: bytes) -> None:
+    """Append `data`, one newline-terminated line, to `path`, creating it and its directory.
+
+    A run killed mid-write (or a hand edit) leaves a last line with no newline; a newline goes
+    first in that case so this line starts on its own and is not glued onto the fragment, which
+    would make one unparseable line of both. Raises OSError when the disk refuses the write.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "ab+") as fh:
+        if fh.tell() > 0:
+            fh.seek(-1, os.SEEK_END)
+            if fh.read(1) != b"\n":
+                data = b"\n" + data
+        fh.write(data)
 
 
 def write_text_atomic(path: Path, text: str) -> None:

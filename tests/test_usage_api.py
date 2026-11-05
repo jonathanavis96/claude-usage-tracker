@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tracker.meter_log import schema_problems
 from tracker.usage_api import parse_usage, read_usage
 
 BODY = {"five_hour": {"utilization": 24.0, "resets_at": "2026-09-06T02:00:00.3Z"},
@@ -29,6 +30,58 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(u.seven_day, 47.0)
         self.assertFalse(parse_usage({"seven_day": sd}, now).weekly_only)  # missing key: schema change
         self.assertFalse(parse_usage({"five_hour": None, "seven_day": None}, now).weekly_only)
+
+    def test_a_reshaped_bucket_or_body_reads_as_missing_instead_of_raising(self):
+        # A schema change (meter_log.schema_problems: "no five_hour bucket") must reach the
+        # callers' schema check, not die in parsing with an AttributeError.
+        now = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
+        u = parse_usage({"five_hour": "unavailable", "seven_day": sd}, now)
+        self.assertEqual((u.five_hour, u.five_hour_resets_at, u.seven_day), (None, None, 47.0))
+        self.assertFalse(u.weekly_only)
+        for body in ([], None, "rate limited"):
+            u = parse_usage(body, now)
+            self.assertEqual((u.five_hour, u.seven_day, u.weekly_only), (None, None, False))
+
+    def test_the_reading_carries_its_schema_problems(self):
+        # Codex on PR #155: a reshaped value reads as no reading, which is also what an idle
+        # window returns; the reading itself has to say which it was, so a caller that never
+        # sees the body (the probe) can tell them apart.
+        now = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
+        odd = {"five_hour": {"utilization": "unavailable", "resets_at": None}, "seven_day": sd}
+        self.assertEqual(parse_usage(odd, now).problems, ("five_hour.utilization is not a number",))
+        idle = {"five_hour": {"utilization": None, "resets_at": None}, "seven_day": sd}
+        self.assertEqual(parse_usage(idle, now).problems, ())
+        self.assertEqual(parse_usage({"five_hour": None, "seven_day": sd}, now).problems, ())
+        self.assertEqual(parse_usage([], now).problems, ("response is not an object",))
+
+    def test_a_reshaped_utilization_reads_as_missing_instead_of_raising(self):
+        # Code review round 3: the bucket was guarded but not the value in it.
+        now = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
+        # Round 4: exactly what schema_problems calls a number is a reading; a bool, a numeric
+        # string or a non-finite value is not (NaN made every account read busy for ever).
+        for odd in ({"value": 7}, "n/a", [7], True, "12.5", float("nan"), float("inf")):
+            u = parse_usage({"five_hour": {"utilization": odd, "resets_at": None}, "seven_day": sd}, now)
+            self.assertEqual((u.five_hour, u.seven_day), (None, 47.0), odd)
+            self.assertIn("five_hour.utilization is not a number",
+                          schema_problems({"five_hour": {"utilization": odd, "resets_at": None}, "seven_day": sd}))
+        self.assertEqual(parse_usage({"five_hour": {"utilization": 7}, "seven_day": sd}, now).five_hour, 7.0)
+        # Round 5: an int too large for a float raised OverflowError from the guard itself.
+        huge = {"five_hour": {"utilization": 10 ** 400, "resets_at": None}, "seven_day": sd}
+        self.assertIsNone(parse_usage(huge, now).five_hour)
+        self.assertIn("five_hour.utilization is not a number", schema_problems(huge))
+
+    def test_parse_instant_is_the_one_stamp_rule(self):
+        # Code review round 5: join and publish each parsed stamps their own way.
+        from tracker.usage_api import parse_instant
+        utc = timezone.utc
+        self.assertEqual(parse_instant("2026-11-02T04:00:00Z"), datetime(2026, 11, 2, 4, tzinfo=utc))
+        self.assertEqual(parse_instant("2026-11-02T04:00:00"), datetime(2026, 11, 2, 4, tzinfo=utc))
+        self.assertEqual(parse_instant("2026-11-02T06:00:00+02:00"), datetime(2026, 11, 2, 4, tzinfo=utc))
+        for bad in ("", "yesterday", None, 7, ["2026-11-02"]):
+            self.assertIsNone(parse_instant(bad), bad)
 
     def test_read_uses_token_from_config_dir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -225,6 +278,19 @@ class SameResetTests(unittest.TestCase):
         from tracker.usage_api import same_reset
         self.assertTrue(same_reset("2026-09-06T02:00:00", "2026-09-06T02:00:00.4+00:00"))
         self.assertFalse(same_reset("2026-09-06T02:00:00", "2026-09-06T07:00:00Z"))
+
+    def test_a_reset_stamp_that_is_no_string_is_no_stamp_and_no_crash(self):
+        # PR #155 review, final round 1: an epoch-int resets_at went through parse_usage and
+        # raised TypeError from fromisoformat in same_reset, crashing choose_account.
+        from tracker.usage_api import same_reset
+        self.assertFalse(same_reset(1_789_000_000, "2026-09-06T02:00:00Z"))
+        self.assertTrue(same_reset(1_789_000_000, 1_789_000_000))
+        now = datetime(2026, 9, 5, 20, 0, tzinfo=timezone.utc)
+        body = {"five_hour": {"utilization": 7, "resets_at": 1_789_000_000},
+                "seven_day": {"utilization": 30, "resets_at": "2026-09-10T00:00:00Z"}}
+        self.assertIsNone(parse_usage(body, now).five_hour_resets_at)
+        self.assertIn("five_hour.resets_at is not a string", schema_problems(body))
+        self.assertEqual(schema_problems({**body, "five_hour": {"utilization": 7, "resets_at": None}}), [])
 
     def test_jitter_within_tolerance_is_the_same_reset(self):
         from tracker.usage_api import same_reset

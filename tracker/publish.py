@@ -16,6 +16,7 @@ from .gs_passive import credit_rate_sources, passive_dollar_readings, unpriced_c
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
+from .usage_api import as_utc, parse_instant
 from .speed import load_history as load_speed_history
 from .speed import speed_block
 from . import five_hour_end, five_hour_weight, weekly_meter
@@ -247,7 +248,10 @@ def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_u
                 continue
             if st.get("reset_verified") is not True and not allow_legacy_unverified:
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in st.get("tokens", {}).items()):
+            # As passive_dollar_readings selects: a zero-token bundle (`<synthetic>`) is skipped,
+            # and a stretch with no bundle left holds no captured work.
+            bundles = credit_model.bundles_with_work(st.get("tokens"))
+            if not bundles or any(bundle_meter_usd(m, tok, prices) is None for m, tok in bundles.items()):
                 continue
             out.append({**st, "_account": acct.get("account")})
     return out
@@ -336,6 +340,11 @@ def flag_provisional_levels(changes: list[dict], credits_block: dict, weekly: di
         max20["provisional"] = rows(max20.get("regimes"), "windows_per_week", "opened_by")
         for block in (max20.get("by_account") or {}).values():
             rows(block.get("regimes"), "windows_per_week", "opened_by")
+
+
+def _in_utc(readings: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
+    # A naive stamp is UTC, as gs_passive._utc_day reads it, never the host's local time.
+    return [(as_utc(ts).astimezone(timezone.utc), v) for ts, v in readings]
 
 
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
@@ -442,8 +451,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     probe_rows = usable_rows(probe_rows)
     credits = credits or CREDITS
 
-    all_readings = passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True) if gs_passive else []
-    verified_readings = passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else []
+    # In UTC: each reading is one UTC day's (passive_dollar_readings groups by `_utc_day`) but
+    # keeps its last stretch's own offset, and every regime, history day and evidence bound
+    # below is a `.date()`, compared with the detector's UTC change instants: a +02:00 reading
+    # just after midnight read as the next day and fell after a change it preceded.
+    all_readings = _in_utc(passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True)
+                           if gs_passive else [])
+    verified_readings = _in_utc(passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else [])
     evidence_status = "measured" if verified_readings else ("conditional" if all_readings else "unavailable")
     series = sorted(verified_readings if verified_readings else all_readings)
     # The measured per-family credit rates, needed here and again for the credits block.
@@ -473,9 +487,15 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # else (ADR 0001 rule 22, amended 2026-10-23). Each opens a regime in every series below,
     # and each series steps there by the detector's own size on its line.
     changes = four_accounts.regime_changes(four_accounts_run)
-    regime_start = changes[-1]["at"].date() if changes else None
-
     measured_at = series[-1][0] if series else None
+    # Past the limit's end the frozen figure is held at the newest regime with readings
+    # (`_chained_levels`, regimes split by date in `regime_index` below), so its evidence is that
+    # regime: a change past the end, which only the seven-day line can find, opens one with no
+    # five-hour reading unless it falls on a day that still has one. By date, as the regimes are.
+    last_read = measured_at.date() if five_hour_ended is not None and measured_at is not None else None
+    five_hour_changes = [c for c in changes if last_read is None or c["at"].date() <= last_read]
+    regime_start = five_hour_changes[-1]["at"].date() if five_hour_changes else None
+
     current = [(ts, v) for ts, v in series
                if (regime_start is None or ts.date() >= regime_start) and ts >= measured_at - timedelta(days=7)]
     stale = measured_at < now - timedelta(days=MAX_SAMPLE_AGE_DAYS) if measured_at else None
@@ -485,7 +505,9 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     stretches = _eligible_stretches(gs_passive, prices, allow_legacy_unverified=evidence_status == "conditional")
     if current:
         since = current[0][0].date().isoformat()
-        stretches = [st for st in stretches if st["end"][:10] >= since]
+        # By UTC day on both sides, as the readings are (`_in_utc`): a +02:00 stretch's own
+        # date string is the next day's for its first two hours.
+        stretches = [st for st in stretches if (_utc(st["end"]) or "")[:10] >= since]
     else:
         stretches = []
     movement = sum(float(st.get("delta_pct", 0)) for st in stretches)
@@ -1802,13 +1824,8 @@ def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, floa
 
 def _utc(stamp) -> str | None:
     """An ISO stamp as UTC, or None for anything that is not a parseable stamp."""
-    if not isinstance(stamp, str) or not stamp:
-        return None
-    try:
-        dt = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+    dt = parse_instant(stamp)
+    return dt.astimezone(timezone.utc).isoformat() if dt is not None else None
 
 
 def _account_feeds(gs_passive: dict | None, masterrig_passive: dict | None, credits: dict,
@@ -1877,12 +1894,14 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
     reading, not the derivation, and neither the old field nor
     `passive_generated_at` (when a file was rebuilt, on another host) answers that.
     """
+    # Compared as instants, in UTC like `account_feeds`: a string max puts a 'Z' or a non-UTC
+    # offset out of time order, and lets a stamp that is not a time at all win.
     stamps = [
-        (a.get("meter") or {}).get("last")
+        _utc((a.get("meter") or {}).get("last"))
         for a in ((gs_passive or {}).get("accounts") or {}).values()
     ]
-    usable = [t for t in stamps if isinstance(t, str) and t]
-    return max(usable) if usable else None
+    usable = [t for t in stamps if t]
+    return max(usable, key=datetime.fromisoformat) if usable else None
 
 
 def load_contributed(path: Path | None) -> dict | None:

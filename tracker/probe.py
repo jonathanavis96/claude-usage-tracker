@@ -65,6 +65,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .atomic import append_line
 from .cli_run import RunUsage
 from .publish import class_weight, meter_usd, tokens_usd
 from .usage_api import Utilization, same_reset
@@ -286,6 +287,17 @@ def _seconds_until_reset(u: Utilization, now: datetime) -> float | None:
         return None
 
 
+def _refuse_unmeasurable(u: Utilization) -> None:
+    """Abort on a reading no tick can be measured from, so no further prompt is spent on it:
+    a malformed response (`u.problems`), whose reshaped five-hour value reads as no reading
+    and so as a flat meter, or an account with no five-hour limit (weekly_only, ADR 0001
+    rule 24), whose five-hour meter never ticks."""
+    if u.problems:
+        raise ProbeAbort("usage response malformed: " + "; ".join(u.problems))
+    if u.weekly_only:
+        raise ProbeAbort("account is weekly-only (no five-hour limit): no five-hour tick to measure")
+
+
 def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Utilization],
                    run: Callable[[int], RunUsage], sleep: Callable[[float], None],
                    now: Callable[[], datetime], max_prompts: int = 80, settle_s: float = 60,
@@ -334,6 +346,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     """
     start = now()
     before = read()
+    _refuse_unmeasurable(before)
     reset_start = False
     tick1: int | None = None
     tick_from: int | None = None  # the tick at which measurement started
@@ -344,6 +357,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         before = read()
+        _refuse_unmeasurable(before)
         if before.five_hour == 0:
             reset_start = True
             tick1 = 0
@@ -382,6 +396,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         cur = read()
+        _refuse_unmeasurable(cur)
         reading = {"prompt": prompts, "five_hour": cur.five_hour, "tokens": batch}
         if k > 1:
             reading["burst"] = k
@@ -819,8 +834,11 @@ WEEKLY_MAX_PCT = 90
 @dataclass(frozen=True)
 class Skip:
     """Why choose_account passed over an account. `kind` is `busy` (someone is using it,
-    by busy_reason's checks) or `weekly` (its seven-day meter is too near the cap to
-    spend a run on); `why` is the detail the log line carries after it."""
+    by busy_reason's checks), `weekly` (its seven-day meter is too near the cap to
+    spend a run on), `weekly-only` (it has no five-hour limit, ADR 0001 rule 24) or
+    `malformed` (the usage response has a reshaped value, so its meter cannot be read;
+    retried like busy, since the endpoint may recover); `why` is the detail the log line
+    carries after it."""
     kind: str
     why: str
 
@@ -871,12 +889,19 @@ def busy_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     return skip.why if skip is not None else None
 
 
+def _five_hour_text(u: Utilization) -> str:
+    """`7%`, or `no reading` while the endpoint reports no five-hour figure (no window
+    open): a meter that moves from no reading to one is busy, not a format error."""
+    return f"{u.five_hour:g}%" if u.five_hour is not None else "no reading"
+
+
 def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None], window_s: float = 120,
                 cfg: Path | None = None,
                 processes: Callable[[], list[tuple[int, Path]]] | None = None,
                 session_status: Callable[[Path, int], SessionState] = read_session_status,
                 weekly_max_pct: float | None = WEEKLY_MAX_PCT,
-                note: Callable[[str], None] = lambda line: None) -> Skip | None:
+                note: Callable[[str], None] = lambda line: None,
+                peek: Callable[[], Utilization | None] | None = None) -> Skip | None:
     """Why the account should not be probed now, as a Skip, or None when it can be.
 
     busy_reason's checks in its order, with the weekly meter between the first meter
@@ -884,28 +909,42 @@ def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
     extra call to the usage endpoint, and an account it rules out spends no window. The
     weekly figure goes to `note` as `weekly meter N%` (or `weekly meter not reported`)
     for every account whose meter is read, so the log shows what each choice was made
-    on. An account the free pid check rejects first is `busy` without a meter read, so
-    its weekly figure is not known. `weekly_max_pct=None` leaves the weekly meter out
-    (busy_reason).
+    on. An account the free pid check rejects first is `busy` without a meter read, unless
+    `peek` (a best-effort reading, None when it has none) says it is weekly-only: a session
+    open on such an account does not make it worth waiting for, since waiting cannot give it
+    a five-hour limit back. `weekly_max_pct=None` leaves the weekly meter out (busy_reason).
     """
     watch = (SessionWatch(cfg, processes, session_status)
              if cfg is not None and processes is not None else None)
     if watch is not None:
         reason = watch.snapshot()
         if reason is not None:
+            seen = peek() if peek is not None and weekly_max_pct is not None else None
+            if seen is not None and seen.weekly_only:
+                return Skip("weekly-only", "no five-hour limit, so no tick to measure")
             return Skip("busy", reason)
     a = read()
+    if a.problems:
+        # A reshaped five-hour value reads as no reading, as an idle window's does, so two
+        # of them would pass the flat-meter check: refuse it before any window or prompt.
+        return Skip("malformed", "; ".join(a.problems))
     if weekly_max_pct is not None:
         note(f"weekly meter {a.seven_day:g}%" if a.seven_day is not None else "weekly meter not reported")
+        if a.weekly_only:
+            # Its null five-hour meter is flat, so it reads idle, but run_tick_probe would
+            # only refuse it: pass it over for an account that still has a five-hour limit.
+            return Skip("weekly-only", "no five-hour limit, so no tick to measure")
         why = weekly_reason(a, weekly_max_pct)
         if why is not None:
             return Skip("weekly", why)
     sleep(window_s)
     b = read()
+    if b.problems:
+        return Skip("malformed", "; ".join(b.problems))
     if not _same_window(a, b):
         return Skip("busy", "window reset")
     if a.five_hour != b.five_hour:
-        return Skip("busy", f"meter moved {a.five_hour:g}% -> {b.five_hour:g}%")
+        return Skip("busy", f"meter moved {_five_hour_text(a)} -> {_five_hour_text(b)}")
     reason = watch.check() if watch is not None else None
     return Skip("busy", reason) if reason is not None else None
 
@@ -929,8 +968,10 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
                    processes: Callable[[], list[tuple[int, Path]]] = claude_processes,
                    session_status: Callable[[Path, int], SessionState] = read_session_status,
                    log: Callable[[str], None] = _log_stderr, weekly_max_pct: float = WEEKLY_MAX_PCT,
-                   skipped: dict[str, Skip] | None = None):
-    """Return the first account fit to probe, or None once the wait or the deadline runs out.
+                   skipped: dict[str, Skip] | None = None, history: list[Skip] | None = None,
+                   peek_for: Callable[[str], Callable[[], Utilization]] | None = None):
+    """Return the first account fit to probe, or None once the wait or the deadline runs out,
+    or at once when every account was passed over as weekly-only (waiting cannot clear that).
 
     An account is passed over when it is busy (busy_reason's checks) or when its
     seven-day meter reads above `weekly_max_pct` (issue #38), and each is logged as
@@ -940,25 +981,52 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
     busy. Every account whose meter is read also logs `<name> weekly meter N%`, the
     figure its choice was made on (skip_reason). A weekly skip is retried like a busy
     one, at one meter read per retry. `skipped`, when given, is filled with each
-    passed-over account's latest Skip, so a caller left with None can say why.
+    passed-over account's latest Skip, so a caller left with None can say why, and
+    `history` with every Skip of every round, so it can say whether it waited.
+    `peek_for(name)`, when given, is a quick read (no 429 retries) tried at most once per
+    account per call, for an account the pid check calls busy: one found weekly-only is
+    passed over as such, so a session open on it does not hold the whole wait. A failed peek
+    leaves the account the plain busy skip it was.
     `processes` is the host process lister (`claude_processes` by default) and
     `session_status` the per-session status reader (`read_session_status`); tests
     inject both.
     """
     waited = 0.0
+    peeked: dict[str, Utilization | None] = {}
+    known_weekly_only: dict[str, Skip] = {}
+
+    def peek(name: str) -> Utilization | None:
+        if name not in peeked:
+            try:
+                peeked[name] = peek_for(name)() if peek_for is not None else None
+            except Exception:  # best effort: any failure is no reading, never a crash
+                peeked[name] = None
+        return peeked[name]
+
     while True:
         if deadline is not None and now is not None and now() >= deadline:
             return None
+        may_clear = False  # a weekly-only account does not get its five-hour limit back by waiting
         for name, cfg in accounts:
-            skip = skip_reason(read_for(name), sleep, cfg=cfg, processes=processes,
-                               session_status=session_status, weekly_max_pct=weekly_max_pct,
-                               note=lambda line, name=name: log(f"{name} {line}"))
+            # Waiting cannot give a weekly-only account its limit back, so it is not read again:
+            # a re-read is an endpoint call, whose 429 backoff would spend the wait's budget.
+            if name in known_weekly_only:  # already logged and counted in an earlier round
+                continue
+            skip = skip_reason(
+                read_for(name), sleep, cfg=cfg, processes=processes, session_status=session_status,
+                weekly_max_pct=weekly_max_pct, note=lambda line, name=name: log(f"{name} {line}"),
+                peek=lambda name=name: peek(name))
             if skip is None:
                 return (name, cfg)
+            if skip.kind == "weekly-only":
+                known_weekly_only[name] = skip
             if skipped is not None:
                 skipped[name] = skip
+            if history is not None:
+                history.append(skip)
             log(f"{name} {skip.kind}: {skip.why}")
-        if waited >= max_wait_s:
+            may_clear = may_clear or skip.kind != "weekly-only"
+        if not may_clear or waited >= max_wait_s:
             return None
         if deadline is not None and now is not None and now() >= deadline:
             return None
@@ -966,12 +1034,29 @@ def choose_account(accounts: list[tuple[str, Path]], read_for: Callable[[str], C
         waited += retry_s
 
 
+def deadline_peek_fetch(clock: Callable[[], datetime], deadline: datetime,
+                        sleep: Callable[[float], None], fetch=None):
+    """The fetch for choose_account's peek at a busy account: one try, charged to the run's
+    one budget. None once the deadline is gone, and a 429 is never retried, so a peek cannot
+    spend what is left of the wait."""
+    if fetch is None:
+        from .usage_api import _default_fetch as fetch
+
+    def go(url: str, headers: dict) -> dict:
+        if clock() >= deadline:
+            raise ProbeAbort("deadline")
+        return fetch(url, headers, sleep=sleep, max_retries=0)
+    return go
+
+
 def append_result(path: Path, r: ProbeResult, account: str) -> None:
     row = asdict(r)
     row["ts"] = r.ts.isoformat()
     row["account"] = account
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row) + "\n")
+    # A last line with no newline (a hand edit, a torn write) would swallow this row into
+    # one unparseable line, and load_probes refuses the whole file over it: append_line
+    # starts the row on its own line.
+    append_line(path, (json.dumps(row) + "\n").encode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1071,16 +1156,32 @@ def main(argv: list[str] | None = None) -> int:
 
     def read_for(name):
         return lambda: read_usage(account_cfgs[name], fetch=fetch)
+
+    peek_fetch = deadline_peek_fetch(clock, deadline, deadline_sleep)
+
+    def peek_for(name):
+        return lambda: read_usage(account_cfgs[name], fetch=peek_fetch)
     skipped: dict[str, Skip] = {}
+    history: list[Skip] = []
     picked = choose_account(accounts, read_for, time.sleep, max_wait_s=a.max_wait,
-                            now=clock, deadline=deadline, skipped=skipped)
+                            now=clock, deadline=deadline, skipped=skipped, history=history,
+                            peek_for=peek_for)
     if picked is None:
         # Every account passed over. Busy alone keeps the line it has always had; once a
-        # weekly meter is among the reasons the line says so and names each account's,
-        # so a spent week does not read as the "no idle account" blackout of issue #21.
-        if any(s.kind == "weekly" for s in skipped.values()):
+        # weekly meter (or a weekly-only account) is among the reasons the line says so and
+        # names each account's, so neither reads as the "no idle account" blackout of issue #21.
+        if any(s.kind != "busy" for s in skipped.values()):
             why = "; ".join(f"{n} {s.kind}: {s.why}" for n, s in skipped.items())
-            print(f"probe skipped: no usable account within max wait ({why})", file=sys.stderr)
+            if all(s.kind == "weekly-only" for s in history):
+                # choose_account gave up at once: no wait happened, so the line claims none.
+                print(f"probe skipped: every account is weekly-only, nothing to wait for ({why})",
+                      file=sys.stderr)
+            elif all(s.kind == "weekly-only" for s in skipped.values()):
+                # It waited for a busy account, which then read weekly-only too.
+                print(f"probe skipped: every account is weekly-only, after waiting for a busy one ({why})",
+                      file=sys.stderr)
+            else:
+                print(f"probe skipped: no usable account within max wait ({why})", file=sys.stderr)
         else:
             print("probe skipped: no idle account within max wait", file=sys.stderr)
         return 3

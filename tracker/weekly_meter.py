@@ -38,6 +38,7 @@ from .crossings import crossings
 from .join import Stretch
 from .samples import Sample
 from .turns import Turn
+from .usage_api import as_utc
 
 #: Bootstrap draws behind every interval here, and the seed every draw's stream starts from
 #: (a publish is reproducible: the same history gives the same intervals).
@@ -133,14 +134,16 @@ def clean_steps(by_account: dict[str, list[dict]], runs: list[credit_model.Harne
     """
     withheld: dict[str, list[tuple[datetime, datetime]]] = {}
     for account, rows in (stretches or {}).items():
-        withheld[account] = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
-                             for s in rows if s.get("start") and s.get("end")
-                             and s.get("status") != "accepted"]
+        withheld[account] = [span for s in rows if s.get("status") != "accepted"
+                             and (span := credit_model.stretch_span(s)) is not None]
     kept: dict[str, list[dict]] = {}
     for account, steps in by_account.items():
         rows = []
         for st in steps:
-            start, end = datetime.fromisoformat(st["start"]), datetime.fromisoformat(st["end"])
+            span = credit_model.stretch_span(st)
+            if span is None:
+                continue  # a step with no span cannot be tested against a run or a stretch
+            start, end = span
             # A withheld stretch past the five-hour limit's end is dropped, and marks the steps
             # it overlapped instead (tracker/five_hour_end.py).
             if st.get("cloud_session") or st.get("withheld_by_stretch"):
@@ -172,11 +175,11 @@ def valued(steps: list[dict], value, factor: float | None = None) -> list[dict]:
         credits = value(st.get("tokens") or {})
         if credits is None:
             continue
-        end = datetime.fromisoformat(st["end"])
+        end = as_utc(datetime.fromisoformat(st["end"]))  # a naive end is UTC, as clean_steps reads it
         raw = st.get("d5", 0)
         head = value(st["headless_tokens"]) if st.get("headless_tokens") else 0.0
         share = min(max(head / credits, 0.0), 1.0) if factor and credits and head else 0.0
-        out.append({"start": datetime.fromisoformat(st["start"]), "end": end,
+        out.append({"start": as_utc(datetime.fromisoformat(st["start"])), "end": end,
                     "day": end.astimezone(timezone.utc).date().isoformat(), "credits": float(credits),
                     "d7": st.get("d7", 1), "d5": raw / (1 + (factor - 1) * share) if share else raw,
                     "raw_d5": raw, "five_hour_measured": st.get("five_hour_measured", True)})

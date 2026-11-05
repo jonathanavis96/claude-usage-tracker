@@ -93,6 +93,9 @@ class Config:
     credentials: Path = HOME / ".claude" / ".credentials.json"
     token_grace_s: int = 12 * 60 * 60
     lock_pidfile: Path = ROOT / ".supervise.pid"
+    #: The supervisor's flock file, for a run with no pid file; None is `<pid file>.lock`, the
+    #: name the default locks carry (tracker.supervise names its pid file `<lock>.pid`).
+    lock_file: Path | None = None
     lock_max_age_s: int = 2 * 60 * 60
     logs: tuple[Path, ...] = ()
     max_log_bytes: int = 5 * 1024 * 1024
@@ -133,10 +136,10 @@ LIVE_PAGE_URL = "https://alldonesites.com/data/claude-usage.json"
 
 
 def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path = GS_OPS,
-              repo: Path = ROOT, site: Path = GS_SITE) -> Config:
+              repo: Path = ROOT, site: Path = GS_SITE, lock_file: Path | None = None) -> Config:
     """Health on gs: the supervised publisher run every 30 min, the age of the JSON it
     published, the three meter timers and the advisory steps of bin/daily.sh."""
-    return Config(state=state, run_interval_s=30 * 60, lock_pidfile=pidfile, logs=logs, repo=repo,
+    return Config(state=state, run_interval_s=30 * 60, lock_pidfile=pidfile, lock_file=lock_file, logs=logs, repo=repo,
                   history_dir=repo / "history",
                   meter_logs=tuple(ops / f"claude-usage-meter-{a}.log" for a in GS_METER_ACCOUNTS),
                   passive_record=repo / "history" / "gs-passive.json",
@@ -409,11 +412,91 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _proc_locks() -> str:
+    return Path("/proc/locks").read_text()
+
+
+def _holds_open(pid: str, st: os.stat_result) -> bool | None:
+    """Whether process `pid` has the file `st` open; None when its fds cannot be read."""
+    try:
+        fds = os.listdir(f"/proc/{pid}/fd")
+    except OSError:
+        return None
+    for fd in fds:
+        try:
+            other = os.stat(f"/proc/{pid}/fd/{fd}")
+        except OSError:
+            continue
+        if (other.st_dev, other.st_ino) == (st.st_dev, st.st_ino):
+            return True
+    return False
+
+
+def _flock_held(lock: Path) -> bool | None:
+    """Whether some process holds a flock on `lock`, read from /proc/locks so the check never
+    takes a lock itself (a shared one, even for an instant, makes a supervised run starting
+    in the same moment skip as "previous run still going"). None when it cannot tell.
+
+    A row is matched by inode and device, or, where the device /proc/locks prints (the
+    superblock's) reads differently from stat's (btrfs subvolumes, overlayfs), by inode and the
+    holder's open files."""
+    try:
+        st = os.stat(lock)
+        table = _proc_locks()
+    except OSError:
+        return None
+    for row in table.splitlines():
+        parts = row.split()
+        if "->" in parts or "FLOCK" not in parts:  # "->" marks a waiter, not a holder
+            continue
+        try:
+            i = parts.index("FLOCK")
+            pid = parts[i + 3]
+            dev_major, dev_minor, inode = parts[i + 4].split(":")
+            if int(inode) != st.st_ino:
+                continue
+            same_dev = int(dev_major, 16) == os.major(st.st_dev) and int(dev_minor, 16) == os.minor(st.st_dev)
+        except (IndexError, ValueError):
+            continue
+        # The device and inode agreeing is enough (the holder may sit in another pid namespace,
+        # where its pid names some other process); the holder's files settle only a device
+        # that reads differently, and where they cannot be read (hidepid, another user) the
+        # inode stands: a false alarm still needs a stamp past the limit and newer than the
+        # last finished run (`_held_lock_age`).
+        if same_dev or _holds_open(pid, st) is not False:
+            return True
+    return False
+
+
+def _held_lock_age(c: Config, now: float) -> float | None:
+    """How long the supervisor's flock (`<name>.lock` beside the pid file) has been held, from
+    the stamp each run puts on it as it takes the lock (tracker.supervise); None when nothing
+    holds it, or when the stamp is older than the last finished run, so it was not this run's
+    (the stamp could not be written: a read-only disk) and cannot age it."""
+    lock = c.lock_file or c.lock_pidfile.with_suffix(".lock")
+    if not _flock_held(lock):
+        return None
+    try:
+        mtime = lock.stat().st_mtime
+    except OSError:
+        return None
+    st = read_state(c.state)
+    finished = [t for t in (st.get("last_ok"), st.get("last_fail")) if isinstance(t, (int, float))]
+    if finished and max(finished) > mtime:
+        return None
+    return now - mtime
+
+
 def check_lock(c: Config, now: float) -> str | None:
     try:
         text = c.lock_pidfile.read_text().strip()
         mtime = c.lock_pidfile.stat().st_mtime
     except OSError:
+        # No pid file: a run on a full disk goes on without one (tracker.supervise), so a held
+        # lock (`<name>.lock` beside `<name>.pid`) is aged by its own stamp instead.
+        age = _held_lock_age(c, now)
+        if age is not None and age > c.lock_max_age_s:
+            return f"lock: a run with no pid file has held the lock {_age(age)}"
         return None
     if not text.isdigit() or not pid_alive(int(text)):
         return f"lock: stale lock {c.lock_pidfile.name} (pid {text or '?'} not running)"

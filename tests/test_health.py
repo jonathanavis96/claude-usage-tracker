@@ -177,6 +177,74 @@ class HealthTest(unittest.TestCase):
         os.utime(self.c.lock_pidfile, (NOW - 3 * 3600, NOW - 3 * 3600))
         self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
 
+    def test_a_held_lock_with_no_pid_file_is_aged_by_the_lock_file(self):
+        # Code review round 5: a run that could not write its pid file (full disk) and then
+        # hung read as a healthy lock here, while supervise alerted on it and pointed here.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 4 * 3600}))  # the hung run began after it
+        self.assertIsNone(self.reasons().get("lock"))  # not held: an old lock file is no run at all
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            # Round 6: the check reads /proc/locks and never takes a lock of its own, which
+            # would make a supervised run starting in the same instant skip itself.
+            with mock.patch("fcntl.flock", side_effect=AssertionError("health took a lock")):
+                self.assertIn("a run with no pid file has held the lock 3h00m", self.reasons()["lock"])
+            os.utime(lock, (NOW - 600, NOW - 600))
+            self.assertIsNone(self.reasons().get("lock"))
+        finally:
+            os.close(fd)
+
+    def test_a_lock_stamp_older_than_the_last_finished_run_does_not_age_the_lock(self):
+        # Code review round 7: when the stamp itself could not be written (a read-only disk),
+        # the lock still carries an earlier run's time, which would read as hours held.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 120}))
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertIsNone(self.reasons().get("lock"))
+        finally:
+            os.close(fd)
+
+    def test_a_held_lock_is_found_by_its_holder_when_the_device_reads_differently(self):
+        # Code review round 7: /proc/locks prints the superblock's device, which differs from
+        # stat's on btrfs subvolumes and overlayfs; the holder's open files settle it.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 4 * 3600}))
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        row = f"1: FLOCK  ADVISORY  WRITE {os.getpid()} ff:ff:{os.stat(lock).st_ino} 0 EOF\n"
+        try:
+            with mock.patch.object(health, "_proc_locks", return_value=row):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+            # Round 11: a holder whose files cannot be read (hidepid, another user) is no veto.
+            with mock.patch.object(health, "_proc_locks", return_value=row.replace(str(os.getpid()), "1")), \
+                    mock.patch.object(health, "_holds_open", return_value=None):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+            other = f"1: FLOCK  ADVISORY  WRITE 1 ff:ff:{os.stat(lock).st_ino} 0 EOF\n"
+            with mock.patch.object(health, "_proc_locks", return_value=other), \
+                    mock.patch.object(health, "_holds_open", return_value=False):
+                self.assertIsNone(self.reasons().get("lock"))  # the same inode on another device
+            # Round 8: device and inode agreeing is enough, though the holder's pid shows no
+            # such file (another pid namespace).
+            st = os.stat(lock)
+            same = f"1: FLOCK  ADVISORY  WRITE 1 {os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino} 0 EOF\n"
+            with mock.patch.object(health, "_proc_locks", return_value=same), \
+                    mock.patch.object(health, "_holds_open", return_value=False):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+        finally:
+            os.close(fd)
+
     def test_sizes(self):
         self.c.max_log_bytes = 10
         (self.tmp / "run.log").write_text("x" * 2048)

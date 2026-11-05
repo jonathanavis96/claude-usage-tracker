@@ -102,6 +102,7 @@ from .rows import usable_rows
 from .samples import Sample, infer_resets, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 from .unclaimed import airlock_record
+from .usage_api import as_utc
 from .unclaimed import attribute as attribute_unclaimed
 from .weekly_meter import seven_day_steps
 
@@ -994,8 +995,7 @@ def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict
 
 
 def _utc_day(stamp: str) -> str:
-    at = datetime.fromisoformat(stamp)
-    return (at.astimezone(timezone.utc) if at.tzinfo else at).date().isoformat()
+    return as_utc(datetime.fromisoformat(stamp)).astimezone(timezone.utc).date().isoformat()
 
 
 def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
@@ -1030,15 +1030,21 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             # A stretch with a model these prices do not cover is left out whole:
             # valuing that model at $0 would deflate the reading and look like a
             # cheaper meter, and the stretch's percent is spent on it all the same.
-            valued = {m: bundle_meter_usd(m, tok, prices) for m, tok in s["tokens"].items()}
-            if any(v is None for v in valued.values()):
+            # A bundle of no tokens (Claude Code's `<synthetic>` rows) hides no work and is
+            # skipped, as `passive_credit_points` skips it; with nothing else left, no reading.
+            valued = {m: bundle_meter_usd(m, tok, prices)
+                      for m, tok in credit_model.bundles_with_work(s["tokens"]).items()}
+            if not valued or any(v is None for v in valued.values()):
                 continue
             # Per UTC day, as the docstring says: a +02:00 stretch's own date is not its UTC date.
             key = _utc_day(s["end"]) if by == "day" else s["end"]
             groups.setdefault(key, []).append((s, sum(valued.values())))
         for ss in groups.values():
             usd = sum(v for _, v in ss)
-            out.append((datetime.fromisoformat(ss[-1][0]["end"]), usd / sum(s["delta_pct"] for s, _ in ss) * 100))
+            # A naive end is UTC, as `_utc_day` files it: left naive it would not sort against
+            # an aware one, and the whole series would fail on one hand-written stamp.
+            end = as_utc(datetime.fromisoformat(ss[-1][0]["end"]))
+            out.append((end, usd / sum(s["delta_pct"] for s, _ in ss) * 100))
     return sorted(out)
 
 
@@ -1050,11 +1056,6 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
 #: at least one family whose rate was fitted; one that reads `anchor` was pure Opus.
 CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_table",
                        "inferred_list_price")
-
-
-def _empty(tok) -> bool:
-    """A token bundle that holds no tokens (Claude Code's `<synthetic>` placeholder rows)."""
-    return isinstance(tok, dict) and not credit_model.raw_tokens(tok)
 
 
 def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
@@ -1102,7 +1103,9 @@ def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
         # rows carry the model id `<synthetic>` and zero tokens, belong to no family, and
         # would otherwise drop the whole stretch as unpriced. One that ever carries tokens
         # is not skipped, and lands in `unpriced_credit_models`.
-        if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
+        if not isinstance(tok, dict):
+            return None, "unpriced"  # no bundle: refused whole (`credits.bundles_with_work`)
+        if not credit_model.holds_work(tok):
             continue
         fam = credit_model.family(model, credits)
         if fam is None:
@@ -1175,8 +1178,8 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0 or not s.get("tokens"):
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
-                   if not _empty(tok)):
+            if any(bundle_meter_usd(m, tok, prices) is None
+                   for m, tok in credit_model.bundles_with_work(s["tokens"]).items()):
                 continue
             value, _source = stretch_credits(s["tokens"], credits, model_rates, prices)
             if value is None or not s.get("delta_pct"):
@@ -1186,7 +1189,8 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                 # `<synthetic>` ones. The meter moved and no work explains it, so it is no
                 # reading of credits per percent, and a zero here would pull the level down.
                 continue
-            out.append((datetime.fromisoformat(s["end"]), value, float(s["delta_pct"]),
+            # A naive end is UTC, as in passive_dollar_readings: left naive it would not sort.
+            out.append((as_utc(datetime.fromisoformat(s["end"])), value, float(s["delta_pct"]),
                         int(s.get("windows") or 1)))
     return sorted(out, key=lambda p: p[0])
 
@@ -1203,9 +1207,10 @@ def unpriced_credit_models(report: dict, prices: dict, credits: dict,
     out = set()
     for account in report.get("accounts", {}).values():
         for s in account.get("stretches") or []:
-            for model, tok in (s.get("tokens") or {}).items():
-                # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows).
-                if not isinstance(tok, dict) or model in out or not credit_model.raw_tokens(tok):
+            for model, tok in credit_model.bundles_with_work(s.get("tokens")).items():
+                # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows); a value
+                # that is no bundle at all cannot be valued, so it is listed like a missing price.
+                if model in out:
                     continue
                 if (bundle_meter_usd(model, tok, prices) is None
                         or stretch_credits({model: tok}, credits, model_rates, prices)[0] is None):
@@ -1226,8 +1231,8 @@ def credit_rate_sources(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0:
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
-                   if not _empty(tok)):
+            if any(bundle_meter_usd(m, tok, prices) is None
+                   for m, tok in credit_model.bundles_with_work(s["tokens"]).items()):
                 continue
             value, source = stretch_credits(s["tokens"], credits, model_rates, prices)
             # The same admission rule as passive_credit_points: priced and charged.
@@ -1290,9 +1295,12 @@ def fit_output_weight(rpt: dict, prices: dict) -> dict:
             if st.get("capture_status", st["status"]) != ACCEPTED:
                 continue
             base = out = 0.0
-            for m, tok in st["tokens"].items():
+            work = credit_model.bundles_with_work(st["tokens"])
+            if not work:
+                continue  # only `<synthetic>` rows, or no bundle: a collection gap, not a zero row
+            for m, tok in work.items():
                 price = prices.get(m)
-                if price is None:
+                if price is None or not isinstance(tok, dict):  # unpriced, or no bundle at all
                     break
                 base += (tok.get("input", 0) * price["input"] + tok.get("cache_write", 0) * price["cache_write"]) / 1e6
                 out += tok.get("output", 0) * price["output"] / 1e6
@@ -1325,9 +1333,7 @@ def _utc_arg(value: str, *, end_of_day: bool = False) -> datetime:
     on comparison. A bare date means the whole day: its start for --since, its
     last second for --until, so `--since 2026-09-05 --until 2026-09-15` spans
     both days inclusive."""
-    t = datetime.fromisoformat(value)
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
+    t = as_utc(datetime.fromisoformat(value))
     if end_of_day and len(value) == 10:
         t = t.replace(hour=23, minute=59, second=59)
     return t

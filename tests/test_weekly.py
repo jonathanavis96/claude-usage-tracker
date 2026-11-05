@@ -319,6 +319,27 @@ class ProbeWeeklyWindowsTests(unittest.TestCase):
         ])
         self.assertEqual(result["current"], 5.5)
 
+    def test_reset_jitter_across_midnight_stays_one_week(self):
+        # The endpoint jitters resets_at by under a second (real rows: 22:59:59.978794 and
+        # 23:00:00.500329). For a reset at midnight that jitter changes the date, and keying on
+        # resets_at[:10] split one week into two halves, each under the seven-day floor.
+        rows = [
+            probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 15.0, "2026-09-03T23:59:59.978794+00:00"),
+            probe_row("2026-09-02T00:00:00+00:00", 10.0, 35.0, 10.0, 15.0, "2026-09-04T00:00:00.500329+00:00"),
+        ]
+        result = probe_weekly_windows(rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual(result["history"], [
+            {"week_ending": "2026-09-04", "windows": 5.0, "five_hour_pct": 50.0, "seven_day_pct": 10.0,
+             "partial": False},
+        ])
+
+    def test_a_reset_stamp_that_does_not_parse_falls_back_to_the_iso_week(self):
+        # Code review round 1: _week_key parses where resets_at[:10] only sliced, and
+        # build_public_json calls this unguarded, so one odd stamp must not stop the publish.
+        rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 20.0, "soon")]
+        result = probe_weekly_windows(rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual([h["week_ending"] for h in result["history"]], ["2026-09-06"])
+
     def test_falls_back_to_iso_week_ending_without_resets_at(self):
         # 2026-09-01 is a Tuesday in ISO week ending Sunday 2026-09-06.
         rows = [probe_row("2026-09-01T00:00:00+00:00", 10.0, 35.0, 10.0, 20.0)]
@@ -362,3 +383,17 @@ class MalformedRowTests(unittest.TestCase):
         self.assertEqual(weekly_windows(parse_rows(['{"ts": "x", "five_hour": {"utilization": 1, "resets_at": "y"},'
                                                     ' "seven_day": {"utilization": 1, "resets_at": "z"}}'])),
                          weekly_windows([]))
+
+    def test_a_naive_stamp_is_read_as_utc_not_a_crash(self):
+        # contrib/sample.py writes UTC; one naive row among aware ones raised TypeError
+        # ("can't subtract offset-naive and offset-aware datetimes") and took the whole
+        # weekly figure down with it.
+        import json
+        def line(ts, f, fr, s, sr):
+            return json.dumps({"ts": ts, "five_hour": {"utilization": f, "resets_at": fr},
+                               "seven_day": {"utilization": s, "resets_at": sr}})
+        aware = [line("2026-09-01T10:00:00+00:00", 5, "2026-09-01T12:00:00+00:00", 9, "2026-09-05T04:00:00+00:00"),
+                 line("2026-09-01T10:30:00+00:00", 9, "2026-09-01T12:00:00+00:00", 10, "2026-09-05T04:00:00+00:00")]
+        naive = [aware[0], line("2026-09-01T10:30:00", 9, "2026-09-01T12:00:00", 10, "2026-09-05T04:00:00")]
+        now = datetime(2026, 9, 20, tzinfo=timezone.utc)
+        self.assertEqual(weekly_windows(parse_rows(naive), now=now), weekly_windows(parse_rows(aware), now=now))

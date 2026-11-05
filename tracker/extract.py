@@ -218,15 +218,27 @@ def _births(paths: list[Path]) -> dict[Path, float]:
     for i in range(0, len(paths), 500):
         chunk = paths[i:i + 500]
         try:
-            res = subprocess.run(["stat", "-c", "%W %Y", "--", *map(str, chunk)], capture_output=True,
-                                 text=True, timeout=60)
-            rows = res.stdout.splitlines()
+            # Bytes, decoded name by name as Python decodes file names: a name that is not
+            # UTF-8 neither raises nor fails to match its own str(path), and no newline
+            # translation turns a carriage return in a name into a newline. Rows end in NUL,
+            # the one byte no path holds: split on newlines, a name holding one became two rows,
+            # and a fragment equal to another path in the chunk took over that path's times.
+            res = subprocess.run(["stat", "--printf", "%W %Y %n\\0", "--", *map(str, chunk)],
+                                 capture_output=True, timeout=60)
+            rows = [os.fsdecode(r) for r in res.stdout.split(b"\0")]
         except (OSError, subprocess.SubprocessError):
             rows = []
-        if len(rows) != len(chunk):
-            continue  # a path vanished mid-call: the per-path fallback below covers the chunk
-        for p, row in zip(chunk, rows):
-            birth, _, mtime = row.partition(" ")
+        # Each row names its path, so a path that vanished mid-call (stat prints no row for
+        # it) costs only itself; matched by position, it cost the whole chunk its birth times.
+        by_name: dict[str, tuple[str, str]] = {}
+        for row in rows:
+            birth, _, rest = row.partition(" ")
+            mtime, _, name = rest.partition(" ")
+            by_name[name] = (birth, mtime)
+        for p in chunk:
+            if (got := by_name.get(str(p))) is None:
+                continue  # the per-path fallback below covers it
+            birth, mtime = got
             try:
                 out[p] = float(birth) if birth.isdigit() and int(birth) > 0 else float(mtime)
             except ValueError:

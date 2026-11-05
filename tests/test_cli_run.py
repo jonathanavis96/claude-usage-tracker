@@ -58,3 +58,63 @@ class ModelMismatchTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as e:
             parse_result(json.dumps(d), "claude-opus-5")
         self.assertIn("claude-opus-5", str(e.exception))
+
+    def test_a_newer_minor_version_is_not_the_model_asked_for(self):
+        # Asked for claude-opus-5, served by claude-opus-5-5: a different model whose id merely
+        # starts with the one asked for. Accepting it would measure the substitute.
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-opus-5-5": d["modelUsage"]["claude-sonnet-5"]}
+        with self.assertRaises(RuntimeError):
+            parse_result(json.dumps(d), "claude-opus-5")
+
+    def test_exact_id_wins_over_a_longer_one_listed_first(self):
+        d = json.loads(RESULT)
+        block = d["modelUsage"]["claude-sonnet-5"]
+        d["modelUsage"] = {"claude-sonnet-5-5": {**block, "outputTokens": 999}, "claude-sonnet-5": block}
+        self.assertEqual(parse_result(json.dumps(d), "claude-sonnet-5").output, 80)
+
+    def test_a_dated_snapshot_of_the_model_asked_for_still_counts(self):
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-sonnet-5-20260901": d["modelUsage"]["claude-sonnet-5"]}
+        u = parse_result(json.dumps(d), "claude-sonnet-5")
+        self.assertEqual((u.model, u.output), ("claude-sonnet-5-20260901", 80))
+
+    def test_the_1m_context_marker_is_the_same_model(self):
+        # Review round 1: the old prefix match accepted "claude-opus-5-5[1m]"; the exact-or-dated
+        # rule refused it, failing every run on a model the CLI reports with the marker.
+        d = json.loads(RESULT)
+        block = d["modelUsage"]["claude-sonnet-5"]
+        d["modelUsage"] = {"claude-opus-5-5[1m]": block}
+        self.assertEqual(parse_result(json.dumps(d), "claude-opus-5-5").output, 80)
+        d["modelUsage"] = {"claude-opus-5-5-20261001[1m]": block}
+        self.assertEqual(parse_result(json.dumps(d), "claude-opus-5-5").output, 80)
+        with self.assertRaises(RuntimeError):  # still another model when asked for Opus 5
+            parse_result(json.dumps(d), "claude-opus-5")
+
+    def test_every_key_of_the_model_asked_for_is_summed(self):
+        # Code review round 10: a run reported under its dated id and its [1m] variant at once
+        # was measured on whichever came first, dropping the other's tokens.
+        d = json.loads(RESULT)
+        block = d["modelUsage"]["claude-sonnet-5"]
+        d["modelUsage"] = {"claude-haiku-4-5": {**block, "outputTokens": 999},
+                           "claude-opus-5-5-20261001": block, "claude-opus-5-5[1m]": block}
+        u = parse_result(json.dumps(d), "claude-opus-5-5")
+        self.assertEqual(u.output, 160)
+        self.assertEqual(u.input, 2 * int(block.get("inputTokens") or 0))
+        # Rounds 11 and 12: the keys' own costs when every one carries it; when only some do,
+        # unknown (the run's total carries the sidecar's cost too).
+        d["modelUsage"] = {"claude-opus-5-5-20261001": {**block, "costUSD": 0.4},
+                           "claude-opus-5-5[1m]": {k: v for k, v in block.items() if k != "costUSD"},
+                           "claude-haiku-4-5": {**block, "costUSD": 0.02}}
+        d["total_cost_usd"] = 1.25
+        self.assertIsNone(parse_result(json.dumps(d), "claude-opus-5-5").cost_usd)
+        d["modelUsage"]["claude-opus-5-5[1m]"]["costUSD"] = 0.6
+        self.assertAlmostEqual(parse_result(json.dumps(d), "claude-opus-5-5").cost_usd, 1.0)
+
+    def test_an_aliased_older_model_is_not_the_one_asked_for(self):
+        # turns.MODEL_ALIASES prices claude-fable-5 as claude-fable-5-1; a probe of 5.1 served
+        # by 5 is still the wrong model.
+        d = json.loads(RESULT)
+        d["modelUsage"] = {"claude-fable-5": d["modelUsage"]["claude-sonnet-5"]}
+        with self.assertRaises(RuntimeError):
+            parse_result(json.dumps(d), "claude-fable-5-1")

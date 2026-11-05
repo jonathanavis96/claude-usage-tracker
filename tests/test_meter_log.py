@@ -1,9 +1,11 @@
 import hashlib
+import io
 import json
 import os
 import tempfile
 import unittest
 import urllib.error
+from contextlib import redirect_stderr
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -100,6 +102,20 @@ class SampleTests(unittest.TestCase):
             self.assertEqual(parse_moonlighter(lines)[0].five_hour, 12.0)
             self.assertIsNotNone(parse_row(row))
             self.assertEqual(parse_meter_log(lines)[0].resets_at, "2026-09-15T23:00:00.4+00:00")
+
+    def test_a_response_that_is_not_an_object_is_logged_as_a_gap_not_a_reading(self):
+        # Code review round 6 asked whether parse_usage's all-None reading of a list or a string
+        # logs as an idle meter with no warning. It does not: read_usage refuses a response with
+        # no utilization at all, so the tick is a gap that names the error.
+        for body in ([], "rate limited"):
+            with tempfile.TemporaryDirectory() as d:
+                cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+                with redirect_stderr(io.StringIO()):
+                    code = sample(cfg, "a1", log, fetch=lambda url, headers, body=body: body, now=lambda: NOW)
+                row = json.loads(log.read_text().splitlines()[0])
+                self.assertNotEqual(code, 0)
+                self.assertIn("no five_hour or seven_day utilization", row["error"])
+                self.assertNotIn("five_hour", row)
 
     def test_a_null_five_hour_is_a_weekly_only_reading_never_a_made_up_zero(self):
         # Since 2026-10-31 some Max 20x accounts get "five_hour": null with seven_day intact:

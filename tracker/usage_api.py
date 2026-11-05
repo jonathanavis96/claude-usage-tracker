@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -25,21 +26,72 @@ class Utilization:
     #: since 2026-10-31 some Max 20x accounts get `"five_hour": null` from the endpoint, and
     #: no `5h-*` rate-limit headers, while the seven-day meter reads normally.
     weekly_only: bool = False
+    #: What in the response no longer has the shape this collector reads (schema_problems).
+    #: A reshaped value reads as None, as an idle window does; this is how a reader that
+    #: never sees the body (the probe) tells the two apart. Empty for a well-formed response.
+    problems: tuple[str, ...] = ()
+
+
+def utilization_number(u: object) -> float | None:
+    """A bucket's `utilization` as a reading: a finite JSON number, else None. A bool, a string
+    or a NaN is a reshaped value, not a reading (schema_problems names it): float()
+    would read True as 1%, and a NaN never equals itself, so the meter would read as moving."""
+    if isinstance(u, bool) or not isinstance(u, (int, float)):
+        return None
+    try:
+        f = float(u)  # an int too large for a float raises OverflowError
+    except OverflowError:
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _bucket(body: dict, key: str) -> tuple[float | None, str | None]:
-    b = body.get(key) or {}
-    u = b.get("utilization")
-    return (float(u) if u is not None else None, b.get("resets_at"))
+    b = body.get(key)
+    if not isinstance(b, dict):
+        b = {}  # absent, null, or reshaped: no reading here (schema_problems names it)
+    reset = b.get("resets_at")
+    # Only a string is a stamp; a reshaped one (an epoch number) is none, and
+    # schema_problems names it, as for a reshaped utilization.
+    return (utilization_number(b.get("utilization")), reset if isinstance(reset, str) else None)
+
+
+def schema_problems(body: dict) -> list[str]:
+    """What in a usage response no longer has the shape this collector reads.
+
+    A renamed key reads as null, and null is also what an idle window returns, so without
+    this a schema change would be logged as ordinary readings and freeze the published
+    series with nobody told (red-team, 2026-10-02)."""
+    out = []
+    for bucket in ("five_hour", "seven_day"):
+        b = body.get(bucket)
+        if bucket == "five_hour" and bucket in body and b is None:
+            continue  # present but null: an account with no five-hour limit, not a rename
+        if not isinstance(b, dict):
+            out.append(f"no {bucket} bucket")
+            continue
+        for key in ("utilization", "resets_at"):
+            if key not in b:
+                out.append(f"{bucket}.{key} missing")
+        if b.get("utilization") is not None and utilization_number(b["utilization"]) is None:
+            out.append(f"{bucket}.utilization is not a number")
+        if b.get("resets_at") is not None and not isinstance(b["resets_at"], str):
+            out.append(f"{bucket}.resets_at is not a string")
+    return out
 
 
 def parse_usage(body: dict, now: datetime) -> Utilization:
+    if not isinstance(body, dict):
+        # Not an object at all: a schema change for the caller to report, not a crash.
+        problems: tuple[str, ...] = ("response is not an object",)
+        body = {}
+    else:
+        problems = tuple(schema_problems(body))
     fh, fh_reset = _bucket(body, "five_hour")
     sd, sd_reset = _bucket(body, "seven_day")
     # Only an explicit null is "no five-hour limit"; a missing key is a schema change.
     weekly_only = "five_hour" in body and body["five_hour"] is None and sd is not None
     return Utilization(ts=now, five_hour=fh, seven_day=sd, five_hour_resets_at=fh_reset,
-                        seven_day_resets_at=sd_reset, weekly_only=weekly_only)
+                        seven_day_resets_at=sd_reset, weekly_only=weekly_only, problems=problems)
 
 
 class AuthExpired(Exception):
@@ -138,9 +190,21 @@ def read_usage(config_dir: Path, fetch: Callable[[str, dict], dict] | None = Non
     return parse_usage(body, (now or (lambda: datetime.now(timezone.utc)))())
 
 
-def _as_utc(d: datetime) -> datetime:
+def as_utc(d: datetime) -> datetime:
     """A stamp with no offset is UTC; without this, naive minus aware raises TypeError."""
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def parse_instant(stamp: object) -> datetime | None:
+    """An ISO stamp as an aware instant: a 'Z' suffix is UTC and so is a stamp with no offset.
+    None for anything that is not a parseable stamp. The one parser of this rule for join
+    and publish."""
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        return as_utc(datetime.fromisoformat(stamp.replace("Z", "+00:00")))
+    except ValueError:
+        return None
 
 
 def same_reset(a: str | None, b: str | None, tol_s: float = 60) -> bool:
@@ -151,8 +215,7 @@ def same_reset(a: str | None, b: str | None, tol_s: float = 60) -> bool:
     """
     if not a or not b:
         return True
-    try:
-        da, db = (_as_utc(datetime.fromisoformat(x)) for x in (a, b))
-    except ValueError:
+    da, db = parse_instant(a), parse_instant(b)
+    if da is None or db is None:
         return a == b
     return abs((da - db).total_seconds()) <= tol_s
