@@ -499,6 +499,9 @@ def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Pr
     # price, and tools/model_rates.py's `ok` column counts its stretch: skipped, not unpriced.
     for model, tok in work_bundles(tokens).items():
         if not isinstance(tok, dict):
+            # A value that is no bundle cannot be priced, so neither can its stretch, as the
+            # published series refuses it (`bundles_with_work`).
+            priced = False
             continue
         at_in, at_out = input_side(tok, weight), tok.get("output", 0)
         raw += raw_tokens(tok)
@@ -571,8 +574,8 @@ def run_reason(row: dict) -> str:
 
 def stretch_span(st: dict) -> tuple[datetime, datetime] | None:
     """A stretch's [start, end] as aware instants (a naive stamp is UTC), or None when it lacks
-    either stamp. Every filter reads a stretch's span through this, so none compares naive
-    with aware."""
+    either stamp. The selection filters read a span through this, so none compares naive with
+    aware even on a stretch that did not come through `stretches_by_account`."""
     start, end = st.get("start"), st.get("end")
     if not start or not end:
         return None
@@ -606,8 +609,29 @@ def stretches_by_account(*reports: dict | None) -> dict[str, list[dict]]:
         if not accounts and report.get("stretches") is not None:
             accounts = {"masterrig": {"stretches": report["stretches"]}}
         for name, body in (accounts or {}).items():
-            out.setdefault(name, []).extend(body.get("stretches") or [])
+            out.setdefault(name, []).extend(_utc_stamped(st) for st in body.get("stretches") or [])
     return out
+
+
+def _utc_stamped(st):
+    """The stretch with a naive `start`/`end` written as UTC, a copy only when one is naive.
+
+    A stamp with no offset is UTC (`usage_api.as_utc`). Every writer stamps an offset, so the
+    record itself comes back as it is; a hand-written naive one would otherwise compare naive
+    with aware in whichever reader parses it next (the regime index, `newest_end`)."""
+    if not isinstance(st, dict):
+        return st
+    fixed = {}
+    for key in ("start", "end"):
+        stamp = st.get(key)
+        if isinstance(stamp, str) and stamp:
+            try:
+                at = datetime.fromisoformat(stamp)
+            except ValueError:
+                continue  # left as it is, for the reader that refuses it to say so
+            if at.tzinfo is None:
+                fixed[key] = as_utc(at).isoformat()
+    return {**st, **fixed} if fixed else st
 
 
 def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *,
@@ -1825,7 +1849,7 @@ def _pooled_stretch_credits(tokens: dict, credits: dict, fit: dict) -> float | N
     total = 0.0
     for model, tok in work_bundles(tokens).items():
         if not isinstance(tok, dict):
-            continue
+            return None  # no bundle: the stretch is refused whole (`bundles_with_work`)
         fam = family(model, credits)
         rate = fit["input"].get(fam) if fam else None
         if rate is None:
@@ -1944,6 +1968,8 @@ def comparison_value(credits: dict, model_rates: dict | None = None,
     def value(tokens: dict) -> float | None:
         total = 0.0
         for model, tok in tokens.items():
+            if not isinstance(tok, dict):
+                return None  # no bundle: the stretch is refused whole (`bundles_with_work`)
             if not holds_work(tok):
                 continue
             fam = family(model, credits)

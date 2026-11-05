@@ -257,3 +257,38 @@ class EmptyBundleBesideNoBundleTests(unittest.TestCase):
         self.assertFalse(C.price_tokens(tokens, CREDITS, 0).priced)
         self.assertIsNone(C.across_cut_value(CREDITS, model_rates=POOLED)(tokens))
         self.assertEqual(C.work_bundles(tokens), tokens)
+
+
+class NoBundleRefusesEveryValuerTests(unittest.TestCase):
+    def test_a_value_that_is_no_bundle_refuses_its_stretch_in_every_valuer(self):
+        # PR #155 review, final round 3: the readers behind the published series refuse a
+        # stretch with a malformed bundle (bundles_with_work), but the fit side's valuers
+        # skipped the value and priced the stretch on the rest of its work.
+        from tracker.gs_passive import stretch_credits
+        tokens = {"claude-opus-5": tok(input=1_000, output=100), "claude-sonnet-5": "garbage"}
+        self.assertFalse(C.price_tokens(tokens, CREDITS, 0).priced)
+        self.assertIsNone(C.across_cut_value(CREDITS, model_rates=POOLED)(tokens))
+        self.assertIsNone(C.comparison_value(CREDITS)(tokens))
+        self.assertEqual(stretch_credits(tokens, CREDITS, None), (None, "unpriced"))
+        # The real work alone is still priced in each.
+        real = {"claude-opus-5": tok(input=1_000, output=100)}
+        self.assertTrue(C.price_tokens(real, CREDITS, 0).priced)
+        self.assertIsNotNone(C.across_cut_value(CREDITS, model_rates=POOLED)(real))
+        self.assertIsNotNone(C.comparison_value(CREDITS)(real))
+        self.assertIsNotNone(stretch_credits(real, CREDITS, None)[0])
+
+
+class StampsAreUtcFromLoadTests(unittest.TestCase):
+    def test_a_naive_stretch_is_loaded_with_utc_stamps_and_the_record_is_untouched(self):
+        # PR #155 review, final round 3: the filters read a naive stamp as UTC, but other
+        # readers (newest_end, the regime index, change candidates) parsed it naive and
+        # crashed on it beside aware ones. Every stretch now enters as UTC where it is loaded.
+        naive = {"start": "2026-10-01T00:00:00", "end": "2026-10-01T02:00:00", "delta_pct": 5}
+        aware = {"start": "2026-10-02T00:00:00+02:00", "end": "2026-10-02T02:00:00+02:00", "delta_pct": 5}
+        report = {"accounts": {"jwork": {"stretches": [naive, aware]}}}
+        got = C.stretches_by_account(report)["jwork"]
+        self.assertEqual([s["start"] for s in got], ["2026-10-01T00:00:00+00:00", aware["start"]])
+        self.assertEqual(got[0]["end"], "2026-10-01T02:00:00+00:00")
+        self.assertIs(got[1], aware)
+        self.assertEqual(naive["start"], "2026-10-01T00:00:00")
+        self.assertEqual(C.newest_end(got), aware["end"])

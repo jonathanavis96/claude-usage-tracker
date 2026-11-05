@@ -160,6 +160,25 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([r["credits"] for r in rows], [0.0])
         self.assertEqual(rows[0]["day"], "2026-09-20")
 
+    def test_a_naive_steps_day_is_its_utc_day_whatever_the_hosts_zone(self):
+        # PR #155 review, final round 3: clean_steps reads a naive step as UTC, but valued
+        # filed it by astimezone, which reads a naive time in the host's zone.
+        import os
+        import time
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "Africa/Johannesburg"
+        time.tzset()
+        try:
+            naive = {"start": "2026-11-05T00:30:00", "end": "2026-11-05T01:00:00",
+                     "d7": 1, "d5": 0, "tokens": {}}
+            self.assertEqual(W.valued([naive], value)[0]["day"], "2026-11-05")
+        finally:
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
     def test_the_day_is_the_utc_day_of_the_steps_end(self):
         late = {"start": "2026-09-21T01:00:00+02:00", "end": "2026-09-21T01:30:00+02:00",
                 "d7": 1, "d5": 0, "tokens": {}}

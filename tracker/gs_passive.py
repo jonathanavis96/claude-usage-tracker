@@ -1103,6 +1103,8 @@ def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
         # rows carry the model id `<synthetic>` and zero tokens, belong to no family, and
         # would otherwise drop the whole stretch as unpriced. One that ever carries tokens
         # is not skipped, and lands in `unpriced_credit_models`.
+        if not isinstance(tok, dict):
+            return None, "unpriced"  # no bundle: refused whole (`credits.bundles_with_work`)
         if not credit_model.holds_work(tok):
             continue
         fam = credit_model.family(model, credits)

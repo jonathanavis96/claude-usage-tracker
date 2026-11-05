@@ -38,6 +38,7 @@ from .crossings import crossings
 from .join import Stretch
 from .samples import Sample
 from .turns import Turn
+from .usage_api import as_utc
 
 #: Bootstrap draws behind every interval here, and the seed every draw's stream starts from
 #: (a publish is reproducible: the same history gives the same intervals).
@@ -174,11 +175,11 @@ def valued(steps: list[dict], value, factor: float | None = None) -> list[dict]:
         credits = value(st.get("tokens") or {})
         if credits is None:
             continue
-        end = datetime.fromisoformat(st["end"])
+        end = as_utc(datetime.fromisoformat(st["end"]))  # a naive end is UTC, as clean_steps reads it
         raw = st.get("d5", 0)
         head = value(st["headless_tokens"]) if st.get("headless_tokens") else 0.0
         share = min(max(head / credits, 0.0), 1.0) if factor and credits and head else 0.0
-        out.append({"start": datetime.fromisoformat(st["start"]), "end": end,
+        out.append({"start": as_utc(datetime.fromisoformat(st["start"])), "end": end,
                     "day": end.astimezone(timezone.utc).date().isoformat(), "credits": float(credits),
                     "d7": st.get("d7", 1), "d5": raw / (1 + (factor - 1) * share) if share else raw,
                     "raw_d5": raw, "five_hour_measured": st.get("five_hour_measured", True)})
