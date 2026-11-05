@@ -292,3 +292,18 @@ class StampsAreUtcFromLoadTests(unittest.TestCase):
         self.assertIs(got[1], aware)
         self.assertEqual(naive["start"], "2026-10-01T00:00:00")
         self.assertEqual(C.newest_end(got), aware["end"])
+
+
+class FirstTurnsAreUtcFromLoadTests(unittest.TestCase):
+    def test_a_naive_first_turn_is_loaded_as_utc(self):
+        # PR #155 review, final round 4: _utc_stamped wrote start/end as UTC but left a naive
+        # first_turns stamp, which family_first_seen compared with an aware one.
+        a = {"start": "2026-10-01T00:00:00+00:00", "end": "2026-10-01T02:00:00+00:00",
+             "tokens": {"claude-opus-5": tok(input=1)}}
+        b = {"start": "2026-10-02T00:00:00+00:00", "end": "2026-10-02T02:00:00+00:00",
+             "tokens": {"claude-opus-5": tok(input=1)}, "first_turns": {"claude-opus-5": "2026-09-30T23:00:00"}}
+        by = C.stretches_by_account({"accounts": {"jwork": {"stretches": [a, b]}}})
+        self.assertEqual(by["jwork"][1]["first_turns"]["claude-opus-5"], "2026-09-30T23:00:00+00:00")
+        self.assertEqual(b["first_turns"]["claude-opus-5"], "2026-09-30T23:00:00")
+        seen = C.family_first_seen(by, CREDITS)["opus"]
+        self.assertEqual(seen["first_turn"], datetime(2026, 9, 30, 23, tzinfo=timezone.utc))

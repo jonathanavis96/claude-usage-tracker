@@ -613,24 +613,34 @@ def stretches_by_account(*reports: dict | None) -> dict[str, list[dict]]:
     return out
 
 
+def _utc_stamp(stamp):
+    """`stamp` written as UTC when it is a naive ISO stamp; anything else as it is (a bad one is
+    left for the reader that refuses it to say so)."""
+    if not isinstance(stamp, str) or not stamp:
+        return stamp
+    try:
+        at = datetime.fromisoformat(stamp)
+    except ValueError:
+        return stamp
+    return as_utc(at).isoformat() if at.tzinfo is None else stamp
+
+
 def _utc_stamped(st):
-    """The stretch with a naive `start`/`end` written as UTC, a copy only when one is naive.
+    """The stretch with a naive `start`, `end` or `first_turns` stamp written as UTC, a copy
+    only when one is naive.
 
     A stamp with no offset is UTC (`usage_api.as_utc`). Every writer stamps an offset, so the
     record itself comes back as it is; a hand-written naive one would otherwise compare naive
     with aware in whichever reader parses it next (the regime index, `newest_end`)."""
     if not isinstance(st, dict):
         return st
-    fixed = {}
-    for key in ("start", "end"):
-        stamp = st.get(key)
-        if isinstance(stamp, str) and stamp:
-            try:
-                at = datetime.fromisoformat(stamp)
-            except ValueError:
-                continue  # left as it is, for the reader that refuses it to say so
-            if at.tzinfo is None:
-                fixed[key] = as_utc(at).isoformat()
+    fixed = {key: _utc_stamp(st[key]) for key in ("start", "end")
+             if key in st and _utc_stamp(st[key]) is not st[key]}
+    turns = st.get("first_turns")
+    if isinstance(turns, dict):
+        utc_turns = {m: _utc_stamp(s) for m, s in turns.items()}
+        if any(utc_turns[m] is not turns[m] for m in turns):
+            fixed["first_turns"] = utc_turns
     return {**st, **fixed} if fixed else st
 
 
