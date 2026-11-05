@@ -43,6 +43,19 @@ class ParseTests(unittest.TestCase):
             u = parse_usage(body, now)
             self.assertEqual((u.five_hour, u.seven_day, u.weekly_only), (None, None, False))
 
+    def test_the_reading_carries_its_schema_problems(self):
+        # Codex on PR #155: a reshaped value reads as no reading, which is also what an idle
+        # window returns; the reading itself has to say which it was, so a caller that never
+        # sees the body (the probe) can tell them apart.
+        now = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        sd = {"utilization": 47.0, "resets_at": "2026-11-05T23:00:00+00:00"}
+        odd = {"five_hour": {"utilization": "unavailable", "resets_at": None}, "seven_day": sd}
+        self.assertEqual(parse_usage(odd, now).problems, ("five_hour.utilization is not a number",))
+        idle = {"five_hour": {"utilization": None, "resets_at": None}, "seven_day": sd}
+        self.assertEqual(parse_usage(idle, now).problems, ())
+        self.assertEqual(parse_usage({"five_hour": None, "seven_day": sd}, now).problems, ())
+        self.assertEqual(parse_usage([], now).problems, ("response is not an object",))
+
     def test_a_reshaped_utilization_reads_as_missing_instead_of_raising(self):
         # Code review round 3: the bucket was guarded but not the value in it.
         now = datetime(2026, 11, 2, tzinfo=timezone.utc)

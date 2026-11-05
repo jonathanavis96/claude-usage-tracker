@@ -82,7 +82,7 @@ from .usage_api import (
     Utilization,
     _default_fetch,
     read_usage,
-    utilization_number,
+    schema_problems,
 )
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
@@ -169,30 +169,6 @@ def sample_line(u: Utilization, account: str, identity: str) -> dict:
     return {"ts": _stamp(u.ts), "account": account, "identity": identity,
             "five_hour": {"utilization": u.five_hour, "resets_at": u.five_hour_resets_at},
             "seven_day": {"utilization": u.seven_day, "resets_at": u.seven_day_resets_at}}
-
-
-def schema_problems(body: dict) -> list[str]:
-    """What in a usage response no longer has the shape this collector reads.
-
-    A renamed key reads as null, and null is also what an idle window returns, so without
-    this a schema change would be logged as ordinary readings and freeze the published
-    series with nobody told (red-team, 2026-10-02)."""
-    out = []
-    for bucket in ("five_hour", "seven_day"):
-        b = body.get(bucket)
-        if bucket == "five_hour" and bucket in body and b is None:
-            continue  # present but null: an account with no five-hour limit, not a rename
-        if not isinstance(b, dict):
-            out.append(f"no {bucket} bucket")
-            continue
-        for key in ("utilization", "resets_at"):
-            if key not in b:
-                out.append(f"{bucket}.{key} missing")
-        if b.get("utilization") is not None and utilization_number(b["utilization"]) is None:
-            out.append(f"{bucket}.utilization is not a number")
-        if b.get("resets_at") is not None and not isinstance(b["resets_at"], str):
-            out.append(f"{bucket}.resets_at is not a string")
-    return out
 
 
 def log_owner(log: Path) -> str | None:

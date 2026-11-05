@@ -287,9 +287,13 @@ def _seconds_until_reset(u: Utilization, now: datetime) -> float | None:
         return None
 
 
-def _refuse_weekly_only(u: Utilization) -> None:
-    """Abort on a reading of an account with no five-hour limit (weekly_only, ADR 0001
-    rule 24): its five-hour meter never ticks, so every further prompt is spent for nothing."""
+def _refuse_unmeasurable(u: Utilization) -> None:
+    """Abort on a reading no tick can be measured from, so no further prompt is spent on it:
+    a malformed response (`u.problems`), whose reshaped five-hour value reads as no reading
+    and so as a flat meter, or an account with no five-hour limit (weekly_only, ADR 0001
+    rule 24), whose five-hour meter never ticks."""
+    if u.problems:
+        raise ProbeAbort("usage response malformed: " + "; ".join(u.problems))
     if u.weekly_only:
         raise ProbeAbort("account is weekly-only (no five-hour limit): no five-hour tick to measure")
 
@@ -342,7 +346,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
     """
     start = now()
     before = read()
-    _refuse_weekly_only(before)
+    _refuse_unmeasurable(before)
     reset_start = False
     tick1: int | None = None
     tick_from: int | None = None  # the tick at which measurement started
@@ -353,7 +357,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         before = read()
-        _refuse_weekly_only(before)
+        _refuse_unmeasurable(before)
         if before.five_hour == 0:
             reset_start = True
             tick1 = 0
@@ -392,7 +396,7 @@ def run_tick_probe(model: str, effort: str, prompt: str, read: Callable[[], Util
         if deadline is not None and now() >= deadline:
             raise ProbeAbort("deadline")
         cur = read()
-        _refuse_weekly_only(cur)
+        _refuse_unmeasurable(cur)
         reading = {"prompt": prompts, "five_hour": cur.five_hour, "tokens": batch}
         if k > 1:
             reading["burst"] = k
@@ -831,8 +835,10 @@ WEEKLY_MAX_PCT = 90
 class Skip:
     """Why choose_account passed over an account. `kind` is `busy` (someone is using it,
     by busy_reason's checks), `weekly` (its seven-day meter is too near the cap to
-    spend a run on) or `weekly-only` (it has no five-hour limit, ADR 0001 rule 24); `why`
-    is the detail the log line carries after it."""
+    spend a run on), `weekly-only` (it has no five-hour limit, ADR 0001 rule 24) or
+    `malformed` (the usage response has a reshaped value, so its meter cannot be read;
+    retried like busy, since the endpoint may recover); `why` is the detail the log line
+    carries after it."""
     kind: str
     why: str
 
@@ -918,6 +924,10 @@ def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
                 return Skip("weekly-only", "no five-hour limit, so no tick to measure")
             return Skip("busy", reason)
     a = read()
+    if a.problems:
+        # A reshaped five-hour value reads as no reading, as an idle window's does, so two
+        # of them would pass the flat-meter check: refuse it before any window or prompt.
+        return Skip("malformed", "; ".join(a.problems))
     if weekly_max_pct is not None:
         note(f"weekly meter {a.seven_day:g}%" if a.seven_day is not None else "weekly meter not reported")
         if a.weekly_only:
@@ -929,6 +939,8 @@ def skip_reason(read: Callable[[], Utilization], sleep: Callable[[float], None],
             return Skip("weekly", why)
     sleep(window_s)
     b = read()
+    if b.problems:
+        return Skip("malformed", "; ".join(b.problems))
     if not _same_window(a, b):
         return Skip("busy", "window reset")
     if a.five_hour != b.five_hour:

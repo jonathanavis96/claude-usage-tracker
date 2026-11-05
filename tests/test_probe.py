@@ -1445,3 +1445,57 @@ class LowExpectationRefusalTests(unittest.TestCase):
         self.assertLess(too_low / floor_prompt, MIN_PROMPTS_PER_SPAN)
         fine = floor_prompt * MIN_PROMPTS_PER_SPAN
         self.assertGreaterEqual(fine / prompt_meter_usd(payload_words_for(fine, price), price), MIN_PROMPTS_PER_SPAN)
+
+
+class MalformedResponseTests(unittest.TestCase):
+    """Codex on PR #155: parse_usage reads a reshaped five-hour value as no reading, so
+    without a schema check the probe took two such reads for a flat, idle meter and spent
+    every prompt on a meter it could not read. A legitimate null reading still probes."""
+
+    SD = {"utilization": 30.0, "resets_at": "2026-09-10T08:00:00+00:00"}
+
+    def reader(self, five_hour):
+        from tracker.usage_api import parse_usage
+        return lambda: parse_usage({"five_hour": five_hour, "seven_day": self.SD}, T0)
+
+    def test_skip_reason_passes_over_a_malformed_response(self):
+        from tracker.probe import Skip, skip_reason
+        slept = []
+        skip = skip_reason(self.reader({"utilization": "unavailable", "resets_at": None}), slept.append)
+        self.assertEqual(skip, Skip("malformed", "five_hour.utilization is not a number"))
+        self.assertEqual(slept, [])  # refused on the first read: no meter window spent
+        self.assertEqual(skip_reason(self.reader({"utilization": "unavailable", "resets_at": None}),
+                                     lambda s: None, weekly_max_pct=None).kind, "malformed")
+
+    def test_a_null_idle_reading_is_still_probed(self):
+        from tracker.probe import skip_reason
+        self.assertIsNone(skip_reason(self.reader({"utilization": None, "resets_at": None}), lambda s: None))
+
+    def test_run_tick_probe_sends_no_prompt_on_a_malformed_response(self):
+        sent = []
+
+        def run(i):
+            sent.append(i)
+            return runner()(i)
+        with self.assertRaises(ProbeAbort) as cm:
+            run_tick_probe("claude-sonnet-5", "low", "p",
+                           self.reader({"utilization": "unavailable", "resets_at": None}),
+                           run, lambda s: None, lambda: T0, max_prompts=5, settle_s=0)
+        self.assertIn("five_hour.utilization is not a number", str(cm.exception))
+        self.assertEqual(sent, [])
+
+    def test_run_tick_probe_aborts_when_a_reading_turns_malformed(self):
+        from tracker.usage_api import parse_usage
+        bodies = iter([{"utilization": 10.0, "resets_at": "r1"},
+                       {"utilization": "unavailable", "resets_at": "r1"}])
+        sent = []
+
+        def run(i):
+            sent.append(i)
+            return runner()(i)
+        with self.assertRaises(ProbeAbort) as cm:
+            run_tick_probe("claude-sonnet-5", "low", "p",
+                           lambda: parse_usage({"five_hour": next(bodies), "seven_day": self.SD}, T0),
+                           run, lambda s: None, lambda: T0, max_prompts=5, settle_s=0)
+        self.assertIn("five_hour.utilization is not a number", str(cm.exception))
+        self.assertEqual(sent, [0])
