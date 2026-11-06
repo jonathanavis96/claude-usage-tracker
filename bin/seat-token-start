@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Start `claude setup-token` for a seat in a detached tmux session and print only
+# the sign-in URL. The pane stays open after the CLI exits (remain-on-exit), so
+# the printed token is still on screen for `seat-token-capture` to move into the
+# env file. Without that, the session closed on exit and the token was lost
+# (2026-10-12).
+# Usage: seat-token-start <config-dir> <tmux-session>
+#   then send the URL to the account holder, paste their code into the session:
+#   tmux send-keys -t <session> -l '<code>' && tmux send-keys -t <session> Enter
+#   then: seat-token-capture <session> <ENV_VAR_NAME>
+set -euo pipefail
+CFG="${1:?config dir, e.g. ~/.claude-dave}"; S="${2:?tmux session name}"
+[ -d "$CFG" ] || { echo "no config dir $CFG" >&2; exit 2; }
+tmux has-session -t "$S" 2>/dev/null && { echo "tmux session $S already exists" >&2; exit 2; }
+tmux new-session -d -s "$S" -x 400 -y 50
+tmux set-option -t "$S" remain-on-exit on >/dev/null
+tmux respawn-pane -k -t "$S" "CLAUDE_CONFIG_DIR='$CFG' exec $HOME/.npm-global/bin/claude setup-token"
+for _ in $(seq 1 20); do
+  url=$(tmux capture-pane -p -J -t "$S" | awk '/oauth\/authorize/ {print $1; exit}')
+  [ -n "$url" ] && { echo "$url"; exit 0; }
+  sleep 1
+done
+echo "no sign-in URL after 20s; check: tmux attach -t $S" >&2; exit 1

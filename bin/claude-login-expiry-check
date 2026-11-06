@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Warn before a Claude Code seat on this box signs itself out.
+
+Two kinds of seat:
+
+- OAuth login (jwork, avis): the refresh token has a fixed end date set at
+  /login; nothing extends it (measured 2026-09-18: Dave's and Jono Work's dates
+  were unchanged across three weeks of backups, and Dave's seat went dead the
+  first time its access token expired after that date). Usage probes and
+  headless calls do not renew it, so the only cure is an interactive /login
+  before the date.
+- Setup token (dave, from 2026-10-12): a 1-year `claude setup-token` token in
+  ~/.config/greenscape/env. Its .credentials.json is a leftover with no refresh
+  token and must not be read as "signed out". The token carries no end date, so
+  it is taken from the "created YYYY-MM-DD" comment on the line above the
+  variable (issued + 365 days). A revoked token shows as `token_rejected` at the
+  end of the seat's meter log (tracker.meter_log --token-env).
+
+Reads dates and presence only, never a token value. Prints one line per seat;
+with --alert, emails Jonathan through claude-usage-tracker's alert channel when
+a seat is signed out, rejected, or within its warning window. At most one mail
+a day (stamp file).
+
+Lives in claude-usage-tracker (bin/); gs ~/bin/claude-login-expiry-check is a
+symlink to it, and deploy/systemd/claude-login-expiry-check.service runs it.
+"""
+import json, re, subprocess, sys, time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+HOME = Path.home()
+ENV_FILE = HOME / ".config" / "greenscape" / "env"
+OPS = HOME / ".paperclip" / "ops"
+SEATS = {
+    "dave": {"token_env": "GS_DAVE_CLAUDE_OAUTH_TOKEN"},
+    "jwork": {"dir": ".claude-javiswork"},
+    "avis": {"dir": ".claude-avis"},
+}
+WARN_DAYS = 3            # OAuth: end date is weeks away at most, so a short warning
+TOKEN_WARN_DAYS = 30     # setup token: a year long; renewing needs the account holder
+TOKEN_LIFE_DAYS = 365
+STAMP = HOME / ".cache" / "claude-login-expiry-check.stamp"
+REPO = Path(__file__).resolve().parent.parent   # ~/bin holds a symlink to this file
+
+
+def oauth_state(cfg: Path):
+    try:
+        o = json.loads((cfg / ".credentials.json").read_text()).get("claudeAiOauth", {})
+    except (OSError, ValueError):
+        return "unreadable", None
+    end = o.get("refreshTokenExpiresAt")
+    if not o.get("refreshToken"):
+        return "signed-out", end / 1000 if end else None
+    if not end:
+        return "no-end-date", None
+    days = (end / 1000 - time.time()) / 86400
+    return ("expiring" if days <= WARN_DAYS else "ok"), end / 1000
+
+
+def token_state(name: str, var: str):
+    """(state, end epoch s) for a setup-token seat. Never reads the value out."""
+    try:
+        lines = ENV_FILE.read_text().splitlines()
+    except OSError:
+        return "unreadable", None
+    idx = next((i for i, l in enumerate(lines) if re.match(rf"\s*(export\s+)?{var}=\S", l)), None)
+    if idx is None:
+        return "no-token", None
+    end = None
+    if idx and (m := re.search(r"created (\d{4}-\d{2}-\d{2})", lines[idx - 1])):
+        issued = datetime.strptime(m.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end = (issued + timedelta(days=TOKEN_LIFE_DAYS)).timestamp()
+    if _meter_rejected(OPS / f"claude-usage-meter-{name}.log"):
+        return "rejected", end
+    if end is None:
+        return "no-end-date", None
+    days = (end - time.time()) / 86400
+    return ("expiring" if days <= TOKEN_WARN_DAYS else "ok"), end
+
+
+def _meter_rejected(log: Path) -> bool:
+    """The meter log's newest line is a 401 on the setup token."""
+    try:
+        with open(log, "rb") as f:
+            f.seek(0, 2); f.seek(max(0, f.tell() - 8192))
+            tail = [l for l in f.read().splitlines() if l.strip()]
+        return json.loads(tail[-1]).get("reason") == "token_rejected"
+    except (OSError, ValueError, IndexError, AttributeError):
+        return False
+
+
+def main() -> int:
+    lines, bad = [], []
+    for name, seat in SEATS.items():
+        if "token_env" in seat:
+            var = seat["token_env"]
+            state, end = token_state(name, var)
+            kind = "token ends"
+            fix = (f"fix: seat-token-start ~/.claude-{name} {name}-token, then seat-token-capture {name}-token {var}"
+                   f" (keep the 'created YYYY-MM-DD' comment above {var} in ~/.config/greenscape/env)")
+        else:
+            state, end = oauth_state(HOME / seat["dir"])
+            kind = "login ends"
+            fix = f"fix: CLAUDE_CONFIG_DIR=~/{seat['dir']} claude, then /login"
+        when = time.strftime("%d/%m/%y %H:%M UTC", time.gmtime(end)) if end else "unknown"
+        left = f"{(end - time.time()) / 86400:.1f} days" if end else "?"
+        line = f"{name:6} {state:11} {kind} {when} ({left}) — {fix}"
+        lines.append(line)
+        if state != "ok":
+            bad.append(line)
+    print("\n".join(lines))
+    if "--alert" in sys.argv and bad:
+        today = time.strftime("%Y-%m-%d")
+        if STAMP.exists() and STAMP.read_text().strip() == today:
+            return 1
+        r = subprocess.run([sys.executable, "-m", "tracker.alert", "--subject",
+                            "Claude seat login needs renewing", "--text",
+                            "A Claude Code login on the greenscape box is signed out or about to end.\n"
+                            "Nothing renews it automatically; it needs an interactive /login or a new setup token.\n\n"
+                            + "\n".join(bad)],
+                           cwd=REPO)
+        if r.returncode == 0:
+            STAMP.parent.mkdir(parents=True, exist_ok=True); STAMP.write_text(today)
+    return 1 if bad else 0
+
+if __name__ == "__main__":
+    sys.exit(main())
