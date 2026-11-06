@@ -36,9 +36,12 @@ Checks, in order (the first failure is the one-line reason):
                Claude Code refreshes it), not broken: it fails only when its refresh
                token has expired, or after 24 h. A header-probe log (meter_log
                --token-env) whose newest line is a reading in a lapsed five-hour window
-               or at a 100% seven-day meter is held, not stale: meter_log writes
-               nothing while it holds. Trailing `token_rejected` lines fail with that
-               reason. Every failing log is reported, joined
+               with no session in the account's config dir since (its `sessions/`
+               unchanged after the reset), or at a 100% seven-day meter, is held, not
+               stale: meter_log writes nothing while it holds. A session after the reset
+               ends the hold, as it does in meter_log, so the age limit applies again.
+               Trailing `token_rejected` lines fail with that reason. Every failing log
+               is reported, joined
                with " | ", so each account is its own incident in the supervisor.
                An account the publisher uses (one history/gs-passive.json holds) is
                blind once its meter has not read for an hour, idle token or held probe
@@ -549,16 +552,22 @@ def _meter_account(log: Path) -> str | None:
     return None
 
 
+def _meter_config_dir(c: Config, account: str | None) -> Path | None:
+    """The config dir of a meter log's account, or None when it is not a known one."""
+    dirs = c.meter_config_dirs if c.meter_config_dirs is not None else {
+        a: Path(os.environ.get("HOME", str(Path.home()))) / d for a, d in GS_METER_CONFIG_DIRS.items()}
+    return Path(dirs[account]) if account in dirs else None
+
+
 def _refresh_token_expiry(c: Config, account: str | None) -> float | None:
     """When the account's refresh token expires (epoch s), or None when unknown.
 
     Reads only `claudeAiOauth.refreshTokenExpiresAt`; no token value is ever read out."""
-    dirs = c.meter_config_dirs if c.meter_config_dirs is not None else {
-        a: Path(os.environ.get("HOME", str(Path.home()))) / d for a, d in GS_METER_CONFIG_DIRS.items()}
-    if account not in dirs:
+    config_dir = _meter_config_dir(c, account)
+    if config_dir is None:
         return None
     try:
-        oauth = json.loads((Path(dirs[account]) / ".credentials.json").read_text()).get("claudeAiOauth") or {}
+        oauth = json.loads((config_dir / ".credentials.json").read_text()).get("claudeAiOauth") or {}
     except (OSError, ValueError, AttributeError):
         return None
     return _parse_ts(oauth.get("refreshTokenExpiresAt"))
@@ -639,7 +648,8 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
     if trailing and all(r.get("reason") == "token_rejected" for r in trailing):
         return (f"meters: the setup token was refused (401) since {_age(now - newest) if newest else 'the start'} "
                 f"in {log.name}: that seat needs a new token")
-    if not trailing and newest is not None and _header_hold(newest_row, now):
+    if not trailing and newest is not None and _header_hold(newest_row, now,
+                                                            _meter_config_dir(c, _meter_account(log))):
         # header probe held (lapsed window or capped week): meter_log writes nothing then
         return blind_reason("header probe held, no session on this host since its window lapsed") if blind else None
     if newest is None:
@@ -715,8 +725,11 @@ def check_advisory(c: Config, now: float) -> str | None:
 ADVISORY_SILENT_S = 26 * 60 * 60
 
 
-def _header_hold(row: dict, now: float) -> bool:
-    """A header-probe reading meter_log is deliberately not following up (see meter_log.header_hold)."""
+def _header_hold(row: dict, now: float, config_dir: Path | None) -> bool:
+    """A header-probe reading meter_log is deliberately not following up (see meter_log.header_hold).
+
+    The lapsed hold ends when `<config_dir>/sessions` changes after the reset, because
+    meter_log then probes again: without that test a dead meter reads as held for good."""
     if row.get("source") != "ratelimit_headers":
         return False
     sd = row.get("seven_day") or {}
@@ -727,7 +740,14 @@ def _header_hold(row: dict, now: float) -> bool:
     except (TypeError, ValueError):
         pass
     fh_reset = _parse_ts((row.get("five_hour") or {}).get("resets_at"))
-    return fh_reset is not None and fh_reset <= now
+    if fh_reset is None or fh_reset > now:
+        return False
+    if config_dir is None:
+        return True
+    try:
+        return (Path(config_dir) / "sessions").stat().st_mtime <= fh_reset
+    except OSError:
+        return True  # no sessions/ to read: meter_log holds as well
 
 
 check_meter = check_meters  # the name the red-team tests and older notes use
