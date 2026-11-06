@@ -355,6 +355,8 @@ class GsProfileTest(unittest.TestCase):
         self.publish(NOW - 600)
         self.c = health.gs_config(state=self.state, pidfile=self.ops / "x.pid", ops=self.ops, repo=self.tmp,
                                   site=self.site)
+        # Never the machine's own ~/.claude-dave: its sessions/ changes the hold.
+        self.c.meter_config_dirs = {a: self.tmp / f"cfg-{a}" for a in health.GS_METER_ACCOUNTS}
 
     def publish(self, generated_at):
         page = self.site / health.SITE_JSON
@@ -525,10 +527,55 @@ class GsProfileTest(unittest.TestCase):
     def test_a_held_header_probe_is_not_stale(self):
         # Window lapsed 2 h ago and meter_log holds its probe until a session runs: no lines, no failure.
         self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 3 * 3600)
         self.assertIsNone(health.first_failure(self.c, NOW))
         # Seven-day meter at 100% until tomorrow: held as well.
         self.write_header_meter(NOW - 3 * 3600, five_reset=NOW + 3600, seven=100.0)
         self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def dave_config_dir(self, sessions_touched=None):
+        """A dave config dir whose `sessions/` last changed at `sessions_touched` (None: no such dir)."""
+        cfg = self.tmp / "cfg-dave"
+        (cfg / "sessions").mkdir(parents=True, exist_ok=True)
+        if sessions_touched is None:
+            (cfg / "sessions").rmdir()
+        else:
+            os.utime(cfg / "sessions", (sessions_touched, sessions_touched))
+        self.c.meter_config_dirs = {"dave": cfg}
+
+    def test_a_session_after_the_reset_ends_the_hold_and_the_age_rule_applies(self):
+        # meter_log probes again once `sessions/` changes after the reset, so a log still
+        # silent 40 min later is a dead meter, not a held one.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 40 * 60)
+        self.assertIn("newest usable reading in claude-usage-meter-dave.log is 3h",
+                      health.first_failure(self.c, NOW))
+
+    def test_a_lapsed_window_with_no_session_since_stays_held(self):
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 2 * 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW), "touched at the reset itself: still held")
+        self.dave_config_dir(sessions_touched=None)
+        self.assertIsNone(health.first_failure(self.c, NOW), "no sessions/ yet: meter_log holds too")
+
+    def test_a_capped_week_stays_held_whatever_sessions_ran(self):
+        # meter_log's capped hold does not read sessions/, and a capped account cannot be probed.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600, seven=100.0)
+        self.dave_config_dir(sessions_touched=NOW - 40 * 60)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_health_holds_exactly_when_meter_log_does(self):
+        from tracker import meter_log
+        when = datetime.fromtimestamp(NOW, timezone.utc)
+        for touched in (NOW - 40 * 60, NOW - 2 * 3600, NOW - 3 * 3600, None):
+            with self.subTest(touched=touched):
+                self.dave_config_dir(sessions_touched=touched)
+                row = {"source": "ratelimit_headers",
+                       "five_hour": {"resets_at": iso(NOW - 2 * 3600)},
+                       "seven_day": {"utilization": 22.0, "resets_at": iso(NOW + 86400)}}
+                cfg = self.c.meter_config_dirs["dave"]
+                self.assertEqual(health._header_hold(row, NOW, cfg),
+                                 meter_log.header_hold(row, cfg, when) is not None)
 
     def test_a_header_probe_in_a_live_window_still_goes_stale(self):
         self.write_header_meter(NOW - 1800, five_reset=NOW + 3600)
