@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-06T00:16:44.672383+00:00",
+ "generated_at": "2026-11-06T04:18:15.769064+00:00",
  "plan_ratio_5x_to_20x": 0.2532,
  "split": {
   "input": 0.0,
@@ -387,11 +387,11 @@
  },
  "session_tokens": {
   "claude-sonnet-4-6": 222343,
-  "claude-opus-5-5": 538622,
-  "claude-opus-4-8": 10309
+  "claude-opus-5-5": 600036,
+  "claude-opus-4-8": 23741
  },
  "weekly_windows": {
-  "current": 3.99,
+  "current": 4.16,
   "history": [
    {
     "week_ending": "2026-06-19",
@@ -690,7 +690,7 @@
     "pieces": 6,
     "source": "paired_meter_deltas",
     "reset_verified": true,
-    "partial": true,
+    "partial": false,
     "resets_at": "2026-11-06T03:59:59.777753+00:00"
    }
   ],
