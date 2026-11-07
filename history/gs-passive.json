@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-07T12:30:06.714091+00:00",
+ "generated_at": "2026-11-07T13:00:06.229075+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-07T12:27:05+00:00",
+    "last": "2026-11-07T12:58:05+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -38068,7 +38068,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-07T12:30:06+00:00",
+    "last": "2026-11-07T12:56:05+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -38077,7 +38077,7 @@
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
     "files": 5222,
-    "turns": 158149,
+    "turns": 158159,
     "withheld_patterns": [],
     "own_sessions": null,
     "sources": [
@@ -38085,7 +38085,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-dave/projects",
       "files": 1948,
-      "turns": 83891
+      "turns": 83901
      },
      {
       "source": "archive:transcripts-20261015/claude-dave",
@@ -69455,12 +69455,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 22976,
+    "reset_verified_samples": 22988,
     "since": null,
-    "samples": 26056,
+    "samples": 26068,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-07T12:29:06+00:00",
-    "five_hour_last": "2026-11-07T12:29:06+00:00",
+    "last": "2026-11-07T13:00:06+00:00",
+    "five_hour_last": "2026-11-07T13:00:06+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -69472,7 +69472,7 @@
      ".claude-jono"
     ],
     "files": 3861,
-    "turns": 87714,
+    "turns": 87718,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2060,
@@ -69493,7 +69493,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 1088,
-      "turns": 36258
+      "turns": 36262
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -84301,7 +84301,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-07T12:29:06+00:00",
+     "window_ending": "2026-11-07T13:00:06+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -84323,7 +84323,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-07T12:32:31.438857+00:00",
+  "generated_at": "2026-11-07T13:02:27.170853+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -160915,10 +160915,10 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 2420,
+    "n": 2421,
     "fast_session_requests": 0,
     "output_hist": {
-     "233": 83,
+     "233": 84,
      "231": 103,
      "228": 109,
      "229": 110,
@@ -161044,6 +161044,7 @@
      "90": 32,
      "73": 41,
      "123": 8,
+     "67": 34,
      "111": 14,
      "98": 22,
      "120": 14,
@@ -161075,7 +161076,6 @@
      "102": 20,
      "97": 19,
      "138": 5,
-     "67": 33,
      "131": 8,
      "137": 3,
      "107": 13,
@@ -161241,7 +161241,7 @@
     "model": "claude-opus-5-5",
     "account": "a3",
     "entrypoint": "cli",
-    "n": 21,
+    "n": 24,
     "fast_session_requests": 0,
     "output_hist": {
      "227": 1,
@@ -161249,7 +161249,7 @@
      "242": 1,
      "226": 1,
      "221": 2,
-     "224": 1,
+     "224": 2,
      "234": 1,
      "219": 1,
      "213": 1,
@@ -161259,7 +161259,9 @@
      "209": 1,
      "211": 1,
      "230": 1,
-     "204": 1
+     "204": 1,
+     "229": 1,
+     "232": 1
     },
     "ttfb_hist": {
      "66": 1,
@@ -161279,9 +161281,11 @@
      "90": 1,
      "70": 1,
      "60": 1,
-     "48": 1,
+     "48": 2,
      "36": 1,
-     "23": 1
+     "23": 1,
+     "91": 1,
+     "65": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
