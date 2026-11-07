@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-07T04:30:06.410445+00:00",
+ "generated_at": "2026-11-07T05:00:06.364158+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-07T04:29:54+00:00",
+    "last": "2026-11-07T04:59:06+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -37963,7 +37963,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-07T04:31:00+00:00",
+    "last": "2026-11-07T04:57:06+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -69350,12 +69350,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 22777,
+    "reset_verified_samples": 22789,
     "since": null,
-    "samples": 25855,
+    "samples": 25867,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-07T04:29:54+00:00",
-    "five_hour_last": "2026-11-07T04:29:54+00:00",
+    "last": "2026-11-07T04:59:06+00:00",
+    "five_hour_last": "2026-11-07T04:59:06+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -69367,7 +69367,7 @@
      ".claude-jono"
     ],
     "files": 3857,
-    "turns": 87611,
+    "turns": 87614,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2056,
@@ -69388,7 +69388,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 1084,
-      "turns": 36155
+      "turns": 36158
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -84121,7 +84121,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-07T04:32:27.730971+00:00",
+  "generated_at": "2026-11-07T05:02:16.994028+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
