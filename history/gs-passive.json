@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-09T20:30:06.419721+00:00",
+ "generated_at": "2026-11-09T21:00:05.877369+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-09T20:29:22+00:00",
+    "last": "2026-11-09T20:58:47+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -34,11 +34,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 9036,
-    "turns": 187311,
+    "files": 9038,
+    "turns": 187313,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 5627,
+     "kept": 5629,
      "dropped": 5330,
      "subagent_files": 1948,
      "dropped_to": {
@@ -47,7 +47,7 @@
       ".claude-dave": 8
      },
      "attributed_by_record": {
-      "airlock_tune_env": 854,
+      "airlock_tune_env": 856,
       "auto_mail_default_login": 555,
       "harness_run": 465
      },
@@ -61,8 +61,8 @@
      {
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
-      "files": 2525,
-      "turns": 57087
+      "files": 2527,
+      "turns": 57089
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -38945,7 +38945,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-09T20:26:11+00:00",
+    "last": "2026-11-09T20:57:43+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -70355,12 +70355,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 24219,
+    "reset_verified_samples": 24231,
     "since": null,
-    "samples": 27444,
+    "samples": 27456,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-09T20:28:18+00:00",
-    "five_hour_last": "2026-11-09T20:28:18+00:00",
+    "last": "2026-11-09T20:59:52+00:00",
+    "five_hour_last": "2026-11-09T20:59:52+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -70371,19 +70371,19 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 3885,
-    "turns": 87774,
+    "files": 3886,
+    "turns": 87778,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 2084,
-     "dropped": 5244,
+     "kept": 2085,
+     "dropped": 5246,
      "subagent_files": 929,
      "dropped_to": {
       ".claude": 2,
-      ".claude-javiswork": 3090
+      ".claude-javiswork": 3092
      },
      "attributed_by_record": {
-      "airlock_tune_env": 743
+      "airlock_tune_env": 745
      },
      "unclaimed": 2152,
      "contested": 182
@@ -70392,8 +70392,8 @@
      {
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
-      "files": 1112,
-      "turns": 36318
+      "files": 1113,
+      "turns": 36322
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -85223,7 +85223,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-09T20:32:15.838185+00:00",
+  "generated_at": "2026-11-09T21:02:19.362576+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -163372,14 +163372,14 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "sdk-cli",
-    "n": 26,
+    "n": 28,
     "fast_session_requests": 0,
     "output_hist": {
      "240": 6,
-     "235": 1,
+     "235": 2,
      "241": 3,
      "246": 4,
-     "247": 1,
+     "247": 2,
      "243": 2,
      "239": 2,
      "244": 4,
@@ -163396,7 +163396,7 @@
      "153": 1,
      "178": 1,
      "180": 2,
-     "118": 1,
+     "118": 2,
      "143": 2,
      "162": 1,
      "122": 1,
@@ -163409,6 +163409,7 @@
      "156": 1,
      "171": 1,
      "125": 1,
+     "96": 1,
      "165": 1
     },
     "fast_output_hist": {},
@@ -163608,7 +163609,7 @@
     "model": "claude-sonnet-5-5",
     "account": "a4",
     "entrypoint": "sdk-cli",
-    "n": 6,
+    "n": 8,
     "fast_session_requests": 0,
     "output_hist": {
      "249": 1,
@@ -163616,15 +163617,18 @@
      "251": 1,
      "220": 1,
      "257": 1,
-     "250": 1
+     "250": 1,
+     "258": 1,
+     "246": 1
     },
     "ttfb_hist": {
      "79": 1,
      "62": 1,
-     "48": 1,
+     "48": 2,
      "72": 1,
      "82": 1,
-     "53": 1
+     "53": 1,
+     "66": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
