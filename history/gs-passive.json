@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-10T09:30:06.969113+00:00",
+ "generated_at": "2026-11-10T10:00:06.199449+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-10T09:27:38+00:00",
+    "last": "2026-11-10T09:58:52+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -35,15 +35,15 @@
      ".claude-jono"
     ],
     "files": 9096,
-    "turns": 188580,
+    "turns": 188583,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 5686,
-     "dropped": 5338,
+     "dropped": 5339,
      "subagent_files": 1978,
      "dropped_to": {
       ".claude": 558,
-      ".claude-avis": 2342,
+      ".claude-avis": 2343,
       ".claude-dave": 8
      },
      "attributed_by_record": {
@@ -62,7 +62,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
       "files": 2584,
-      "turns": 58355
+      "turns": 58358
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -39025,7 +39025,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-10T09:28:44+00:00",
+    "last": "2026-11-10T10:00:59+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -70523,12 +70523,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 24517,
+    "reset_verified_samples": 24531,
     "since": null,
-    "samples": 27763,
+    "samples": 27777,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-10T09:30:52+00:00",
-    "five_hour_last": "2026-11-10T09:30:52+00:00",
+    "last": "2026-11-10T09:59:57+00:00",
+    "five_hour_last": "2026-11-10T09:59:57+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -85391,7 +85391,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-10T09:32:36.566226+00:00",
+  "generated_at": "2026-11-10T10:02:33.899063+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
