@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-10T13:18:50.888885+00:00",
+ "generated_at": "2026-11-11T10:16:39.717641+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -31,7 +31,7 @@
     "since": null,
     "samples": 24641,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-11-10T13:16:38+00:00",
+    "last": "2026-11-11T10:15:27+00:00",
     "five_hour_last": "2026-10-31T11:20:00+00:00",
     "weekly_only_since": "2026-10-31T13:30:02.334304+02:00"
    },
@@ -39,13 +39,13 @@
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 9273,
-    "turns": 229321,
+    "files": 9294,
+    "turns": 230567,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 9273,
+     "kept": 9294,
      "dropped": 215,
-     "subagent_files": 3467,
+     "subagent_files": 3468,
      "dropped_to": {
       ".claude-avis": 133
      },
@@ -63,8 +63,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 9273,
-      "turns": 229321
+      "files": 9294,
+      "turns": 230567
      }
     ]
    },
@@ -166,6 +166,72 @@
       "start": "2026-11-10T11:32:42+00:00",
       "end": "2026-11-10T11:32:42+00:00",
       "source": "launch"
+     },
+     {
+      "session": "session_01AAEXLBNtehpXpLHvwXf3kk",
+      "start": "2026-11-10T14:36:43+00:00",
+      "end": "2026-11-10T14:48:38.743000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL8s1kafpu3rx4XQP53",
+      "start": "2026-11-10T14:37:11+00:00",
+      "end": "2026-11-10T14:58:04.713000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL9DRKqdeD3tnjAmbny",
+      "start": "2026-11-10T14:40:07+00:00",
+      "end": "2026-11-10T14:45:24.444000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXLBPgGrACMuLjnUXNvw",
+      "start": "2026-11-10T15:11:55+00:00",
+      "end": "2026-11-10T15:18:14.767000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL8RT7LcC4r5KiosNPy",
+      "start": "2026-11-10T15:15:49+00:00",
+      "end": "2026-11-10T15:30:54.610000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXLBQa6uYKRKAH6pUPTK",
+      "start": "2026-11-10T16:15:02+00:00",
+      "end": "2026-11-10T16:24:55.914000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXLAUr4KueTYtyTECRyL",
+      "start": "2026-11-10T22:48:37+00:00",
+      "end": "2026-11-10T23:02:24.017000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL9ZogQndqxj7D5AJod",
+      "start": "2026-11-10T23:19:35+00:00",
+      "end": "2026-11-10T23:36:11.461000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXLAmrFfcgas89Eq2YfY",
+      "start": "2026-11-10T23:23:26+00:00",
+      "end": "2026-11-10T23:37:35.271000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXLB58pHyK54pRdD42hc",
+      "start": "2026-11-10T23:49:41+00:00",
+      "end": "2026-11-11T00:12:23.525000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXLAN6FC1rR349EWnV8b",
+      "start": "2026-11-11T00:45:35+00:00",
+      "end": "2026-11-11T00:58:26.604000+00:00",
+      "source": "transcript"
      }
     ],
     "launches_unattributed": 0
@@ -23931,6 +23997,223 @@
      "unpriced_tokens": 11724869,
      "turns": 132,
      "remote_sourced_turns": 36,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-10T11:46:08+00:00",
+     "end": "2026-11-10T14:19:40+00:00",
+     "seven_day": 35,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 253,
+       "output": 68359,
+       "cache_read": 20471725,
+       "cache_write": 283244,
+       "cache_write_1h": 283244
+      },
+      "claude-fable-5-2": {
+       "input": 16,
+       "output": 17475,
+       "cache_read": 813678,
+       "cache_write": 146690,
+       "cache_write_1h": 146690
+      }
+     },
+     "unpriced_tokens": 977859,
+     "turns": 113,
+     "remote_sourced_turns": 10,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-10T14:19:40+00:00",
+     "end": "2026-11-10T14:45:56+00:00",
+     "seven_day": 36,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 321,
+       "output": 104629,
+       "cache_read": 24739000,
+       "cache_write": 465443,
+       "cache_write_1h": 465443
+      },
+      "claude-fable-5-2": {
+       "input": 110,
+       "output": 67815,
+       "cache_read": 11247482,
+       "cache_write": 125437,
+       "cache_write_1h": 125437
+      }
+     },
+     "unpriced_tokens": 11440844,
+     "turns": 210,
+     "remote_sourced_turns": 95,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-10T14:45:56+00:00",
+     "end": "2026-11-10T15:12:20+00:00",
+     "seven_day": 37,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 134,
+       "output": 96675,
+       "cache_read": 16117901,
+       "cache_write": 442043,
+       "cache_write_1h": 442043
+      },
+      "claude-fable-5-2": {
+       "input": 78,
+       "output": 38984,
+       "cache_read": 10605691,
+       "cache_write": 64377,
+       "cache_write_1h": 64377
+      }
+     },
+     "unpriced_tokens": 10709130,
+     "turns": 98,
+     "remote_sourced_turns": 41,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-10T15:12:20+00:00",
+     "end": "2026-11-10T18:30:05.066168+02:00",
+     "seven_day": 38,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 469,
+       "output": 149484,
+       "cache_read": 39787409,
+       "cache_write": 599658,
+       "cache_write_1h": 599658
+      },
+      "claude-fable-5-2": {
+       "input": 78,
+       "output": 40068,
+       "cache_read": 5516973,
+       "cache_write": 142801,
+       "cache_write_1h": 142801
+      }
+     },
+     "unpriced_tokens": 5699920,
+     "turns": 243,
+     "remote_sourced_turns": 114,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-10T18:30:05.066168+02:00",
+     "end": "2026-11-10T22:26:08+00:00",
+     "seven_day": 39,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 391,
+       "output": 147299,
+       "cache_read": 44593951,
+       "cache_write": 867595,
+       "cache_write_1h": 867595
+      },
+      "claude-sonnet-4-6": {
+       "input": 8,
+       "output": 2702,
+       "cache_read": 189227,
+       "cache_write": 24792,
+       "cache_write_1h": 24792
+      },
+      "claude-fable-5-2": {
+       "input": 22,
+       "output": 14159,
+       "cache_read": 1781522,
+       "cache_write": 24380,
+       "cache_write_1h": 24380
+      }
+     },
+     "unpriced_tokens": 1820083,
+     "turns": 195,
+     "remote_sourced_turns": 67,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 8,
+       "output": 2702,
+       "cache_read": 189227,
+       "cache_write": 24792,
+       "cache_write_1h": 24792
+      }
+     },
+     "headless_turns": 6,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-10T22:26:08+00:00",
+     "end": "2026-11-10T23:44:06+00:00",
+     "seven_day": 40,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 544,
+       "output": 240422,
+       "cache_read": 69187538,
+       "cache_write": 825677,
+       "cache_write_1h": 825677
+      },
+      "claude-haiku-5-5": {
+       "input": 14,
+       "output": 5085,
+       "cache_read": 405845,
+       "cache_write": 80520
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 268,
+     "remote_sourced_turns": 178,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-10T23:44:06+00:00",
+     "end": "2026-11-11T01:51:29+00:00",
+     "seven_day": 41,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 404,
+       "output": 110320,
+       "cache_read": 52234433,
+       "cache_write": 470577,
+       "cache_write_1h": 470577
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 192,
+     "remote_sourced_turns": 139,
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": true
