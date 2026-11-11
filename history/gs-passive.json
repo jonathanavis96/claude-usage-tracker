@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-11T15:00:05.901808+00:00",
+ "generated_at": "2026-11-11T15:30:05.274102+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-11T14:58:07+00:00",
+    "last": "2026-11-11T15:29:04+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39146,7 +39146,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-11T15:00:13+00:00",
+    "last": "2026-11-11T15:31:06+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -54878,6 +54878,21 @@
      "start": "2026-11-11T14:39:46+00:00",
      "end": "2026-11-11T14:50:05+00:00",
      "seven_day": 54,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-11T14:50:05+00:00",
+     "end": "2026-11-11T15:10:31+00:00",
+     "seven_day": 55,
      "five_hour_measured": false,
      "d7": 1,
      "d5": 0,
@@ -71643,12 +71658,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 25228,
+    "reset_verified_samples": 25240,
     "since": null,
-    "samples": 28483,
+    "samples": 28495,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-11T14:58:07+00:00",
-    "five_hour_last": "2026-11-11T14:58:07+00:00",
+    "last": "2026-11-11T15:29:04+00:00",
+    "five_hour_last": "2026-11-11T15:29:04+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -87969,10 +87984,10 @@
     {
      "window_ending": "2026-11-11T19:20:00.000068+00:00",
      "windows": null,
-     "five_hour_pct": 1.0,
+     "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
      "rounding_interval": [
-      0.0,
+      0.2734,
       null
      ],
      "pieces": 1,
@@ -87989,7 +88004,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-11T15:02:17.843985+00:00",
+  "generated_at": "2026-11-11T15:32:15.001429+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
