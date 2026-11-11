@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-11T12:00:05.740652+00:00",
+ "generated_at": "2026-11-11T12:30:06.072026+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-11T11:58:16+00:00",
+    "last": "2026-11-11T12:29:05+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39146,7 +39146,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-11T11:58:17+00:00",
+    "last": "2026-11-11T12:29:06+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -39155,7 +39155,7 @@
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
     "files": 5367,
-    "turns": 163169,
+    "turns": 163176,
     "withheld_patterns": [],
     "own_sessions": null,
     "sources": [
@@ -39163,7 +39163,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-dave/projects",
       "files": 2093,
-      "turns": 88911
+      "turns": 88918
      },
      {
       "source": "archive:transcripts-20261015/claude-dave",
@@ -71424,12 +71424,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 25156,
+    "reset_verified_samples": 25168,
     "since": null,
-    "samples": 28411,
+    "samples": 28423,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-11T11:58:16+00:00",
-    "five_hour_last": "2026-11-11T11:58:16+00:00",
+    "last": "2026-11-11T12:29:05+00:00",
+    "five_hour_last": "2026-11-11T12:29:05+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -71441,7 +71441,7 @@
      ".claude-jono"
     ],
     "files": 4017,
-    "turns": 91517,
+    "turns": 91524,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2216,
@@ -71462,7 +71462,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 1244,
-      "turns": 40061
+      "turns": 40068
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -87713,7 +87713,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-11T11:58:16+00:00",
+     "window_ending": "2026-11-11T12:29:05+00:00",
      "windows": 5.0,
      "five_hour_pct": 5.0,
      "seven_day_pct": 1.0,
@@ -87735,7 +87735,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-11T12:02:12.480449+00:00",
+  "generated_at": "2026-11-11T12:32:17.255815+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -167863,7 +167863,7 @@
     "model": "claude-opus-5-5",
     "account": "a3",
     "entrypoint": "cli",
-    "n": 386,
+    "n": 387,
     "fast_session_requests": 0,
     "output_hist": {
      "218": 10,
@@ -167913,10 +167913,10 @@
      "208": 4,
      "187": 5,
      "211": 6,
+     "207": 3,
      "193": 2,
      "206": 2,
      "195": 4,
-     "207": 2,
      "197": 2,
      "181": 1,
      "200": 2,
@@ -168004,7 +168004,7 @@
      "100": 3,
      "34": 1,
      "77": 4,
-     "96": 4,
+     "96": 5,
      "85": 4,
      "101": 4,
      "122": 1,
@@ -168066,25 +168066,25 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 644,
+    "n": 647,
     "fast_session_requests": 0,
     "output_hist": {
      "225": 24,
      "234": 34,
      "235": 35,
      "229": 38,
-     "228": 47,
+     "228": 48,
      "226": 38,
      "238": 19,
      "242": 15,
      "233": 26,
      "236": 25,
-     "231": 44,
+     "231": 45,
      "237": 27,
      "248": 2,
      "241": 7,
      "222": 14,
-     "232": 51,
+     "232": 52,
      "249": 3,
      "243": 6,
      "224": 25,
@@ -168146,7 +168146,7 @@
      "49": 5,
      "62": 6,
      "90": 9,
-     "34": 9,
+     "34": 10,
      "82": 3,
      "6": 2,
      "41": 11,
@@ -168157,7 +168157,7 @@
      "32": 6,
      "38": 4,
      "18": 4,
-     "87": 4,
+     "87": 5,
      "-4": 1,
      "37": 10,
      "93": 4,
@@ -168239,7 +168239,7 @@
      "103": 1,
      "107": 1,
      "96": 2,
-     "26": 3,
+     "26": 4,
      "119": 4,
      "147": 1,
      "-3": 1,
