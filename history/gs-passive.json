@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-12T07:00:05.009650+00:00",
+ "generated_at": "2026-11-12T07:30:06.837674+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-12T06:58:45+00:00",
+    "last": "2026-11-12T07:30:00+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39146,7 +39146,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-12T07:00:51+00:00",
+    "last": "2026-11-12T07:26:46+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -55382,6 +55382,21 @@
      "start": "2026-11-11T23:50:00+00:00",
      "end": "2026-11-12T03:53:36+00:00",
      "seven_day": 78,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-12T03:53:36+00:00",
+     "end": "2026-11-12T07:21:26+00:00",
+     "seven_day": 79,
      "five_hour_measured": false,
      "d7": 1,
      "d5": 0,
@@ -72147,12 +72162,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 25621,
+    "reset_verified_samples": 25633,
     "since": null,
-    "samples": 28876,
+    "samples": 28888,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-12T06:58:45+00:00",
-    "five_hour_last": "2026-11-12T06:58:45+00:00",
+    "last": "2026-11-12T07:30:00+00:00",
+    "five_hour_last": "2026-11-12T07:30:00+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -88758,7 +88773,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-12T07:01:52.954562+00:00",
+  "generated_at": "2026-11-12T07:31:52.282091+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
