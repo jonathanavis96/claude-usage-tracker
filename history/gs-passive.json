@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-12T04:00:05.734217+00:00",
+ "generated_at": "2026-11-12T04:30:05.556091+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-12T03:56:45+00:00",
+    "last": "2026-11-12T04:29:08+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39146,7 +39146,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-12T03:58:56+00:00",
+    "last": "2026-11-12T04:29:09+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -72147,12 +72147,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 25549,
+    "reset_verified_samples": 25561,
     "since": null,
-    "samples": 28804,
+    "samples": 28816,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-12T03:58:55+00:00",
-    "five_hour_last": "2026-11-12T03:58:55+00:00",
+    "last": "2026-11-12T04:29:08+00:00",
+    "five_hour_last": "2026-11-12T04:29:08+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -72164,7 +72164,7 @@
      ".claude-jono"
     ],
     "files": 4020,
-    "turns": 91815,
+    "turns": 91818,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2219,
@@ -72185,7 +72185,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 1247,
-      "turns": 40359
+      "turns": 40362
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -88758,7 +88758,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-12T04:01:54.382806+00:00",
+  "generated_at": "2026-11-12T04:31:53.906925+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -169451,7 +169451,7 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 12,
+    "n": 14,
     "fast_session_requests": 0,
     "output_hist": {
      "223": 1,
@@ -169464,7 +169464,9 @@
      "217": 1,
      "213": 1,
      "212": 1,
-     "186": 1
+     "186": 1,
+     "190": 1,
+     "205": 1
     },
     "ttfb_hist": {
      "77": 1,
@@ -169478,7 +169480,9 @@
      "90": 1,
      "55": 1,
      "112": 1,
-     "57": 1
+     "57": 1,
+     "117": 1,
+     "69": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
