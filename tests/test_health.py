@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from tracker import health
 
@@ -50,6 +51,18 @@ class HealthTest(unittest.TestCase):
     def test_stale_collection(self):
         self.log.write_text(json.dumps({"ts": iso(NOW - 2 * 3600), "five_hour": {"utilization": 1}}) + "\n")
         self.assertIn("collection: newest meter sample is 2h00m old", self.reasons()["collection"])
+
+    def test_a_weekly_only_reading_still_counts_as_collecting(self):
+        # An account with no five-hour limit logs five_hour null; its numeric seven_day
+        # proves collection is alive.
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None, "resets_at": None},
+                                        "seven_day": {"utilization": 17.0}, "weekly_only": True}) + "\n")
+        self.assertIsNone(self.reasons()["collection"])
+
+    def test_a_line_with_no_numeric_bucket_is_not_a_sample(self):
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None},
+                                        "seven_day": {"utilization": None}}) + "\n")
+        self.assertIn("no reading", self.reasons()["collection"])
 
     def test_resets_at_style_offsets_are_parsed_not_string_compared(self):
         self.log.write_text(json.dumps({"ts": "2026-10-02T03:59:00+02:00", "five_hour": {"utilization": 1}}) + "\n")
@@ -126,6 +139,15 @@ class HealthTest(unittest.TestCase):
                                      "schema": ["seven_day.resets_at missing"]}) + "\n")
         self.assertIn("usage API changed shape", self.reasons()["meters"] or "")
 
+    def test_a_weekly_only_reading_is_not_a_schema_change(self):
+        meter = self.tmp / "meter-dave.log"
+        self.c.meter_logs = (meter,)
+        self.c.checks = ("meters",)
+        meter.write_text(json.dumps({"ts": iso(NOW - 60), "weekly_only": True,
+                                     "five_hour": {"utilization": None, "resets_at": None},
+                                     "seven_day": {"utilization": 8.0, "resets_at": iso(NOW + 86400)}}) + "\n")
+        self.assertIsNone(self.reasons()["meters"])
+
     def test_stale_publisher(self):
         self.c.publisher_max_age_s = 300
         self.assertIn("publisher: history/gs-passive.json last committed 10m ago", self.reasons()["publisher"])
@@ -155,6 +177,74 @@ class HealthTest(unittest.TestCase):
         os.utime(self.c.lock_pidfile, (NOW - 3 * 3600, NOW - 3 * 3600))
         self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
 
+    def test_a_held_lock_with_no_pid_file_is_aged_by_the_lock_file(self):
+        # Code review round 5: a run that could not write its pid file (full disk) and then
+        # hung read as a healthy lock here, while supervise alerted on it and pointed here.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 4 * 3600}))  # the hung run began after it
+        self.assertIsNone(self.reasons().get("lock"))  # not held: an old lock file is no run at all
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            # Round 6: the check reads /proc/locks and never takes a lock of its own, which
+            # would make a supervised run starting in the same instant skip itself.
+            with mock.patch("fcntl.flock", side_effect=AssertionError("health took a lock")):
+                self.assertIn("a run with no pid file has held the lock 3h00m", self.reasons()["lock"])
+            os.utime(lock, (NOW - 600, NOW - 600))
+            self.assertIsNone(self.reasons().get("lock"))
+        finally:
+            os.close(fd)
+
+    def test_a_lock_stamp_older_than_the_last_finished_run_does_not_age_the_lock(self):
+        # Code review round 7: when the stamp itself could not be written (a read-only disk),
+        # the lock still carries an earlier run's time, which would read as hours held.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 120}))
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertIsNone(self.reasons().get("lock"))
+        finally:
+            os.close(fd)
+
+    def test_a_held_lock_is_found_by_its_holder_when_the_device_reads_differently(self):
+        # Code review round 7: /proc/locks prints the superblock's device, which differs from
+        # stat's on btrfs subvolumes and overlayfs; the holder's open files settle it.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 4 * 3600}))
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        row = f"1: FLOCK  ADVISORY  WRITE {os.getpid()} ff:ff:{os.stat(lock).st_ino} 0 EOF\n"
+        try:
+            with mock.patch.object(health, "_proc_locks", return_value=row):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+            # Round 11: a holder whose files cannot be read (hidepid, another user) is no veto.
+            with mock.patch.object(health, "_proc_locks", return_value=row.replace(str(os.getpid()), "1")), \
+                    mock.patch.object(health, "_holds_open", return_value=None):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+            other = f"1: FLOCK  ADVISORY  WRITE 1 ff:ff:{os.stat(lock).st_ino} 0 EOF\n"
+            with mock.patch.object(health, "_proc_locks", return_value=other), \
+                    mock.patch.object(health, "_holds_open", return_value=False):
+                self.assertIsNone(self.reasons().get("lock"))  # the same inode on another device
+            # Round 8: device and inode agreeing is enough, though the holder's pid shows no
+            # such file (another pid namespace).
+            st = os.stat(lock)
+            same = f"1: FLOCK  ADVISORY  WRITE 1 {os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino} 0 EOF\n"
+            with mock.patch.object(health, "_proc_locks", return_value=same), \
+                    mock.patch.object(health, "_holds_open", return_value=False):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+        finally:
+            os.close(fd)
+
     def test_sizes(self):
         self.c.max_log_bytes = 10
         (self.tmp / "run.log").write_text("x" * 2048)
@@ -169,11 +259,81 @@ class HealthTest(unittest.TestCase):
         self.log.write_text(json.dumps({"ts": iso(now - 60), "five_hour": {"utilization": 1}}) + "\n")
         self.state.write_text(json.dumps({"last_ok": now - 60}))
         self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": int((now + 3600) * 1000)}}))
+        meter = self.tmp / "claude-usage-meter-a1.log"
+        meter.write_text(json.dumps({"ts": iso(now - 60), "five_hour": {"utilization": 1}}) + "\n")
         args = ["--usage-log", str(self.log), "--state", str(self.state), "--repo", str(self.repo),
-                "--credentials", str(self.creds), "--pidfile", str(self.c.lock_pidfile), "--skip", "publisher"]
+                "--credentials", str(self.creds), "--pidfile", str(self.c.lock_pidfile), "--skip", "publisher",
+                "--page-url", "", "--meter-log", str(meter)]
         self.assertEqual(health.main(args), 0)
+        meter.unlink()
+        self.assertEqual(health.main(args), 1, "the masterrig profile checks a1's meter log")
+        meter.write_text(json.dumps({"ts": iso(now - 60), "five_hour": {"utilization": 1}}) + "\n")
         self.log.unlink()
         self.assertEqual(health.main(args), 1)
+
+    def test_the_masterrig_cli_checks_the_live_page_by_default(self):
+        c = health.config_from_args(health.build_parser().parse_args([]))
+        self.assertEqual(c.page_url, health.LIVE_PAGE_URL)
+        c = health.config_from_args(health.build_parser().parse_args(["--page-url", ""]))
+        self.assertIsNone(c.page_url)
+
+    def test_a_withheld_publish_fails_the_run_check_at_once(self):
+        # bin/daily.sh exit 9: the run finished 30 min ago, so the age rule read it as healthy.
+        self.state.write_text(json.dumps({"last_ok": NOW - 1800, "last_fail": NOW - 60, "last_exit": 9}))
+        self.assertIn("run: bin/daily.sh withheld the public JSON (exit 9), last successful run 30m ago",
+                      self.reasons()["run"])
+        self.state.write_text(json.dumps({"last_ok": NOW - 30, "last_fail": NOW - 60, "last_exit": 0}))
+        self.assertIsNone(self.reasons()["run"])
+
+    def test_masterrig_reads_no_ceiling_feed(self):
+        # The ceiling log stopped on 2026-10-18 (mis-usage-ceiling.service: not-found) and
+        # a1's meter log replaces it (fix/a1-meter-feed's `meters` check). A collection
+        # check on the dead log failed forever and, first in the order, hid every other
+        # masterrig check (review of 359b7c1).
+        self.assertFalse(hasattr(health, "CEILING_LOG"))
+        self.assertNotIn("--ceiling-log", health.build_parser().format_help())
+        self.assertIsNone(health.check_collection(self.c, NOW))
+
+    # -- the page readers get (masterrig: the live URL) ----------------------------------
+
+    def page(self, body=None, error=None):
+        def fetch(url, timeout):
+            if error:
+                raise error
+            return json.dumps(body).encode()
+        p = mock.patch.object(health, "fetch_page", fetch)
+        p.start()
+        self.addCleanup(p.stop)
+        self.c.page_url = "https://example.invalid/data/claude-usage.json"
+        self.c.page_fetch_state = self.tmp / "page-fetch.json"
+
+    def test_a_fresh_live_page_passes_and_a_stale_one_fails(self):
+        self.page({"generated_at": iso(NOW - 1800)})
+        self.assertIsNone(self.reasons()["page"])
+        mock.patch.stopall()
+        # The live page on 2026-10-22: 2026-10-13T10:31:29Z, nine days old.
+        self.page({"generated_at": "2026-10-13T10:31:29.045996Z"})
+        reason = health.check_page(self.c, datetime(2026, 10, 22, 20, 0, tzinfo=timezone.utc).timestamp())
+        self.assertIn("was generated 225h28m ago (limit 2h00m): the page is not updating", reason)
+
+    def test_a_failing_fetch_waits_out_its_grace_then_is_its_own_reason(self):
+        import urllib.error
+        self.page(error=urllib.error.URLError("no route"))
+        self.assertIsNone(health.check_page(self.c, NOW), "the first failure is inside the grace")
+        self.assertIsNone(health.check_page(self.c, NOW + 3600))
+        reason = health.check_page(self.c, NOW + 2 * 3600 + 60)
+        self.assertIn("page: cannot fetch https://example.invalid/data/claude-usage.json for 2h01m", reason)
+        mock.patch.stopall()
+        # One good fetch clears the stamp: the next failure starts a new grace.
+        self.page({"generated_at": iso(NOW + 3 * 3600)})
+        self.assertIsNone(health.check_page(self.c, NOW + 3 * 3600))
+        self.assertFalse(self.c.page_fetch_state.exists())
+        mock.patch.stopall()
+        self.page(error=urllib.error.URLError("no route"))
+        self.assertIsNone(health.check_page(self.c, NOW + 4 * 3600))
+
+    def test_a_bare_config_reads_no_page(self):
+        self.assertIsNone(health.check_page(health.Config(), NOW))
 
 
 if __name__ == "__main__":
@@ -191,7 +351,24 @@ class GsProfileTest(unittest.TestCase):
         self.state.write_text(json.dumps({"last_ok": NOW - 120}))
         for a in health.GS_METER_ACCOUNTS:
             self.write_meter(a, NOW - 60)
-        self.c = health.gs_config(state=self.state, pidfile=self.ops / "x.pid", ops=self.ops, repo=self.tmp)
+        self.site = self.tmp / "site"
+        self.publish(NOW - 600)
+        self.c = health.gs_config(state=self.state, pidfile=self.ops / "x.pid", ops=self.ops, repo=self.tmp,
+                                  site=self.site)
+        # Never the machine's own ~/.claude-dave: its sessions/ changes the hold.
+        self.c.meter_config_dirs = {a: self.tmp / f"cfg-{a}" for a in health.GS_METER_ACCOUNTS}
+
+    def publish(self, generated_at):
+        page = self.site / health.SITE_JSON
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text(json.dumps({"generated_at": iso(generated_at)}))
+
+    def uses(self, *accounts):
+        """The publisher's stretch record holds these accounts (history/gs-passive.json)."""
+        (self.tmp / "history").mkdir(exist_ok=True)
+        (self.tmp / "history" / "gs-passive.json").write_text(json.dumps({"accounts": {
+            a: {"account": a, "meter": {"log": f"/home/x/.paperclip/ops/claude-usage-meter-{a}.log"}}
+            for a in accounts}}))
 
     def write_meter(self, account, ts, gap_after=0):
         rows = [{"ts": iso(ts), "account": account, "five_hour": {"utilization": 1.0}}]
@@ -201,11 +378,138 @@ class GsProfileTest(unittest.TestCase):
 
     def test_fresh_gs_is_healthy_and_skips_masterrig_checks(self):
         names = [n for n, _ in health.run_checks(self.c, NOW)]
-        self.assertEqual(names, ["run", "lock", "sizes", "meters"])
+        self.assertEqual(names, ["run", "page", "lock", "sizes", "meters", "advisory"])
         self.assertIsNone(health.first_failure(self.c, NOW))
 
-    def test_masterrig_default_does_not_run_meters(self):
-        self.assertNotIn("meters", [n for n, _ in health.run_checks(health.Config(), NOW)])
+    def test_a_bare_config_does_not_run_meters(self):
+        names = [n for n, _ in health.run_checks(health.Config(), NOW)]
+        self.assertNotIn("meters", names)
+        self.assertNotIn("advisory", names)
+
+    # -- the published JSON's age --------------------------------------------------------
+
+    def test_a_page_withheld_past_two_hours_fails(self):
+        # The withheld page put back the 2026-10-13T10:31Z JSON on every run for nine days.
+        self.publish(NOW - 2 * 3600 - 60)
+        self.assertIn("page: the published JSON in the site checkout (claude-usage.json) was generated "
+                      "2h01m ago (limit 2h00m)", health.first_failure(self.c, NOW))
+        self.publish(NOW - 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_an_unreadable_page_fails(self):
+        (self.site / health.SITE_JSON).write_text("{not json")
+        self.assertIn("page: cannot read the published JSON", health.first_failure(self.c, NOW))
+
+    def test_a_withheld_run_is_named_before_the_page_it_left_stale(self):
+        self.publish(NOW - 5 * 3600)
+        self.state.write_text(json.dumps({"last_ok": NOW - 5 * 3600, "last_fail": NOW - 60, "last_exit": 9}))
+        self.assertTrue(health.first_failure(self.c, NOW).startswith("run: bin/daily.sh withheld the public JSON"))
+
+    # -- a blind meter on an account the publisher uses ------------------------------------
+
+    def test_a_used_accounts_idle_lapse_is_blind_after_an_hour(self):
+        # An idle lapse (only auth_expired lines after the last reading) passed for 24 h; jwork
+        # read nothing for 41.7 h on 19-20 Oct.
+        self.uses("dave", "jwork", "avis")
+        self._idle("dave", 20 * 86400, 50 * 60)
+        self.assertIsNone(health.first_failure(self.c, NOW), "inside the hour")
+        self._idle("dave", 20 * 86400, 3 * 3600)
+        reason = health.first_failure(self.c, NOW)
+        self.assertIn("meters: dave is blind, no reading in claude-usage-meter-dave.log for 3h00m (limit 1h00m; "
+                      "token lapsed (idle)", reason)
+        self.assertIn("the publisher uses this account", reason)
+
+    def test_an_account_the_publisher_does_not_use_keeps_the_idle_grace(self):
+        self.uses("jwork", "avis")
+        self._idle("dave", 20 * 86400, 3 * 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_a_used_accounts_held_header_probe_is_blind_after_an_hour(self):
+        # dave, 2026-10-22 01:09-06:34Z: the probe held while masterrig used dave for 3,238 messages.
+        self.uses("dave")
+        self.write_header_meter(NOW - 50 * 60, five_reset=NOW - 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+        self.write_header_meter(NOW - 5 * 3600 - 25 * 60, five_reset=NOW - 3600)
+        self.assertIn("meters: dave is blind, no reading in claude-usage-meter-dave.log for 5h25m "
+                      "(limit 1h00m; header probe held", health.first_failure(self.c, NOW))
+
+    def test_a_used_account_honouring_a_long_retry_after_is_blind_after_an_hour(self):
+        self.uses("jwork")
+        rows = [{"ts": iso(NOW - 3700), "account": "jwork", "five_hour": {"utilization": 1.0}},
+                {"ts": iso(NOW - 3690), "account": "jwork", "error": "HTTP 429", "reason": "rate_limited",
+                 "retry_after_s": 7200}]
+        (self.ops / "claude-usage-meter-jwork.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.assertIn("jwork is blind", health.first_failure(self.c, NOW))
+
+    def test_the_used_accounts_come_from_the_record_by_label_or_meter_log(self):
+        self.uses("a2")   # a label the log name does not carry: matched by its meter log path
+        (self.tmp / "history" / "gs-passive.json").write_text(json.dumps({"accounts": {
+            "a2": {"meter": {"log": "/srv/ops/claude-usage-meter-dave.log"}}}}))
+        self.assertEqual(health._publisher_accounts(self.c, self.ops / "claude-usage-meter-dave.log"),
+                         {"a2", "dave"})
+        (self.tmp / "history" / "gs-passive.json").write_text("{not json")
+        self.assertEqual(health._publisher_accounts(self.c, self.ops / "claude-usage-meter-dave.log"), set())
+
+    # -- advisory steps of bin/daily.sh --------------------------------------------------------
+
+    def test_an_advisory_step_failing_past_its_grace_fails_by_name(self):
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        advisory.record(state, "tracker.list_prices", 0, NOW - 5 * 3600)
+        # The refit crashed on every run from 2026-10-13T19:30Z.
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.assertIn("advisory: tools.model_rates has failed on every run for 5h00m (limit 3h00m, last exit 1)",
+                      health.first_failure(self.c, NOW))
+        advisory.record(state, "tools.model_rates", 0, NOW)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_all_failures_names_the_advisory_step_behind_a_withheld_run(self):
+        # The supervisor read first_failure: while `run` failed (the page withheld), the
+        # refit crashing for days behind it never reached an alert.
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.state.write_text(json.dumps({"last_ok": NOW - 5 * 3600, "last_fail": NOW - 60, "last_exit": 9}))
+        self.publish(NOW - 5 * 3600)
+        first = health.first_failure(self.c, NOW)
+        every = health.all_failures(self.c, NOW, skip=("lock",))
+        self.assertNotIn("advisory", first)
+        parts = every.split(" | ")
+        self.assertEqual([p.split(":")[0] for p in parts], ["run", "page", "advisory"])
+        self.assertTrue(parts[2].startswith("advisory: tools.model_rates has failed on every run"))
+        advisory.record(state, "tools.model_rates", 0, NOW)
+        self.state.write_text(json.dumps({"last_ok": NOW - 60}))
+        self.publish(NOW - 60)
+        self.assertIsNone(health.all_failures(self.c, NOW))
+
+    def test_a_held_refit_is_not_an_advisory_failure(self):
+        # tools.model_rates exits 3 on a new hold and 4 while it stands: the refit ran and kept
+        # the rates in force, which bin/daily.sh alerts once. It must not become an incident.
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        for k in range(10, -1, -1):
+            advisory.record(state, "tools.model_rates", 1, NOW - k * 1800)
+        self.assertIn("advisory: tools.model_rates", health.first_failure(self.c, NOW))
+        rec = advisory.record(state, "tools.model_rates", 3, NOW)
+        self.assertNotIn("failing_since", rec)
+        self.assertEqual(rec["last_exit"], 3)
+        for k in range(1, 12):
+            advisory.record(state, "tools.model_rates", 4, NOW + k * 1800)
+        self.assertIsNone(health.check_advisory(self.c, NOW + 11 * 1800))
+        # A 3 or 4 from any other step is still a failure.
+        for k in range(10, -1, -1):
+            advisory.record(state, "tracker.gs_passive", 3, NOW - k * 1800)
+        self.assertIn("advisory: tracker.gs_passive has failed on every run", health.check_advisory(self.c, NOW))
+
+    def test_an_advisory_step_inside_its_grace_or_no_longer_run_passes(self):
+        from tracker import advisory
+        state = self.ops / health.GS_ADVISORY.name
+        advisory.record(state, "tracker.gs_passive", 2, NOW - 2 * 3600)
+        advisory.record(state, "tracker.gs_passive", 2, NOW)
+        self.assertIsNone(health.first_failure(self.c, NOW), "two hours is inside the grace")
+        self.assertIsNone(health.check_advisory(self.c, NOW + 27 * 3600), "not run for a day: not failing")
 
     def test_gap_lines_do_not_count_as_a_reading(self):
         # dave's last usable read is 20 min old though 429 gaps were logged since.
@@ -223,10 +527,55 @@ class GsProfileTest(unittest.TestCase):
     def test_a_held_header_probe_is_not_stale(self):
         # Window lapsed 2 h ago and meter_log holds its probe until a session runs: no lines, no failure.
         self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 3 * 3600)
         self.assertIsNone(health.first_failure(self.c, NOW))
         # Seven-day meter at 100% until tomorrow: held as well.
         self.write_header_meter(NOW - 3 * 3600, five_reset=NOW + 3600, seven=100.0)
         self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def dave_config_dir(self, sessions_touched=None):
+        """A dave config dir whose `sessions/` last changed at `sessions_touched` (None: no such dir)."""
+        cfg = self.tmp / "cfg-dave"
+        (cfg / "sessions").mkdir(parents=True, exist_ok=True)
+        if sessions_touched is None:
+            (cfg / "sessions").rmdir()
+        else:
+            os.utime(cfg / "sessions", (sessions_touched, sessions_touched))
+        self.c.meter_config_dirs = {"dave": cfg}
+
+    def test_a_session_after_the_reset_ends_the_hold_and_the_age_rule_applies(self):
+        # meter_log probes again once `sessions/` changes after the reset, so a log still
+        # silent 40 min later is a dead meter, not a held one.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 40 * 60)
+        self.assertIn("newest usable reading in claude-usage-meter-dave.log is 3h",
+                      health.first_failure(self.c, NOW))
+
+    def test_a_lapsed_window_with_no_session_since_stays_held(self):
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 2 * 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW), "touched at the reset itself: still held")
+        self.dave_config_dir(sessions_touched=None)
+        self.assertIsNone(health.first_failure(self.c, NOW), "no sessions/ yet: meter_log holds too")
+
+    def test_a_capped_week_stays_held_whatever_sessions_ran(self):
+        # meter_log's capped hold does not read sessions/, and a capped account cannot be probed.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600, seven=100.0)
+        self.dave_config_dir(sessions_touched=NOW - 40 * 60)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_health_holds_exactly_when_meter_log_does(self):
+        from tracker import meter_log
+        when = datetime.fromtimestamp(NOW, timezone.utc)
+        for touched in (NOW - 40 * 60, NOW - 2 * 3600, NOW - 3 * 3600, None):
+            with self.subTest(touched=touched):
+                self.dave_config_dir(sessions_touched=touched)
+                row = {"source": "ratelimit_headers",
+                       "five_hour": {"resets_at": iso(NOW - 2 * 3600)},
+                       "seven_day": {"utilization": 22.0, "resets_at": iso(NOW + 86400)}}
+                cfg = self.c.meter_config_dirs["dave"]
+                self.assertEqual(health._header_hold(row, NOW, cfg),
+                                 meter_log.header_hold(row, cfg, when) is not None)
 
     def test_a_header_probe_in_a_live_window_still_goes_stale(self):
         self.write_header_meter(NOW - 1800, five_reset=NOW + 3600)
@@ -317,3 +666,54 @@ class GsProfileTest(unittest.TestCase):
     def test_publisher_run_is_held_to_thirty_minutes(self):
         self.state.write_text(json.dumps({"last_ok": NOW - 3700, "last_reason": "exit 1 after 1 attempts"}))
         self.assertIn("run: last successful run 1h01m ago", health.first_failure(self.c, NOW))
+
+
+class MasterrigProfileTest(unittest.TestCase):
+    """The masterrig profile watches a1's own meter log: the 5-minute reader before it went
+    blind on 2026-10-18 and a1 formed no stretches for days while every check said ok."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.ops = self.tmp / "ops"
+        self.ops.mkdir()
+        self.home = self.tmp / "home"
+        (self.home / ".claude").mkdir(parents=True)
+        self.log = self.ops / "claude-usage-meter-a1.log"
+        self.c = health.masterrig_config(ops=self.ops, home=self.home, checks=("meters",))
+
+    def write(self, ts, trailing=()):
+        rows = [{"ts": iso(ts), "account": "a1", "five_hour": {"utilization": 8.0}}, *trailing]
+        self.log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def test_the_profile_runs_every_check_with_meters_on_a1s_log(self):
+        c = health.masterrig_config(ops=self.ops, home=self.home)
+        self.assertEqual(c.checks, ("collection", "run", "publisher", "page", "token", "lock", "sizes", "meters"))
+        self.assertEqual(c.meter_logs, (self.ops / "claude-usage-meter-a1.log",))
+        self.assertEqual(c.meter_config_dirs, {"a1": self.home / ".claude"})
+        self.assertEqual(c.page_url, health.LIVE_PAGE_URL)
+        self.assertIsNone(health.masterrig_config(ops=self.ops, home=self.home, page_url=None).page_url)
+
+    def test_a_fresh_a1_log_is_healthy(self):
+        self.write(NOW - 130)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_a_missing_or_stopped_a1_log_fails(self):
+        self.assertIn("meters: cannot read claude-usage-meter-a1.log", health.first_failure(self.c, NOW))
+        # A stopped timer, or a refusal (exit 2 writes nothing): the newest reading only ages.
+        self.write(NOW - 20 * 60)
+        self.assertIn("claude-usage-meter-a1.log is 20m old", health.first_failure(self.c, NOW))
+
+    def test_an_idle_a1_whose_token_lapsed_is_not_a_dead_feed(self):
+        # Read off ~/.claude's refresh-token expiry, the dir the a1 unit samples.
+        creds = self.home / ".claude" / ".credentials.json"
+        creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": int((NOW + 86400) * 1000)}}))
+        gaps = [{"ts": iso(t), "account": "a1", "error": "AuthExpired: token expired, sign in again",
+                 "reason": "auth_expired"} for t in range(int(NOW - 3 * 3600) + 110, int(NOW), 110)]
+        self.write(NOW - 3 * 3600, trailing=gaps)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+        creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": int((NOW - 3600) * 1000)}}))
+        self.assertIn("a1's refresh token expired", health.first_failure(self.c, NOW))
+
+    def test_the_cli_defaults_to_a1s_log(self):
+        a = health.build_parser().parse_args([])
+        self.assertEqual(health.config_from_args(a).meter_logs, (health.GS_OPS / "claude-usage-meter-a1.log",))

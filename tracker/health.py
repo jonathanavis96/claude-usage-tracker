@@ -9,9 +9,13 @@ Checks, in order (the first failure is the one-line reason):
                moonlighter's ~/.moonlighter/usage_log.jsonl, sampled every 30 min) is
                younger than two intervals.
   run          the supervisor's last successful passive run (tracker/supervise.py state
-               file, `last_ok`) is younger than two intervals of the hourly cron.
+               file, `last_ok`) is younger than two intervals of the hourly cron, and the
+               last run was not a withheld publish (bin/daily.sh exit 9).
   publisher    the last commit touching history/gs-passive.json (gs's "Daily publisher
                state", every 30 min) is younger than --publisher-max-age.
+  page         the public JSON's own `generated_at` is younger than 2 h: on gs the site
+               checkout's copy, on masterrig the live URL (--page-url). A fetch that has
+               failed for 2 h in a row is its own reason; a shorter failure passes.
   token        ~/.claude/.credentials.json is readable and claudeAiOauth.expiresAt is
                not further in the past than --token-grace. Claude Code refreshes the
                access token only when it runs, so an idle few hours is normal; a token
@@ -19,7 +23,7 @@ Checks, in order (the first failure is the one-line reason):
   lock         no lock pid file whose process is dead, and none older than --lock-max-age.
   sizes        each log under --max-log-bytes and the history/ directory under
                --max-history-bytes.
-  meters       (gs profile) each per-account meter log's newest usable reading (a line
+  meters       (gs, masterrig) each per-account meter log's newest usable reading (a line
                with `five_hour`, not a logged gap) is younger than --meter-max-age. The
                timers read every minute and 429s are routine, so 15 min is a stopped
                timer or an account whose reads all fail, never one slow tick. It is far
@@ -32,16 +36,32 @@ Checks, in order (the first failure is the one-line reason):
                Claude Code refreshes it), not broken: it fails only when its refresh
                token has expired, or after 24 h. A header-probe log (meter_log
                --token-env) whose newest line is a reading in a lapsed five-hour window
-               or at a 100% seven-day meter is held, not stale: meter_log writes
-               nothing while it holds. Trailing `token_rejected` lines fail with that
-               reason. Every failing log is reported, joined
+               with no session in the account's config dir since (its `sessions/`
+               unchanged after the reset), or at a 100% seven-day meter, is held, not
+               stale: meter_log writes nothing while it holds. A session after the reset
+               ends the hold, as it does in meter_log, so the age limit applies again.
+               Trailing `token_rejected` lines fail with that reason. Every failing log
+               is reported, joined
                with " | ", so each account is its own incident in the supervisor.
+               An account the publisher uses (one history/gs-passive.json holds) is
+               blind once its meter has not read for an hour, idle token or held probe
+               or not: what it spends on another host meanwhile is not measured.
+  advisory     (gs profile) no advisory step of bin/daily.sh (list_prices, contributed,
+               gs_passive, the model_rates refit, the four_accounts daily run) has failed
+               on every run for 3 h.
 
-Profiles pick which checks run. `masterrig` (default) is collection, run, publisher,
-token, lock, sizes. `gs` is run (the supervised bin/daily.sh, every 30 min), meters,
-lock and sizes: gs has no moonlighter log, and its publisher is the job itself.
+Profiles pick which checks run. `masterrig` (default, masterrig_config) is collection,
+run, publisher, page, token, lock, sizes and meters, the last on a1's own meter log
+(deploy/systemd-masterrig/claude-usage-meter-a1.timer): moonlighter's 30-minute log is
+too sparse for the passive join (MAX_PAIR_GAP is 15 min), so a1 forms stretches only
+while that timer reads, and the 5-minute reader before it went blind for two days
+(2026-10-18) while every check here said ok. `gs` is run (the supervised bin/daily.sh,
+every 30 min), page, meters, lock, sizes and advisory: gs has no moonlighter log, and its
+publisher is the job itself. A bare Config() keeps every check but meters and advisory,
+with no meter logs and no live page.
 
-Each check reads its file fresh on every call; nothing is cached between runs.
+Each check reads its file fresh on every call; nothing is cached between runs, except when
+the live page's fetches started failing (~/.cache/claude-usage-tracker/page-fetch.json).
 Timestamps are parsed, never compared as strings.
 """
 from __future__ import annotations
@@ -52,10 +72,13 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+
+from .meter_log import MASTERRIG_METER_LOG
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(os.environ.get("HOME", str(Path.home())))
@@ -73,6 +96,9 @@ class Config:
     credentials: Path = HOME / ".claude" / ".credentials.json"
     token_grace_s: int = 12 * 60 * 60
     lock_pidfile: Path = ROOT / ".supervise.pid"
+    #: The supervisor's flock file, for a run with no pid file; None is `<pid file>.lock`, the
+    #: name the default locks carry (tracker.supervise names its pid file `<lock>.pid`).
+    lock_file: Path | None = None
     lock_max_age_s: int = 2 * 60 * 60
     logs: tuple[Path, ...] = ()
     max_log_bytes: int = 5 * 1024 * 1024
@@ -81,7 +107,21 @@ class Config:
     meter_logs: tuple[Path, ...] = ()
     meter_max_age_s: int = 15 * 60
     meter_config_dirs: dict | None = None  # account -> config dir; None: GS_METER_CONFIG_DIRS under HOME
-    checks: tuple[str, ...] | None = None  # None: every check but meters (masterrig)
+    #: The stretch record whose accounts the publisher uses (gs: history/gs-passive.json).
+    #: A meter log of one of those accounts is blind after meter_blind_s, whatever the reason.
+    passive_record: Path | None = None
+    meter_blind_s: int = 60 * 60
+    #: The page: the site checkout's JSON on gs (`page_json`), the live URL on masterrig
+    #: (`page_url`); None: not checked.
+    page_json: Path | None = None
+    page_url: str | None = None
+    page_max_age_s: int = 2 * 60 * 60
+    page_fetch_state: Path = HOME / ".cache" / "claude-usage-tracker" / "page-fetch.json"
+    page_fetch_grace_s: int = 2 * 60 * 60
+    #: bin/daily.sh's advisory steps (tracker/advisory.py); None: not checked.
+    advisory_state: Path | None = None
+    advisory_grace_s: int = 3 * 60 * 60
+    checks: tuple[str, ...] | None = None  # None: every check but meters and advisory (masterrig)
 
 
 GS_OPS = HOME / ".paperclip" / "ops"
@@ -89,15 +129,49 @@ GS_METER_ACCOUNTS = ("avis", "dave", "jwork")
 GS_LOCK = GS_OPS / "claude-usage-daily.lock"   # the supervisor's flock; its pid file is .pid
 GS_STATE = GS_OPS / "claude-usage-daily-state.json"
 GS_LOG = GS_OPS / "claude-usage-daily.log"
+GS_ADVISORY = GS_OPS / "claude-usage-advisory.json"
+#: The site checkout bin/daily.sh publishes into, and the JSON in it.
+GS_SITE = HOME / "all-done-sites-platform"
+SITE_JSON = Path("website") / "public" / "data" / "claude-usage.json"
+#: The page as readers get it; masterrig reads it, so a push or a Pages deploy that fails
+#: after gs is done is seen from outside gs too.
+LIVE_PAGE_URL = "https://alldonesites.com/data/claude-usage.json"
 
 
 def gs_config(state: Path, pidfile: Path, logs: tuple[Path, ...] = (), ops: Path = GS_OPS,
-              repo: Path = ROOT) -> Config:
-    """Health on gs: the supervised publisher run every 30 min and the three meter timers."""
-    return Config(state=state, run_interval_s=30 * 60, lock_pidfile=pidfile, logs=logs, repo=repo,
+              repo: Path = ROOT, site: Path = GS_SITE, lock_file: Path | None = None) -> Config:
+    """Health on gs: the supervised publisher run every 30 min, the age of the JSON it
+    published, the three meter timers and the advisory steps of bin/daily.sh."""
+    return Config(state=state, run_interval_s=30 * 60, lock_pidfile=pidfile, lock_file=lock_file, logs=logs, repo=repo,
                   history_dir=repo / "history",
                   meter_logs=tuple(ops / f"claude-usage-meter-{a}.log" for a in GS_METER_ACCOUNTS),
-                  checks=("run", "meters", "lock", "sizes"))
+                  passive_record=repo / "history" / "gs-passive.json",
+                  page_json=site / SITE_JSON, advisory_state=ops / GS_ADVISORY.name,
+                  checks=("run", "page", "meters", "lock", "sizes", "advisory"))
+
+
+#: masterrig's own account and its config dir under HOME: the default ~/.claude, which
+#: deploy/systemd-masterrig/claude-usage-meter-a1.service samples into MASTERRIG_METER_LOG.
+MASTERRIG_METER_CONFIG_DIRS = {"a1": ".claude"}
+MASTERRIG_CHECKS = ("collection", "run", "publisher", "page", "token", "lock", "sizes", "meters")
+
+
+def masterrig_config(*, ops: Path = GS_OPS, home: Path = HOME, meter_logs: tuple[Path, ...] = (),
+                     checks: tuple[str, ...] = MASTERRIG_CHECKS, **kw) -> Config:
+    """Health on masterrig as the supervisor and the CLI run it: every masterrig check, with
+    the live page (which a bare Config, as tests build one, leaves out) and `meters` on a1's
+    own log (or the given ones). Other keyword arguments are Config's, so a caller can set
+    any of them, page_url=None among them.
+
+    The a1 log is the only reading of that account close enough together to pair, and
+    the same failures that stop a gs timer stop it -- a stopped timer, a refusal (exit 2:
+    signed out, or the log names another account), a run of 429s -- so it gets the same
+    check, 15 min by default against its ~130 s reads. A lapsed token on an idle a1 is
+    told from a dead feed by ~/.claude's refresh-token expiry, as on gs."""
+    kw.setdefault("page_url", LIVE_PAGE_URL)
+    return Config(meter_logs=meter_logs or (ops / MASTERRIG_METER_LOG,),
+                  meter_config_dirs={a: home / d for a, d in MASTERRIG_METER_CONFIG_DIRS.items()},
+                  checks=checks, **kw)
 
 
 #: A stamp further in the future than this is clock skew, which would otherwise hide
@@ -142,12 +216,15 @@ def check_collection(c: Config, now: float) -> str | None:
         rows = _tail_rows(c.usage_log, n=10_000)
     except OSError as e:
         return f"collection: cannot read {c.usage_log}: {e.strerror}"
-    # The newest real reading: an error row carries a ts but no utilization.
-    row = next((r for r in reversed(rows) if isinstance(r.get("five_hour"), dict)
-                and isinstance(r["five_hour"].get("utilization"), (int, float))), None)
+    # The newest real reading: an error row carries a ts but no utilization. An account
+    # with no five-hour limit (weekly_only, since 2026-10-31) logs five_hour null, so a
+    # numeric seven_day counts too.
+    def _numeric(r: dict, bucket: str) -> bool:
+        return isinstance(r.get(bucket), dict) and isinstance(r[bucket].get("utilization"), (int, float))
+    row = next((r for r in reversed(rows) if _numeric(r, "five_hour") or _numeric(r, "seven_day")), None)
     ts = _parse_ts(row.get("ts")) if row else None
     if ts is None:
-        return f"collection: no reading (a line with five_hour utilization) near the end of {c.usage_log}"
+        return f"collection: no reading (a line with five_hour or seven_day utilization) near the end of {c.usage_log}"
     if ts - now > CLOCK_SKEW_S:
         return f"collection: newest sample is stamped {_age(ts - now)} in the future (clock skew)"
     if now - ts > 2 * c.collection_interval_s:
@@ -169,6 +246,11 @@ def check_run(c: Config, now: float) -> str | None:
     last_fail = st.get("last_fail")
     if st.get("last_exit") == 3 and isinstance(last_fail, (int, float)) and last_fail >= (last_ok or 0):
         return "run: bin/passive.sh refused to run, the checkout is off main (exit 3)"
+    # A withheld publish (bin/daily.sh exit 9, supervise.EXIT_WITHHELD) fails at once: the run
+    # finished and is recent, so the age rule below read it as healthy for nine days.
+    if st.get("last_exit") == 9 and isinstance(last_fail, (int, float)) and last_fail >= (last_ok or 0):
+        since = f", last successful run {_age(now - last_ok)} ago" if isinstance(last_ok, (int, float)) else ""
+        return f"run: bin/daily.sh withheld the public JSON (exit 9){since}: the page is not updating"
     if not isinstance(last_ok, (int, float)):
         return f"run: no successful supervised run recorded in {c.state.name}"
     if now - last_ok > 2 * c.run_interval_s:
@@ -209,6 +291,75 @@ def check_publisher(c: Config, now: float) -> str | None:
     age = now - max(stamps)
     if age > c.publisher_max_age_s:
         return f"publisher: {c.publisher_path} last committed {_age(age)} ago (limit {_age(c.publisher_max_age_s)})"
+    return None
+
+
+def fetch_page(url: str, timeout: float) -> bytes:
+    """GET `url` uncached; raises on any failure. Tests replace it."""
+    req = urllib.request.Request(url, headers={"Cache-Control": "no-cache",
+                                               "User-Agent": "claude-usage-tracker-health"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _fetch_failing_since(c: Config, now: float, ok: bool) -> float | None:
+    """When fetches of the live page started failing, kept across runs in page_fetch_state:
+    None after a good fetch (the file is removed), else the first failure's time."""
+    if ok:
+        c.page_fetch_state.unlink(missing_ok=True)
+        return None
+    try:
+        since = json.loads(c.page_fetch_state.read_text()).get("failing_since")
+        if isinstance(since, (int, float)) and since <= now:
+            return float(since)
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        c.page_fetch_state.parent.mkdir(parents=True, exist_ok=True)
+        c.page_fetch_state.write_text(json.dumps({"failing_since": now}))
+    except OSError:
+        pass
+    return now
+
+
+def check_page(c: Config, now: float) -> str | None:
+    """The public JSON is younger than page_max_age_s, by its own `generated_at`.
+
+    On gs it reads the site checkout's JSON, which bin/daily.sh puts back to the last
+    published one when it withholds; on masterrig the live URL, which also catches a push
+    or a Pages deploy that failed after gs was done. Nothing read the page's age before
+    2026-10-22, and it sat at 2026-10-13T10:31Z for nine days with every check green.
+    A failed fetch is its own reason, after page_fetch_grace_s of failing in a row: one
+    unreachable hour on a desktop's network is not the page going stale."""
+    if c.page_json is not None:
+        try:
+            doc = json.loads(c.page_json.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return f"page: cannot read the published JSON {c.page_json}: {e}"
+        where = f"the published JSON in the site checkout ({c.page_json.name})"
+    elif c.page_url:
+        try:
+            body = fetch_page(c.page_url, 15.0)
+        except Exception as e:  # noqa: BLE001 - any failure to fetch is the same reason
+            since = _fetch_failing_since(c, now, ok=False)
+            if now - since <= c.page_fetch_grace_s:
+                return None
+            return (f"page: cannot fetch {c.page_url} for {_age(now - since)} "
+                    f"(grace {_age(c.page_fetch_grace_s)}): {type(e).__name__}: {e}")
+        _fetch_failing_since(c, now, ok=True)
+        try:
+            doc = json.loads(body)
+        except ValueError:
+            return f"page: {c.page_url} does not parse as JSON"
+        where = c.page_url
+    else:
+        return None
+    gen = _parse_ts(doc.get("generated_at")) if isinstance(doc, dict) else None
+    if gen is None:
+        return f"page: {where} has no generated_at"
+    if now - gen > c.page_max_age_s:
+        return (f"page: {where} was generated {_age(now - gen)} ago (limit {_age(c.page_max_age_s)}): "
+                f"the page is not updating")
     return None
 
 
@@ -264,11 +415,91 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _proc_locks() -> str:
+    return Path("/proc/locks").read_text()
+
+
+def _holds_open(pid: str, st: os.stat_result) -> bool | None:
+    """Whether process `pid` has the file `st` open; None when its fds cannot be read."""
+    try:
+        fds = os.listdir(f"/proc/{pid}/fd")
+    except OSError:
+        return None
+    for fd in fds:
+        try:
+            other = os.stat(f"/proc/{pid}/fd/{fd}")
+        except OSError:
+            continue
+        if (other.st_dev, other.st_ino) == (st.st_dev, st.st_ino):
+            return True
+    return False
+
+
+def _flock_held(lock: Path) -> bool | None:
+    """Whether some process holds a flock on `lock`, read from /proc/locks so the check never
+    takes a lock itself (a shared one, even for an instant, makes a supervised run starting
+    in the same moment skip as "previous run still going"). None when it cannot tell.
+
+    A row is matched by inode and device, or, where the device /proc/locks prints (the
+    superblock's) reads differently from stat's (btrfs subvolumes, overlayfs), by inode and the
+    holder's open files."""
+    try:
+        st = os.stat(lock)
+        table = _proc_locks()
+    except OSError:
+        return None
+    for row in table.splitlines():
+        parts = row.split()
+        if "->" in parts or "FLOCK" not in parts:  # "->" marks a waiter, not a holder
+            continue
+        try:
+            i = parts.index("FLOCK")
+            pid = parts[i + 3]
+            dev_major, dev_minor, inode = parts[i + 4].split(":")
+            if int(inode) != st.st_ino:
+                continue
+            same_dev = int(dev_major, 16) == os.major(st.st_dev) and int(dev_minor, 16) == os.minor(st.st_dev)
+        except (IndexError, ValueError):
+            continue
+        # The device and inode agreeing is enough (the holder may sit in another pid namespace,
+        # where its pid names some other process); the holder's files settle only a device
+        # that reads differently, and where they cannot be read (hidepid, another user) the
+        # inode stands: a false alarm still needs a stamp past the limit and newer than the
+        # last finished run (`_held_lock_age`).
+        if same_dev or _holds_open(pid, st) is not False:
+            return True
+    return False
+
+
+def _held_lock_age(c: Config, now: float) -> float | None:
+    """How long the supervisor's flock (`<name>.lock` beside the pid file) has been held, from
+    the stamp each run puts on it as it takes the lock (tracker.supervise); None when nothing
+    holds it, or when the stamp is older than the last finished run, so it was not this run's
+    (the stamp could not be written: a read-only disk) and cannot age it."""
+    lock = c.lock_file or c.lock_pidfile.with_suffix(".lock")
+    if not _flock_held(lock):
+        return None
+    try:
+        mtime = lock.stat().st_mtime
+    except OSError:
+        return None
+    st = read_state(c.state)
+    finished = [t for t in (st.get("last_ok"), st.get("last_fail")) if isinstance(t, (int, float))]
+    if finished and max(finished) > mtime:
+        return None
+    return now - mtime
+
+
 def check_lock(c: Config, now: float) -> str | None:
     try:
         text = c.lock_pidfile.read_text().strip()
         mtime = c.lock_pidfile.stat().st_mtime
     except OSError:
+        # No pid file: a run on a full disk goes on without one (tracker.supervise), so a held
+        # lock (`<name>.lock` beside `<name>.pid`) is aged by its own stamp instead.
+        age = _held_lock_age(c, now)
+        if age is not None and age > c.lock_max_age_s:
+            return f"lock: a run with no pid file has held the lock {_age(age)}"
         return None
     if not text.isdigit() or not pid_alive(int(text)):
         return f"lock: stale lock {c.lock_pidfile.name} (pid {text or '?'} not running)"
@@ -321,16 +552,22 @@ def _meter_account(log: Path) -> str | None:
     return None
 
 
+def _meter_config_dir(c: Config, account: str | None) -> Path | None:
+    """The config dir of a meter log's account, or None when it is not a known one."""
+    dirs = c.meter_config_dirs if c.meter_config_dirs is not None else {
+        a: Path(os.environ.get("HOME", str(Path.home()))) / d for a, d in GS_METER_CONFIG_DIRS.items()}
+    return Path(dirs[account]) if account in dirs else None
+
+
 def _refresh_token_expiry(c: Config, account: str | None) -> float | None:
     """When the account's refresh token expires (epoch s), or None when unknown.
 
     Reads only `claudeAiOauth.refreshTokenExpiresAt`; no token value is ever read out."""
-    dirs = c.meter_config_dirs if c.meter_config_dirs is not None else {
-        a: Path(os.environ.get("HOME", str(Path.home()))) / d for a, d in GS_METER_CONFIG_DIRS.items()}
-    if account not in dirs:
+    config_dir = _meter_config_dir(c, account)
+    if config_dir is None:
         return None
     try:
-        oauth = json.loads((Path(dirs[account]) / ".credentials.json").read_text()).get("claudeAiOauth") or {}
+        oauth = json.loads((config_dir / ".credentials.json").read_text()).get("claudeAiOauth") or {}
     except (OSError, ValueError, AttributeError):
         return None
     return _parse_ts(oauth.get("refreshTokenExpiresAt"))
@@ -378,6 +615,19 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
         if isinstance(r.get("five_hour"), dict):
             break
         trailing.append(r)
+    # An account the publisher uses whose meter has not read for meter_blind_s is blind,
+    # whatever the reason: an idle token lapse or a held header probe is quiet on this host
+    # only. dave's held probe read healthy for 5.4 h on 22 Oct while masterrig used dave for
+    # 3,238 messages (six such holds of 3.7-5.4 h from 12 to 22 Oct), and a lapse with only
+    # auth_expired lines after the last reading passed for 24 h (jwork's 41.7 h on 19-20 Oct
+    # failed only because 429s were mixed in). Those reasons still say why; they no longer pass.
+    blind = (newest is not None and now - newest > c.meter_blind_s
+             and _meter_account(log) in _publisher_accounts(c, log))
+
+    def blind_reason(why: str) -> str:
+        return (f"meters: {_meter_account(log)} is blind, no reading in {log.name} for {_age(now - newest)} "
+                f"(limit {_age(c.meter_blind_s)}; {why}): the publisher uses this account, "
+                f"so what it spends meanwhile is not measured")
     if trailing and all(r.get("reason") == "auth_expired" for r in trailing):
         account = _meter_account(log)
         refresh_until = _refresh_token_expiry(c, account)
@@ -389,7 +639,8 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
         # so it falls through to "no usable reading" below and fails.
         if refresh_until is not None and newest is not None:
             if now - newest <= IDLE_TOKEN_GRACE_S:
-                return None   # token lapsed (idle): it refreshes the next time the account is used
+                # token lapsed (idle): it refreshes the next time the account is used here
+                return blind_reason("token lapsed (idle), use that account once to refresh it") if blind else None
             return (f"meters: token lapsed (idle) for {_age(now - newest)} in "
                     f"{log.name}: use that account once to refresh it (limit {_age(IDLE_TOKEN_GRACE_S)})")
         # No readable refresh-token expiry: idle cannot be told from signed out, so the
@@ -397,8 +648,10 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
     if trailing and all(r.get("reason") == "token_rejected" for r in trailing):
         return (f"meters: the setup token was refused (401) since {_age(now - newest) if newest else 'the start'} "
                 f"in {log.name}: that seat needs a new token")
-    if not trailing and newest is not None and _header_hold(newest_row, now):
-        return None   # header probe held (lapsed window or capped week): meter_log writes nothing then
+    if not trailing and newest is not None and _header_hold(newest_row, now,
+                                                            _meter_config_dir(c, _meter_account(log))):
+        # header probe held (lapsed window or capped week): meter_log writes nothing then
+        return blind_reason("header probe held, no session on this host since its window lapsed") if blind else None
     if newest is None:
         return f"meters: no usable reading near the end of {log.name}"
     if newest - now > CLOCK_SKEW_S:
@@ -414,11 +667,69 @@ def _check_meter_log(c: Config, log: Path, now: float) -> str | None:
     if now - newest > limit:
         return (f"meters: newest usable reading in {log.name} is {_age(now - newest)} old "
                 f"(limit {_age(limit)})")
+    if blind:
+        return blind_reason("honouring a Retry-After")
     return None
 
 
-def _header_hold(row: dict, now: float) -> bool:
-    """A header-probe reading meter_log is deliberately not following up (see meter_log.header_hold)."""
+def _publisher_accounts(c: Config, log: Path) -> set[str]:
+    """The accounts the publisher uses, read from its stretch record (`passive_record`):
+    every account it holds, by its label or by the meter log it reads. Derived from the
+    data, so a new account counts once the publisher uses it and no list is kept by hand."""
+    if c.passive_record is None:
+        return set()
+    try:
+        accounts = json.loads(c.passive_record.read_text(encoding="utf-8")).get("accounts") or {}
+    except (OSError, ValueError, AttributeError):
+        return set()
+    if not isinstance(accounts, dict):
+        return set()
+    out = set()
+    for label, block in accounts.items():
+        out.add(label)
+        meter_log = ((block or {}).get("meter") or {}).get("log") if isinstance(block, dict) else None
+        if isinstance(meter_log, str) and Path(meter_log).name == log.name:
+            out.add(_meter_account(log))
+    return out
+
+
+def check_advisory(c: Config, now: float) -> str | None:
+    """No advisory step of bin/daily.sh has failed on every run for advisory_grace_s.
+
+    The steps (tracker.list_prices, tracker.contributed, tracker.gs_passive,
+    tools.model_rates) never stop the publish, which carries on with their previous output,
+    and each failure was one warning line in the run log: the model_rates refit crashed on
+    every run from 2026-10-13T19:30Z, 48 times a day, and nothing alerted. bin/daily.sh
+    records each outcome (tracker/advisory.py). Each step failing past the grace is named,
+    joined with " | ", so each is its own incident. A step not run in ADVISORY_SILENT_S is
+    left out: it is no longer run (the refit runs only when due), not failing."""
+    if c.advisory_state is None:
+        return None
+    steps = read_state(c.advisory_state).get("steps") or {}
+    failures = []
+    for step, rec in sorted(steps.items()) if isinstance(steps, dict) else []:
+        if not isinstance(rec, dict):
+            continue
+        since, last_run = rec.get("failing_since"), rec.get("last_run")
+        if not isinstance(since, (int, float)) or not isinstance(last_run, (int, float)):
+            continue
+        if now - last_run > ADVISORY_SILENT_S or now - since <= c.advisory_grace_s:
+            continue
+        failures.append(f"advisory: {step} has failed on every run for {_age(now - since)} "
+                        f"(limit {_age(c.advisory_grace_s)}, last exit {rec.get('last_exit')}); "
+                        f"the publish keeps using its previous output")
+    return " | ".join(failures) if failures else None
+
+
+#: How long since an advisory step last ran before its record is no longer read.
+ADVISORY_SILENT_S = 26 * 60 * 60
+
+
+def _header_hold(row: dict, now: float, config_dir: Path | None) -> bool:
+    """A header-probe reading meter_log is deliberately not following up (see meter_log.header_hold).
+
+    The lapsed hold ends when `<config_dir>/sessions` changes after the reset, because
+    meter_log then probes again: without that test a dead meter reads as held for good."""
     if row.get("source") != "ratelimit_headers":
         return False
     sd = row.get("seven_day") or {}
@@ -429,7 +740,14 @@ def _header_hold(row: dict, now: float) -> bool:
     except (TypeError, ValueError):
         pass
     fh_reset = _parse_ts((row.get("five_hour") or {}).get("resets_at"))
-    return fh_reset is not None and fh_reset <= now
+    if fh_reset is None or fh_reset > now:
+        return False
+    if config_dir is None:
+        return True
+    try:
+        return (Path(config_dir) / "sessions").stat().st_mtime <= fh_reset
+    except OSError:
+        return True  # no sessions/ to read: meter_log holds as well
 
 
 check_meter = check_meters  # the name the red-team tests and older notes use
@@ -439,16 +757,22 @@ CHECKS: dict[str, Callable[[Config, float], str | None]] = {
     "collection": check_collection,
     "run": check_run,
     "publisher": check_publisher,
+    # After run and publisher: a withheld or failed publish is named by those first, and
+    # `page` is the reason only when the page goes stale with every run succeeding.
+    "page": check_page,
     "token": check_token,
     "lock": check_lock,
     "sizes": check_sizes,
     "meters": check_meters,
+    "advisory": check_advisory,
 }
+#: Checks a bare Config leaves out: gs runs both, masterrig_config runs meters.
+GS_ONLY = ("meters", "advisory")
 
 
 def run_checks(c: Config, now: float | None = None, only: list[str] | None = None) -> list[tuple[str, str | None]]:
     now = time.time() if now is None else now
-    chosen = c.checks if c.checks is not None else tuple(n for n in CHECKS if n != "meters")
+    chosen = c.checks if c.checks is not None else tuple(n for n in CHECKS if n not in GS_ONLY)
     return [(name, _safe(name, fn, c, now)) for name, fn in CHECKS.items()
             if name in chosen and (not only or name in only)]
 
@@ -466,6 +790,18 @@ def first_failure(c: Config, now: float | None = None, skip: tuple[str, ...] = (
         if reason and name not in skip:
             return reason
     return None
+
+
+def all_failures(c: Config, now: float | None = None, skip: tuple[str, ...] = ()) -> str | None:
+    """Every failing check's reason, joined with " | ", or None when all pass.
+
+    The supervisor reads this, not first_failure: tracker.supervise.health_kinds splits it
+    on " | " and keeps an incident per kind, so a later check is never hidden behind an
+    earlier one. With only the first failure, gs's `advisory` (last in its order) never
+    alerted while the page was withheld, and a blind meter appearing and clearing ahead of
+    it sent a false "advisory recovered" and then a "further problem" for the same step."""
+    bad = [reason for name, reason in run_checks(c, now) if reason and name not in skip]
+    return " | ".join(bad) if bad else None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -488,8 +824,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-log-bytes", type=int, default=d.max_log_bytes)
     p.add_argument("--max-history-bytes", type=int, default=d.max_history_bytes)
     p.add_argument("--meter-log", type=Path, action="append", default=[],
-                   help="a per-account meter log (tracker.meter_log) to check for freshness (repeatable)")
+                   help="a per-account meter log (tracker.meter_log) to check for freshness (repeatable); "
+                        "masterrig default: ~/.paperclip/ops/" + MASTERRIG_METER_LOG)
     p.add_argument("--meter-max-age", type=int, default=d.meter_max_age_s)
+    p.add_argument("--page-url", default=LIVE_PAGE_URL,
+                   help="the live JSON whose age `page` checks on masterrig ('' to leave it out)")
     return p
 
 
@@ -499,12 +838,13 @@ def config_from_args(a: argparse.Namespace) -> Config:
         return gs_config(state=GS_STATE if a.state == d.state else a.state,
                          pidfile=GS_LOCK.with_suffix(".pid") if a.pidfile == d.lock_pidfile else a.pidfile,
                          logs=tuple(a.log) or (GS_LOG,), repo=a.repo)
-    return Config(usage_log=a.usage_log, collection_interval_s=a.collection_interval, state=a.state,
-                  run_interval_s=a.run_interval, repo=a.repo, history_dir=a.repo / "history",
-                  publisher_max_age_s=a.publisher_max_age, credentials=a.credentials,
-                  token_grace_s=a.token_grace, lock_pidfile=a.pidfile, logs=tuple(a.log),
-                  max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes,
-                  meter_logs=tuple(a.meter_log), meter_max_age_s=a.meter_max_age)
+    return masterrig_config(usage_log=a.usage_log, collection_interval_s=a.collection_interval, state=a.state,
+                            run_interval_s=a.run_interval, repo=a.repo, history_dir=a.repo / "history",
+                            publisher_max_age_s=a.publisher_max_age, credentials=a.credentials,
+                            token_grace_s=a.token_grace, lock_pidfile=a.pidfile, logs=tuple(a.log),
+                            max_log_bytes=a.max_log_bytes, max_history_bytes=a.max_history_bytes,
+                            meter_logs=tuple(a.meter_log), meter_max_age_s=a.meter_max_age,
+                            page_url=a.page_url or None)
 
 
 def main(argv: list[str] | None = None) -> int:

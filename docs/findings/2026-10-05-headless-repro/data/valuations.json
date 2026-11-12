@@ -1,0 +1,184 @@
+{
+ "_about": "Each family's credit rate per token [input, output], as the tracker's credits.comparison_rate resolved it from the committed model-rates file of that snapshot, and the one cache-read rate of its pooled fit. 'all_at_list' is the same with every family at its list-price ratio (tools/account_agreement.py valuation_rates). A model whose family is null leaves its step unpriced.",
+ "classes": [
+  "input",
+  "output",
+  "cache_read",
+  "cache_write",
+  "cache_write_1h"
+ ],
+ "families": {
+  "<synthetic>": null,
+  "claude-fable-5-1": "fable",
+  "claude-haiku-4-5": "haiku",
+  "claude-opus-4-7": "opus",
+  "claude-opus-4-8": "opus",
+  "claude-opus-5": "opus",
+  "claude-opus-5-5": "opus-5-5",
+  "claude-sonnet-4-6": "sonnet",
+  "claude-sonnet-5": "sonnet",
+  "claude-sonnet-5-5": "sonnet-5-5"
+ },
+ "rate_sets": {
+  "rates-2026-10-05": {
+   "pairs": {
+    "fable": [
+     1.4157207660146673,
+     7.0786038300733365
+    ],
+    "haiku": [
+     0.3033527056153161,
+     1.5167635280765803
+    ],
+    "opus": [
+     0.6666666666666666,
+     3.333333333333333
+    ],
+    "opus-5-5": [
+     0.40734841012289635,
+     2.0367420506144818
+    ],
+    "sonnet": [
+     0.2563067945745235,
+     1.2815339728726174
+    ],
+    "sonnet-5-5": [
+     0.3529864723962355,
+     1.7649323619811774
+    ]
+   },
+   "cache_read_rate": 0.0026513215240206085,
+   "cache_read_weight_of_opus_input": 0.003976982286030913,
+   "fallback_cache_read_weight": 0.0,
+   "generated_at": "2026-10-05T14:32:26Z"
+  },
+  "rates-2026-10-05 all_at_list": {
+   "pairs": {
+    "fable": [
+     1.3333333333333333,
+     6.666666666666666
+    ],
+    "haiku": [
+     0.13333333333333333,
+     0.6666666666666666
+    ],
+    "opus": [
+     0.6666666666666666,
+     3.333333333333333
+    ],
+    "opus-5-5": [
+     0.5333333333333333,
+     2.6666666666666665
+    ],
+    "sonnet": [
+     0.26666666666666666,
+     1.3333333333333333
+    ],
+    "sonnet-5-5": [
+     0.26666666666666666,
+     1.3333333333333333
+    ]
+   },
+   "cache_read_rate": 0.0026513215240206085,
+   "cache_read_weight_of_opus_input": 0.003976982286030913,
+   "fallback_cache_read_weight": 0.0,
+   "generated_at": "2026-10-05T14:32:26Z"
+  },
+  "rates-2026-10-11": {
+   "pairs": {
+    "fable": [
+     1.9700303868953548,
+     9.850151934476774
+    ],
+    "haiku": [
+     0.2753022636941664,
+     1.376511318470832
+    ],
+    "opus": [
+     0.6666666666666666,
+     3.333333333333333
+    ],
+    "opus-5-5": [
+     0.5182135859110903,
+     2.591067929555452
+    ],
+    "sonnet": [
+     0.3341367933937987,
+     1.6706839669689935
+    ],
+    "sonnet-5-5": [
+     0.33007935834995383,
+     1.650396791749769
+    ]
+   },
+   "cache_read_rate": 0.0064059429026207685,
+   "cache_read_weight_of_opus_input": 0.009608914353931153,
+   "fallback_cache_read_weight": 0.0,
+   "generated_at": "2026-10-11T10:32:41Z"
+  },
+  "rates-2026-10-12": {
+   "pairs": {
+    "fable": [
+     1.9696967382321253,
+     9.848483691160627
+    ],
+    "haiku": [
+     0.24073843263767983,
+     1.2036921631883992
+    ],
+    "opus": [
+     0.6666666666666666,
+     3.333333333333333
+    ],
+    "opus-5-5": [
+     0.5182923480986422,
+     2.591461740493211
+    ],
+    "sonnet": [
+     0.334011970695655,
+     1.6700598534782751
+    ],
+    "sonnet-5-5": [
+     0.34045546701258933,
+     1.7022773350629468
+    ]
+   },
+   "cache_read_rate": 0.0064442194431275825,
+   "cache_read_weight_of_opus_input": 0.009666329164691375,
+   "fallback_cache_read_weight": 0.0,
+   "generated_at": "2026-10-12T00:02:24Z"
+  },
+  "rates-2026-10-12 all_at_list": {
+   "pairs": {
+    "fable": [
+     1.3333333333333333,
+     6.666666666666666
+    ],
+    "haiku": [
+     0.13333333333333333,
+     0.6666666666666666
+    ],
+    "opus": [
+     0.6666666666666666,
+     3.333333333333333
+    ],
+    "opus-5-5": [
+     0.5333333333333333,
+     2.6666666666666665
+    ],
+    "sonnet": [
+     0.26666666666666666,
+     1.3333333333333333
+    ],
+    "sonnet-5-5": [
+     0.26666666666666666,
+     1.3333333333333333
+    ]
+   },
+   "cache_read_rate": 0.0064442194431275825,
+   "cache_read_weight_of_opus_input": 0.009666329164691375,
+   "fallback_cache_read_weight": 0.0,
+   "generated_at": "2026-10-12T00:02:24Z"
+  }
+ }
+}

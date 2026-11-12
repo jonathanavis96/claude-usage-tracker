@@ -1,19 +1,22 @@
 import hashlib
+import io
 import json
 import os
 import tempfile
 import unittest
 import urllib.error
+from contextlib import redirect_stderr
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from tracker.meter_log import NO_RETRY_FETCH, account_identity, main, sample
+from tracker.meter_log import MASTERRIG_METER_LOG, NO_RETRY_FETCH, account_identity, claude_json, main, sample
 from tracker.samples import parse_meter_log, parse_moonlighter
 from tracker.weekly import parse_row
 
 ROOT = Path(__file__).resolve().parent.parent
 UNITS = ROOT / "deploy" / "systemd"
+MASTERRIG_UNITS = ROOT / "deploy" / "systemd-masterrig"
 NOW = datetime(2026, 9, 15, 21, 0, 3, tzinfo=timezone.utc)
 BODY = {"five_hour": {"utilization": 12.0, "resets_at": "2026-09-15T23:00:00.4+00:00"},
         "seven_day": {"utilization": 30.0, "resets_at": "2026-09-17T23:00:00.9+00:00"}}
@@ -39,6 +42,51 @@ class IdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertIsNone(account_identity(config_dir(Path(d), uuid=None)))
 
+    def default_home(self, root: Path, stale: str | None, live: str | None) -> Path:
+        """A home whose default ~/.claude holds a stale in-dir .claude.json, as masterrig's does."""
+        cfg = root / ".claude"
+        cfg.mkdir()
+        (cfg / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": TOKEN}}))
+        if stale:
+            (cfg / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": stale}}))
+        if live:
+            (root / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": live}}))
+        return cfg
+
+    def test_the_default_config_dir_is_labelled_from_the_home_level_file(self):
+        # Without CLAUDE_CONFIG_DIR Claude Code keeps ~/.claude.json live; ~/.claude/.claude.json
+        # is a leftover that does not follow a re-login.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = self.default_home(Path(d), stale="old-account", live="new-login")
+            self.assertEqual(claude_json(cfg, home=Path(d)), Path(d) / ".claude.json")
+            self.assertEqual(account_identity(cfg, home=Path(d)), hashlib.sha256(b"new-login").hexdigest()[:12])
+
+    def test_the_default_config_dir_without_a_home_level_file_is_signed_out(self):
+        # The leftover is never a fallback: it would label readings with an account that may be gone.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = self.default_home(Path(d), stale="old-account", live=None)
+            self.assertIsNone(account_identity(cfg, home=Path(d)))
+
+    def test_an_explicit_config_dir_keeps_its_own_file(self):
+        # The gs seats (CLAUDE_CONFIG_DIR=~/.claude-dave and the rest): the home-level file is another login.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = config_dir(Path(d))
+            (Path(d) / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "uuid-home"}}))
+            self.assertEqual(account_identity(cfg, home=Path(d)), hashlib.sha256(b"uuid-dave").hexdigest()[:12])
+
+    def test_a_relogin_on_the_default_dir_is_refused_not_mixed_into_the_log(self):
+        # a1's unit: --config-dir %h/.claude. ~/.claude signs into another account; the in-dir
+        # leftover still names the old one. The sampler must see the switch and refuse.
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"HOME": d}):
+            cfg = self.default_home(Path(d), stale="old-account", live="old-account")
+            log = Path(d) / "ops" / MASTERRIG_METER_LOG
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: BODY, now=lambda: NOW), 0)
+            (Path(d) / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "new-login"}}))
+            before = log.read_text()
+            later = lambda: NOW.replace(minute=10)  # noqa: E731 - past MIN_READ_SPACING_S
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: BODY, now=later), 2)
+            self.assertEqual(log.read_text(), before)
+
 
 class SampleTests(unittest.TestCase):
     def test_one_reading_appends_one_line_the_existing_parsers_read(self):
@@ -54,6 +102,66 @@ class SampleTests(unittest.TestCase):
             self.assertEqual(parse_moonlighter(lines)[0].five_hour, 12.0)
             self.assertIsNotNone(parse_row(row))
             self.assertEqual(parse_meter_log(lines)[0].resets_at, "2026-09-15T23:00:00.4+00:00")
+
+    def test_a_response_that_is_not_an_object_is_logged_as_a_gap_not_a_reading(self):
+        # Code review round 6 asked whether parse_usage's all-None reading of a list or a string
+        # logs as an idle meter with no warning. It does not: read_usage refuses a response with
+        # no utilization at all, so the tick is a gap that names the error.
+        for body in ([], "rate limited"):
+            with tempfile.TemporaryDirectory() as d:
+                cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+                with redirect_stderr(io.StringIO()):
+                    code = sample(cfg, "a1", log, fetch=lambda url, headers, body=body: body, now=lambda: NOW)
+                row = json.loads(log.read_text().splitlines()[0])
+                self.assertNotEqual(code, 0)
+                self.assertIn("no five_hour or seven_day utilization", row["error"])
+                self.assertNotIn("five_hour", row)
+
+    def test_a_null_five_hour_is_a_weekly_only_reading_never_a_made_up_zero(self):
+        # Since 2026-10-31 some Max 20x accounts get "five_hour": null with seven_day intact:
+        # the account has no five-hour limit. That is a real reading, not a gap and not 0%.
+        weekly = {"five_hour": None, "seven_day": BODY["seven_day"]}
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: weekly, now=lambda: NOW), 0)
+            lines = log.read_text().splitlines()
+            row = json.loads(lines[0])
+            self.assertNotIn("error", row)
+            self.assertEqual(row["five_hour"], {"utilization": None, "resets_at": None})
+            self.assertEqual(row["seven_day"]["utilization"], BODY["seven_day"]["utilization"])
+            self.assertTrue(row["weekly_only"])
+            self.assertNotIn("five_hour_idle", row)
+            self.assertNotIn("schema", row)  # key present but null is no limit, not a rename
+            # No five-hour figure, so nothing five-hour-based reads it...
+            self.assertEqual(parse_moonlighter(lines), [])
+            self.assertIsNone(parse_row(row))
+            self.assertEqual(parse_meter_log(lines), [])
+            # ...but the seven-day readers still get its seven-day figure.
+            kept = parse_meter_log(lines, weekly=True)
+            self.assertEqual([(s.five_hour, s.seven_day, s.resets_at) for s in kept],
+                             [(None, BODY["seven_day"]["utilization"], None)])
+
+    def test_a_missing_five_hour_key_is_still_a_gap(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+            gone = {"seven_day": BODY["seven_day"]}
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: gone, now=lambda: NOW), 4)
+            self.assertIn("error", json.loads(log.read_text().splitlines()[0]))
+
+    def test_old_five_hour_idle_rows_are_not_five_hour_samples(self):
+        # meter_log logged a null five_hour as a made-up 0% (five_hour_idle) from 2026-10-31.
+        row = {"ts": "2026-10-31T21:00:00+00:00", "five_hour": {"utilization": 0.0, "resets_at": None},
+               "five_hour_idle": True, "seven_day": {"utilization": 40.0, "resets_at": None}}
+        self.assertEqual(parse_moonlighter([json.dumps(row)]), [])
+        self.assertEqual([(s.five_hour, s.seven_day) for s in parse_moonlighter([json.dumps(row)], weekly=True)],
+                         [(None, 40.0)])
+
+    def test_a_response_with_no_buckets_at_all_is_still_a_gap(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg, log = config_dir(Path(d)), Path(d) / "ops" / "meter.log"
+            empty = {"five_hour": None, "seven_day": None}
+            self.assertEqual(sample(cfg, "a1", log, fetch=lambda url, headers: empty, now=lambda: NOW), 4)
+            self.assertIn("error", json.loads(log.read_text().splitlines()[0]))
 
     def test_a_failed_read_is_logged_without_the_token_and_exits_4(self):
         def fail(url, headers):
@@ -263,6 +371,28 @@ class UnitFileTests(unittest.TestCase):
         self.assertIn("Unit=claude-usage-meter-jwork.service", timer)
         self.assertIn("WantedBy=timers.target", timer)
 
+    def test_a1_sampler_reads_masterrigs_own_account_into_the_log_the_joins_read(self):
+        # masterrig's checkout is ~/code/claude-usage-tracker, not gs's ~/claude-usage-tracker.
+        service = (MASTERRIG_UNITS / "claude-usage-meter-a1.service").read_text()
+        self.assertIn("-m tracker.meter_log", service)
+        self.assertIn("--config-dir %h/.claude ", service)
+        self.assertIn("--account a1", service)
+        self.assertIn(f"--log %h/.paperclip/ops/{MASTERRIG_METER_LOG}", service)
+        self.assertNotIn("--token-env", service)  # a /login seat: the usage endpoint reads it
+        self.assertIn("SuccessExitStatus=0 4", service)
+        self.assertIn("WorkingDirectory=%h/code/claude-usage-tracker", service)
+
+    def test_a1_timer_samples_every_minute(self):
+        timer = (MASTERRIG_UNITS / "claude-usage-meter-a1.timer").read_text()
+        self.assertIn("OnUnitActiveSec=1min", timer)
+        self.assertIn("Unit=claude-usage-meter-a1.service", timer)
+        self.assertIn("WantedBy=timers.target", timer)
+
+    def test_the_a1_units_stay_out_of_the_gs_unit_set(self):
+        # deploy/install-gs.sh compares every deploy/systemd/claude-usage-meter-* with gs's
+        # installed units; an a1 unit there would read as drift on every gs install.
+        self.assertEqual(sorted(p.name for p in UNITS.glob("claude-usage-meter-a1*")), [])
+
 
 HEADERS = {"anthropic-ratelimit-unified-5h-utilization": "0.05",
            "anthropic-ratelimit-unified-5h-reset": str(int(datetime(2026, 9, 15, 23, tzinfo=timezone.utc).timestamp())),
@@ -320,6 +450,29 @@ class HeaderModeTests(unittest.TestCase):
         self.assertEqual(parse_meter_log(text.splitlines())[0].resets_at, "2026-09-15T23:00:00+00:00")
         self.assertIsNotNone(parse_row(row))
         self.assertEqual(self.calls[0]["max_tokens"], 1)
+
+    def test_no_5h_headers_is_a_weekly_only_reading(self):
+        # Measured on a Max 20x seat on 2026-11-02: no 5h-* header at all (not even
+        # 5h-status), every 7d-* header present, representative-claim seven_day.
+        weekly = {k: v for k, v in HEADERS.items() if "-5h-" not in k}
+        weekly["anthropic-ratelimit-unified-representative-claim"] = "seven_day"
+        self.assertEqual(self.run_sample(self.post(weekly)), 0)
+        row = json.loads(self.log.read_text())
+        self.assertNotIn("error", row)
+        self.assertEqual(row["five_hour"], {"utilization": None, "resets_at": None})
+        self.assertEqual(row["seven_day"]["utilization"], 22.0)
+        self.assertTrue(row["weekly_only"])
+        self.assertNotIn("schema", row)
+        self.assertEqual(parse_meter_log(self.log.read_text().splitlines()), [])
+
+    def test_a_weekly_only_reading_does_not_hold_the_next_probe(self):
+        # No five-hour window means no lapsed window to avoid starting.
+        row = self.reading("2026-09-15T20:00:00+00:00")
+        row["five_hour"] = {"utilization": None, "resets_at": None}
+        row["weekly_only"] = True
+        self.write(row)
+        self.assertEqual(self.run_sample(self.post()), 0)
+        self.assertEqual(len(self.calls), 1)
 
     def test_probes_are_spaced_five_minutes_apart(self):
         self.write(self.reading("2026-09-15T20:56:03+00:00"))   # 240 s before NOW

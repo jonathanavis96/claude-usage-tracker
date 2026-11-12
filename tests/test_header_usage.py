@@ -55,6 +55,25 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(u.seven_day)
         self.assertEqual(problems, ["anthropic-ratelimit-unified-7d-utilization missing"])
 
+    def test_no_5h_header_at_all_is_weekly_only_not_a_schema_problem(self):
+        h = {k: v for k, v in HEADERS.items() if "-5h-" not in k.lower()}
+        u, extras, problems = parse_ratelimit_headers(h, NOW)
+        self.assertTrue(u.weekly_only)
+        self.assertIsNone(u.five_hour)
+        self.assertEqual(u.seven_day, 22.0)
+        self.assertEqual(problems, [])
+
+    def test_one_5h_header_without_the_rest_is_still_a_problem(self):
+        h = {k: v for k, v in HEADERS.items() if "5h-utilization" not in k.lower()}
+        u, _, problems = parse_ratelimit_headers(h, NOW)
+        self.assertFalse(u.weekly_only)
+        self.assertEqual(problems, ["anthropic-ratelimit-unified-5h-utilization missing"])
+
+    def test_no_7d_either_is_not_weekly_only(self):
+        u, _, problems = parse_ratelimit_headers({"anthropic-ratelimit-unified-status": "allowed"}, NOW)
+        self.assertFalse(u.weekly_only)
+        self.assertEqual(len(problems), 4)
+
     def test_garbage_values_read_as_none(self):
         u, _, _ = parse_ratelimit_headers({"anthropic-ratelimit-unified-5h-utilization": "n/a",
                                            "anthropic-ratelimit-unified-5h-reset": "soon"}, NOW)

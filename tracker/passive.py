@@ -9,8 +9,9 @@ from statistics import median
 
 from .atomic import write_text_atomic
 from .join import DailyRate, build_intervals, daily_rates
-from .samples import merge_samples, parse_ceiling_log, parse_moonlighter
-from .turns import iter_turns, session_tokens_by_model, transcript_paths
+from .meter_log import MASTERRIG_METER_LOG
+from .samples import merge_samples, parse_ceiling_log, parse_meter_log, parse_moonlighter
+from .turns import session_tokens_by_model
 from .weekly import parse_rows as parse_weekly_rows
 from .weekly import weekly_windows
 
@@ -117,9 +118,21 @@ def _rebuild(home: Path) -> tuple[dict[date, DailyRate], dict[str, int], dict]:
     cl = []
     if cl_path.exists():
         cl = parse_ceiling_log(cl_path.read_text(encoding="utf-8", errors="replace").splitlines())
-    samples = merge_samples(ml, cl)
-    paths = transcript_paths(home / ".claude/projects", None)
-    turns = list(iter_turns(paths))
+    # tracker.meter_log's own reading of this account, the ceiling's successor since it went
+    # blind on 2026-10-18 (tracker/gs_passive.py masterrig_account). Absent until installed.
+    meter_path = home / ".paperclip/ops" / MASTERRIG_METER_LOG
+    meter = []
+    if meter_path.exists():
+        meter = parse_meter_log(meter_path.read_text(encoding="utf-8", errors="replace").splitlines())
+    samples = merge_samples(ml, cl, meter)
+    # This account's transcripts as the stretch join reads them (tracker/gs_passive.py), not the
+    # bare tree: ~/.claude-avis links a project into ~/.claude/projects (since 2026-10-18), and
+    # read whole it put avis's work in a1's days, tokens_per_pct 10.7M on 17 Oct to 47.5M on 18 Oct.
+    # Imported here: tracker/credits.py imports this module, and gs_passive imports credits.
+    from .gs_passive import _split_sources, account_turns, masterrig_account
+    split = _split_sources(masterrig_account(home), None, home=home)
+    paths = split.kept
+    turns, _ = account_turns(split)
     rates = daily_rates(build_intervals(samples, turns))
     session_tokens = session_tokens_by_model(paths)
     weekly = weekly_windows(parse_weekly_rows(ml_lines))

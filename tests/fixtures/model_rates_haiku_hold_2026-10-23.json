@@ -1,0 +1,314 @@
+{
+ "_what": "measured_rates blocks of gs's history/model-rates.json in force (2026-10-23T14:33Z) and the refit held at 17:34Z as history/model-rates.candidate.json, trimmed to what rate_moves reads. The hold reported Haiku 5.5 and the pooled fit's Haiku, both collapsed at zero.",
+ "in_force": {
+  "per_family": {
+   "opus": {
+    "input": 0.6666666666666666,
+    "times_opus": 1.0,
+    "times_opus_interval": null,
+    "provisional": false,
+    "anchor": true,
+    "rate_source": "reference",
+    "status": null
+   },
+   "sonnet": {
+    "input": 0.3448348741885226,
+    "times_opus": 0.5172523112827839,
+    "times_opus_interval": [
+     0.45758061923159754,
+     0.594405225421234
+    ],
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": null
+   },
+   "haiku": {
+    "input": null,
+    "times_opus": null,
+    "times_opus_interval": null,
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "not measurable, the pooled fit cannot pin Haiku down: its 80% interval is 1.76x wide end to end, and a published rate needs under 1.5x"
+   },
+   "fable": {
+    "input": 2.022065812987463,
+    "times_opus": 3.033098719481195,
+    "times_opus_interval": [
+     2.83648681236624,
+     3.26631208105736
+    ],
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": null
+   },
+   "opus-5-5": {
+    "input": 0.5247125610443333,
+    "times_opus": 0.7870688415664999,
+    "times_opus_interval": [
+     0.6674075899256258,
+     0.9474367652736576
+    ],
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": null
+   },
+   "sonnet-5-5": {
+    "input": 0.4460272101816699,
+    "times_opus": 0.6690408152725049,
+    "times_opus_interval": [
+     0.5666995010967633,
+     0.8760204294077133
+    ],
+    "provisional": true,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "provisional: Sonnet 5.5 0.669x Opus, 80% interval [0.567x, 0.876x], 1.55x wide end to end; a rate is final when its interval is under 1.5x"
+   },
+   "haiku-5-5": {
+    "input": 5.578501900914112e-14,
+    "times_opus": 8.367752851371168e-14,
+    "times_opus_interval": [
+     5.850200163748206e-14,
+     1.0999126126184121e-13
+    ],
+    "provisional": true,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "provisional: Haiku 5.5 0.000x Opus, 80% interval [0.000x, 0.000x], 1.88x wide end to end; a rate is final when its interval is under 1.5x"
+   },
+   "opus-4-6": {
+    "input": null,
+    "times_opus": null,
+    "times_opus_interval": null,
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "not measurable, no clean stretch is Opus 4.6-heavy"
+   }
+  },
+  "pooled_fit": {
+   "times_opus": {
+    "opus": 1.0,
+    "sonnet": 0.5172523112827839,
+    "haiku": 4.630057338213869e-72,
+    "fable": 3.033098719481195,
+    "opus-5-5": 0.7870688415664999,
+    "sonnet-5-5": 0.6690408152725049,
+    "haiku-5-5": 8.367752851371168e-14
+   },
+   "interval": {
+    "sonnet": [
+     0.45758061923159754,
+     0.594405225421234
+    ],
+    "haiku": [
+     3.5272074612403853e-72,
+     6.200795750914847e-72
+    ],
+    "fable": [
+     2.83648681236624,
+     3.26631208105736
+    ],
+    "opus-5-5": [
+     0.6674075899256258,
+     0.9474367652736576
+    ],
+    "sonnet-5-5": [
+     0.5666995010967633,
+     0.8760204294077133
+    ],
+    "haiku-5-5": [
+     5.850200163748206e-14,
+     1.0999126126184121e-13
+    ]
+   },
+   "cache_read_weight": 0.00998190688029965,
+   "cache_read_weight_interval": [
+    0.007823606137942724,
+    0.012942510346134988
+   ]
+  },
+  "five_hour_unit": {
+   "headless_factor": 1.517,
+   "interval": [
+    1.424,
+    1.616
+   ]
+  },
+  "anchor": {
+   "family": "opus",
+   "input": 0.6666666666666666,
+   "output": 3.333333333333333,
+   "n_stretches_carrying": 179,
+   "groups_carrying": [
+    "avis/post/from-2026-09-22",
+    "dave/post",
+    "jwork/post",
+    "jwork/post/from-2026-09-22",
+    "jwork/pre/from-2026-08-28",
+    "masterrig/post",
+    "masterrig/post/from-2026-09-22",
+    "masterrig/post/from-2026-09-29",
+    "masterrig/pre/from-2026-08-28"
+   ]
+  }
+ },
+ "candidate_17_34": {
+  "per_family": {
+   "opus": {
+    "input": 0.6666666666666666,
+    "times_opus": 1.0,
+    "times_opus_interval": null,
+    "provisional": false,
+    "anchor": true,
+    "rate_source": "reference",
+    "status": null
+   },
+   "sonnet": {
+    "input": 0.34318871990401806,
+    "times_opus": 0.5147830798560271,
+    "times_opus_interval": [
+     0.45427905273362945,
+     0.5935552391439695
+    ],
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": null
+   },
+   "haiku": {
+    "input": null,
+    "times_opus": null,
+    "times_opus_interval": null,
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "not measurable, the pooled fit cannot pin Haiku down: its 80% interval is over 100x wide end to end, and a published rate needs under 1.5x"
+   },
+   "fable": {
+    "input": 2.0202057093666284,
+    "times_opus": 3.0303085640499425,
+    "times_opus_interval": [
+     2.8159809118992194,
+     3.2484990366762365
+    ],
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": null
+   },
+   "opus-5-5": {
+    "input": 0.5213670183728236,
+    "times_opus": 0.7820505275592354,
+    "times_opus_interval": [
+     0.648448018121354,
+     0.9408535429998918
+    ],
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": null
+   },
+   "sonnet-5-5": {
+    "input": 0.44604776442899113,
+    "times_opus": 0.6690716466434867,
+    "times_opus_interval": [
+     0.5445467962225643,
+     0.8486323226996202
+    ],
+    "provisional": true,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "provisional: Sonnet 5.5 0.669x Opus, 80% interval [0.545x, 0.849x], 1.56x wide end to end; a rate is final when its interval is under 1.5x"
+   },
+   "haiku-5-5": {
+    "input": null,
+    "times_opus": null,
+    "times_opus_interval": null,
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "not measurable, the pooled fit cannot pin Haiku 5.5 down: its 80% interval is over 100x wide end to end, and a published rate needs under 1.5x"
+   },
+   "opus-4-6": {
+    "input": null,
+    "times_opus": null,
+    "times_opus_interval": null,
+    "provisional": false,
+    "anchor": false,
+    "rate_source": "measured",
+    "status": "not measurable, no clean stretch is Opus 4.6-heavy"
+   }
+  },
+  "pooled_fit": {
+   "times_opus": {
+    "opus": 1.0,
+    "sonnet": 0.5147830798560271,
+    "haiku": 0.018334434248791512,
+    "fable": 3.030308564049943,
+    "opus-5-5": 0.7820505275592355,
+    "sonnet-5-5": 0.6690716466434867,
+    "haiku-5-5": 4.3522228136100274e-13
+   },
+   "interval": {
+    "sonnet": [
+     0.45427905273362945,
+     0.5935552391439695
+    ],
+    "haiku": [
+     5.022079278321343e-30,
+     0.7155677040470937
+    ],
+    "fable": [
+     2.8159809118992194,
+     3.2484990366762365
+    ],
+    "opus-5-5": [
+     0.648448018121354,
+     0.9408535429998918
+    ],
+    "sonnet-5-5": [
+     0.5445467962225643,
+     0.8486323226996202
+    ],
+    "haiku-5-5": [
+     1.8491250329708698e-17,
+     1.3826818273347077
+    ]
+   },
+   "cache_read_weight": 0.010049532255678464,
+   "cache_read_weight_interval": [
+    0.007726342120730663,
+    0.013069364195728003
+   ]
+  },
+  "five_hour_unit": {
+   "headless_factor": 1.515,
+   "interval": [
+    1.423,
+    1.614
+   ]
+  },
+  "anchor": {
+   "family": "opus",
+   "input": 0.6666666666666666,
+   "output": 3.333333333333333,
+   "n_stretches_carrying": 179,
+   "groups_carrying": [
+    "avis/post/from-2026-09-22",
+    "dave/post",
+    "jwork/post",
+    "jwork/post/from-2026-09-22",
+    "jwork/pre/from-2026-08-28",
+    "masterrig/post",
+    "masterrig/post/from-2026-09-22",
+    "masterrig/post/from-2026-09-29",
+    "masterrig/pre/from-2026-08-28"
+   ]
+  }
+ }
+}

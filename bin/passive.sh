@@ -59,6 +59,12 @@ if [ "$BRANCH" != "main" ]; then
   say "checkout is on '$BRANCH', not main: refusing to join or push"
   exit 3
 fi
+# Every hour, before the 20-hour gate: ship the text-free extracts of the other accounts used on
+# this host to gs (bin/ship-extracts.sh), so gs's next half-hourly join counts their work here.
+# Advisory by design (it always exits 0); skipped in a checkout that has no such script.
+if [ -x bin/ship-extracts.sh ]; then
+  bin/ship-extracts.sh || true
+fi
 # The tree of tracker/ at a commit, or nothing when it has none.
 join_code() { git rev-parse -q --verify "$1:tracker" 2>/dev/null || true; }
 if [ "${1:-}" != "--force" ] && [ -f "$STAMP" ] \

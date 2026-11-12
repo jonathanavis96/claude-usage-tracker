@@ -1,0 +1,1412 @@
+{
+ "_about": "Tables for the post, each copied from a run of tools/headless_hypotheses.py (PR #124's code for the hypothesis tables, PR #125's code for the covariate table) except where a table says it is a plain mean of the exported steps.",
+ "original_window": {
+  "window": "2026-09-14T12:00Z to 2026-10-04T19:53:23Z (the tool's cache), 306 steps",
+  "timing_shift": [
+   {
+    "shift": "-30 min",
+    "factor": 1.43,
+    "ci95": [
+     1.31,
+     1.57
+    ]
+   },
+   {
+    "shift": "-10 min",
+    "factor": 1.51,
+    "ci95": [
+     1.39,
+     1.64
+    ]
+   },
+   {
+    "shift": "0",
+    "factor": 1.53,
+    "ci95": [
+     1.41,
+     1.67
+    ]
+   },
+   {
+    "shift": "+10 min",
+    "factor": 1.44,
+    "ci95": [
+     1.31,
+     1.58
+    ]
+   },
+   {
+    "shift": "+30 min",
+    "factor": 1.42,
+    "ci95": [
+     1.3,
+     1.56
+    ]
+   }
+  ],
+  "ttl_pricing": [
+   {
+    "pricing": "collector (writes 1x, 1h no premium)",
+    "factor": 1.53,
+    "ci95": [
+     1.41,
+     1.67
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 960,
+     "headless_share_over_0.8": 1124
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 217,
+     "headless_share_over_0.8": 159
+    }
+   },
+   {
+    "pricing": "API (5m 1.25x, 1h 2x, read 0.1x)",
+    "factor": 1.52,
+    "ci95": [
+     1.4,
+     1.66
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 3446,
+     "headless_share_over_0.8": 3583
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 775,
+     "headless_share_over_0.8": 507
+    }
+   },
+   {
+    "pricing": "collector, 1h at 1.6x",
+    "factor": 1.54,
+    "ci95": [
+     1.41,
+     1.68
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 1033,
+     "headless_share_over_0.8": 1386
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 234,
+     "headless_share_over_0.8": 195
+    }
+   },
+   {
+    "pricing": "collector, 1h at 2x",
+    "factor": 1.54,
+    "ci95": [
+     1.41,
+     1.68
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 1080,
+     "headless_share_over_0.8": 1560
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 244,
+     "headless_share_over_0.8": 219
+    }
+   }
+  ],
+  "cache_write_shares": {
+   "Max account 2": {
+    "interactive main session": {
+     "one_hour_write_share_of_credits": 0.379,
+     "five_minute_write_share_of_credits": 0.0
+    },
+    "sub-agent": {
+     "one_hour_write_share_of_credits": 0.0,
+     "five_minute_write_share_of_credits": 0.592
+    },
+    "headless (claude -p) main session": {
+     "one_hour_write_share_of_credits": 0.531,
+     "five_minute_write_share_of_credits": 0.0
+    }
+   },
+   "Max account 3": {
+    "interactive main session": {
+     "one_hour_write_share_of_credits": 0.384,
+     "five_minute_write_share_of_credits": 0.0
+    },
+    "sub-agent": {
+     "one_hour_write_share_of_credits": 0.0,
+     "five_minute_write_share_of_credits": 0.558
+    },
+    "headless (claude -p) main session": {
+     "one_hour_write_share_of_credits": 0.381,
+     "five_minute_write_share_of_credits": 0.0
+    }
+   },
+   "Max account 4": {
+    "interactive main session": {
+     "one_hour_write_share_of_credits": 0.424,
+     "five_minute_write_share_of_credits": 0.0
+    },
+    "sub-agent": {
+     "one_hour_write_share_of_credits": 0.0,
+     "five_minute_write_share_of_credits": 0.63
+    },
+    "headless (claude -p) main session": {
+     "one_hour_write_share_of_credits": 0.613,
+     "five_minute_write_share_of_credits": 0.0
+    }
+   }
+  },
+  "per_run_overhead": {
+   "steps_over_0.8_headless": 58,
+   "runs_per_such_step": 10.6,
+   "credits_per_run_k": 98.4,
+   "first_turn_cache_write_share_of_headless_credits": 0.118,
+   "headless_with_runs_per_Mcredit_added": {
+    "factor": 1.45,
+    "ci95": [
+     1.32,
+     1.6
+    ]
+   },
+   "runs_per_Mcredit_term": {
+    "factor": 1.0,
+    "ci95": [
+     1.0,
+     1.01
+    ]
+   }
+  },
+  "other_variables": [
+   {
+    "model": "headless share alone",
+    "headless": {
+     "factor": 1.53,
+     "ci95": [
+      1.41,
+      1.67
+     ]
+    }
+   },
+   {
+    "model": "weekday 12-18Z share alone",
+    "us_morning": {
+     "factor": 1.19,
+     "ci95": [
+      1.11,
+      1.27
+     ]
+    }
+   },
+   {
+    "model": "headless + weekday 12-18Z share",
+    "headless": {
+     "factor": 1.48,
+     "ci95": [
+      1.36,
+      1.62
+     ]
+    },
+    "us_morning": {
+     "factor": 1.11,
+     "ci95": [
+      1.04,
+      1.18
+     ]
+    }
+   },
+   {
+    "model": "headless + turns per million credits",
+    "headless": {
+     "factor": 1.56,
+     "ci95": [
+      1.42,
+      1.7
+     ]
+    },
+    "turns": {
+     "factor": 1.0,
+     "ci95": [
+      1.0,
+      1.0
+     ]
+    }
+   },
+   {
+    "model": "headless + sessions per million credits",
+    "headless": {
+     "factor": 1.51,
+     "ci95": [
+      1.38,
+      1.64
+     ]
+    },
+    "sessions": {
+     "factor": 1.0,
+     "ci95": [
+      1.0,
+      1.0
+     ]
+    }
+   },
+   {
+    "model": "headless + log step length",
+    "headless": {
+     "factor": 1.54,
+     "ci95": [
+      1.41,
+      1.68
+     ]
+    },
+    "log_hours": {
+     "factor": 1.04,
+     "ci95": [
+      1.02,
+      1.07
+     ]
+    }
+   }
+  ],
+  "covariates": [
+   {
+    "added_variable": "none",
+    "that_variable": null,
+    "headless_beside_it": {
+     "factor": 1.53,
+     "ci95": [
+      1.41,
+      1.67
+     ]
+    }
+   },
+   {
+    "added_variable": "concurrency, credit-weighted mean (log)",
+    "that_variable": {
+     "factor": 0.97,
+     "ci95": [
+      0.94,
+      1.0
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.98,
+     "ci95": [
+      0.94,
+      1.01
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.54,
+     "ci95": [
+      1.41,
+      1.68
+     ]
+    }
+   },
+   {
+    "added_variable": "concurrency, peak (log)",
+    "that_variable": {
+     "factor": 1.0,
+     "ci95": [
+      0.97,
+      1.03
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.0,
+     "ci95": [
+      0.97,
+      1.04
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.53,
+     "ci95": [
+      1.41,
+      1.67
+     ]
+    }
+   },
+   {
+    "added_variable": "credits per active minute (log)",
+    "that_variable": {
+     "factor": 0.95,
+     "ci95": [
+      0.92,
+      0.98
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.97,
+     "ci95": [
+      0.94,
+      1.0
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.56,
+     "ci95": [
+      1.43,
+      1.7
+     ]
+    }
+   },
+   {
+    "added_variable": "busiest minute's share of the step",
+    "that_variable": {
+     "factor": 0.95,
+     "ci95": [
+      0.93,
+      0.98
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.95,
+     "ci95": [
+      0.92,
+      0.98
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.53,
+     "ci95": [
+      1.4,
+      1.67
+     ]
+    }
+   },
+   {
+    "added_variable": "Opus 5.5 share",
+    "that_variable": {
+     "factor": 0.84,
+     "ci95": [
+      0.71,
+      1.01
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.06,
+     "ci95": [
+      0.87,
+      1.29
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.57,
+     "ci95": [
+      1.43,
+      1.71
+     ]
+    }
+   },
+   {
+    "added_variable": "Sonnet share",
+    "that_variable": {
+     "factor": 1.12,
+     "ci95": [
+      1.0,
+      1.26
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.9,
+     "ci95": [
+      0.8,
+      1.02
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.59,
+     "ci95": [
+      1.45,
+      1.74
+     ]
+    }
+   },
+   {
+    "added_variable": "Fable share",
+    "that_variable": {
+     "factor": 1.03,
+     "ci95": [
+      0.89,
+      1.18
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.9,
+     "ci95": [
+      0.77,
+      1.06
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.54,
+     "ci95": [
+      1.41,
+      1.68
+     ]
+    }
+   },
+   {
+    "added_variable": "effort (low 1 to max 5, credit-weighted)",
+    "that_variable": {
+     "factor": 1.01,
+     "ci95": [
+      0.98,
+      1.04
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.07,
+     "ci95": [
+      1.04,
+      1.1
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.5,
+     "ci95": [
+      1.37,
+      1.66
+     ]
+    }
+   },
+   {
+    "added_variable": "weekday 12-18Z share",
+    "that_variable": {
+     "factor": 1.11,
+     "ci95": [
+      1.04,
+      1.18
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.19,
+     "ci95": [
+      1.11,
+      1.27
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.48,
+     "ci95": [
+      1.36,
+      1.62
+     ]
+    }
+   },
+   {
+    "added_variable": "weekday 08-12Z share",
+    "that_variable": {
+     "factor": 0.87,
+     "ci95": [
+      0.79,
+      0.96
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.98,
+     "ci95": [
+      0.88,
+      1.09
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.58,
+     "ci95": [
+      1.45,
+      1.73
+     ]
+    }
+   },
+   {
+    "added_variable": "weekend share",
+    "that_variable": {
+     "factor": 0.95,
+     "ci95": [
+      0.87,
+      1.03
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.79,
+     "ci95": [
+      0.73,
+      0.85
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.48,
+     "ci95": [
+      1.33,
+      1.64
+     ]
+    }
+   },
+   {
+    "added_variable": "all of them together",
+    "that_variable": null,
+    "headless_beside_it": {
+     "factor": 1.52,
+     "ci95": [
+      1.34,
+      1.72
+     ]
+    }
+   }
+  ],
+  "median_by_headless_share": {
+   "0-0.2": {
+    "steps": 224,
+    "concurrency_mean": 2.6,
+    "concurrency_peak": 4.0,
+    "credits_per_active_minute_k": 34.6,
+    "us_morning": 0.32
+   },
+   "0.2-0.8": {
+    "steps": 25,
+    "concurrency_mean": 2.9,
+    "concurrency_peak": 5.0,
+    "credits_per_active_minute_k": 35.3,
+    "us_morning": 0.24
+   },
+   "0.8-1.01": {
+    "steps": 57,
+    "concurrency_mean": 3.5,
+    "concurrency_peak": 5.0,
+    "credits_per_active_minute_k": 39.4,
+    "us_morning": 0.43
+   }
+  },
+  "crude_meter_split": {
+   "_about": "Crude split of the 1.5x between the meters, from the collector-pricing row: meter movement per credit for steps over 0.8 headless relative to steps under 0.2 (inverse of the credits-per-1% ratio). No regime or account terms.",
+   "seven_day_meter_per_credit": 0.854,
+   "five_hour_meter_per_credit": 1.365,
+   "inputs_k": {
+    "seven_day": {
+     "under_0.2": 960,
+     "over_0.8": 1124
+    },
+    "five_hour": {
+     "under_0.2": 217,
+     "over_0.8": 159
+    }
+   }
+  },
+  "five_hour_points_per_seven_day_point_by_headless_share": {
+   "Max account 2": {
+    "under 0.2": {
+     "steps": 129,
+     "five_hour_points_per_seven_day_point": 4.333
+    },
+    "0.2 to 0.8": {
+     "steps": 8,
+     "five_hour_points_per_seven_day_point": 5.375
+    }
+   },
+   "Max account 3": {
+    "under 0.2": {
+     "steps": 64,
+     "five_hour_points_per_seven_day_point": 4.797
+    },
+    "0.2 to 0.8": {
+     "steps": 15,
+     "five_hour_points_per_seven_day_point": 5.8
+    },
+    "over 0.8": {
+     "steps": 49,
+     "five_hour_points_per_seven_day_point": 7.286
+    }
+   },
+   "Max account 4": {
+    "under 0.2": {
+     "steps": 31,
+     "five_hour_points_per_seven_day_point": 4.032
+    },
+    "0.2 to 0.8": {
+     "steps": 2,
+     "five_hour_points_per_seven_day_point": 5.0
+    },
+    "over 0.8": {
+     "steps": 8,
+     "five_hour_points_per_seven_day_point": 6.125
+    }
+   },
+   "all accounts": {
+    "under 0.2": {
+     "steps": 224,
+     "five_hour_points_per_seven_day_point": 4.424
+    },
+    "0.2 to 0.8": {
+     "steps": 25,
+     "five_hour_points_per_seven_day_point": 5.6
+    },
+    "over 0.8": {
+     "steps": 57,
+     "five_hour_points_per_seven_day_point": 7.123
+    }
+   }
+  },
+  "fivehour_tool_buckets": {
+   "_about": "tools.account_agreement fivehour, by_headless (all accounts): steps from 14 Sep 12:00Z with no upper cut on the meter log (308 steps; the tool's 306 plus 2 that straddle the cache's last turn), credits valued with cache reads at the fitted weight. Source of the doc's 'reads headless steps at 1.16x the credits per point'.",
+   "buckets": {
+    "under 0.2": {
+     "steps": 226,
+     "five_hour_points_per_seven_day_point": 4.425,
+     "credits_per_1pct_seven_day": 988876,
+     "credits_per_1pct_five_hour": 223486
+    },
+    "0.2 to 0.8": {
+     "steps": 24,
+     "five_hour_points_per_seven_day_point": 5.625,
+     "credits_per_1pct_seven_day": 1208852,
+     "credits_per_1pct_five_hour": 214907
+    },
+    "over 0.8": {
+     "steps": 58,
+     "five_hour_points_per_seven_day_point": 7.086,
+     "credits_per_1pct_seven_day": 1147463,
+     "credits_per_1pct_five_hour": 161929
+    }
+   },
+   "seven_day_credits_per_point_over_0.8_vs_under_0.2": 1.16,
+   "five_hour_credits_per_point_over_0.8_vs_under_0.2": 0.725
+  }
+ },
+ "extended_window": {
+  "window": "2026-09-14T12:00Z to 2026-10-11T22:23:57.561000Z (last turn before 12 Oct), 397 steps",
+  "timing_shift": [
+   {
+    "shift": "-30 min",
+    "factor": 1.42,
+    "ci95": [
+     1.31,
+     1.55
+    ]
+   },
+   {
+    "shift": "-10 min",
+    "factor": 1.48,
+    "ci95": [
+     1.37,
+     1.6
+    ]
+   },
+   {
+    "shift": "0",
+    "factor": 1.49,
+    "ci95": [
+     1.37,
+     1.62
+    ]
+   },
+   {
+    "shift": "+10 min",
+    "factor": 1.41,
+    "ci95": [
+     1.29,
+     1.53
+    ]
+   },
+   {
+    "shift": "+30 min",
+    "factor": 1.4,
+    "ci95": [
+     1.29,
+     1.53
+    ]
+   }
+  ],
+  "ttl_pricing": [
+   {
+    "pricing": "collector (writes 1x, 1h no premium)",
+    "factor": 1.49,
+    "ci95": [
+     1.37,
+     1.62
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 939,
+     "headless_share_over_0.8": 1163
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 210,
+     "headless_share_over_0.8": 161
+    }
+   },
+   {
+    "pricing": "API (5m 1.25x, 1h 2x, read 0.1x)",
+    "factor": 1.49,
+    "ci95": [
+     1.37,
+     1.61
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 3430,
+     "headless_share_over_0.8": 4085
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 764,
+     "headless_share_over_0.8": 567
+    }
+   },
+   {
+    "pricing": "collector, 1h at 1.6x",
+    "factor": 1.5,
+    "ci95": [
+     1.38,
+     1.62
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 1018,
+     "headless_share_over_0.8": 1425
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 228,
+     "headless_share_over_0.8": 197
+    }
+   },
+   {
+    "pricing": "collector, 1h at 2x",
+    "factor": 1.5,
+    "ci95": [
+     1.38,
+     1.63
+    ],
+    "credits_per_1pct_seven_day_k": {
+     "headless_share_under_0.2": 1069,
+     "headless_share_over_0.8": 1600
+    },
+    "credits_per_1pct_five_hour_k": {
+     "headless_share_under_0.2": 240,
+     "headless_share_over_0.8": 221
+    }
+   }
+  ],
+  "cache_write_shares": {
+   "Max account 2": {
+    "interactive main session": {
+     "one_hour_write_share_of_credits": 0.387,
+     "five_minute_write_share_of_credits": 0.0
+    },
+    "sub-agent": {
+     "one_hour_write_share_of_credits": 0.0,
+     "five_minute_write_share_of_credits": 0.592
+    },
+    "headless (claude -p) main session": {
+     "one_hour_write_share_of_credits": 0.521,
+     "five_minute_write_share_of_credits": 0.0
+    }
+   },
+   "Max account 3": {
+    "interactive main session": {
+     "one_hour_write_share_of_credits": 0.386,
+     "five_minute_write_share_of_credits": 0.0
+    },
+    "sub-agent": {
+     "one_hour_write_share_of_credits": 0.0,
+     "five_minute_write_share_of_credits": 0.558
+    },
+    "headless (claude -p) main session": {
+     "one_hour_write_share_of_credits": 0.394,
+     "five_minute_write_share_of_credits": 0.0
+    }
+   },
+   "Max account 4": {
+    "interactive main session": {
+     "one_hour_write_share_of_credits": 0.425,
+     "five_minute_write_share_of_credits": 0.0
+    },
+    "sub-agent": {
+     "one_hour_write_share_of_credits": 0.0,
+     "five_minute_write_share_of_credits": 0.623
+    },
+    "headless (claude -p) main session": {
+     "one_hour_write_share_of_credits": 0.614,
+     "five_minute_write_share_of_credits": 0.0
+    }
+   }
+  },
+  "per_run_overhead": {
+   "steps_over_0.8_headless": 119,
+   "runs_per_such_step": 8.4,
+   "credits_per_run_k": 125.9,
+   "first_turn_cache_write_share_of_headless_credits": 0.101,
+   "headless_with_runs_per_Mcredit_added": {
+    "factor": 1.45,
+    "ci95": [
+     1.33,
+     1.59
+    ]
+   },
+   "runs_per_Mcredit_term": {
+    "factor": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ]
+   }
+  },
+  "other_variables": [
+   {
+    "model": "headless share alone",
+    "headless": {
+     "factor": 1.49,
+     "ci95": [
+      1.37,
+      1.62
+     ]
+    }
+   },
+   {
+    "model": "weekday 12-18Z share alone",
+    "us_morning": {
+     "factor": 1.23,
+     "ci95": [
+      1.17,
+      1.3
+     ]
+    }
+   },
+   {
+    "model": "headless + weekday 12-18Z share",
+    "headless": {
+     "factor": 1.42,
+     "ci95": [
+      1.31,
+      1.54
+     ]
+    },
+    "us_morning": {
+     "factor": 1.18,
+     "ci95": [
+      1.12,
+      1.24
+     ]
+    }
+   },
+   {
+    "model": "headless + turns per million credits",
+    "headless": {
+     "factor": 1.53,
+     "ci95": [
+      1.4,
+      1.66
+     ]
+    },
+    "turns": {
+     "factor": 1.0,
+     "ci95": [
+      1.0,
+      1.0
+     ]
+    }
+   },
+   {
+    "model": "headless + sessions per million credits",
+    "headless": {
+     "factor": 1.5,
+     "ci95": [
+      1.38,
+      1.63
+     ]
+    },
+    "sessions": {
+     "factor": 1.0,
+     "ci95": [
+      1.0,
+      1.0
+     ]
+    }
+   },
+   {
+    "model": "headless + log step length",
+    "headless": {
+     "factor": 1.51,
+     "ci95": [
+      1.39,
+      1.63
+     ]
+    },
+    "log_hours": {
+     "factor": 1.03,
+     "ci95": [
+      1.01,
+      1.05
+     ]
+    }
+   }
+  ],
+  "covariates": [
+   {
+    "added_variable": "none",
+    "that_variable": null,
+    "headless_beside_it": {
+     "factor": 1.49,
+     "ci95": [
+      1.37,
+      1.62
+     ]
+    }
+   },
+   {
+    "added_variable": "concurrency, credit-weighted mean (log)",
+    "that_variable": {
+     "factor": 0.97,
+     "ci95": [
+      0.95,
+      1.0
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.99,
+     "ci95": [
+      0.96,
+      1.02
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.51,
+     "ci95": [
+      1.39,
+      1.64
+     ]
+    }
+   },
+   {
+    "added_variable": "concurrency, peak (log)",
+    "that_variable": {
+     "factor": 0.99,
+     "ci95": [
+      0.96,
+      1.01
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.01,
+     "ci95": [
+      0.98,
+      1.04
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.5,
+     "ci95": [
+      1.38,
+      1.63
+     ]
+    }
+   },
+   {
+    "added_variable": "credits per active minute (log)",
+    "that_variable": {
+     "factor": 0.96,
+     "ci95": [
+      0.93,
+      0.98
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.99,
+     "ci95": [
+      0.96,
+      1.01
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.54,
+     "ci95": [
+      1.41,
+      1.67
+     ]
+    }
+   },
+   {
+    "added_variable": "busiest minute's share of the step",
+    "that_variable": {
+     "factor": 0.97,
+     "ci95": [
+      0.95,
+      1.0
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.96,
+     "ci95": [
+      0.94,
+      0.99
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.49,
+     "ci95": [
+      1.37,
+      1.61
+     ]
+    }
+   },
+   {
+    "added_variable": "Opus 5.5 share",
+    "that_variable": {
+     "factor": 0.94,
+     "ci95": [
+      0.79,
+      1.12
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.11,
+     "ci95": [
+      0.92,
+      1.35
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.5,
+     "ci95": [
+      1.38,
+      1.63
+     ]
+    }
+   },
+   {
+    "added_variable": "Sonnet share",
+    "that_variable": {
+     "factor": 1.07,
+     "ci95": [
+      0.95,
+      1.2
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.88,
+     "ci95": [
+      0.78,
+      0.99
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.52,
+     "ci95": [
+      1.39,
+      1.66
+     ]
+    }
+   },
+   {
+    "added_variable": "Fable share",
+    "that_variable": {
+     "factor": 1.02,
+     "ci95": [
+      0.89,
+      1.17
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.92,
+     "ci95": [
+      0.79,
+      1.08
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.49,
+     "ci95": [
+      1.37,
+      1.63
+     ]
+    }
+   },
+   {
+    "added_variable": "effort (low 1 to max 5, credit-weighted)",
+    "that_variable": {
+     "factor": 1.0,
+     "ci95": [
+      0.98,
+      1.03
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.04,
+     "ci95": [
+      1.01,
+      1.07
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.49,
+     "ci95": [
+      1.36,
+      1.63
+     ]
+    }
+   },
+   {
+    "added_variable": "weekday 12-18Z share",
+    "that_variable": {
+     "factor": 1.18,
+     "ci95": [
+      1.12,
+      1.24
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 1.23,
+     "ci95": [
+      1.17,
+      1.3
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.42,
+     "ci95": [
+      1.31,
+      1.54
+     ]
+    }
+   },
+   {
+    "added_variable": "weekday 08-12Z share",
+    "that_variable": {
+     "factor": 0.85,
+     "ci95": [
+      0.78,
+      0.92
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.94,
+     "ci95": [
+      0.85,
+      1.03
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.55,
+     "ci95": [
+      1.43,
+      1.69
+     ]
+    }
+   },
+   {
+    "added_variable": "weekend share",
+    "that_variable": {
+     "factor": 0.91,
+     "ci95": [
+      0.85,
+      0.99
+     ]
+    },
+    "that_variable_alone": {
+     "factor": 0.79,
+     "ci95": [
+      0.73,
+      0.85
+     ]
+    },
+    "headless_beside_it": {
+     "factor": 1.41,
+     "ci95": [
+      1.28,
+      1.55
+     ]
+    }
+   },
+   {
+    "added_variable": "all of them together",
+    "that_variable": null,
+    "headless_beside_it": {
+     "factor": 1.49,
+     "ci95": [
+      1.34,
+      1.67
+     ]
+    }
+   }
+  ],
+  "median_by_headless_share": {
+   "0-0.2": {
+    "steps": 248,
+    "concurrency_mean": 2.5,
+    "concurrency_peak": 4.0,
+    "credits_per_active_minute_k": 32.1,
+    "us_morning": 0.34
+   },
+   "0.2-0.8": {
+    "steps": 31,
+    "concurrency_mean": 2.1,
+    "concurrency_peak": 4.0,
+    "credits_per_active_minute_k": 28.7,
+    "us_morning": 0.26
+   },
+   "0.8-1.01": {
+    "steps": 118,
+    "concurrency_mean": 3.2,
+    "concurrency_peak": 5.0,
+    "credits_per_active_minute_k": 34.3,
+    "us_morning": 0.52
+   }
+  },
+  "crude_meter_split": {
+   "_about": "Crude split of the 1.5x between the meters, from the collector-pricing row: meter movement per credit for steps over 0.8 headless relative to steps under 0.2 (inverse of the credits-per-1% ratio). No regime or account terms.",
+   "seven_day_meter_per_credit": 0.807,
+   "five_hour_meter_per_credit": 1.304,
+   "inputs_k": {
+    "seven_day": {
+     "under_0.2": 939,
+     "over_0.8": 1163
+    },
+    "five_hour": {
+     "under_0.2": 210,
+     "over_0.8": 161
+    }
+   }
+  },
+  "five_hour_points_per_seven_day_point_by_headless_share": {
+   "Max account 2": {
+    "under 0.2": {
+     "steps": 148,
+     "five_hour_points_per_seven_day_point": 4.351
+    },
+    "0.2 to 0.8": {
+     "steps": 12,
+     "five_hour_points_per_seven_day_point": 5.167
+    }
+   },
+   "Max account 3": {
+    "under 0.2": {
+     "steps": 64,
+     "five_hour_points_per_seven_day_point": 4.797
+    },
+    "0.2 to 0.8": {
+     "steps": 17,
+     "five_hour_points_per_seven_day_point": 5.765
+    },
+    "over 0.8": {
+     "steps": 110,
+     "five_hour_points_per_seven_day_point": 7.309
+    }
+   },
+   "Max account 4": {
+    "under 0.2": {
+     "steps": 36,
+     "five_hour_points_per_seven_day_point": 4.333
+    },
+    "0.2 to 0.8": {
+     "steps": 2,
+     "five_hour_points_per_seven_day_point": 5.0
+    },
+    "over 0.8": {
+     "steps": 8,
+     "five_hour_points_per_seven_day_point": 6.125
+    }
+   },
+   "all accounts": {
+    "under 0.2": {
+     "steps": 248,
+     "five_hour_points_per_seven_day_point": 4.464
+    },
+    "0.2 to 0.8": {
+     "steps": 31,
+     "five_hour_points_per_seven_day_point": 5.484
+    },
+    "over 0.8": {
+     "steps": 118,
+     "five_hour_points_per_seven_day_point": 7.229
+    }
+   }
+  }
+ },
+ "publisher_per_account": {
+  "2026-10-05 (reproduces docs/findings/2026-10-05-headless-weight.md Part 2)": {
+   "steps": 659,
+   "factor": 1.486,
+   "ci95": [
+    1.381,
+    1.599
+   ],
+   "per_account": {
+    "Max account 1": {
+     "steps": 211,
+     "mean_headless_share": 0.035,
+     "factor": 2.655,
+     "ci95": [
+      1.431,
+      4.928
+     ]
+    },
+    "Max account 2": {
+     "steps": 273,
+     "mean_headless_share": 0.254,
+     "factor": 1.376,
+     "ci95": [
+      1.258,
+      1.506
+     ]
+    },
+    "Max account 3": {
+     "steps": 134,
+     "mean_headless_share": 0.472,
+     "factor": 1.496,
+     "ci95": [
+      1.335,
+      1.676
+     ]
+    },
+    "Max account 4": {
+     "steps": 41,
+     "mean_headless_share": 0.223,
+     "factor": 1.525,
+     "ci95": [
+      0.924,
+      2.514
+     ]
+    }
+   }
+  },
+  "2026-10-11 (last publish before 12 Oct)": {
+   "steps": 738,
+   "factor": 1.484,
+   "ci95": [
+    1.384,
+    1.592
+   ],
+   "per_account": {
+    "Max account 1": {
+     "steps": 214,
+     "mean_headless_share": 0.039,
+     "factor": 2.46,
+     "ci95": [
+      1.403,
+      4.313
+     ]
+    },
+    "Max account 2": {
+     "steps": 287,
+     "mean_headless_share": 0.23,
+     "factor": 1.389,
+     "ci95": [
+      1.27,
+      1.519
+     ]
+    },
+    "Max account 3": {
+     "steps": 191,
+     "mean_headless_share": 0.627,
+     "factor": 1.504,
+     "ci95": [
+      1.345,
+      1.681
+     ]
+    },
+    "Max account 4": {
+     "steps": 46,
+     "mean_headless_share": 0.196,
+     "factor": 1.085,
+     "ci95": [
+      0.8,
+      1.472
+     ]
+    }
+   }
+  }
+ }
+}

@@ -9,6 +9,8 @@ Max account 3 has 128 and Max account 4 has 41. Max account 1's transcripts are 
 Part 2 numbers come from `tracker.rebuild_offline` on the inputs of the 2026-10-05 15:01Z
 publish, built with main and with this branch.
 
+Reproduction (2026-10-23): [`2026-10-05-headless-repro/`](2026-10-05-headless-repro/REPRODUCE.md) recomputes these figures from data files in the folder with Python 3 and numpy.
+
 ## Part 1: what each hypothesis does to the headless factor
 
 The headless factor is how much more the five-hour meter moves per seven-day point, per unit

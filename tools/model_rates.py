@@ -13,10 +13,19 @@ same shape, history/harness-runs.jsonl, history/probes.jsonl and data/effort_mat
 Sections: (1) tokens per 1% per model from stretches one model dominates, (2) the meter's
 model ratios from those, (3) the same rates fitted across every clean stretch, twice -- once
 with cache reads held at zero and once with the cache-read weight fitted jointly with the
-rates -- (4) whether model mix, reset_verified or stretch length explains the jwork/Dave gap,
-(5) the window in tokens per model, and (6) the rates the publisher adopts, pooled across the
-fits that agree within their intervals. Ratios from fewer than three stretches on a side are
-reported as not measurable rather than as a number.
+rates -- (4) whether model mix, reset_verified or stretch length explains the gap between two
+accounts' credits per 1%, for every pair of accounts the data carry, (5) the window in tokens
+per model, and (6) the rates the publisher adopts, pooled across the fits that agree within
+their intervals. Ratios from fewer than three stretches on a side are reported as not
+measurable rather than as a number. Sections 4 and 5 are diagnostics nothing downstream reads:
+a comparison with nothing to value reads as not measurable, and one that fails outright is
+recorded as failed (`diagnostic`), so neither can stop the rates in section 6 being written.
+
+A refit that moves a published rate outside its own interval, or takes a measured rate back
+to provisional or to no value, is not written over the rates in force (a rate whose interval
+in force is `collapsed` at zero moves only where the refit's own interval excludes it): it goes to
+`model-rates.candidate.json` beside them and the run exits HELD_EXIT (`rate_moves`), until
+someone reads the move and reruns with --accept-moves.
 
 Token counts are grouped into model families (Opus 5, 4.8 and 4.7 into Opus, and so on;
 Opus 5.5 is a family of its own, tracker.credits.family taking the most specific match),
@@ -48,10 +57,13 @@ which the rates fitted in the publisher's own unit do not show
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
+import re
 import statistics as st
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -61,7 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.harness_runs import effort_matrix_row, probe_rows
 from tracker import credits as C
-from tracker import five_hour_weight
+from tracker import five_hour_end, five_hour_weight
 
 CUT = C.CUT_AT
 P = datetime.fromisoformat
@@ -193,6 +205,9 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
         ie = {m: {f: 0.0 for f in FAMILIES + ("other",)} for m in OUT_MULTS}
         raw = {f: 0.0 for f in FAMILIES + ("other",)}
         reads = {f: 0.0 for f in FAMILIES + ("other",)}
+        # A value that is no bundle cannot be priced, and price_tokens and the pooled valuation
+        # refuse its stretch (credits.bundles_with_work), so the fit must not admit it either.
+        malformed = any(not isinstance(tok, dict) for tok in t.values())
         for model, tok in t.items():
             if not isinstance(tok, dict):
                 continue
@@ -207,7 +222,7 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
                     "era": "pre" if P(s["start"]) < CUT else "post",
                     "regime": regime_of(P(s["start"]), P(s["end"])),
                     "reset_verified": bool(s.get("reset_verified")),
-                    "ie": ie, "raw": raw, "total_raw": total, "ok": raw["other"] == 0,
+                    "ie": ie, "raw": raw, "total_raw": total, "ok": raw["other"] == 0 and not malformed,
                     # Cache reads are kept out of `ie` and out of `raw` (both read the
                     # reference literally, at a weight of zero) and carried here on their
                     # own, so the joint fit can put a column of them in the design matrix
@@ -402,7 +417,19 @@ def fit_bootstrap(recs: list[dict], out_mult: int, rng: random.Random, resamples
 
 
 def ratio_bootstrap(num: list[float], den: list[float], rng: random.Random, resamples: int) -> dict:
-    """median(num) / median(den), resampling each side independently."""
+    """median(num) / median(den), resampling each side independently.
+
+    Not measurable -- no ratio and no interval -- when a side is empty, the denominator's
+    median is zero, or fewer than half the resamples leave a denominator to divide by: the
+    rule fit_bootstrap applies to its own ratios. Without it a zero median divided on every
+    gs run from 2026-10-13T19:30Z (ZeroDivisionError) and a resample with no surviving draw
+    indexed an empty list from 2026-10-15T14:00Z (IndexError in `interval`), and the refit
+    never wrote a file.
+    """
+    out = {"n_num": len(num), "n_den": len(den)}
+    if not num or not den or not st.median(den):
+        return {**out, "measurable": False, "ratio": None, "interval": None, "n_draws": 0,
+                "why": "nothing to divide by: a side is empty or its median is zero"}
     draws = []
     for _ in range(resamples):
         rn = [num[rng.randrange(len(num))] for _ in num]
@@ -410,13 +437,50 @@ def ratio_bootstrap(num: list[float], den: list[float], rng: random.Random, resa
         md = st.median(rd)
         if md:
             draws.append(st.median(rn) / md)
+    if len(draws) < resamples // 2:
+        return {**out, "measurable": False, "ratio": None, "interval": None,
+                "n_draws": len(draws),
+                "why": f"only {len(draws)} of {resamples} resamples had a denominator above zero"}
     lo, hi = interval(draws)
-    return {"ratio": st.median(num) / st.median(den), "interval": [lo, hi],
-            "n_num": len(num), "n_den": len(den)}
+    return {**out, "measurable": True, "ratio": st.median(num) / st.median(den),
+            "interval": [lo, hi], "n_draws": len(draws)}
 
 
 def price(rec: dict, rates: dict[str, float], out_mult: int) -> float:
     return sum(rec["ie"][out_mult][f] * rates.get(f, 0.0) for f in FAMILIES)
+
+
+def priceable(rec: dict, rates: dict[str, float]) -> bool:
+    """Whether a rate table can value the stretch: it carries no tokens of a family the table
+    has no positive rate for.
+
+    `price` reads a missing rate as zero. Section 4 values stretches at the January table,
+    which has rows for Opus, Sonnet, Haiku and Fable only, so a stretch of Opus 5.5 tokens was
+    worth nothing there, and once more than half of an account's stretches were Opus 5.5 its
+    median was zero (32 of dave's 63 reset_verified stretches on 2026-10-13T19:30Z). A stretch
+    a table cannot value is left out of that table's comparison and counted as unpriced; it
+    is never valued at zero.
+    """
+    return all(rates.get(f, 0.0) > 0 for f in FAMILIES if rec["raw"][f] > 0)
+
+
+def compare(num: list[float], den: list[float], rng: random.Random, resamples: int) -> dict:
+    """One of section 4's ratios of medians, or the reason it is not measurable.
+
+    Fewer than MIN_N stretches a side, or a bootstrap with nothing to divide by
+    (`ratio_bootstrap`), reads as not measurable with the counts beside it. A measurable ratio
+    carries the verdict section 4 has always printed: the difference is explained when the
+    ratio's interval holds 1.
+    """
+    if len(num) < MIN_N or len(den) < MIN_N:
+        return {"measurable": False, "ratio": None, "interval": None,
+                "n_num": len(num), "n_den": len(den),
+                "why": f"{len(num)} and {len(den)} stretches, under the {MIN_N} a side a ratio needs"}
+    r = ratio_bootstrap(num, den, rng, resamples)
+    if r["measurable"]:
+        lo, hi = r["interval"]
+        r["verdict"] = "explains" if lo <= 1.0 <= hi else "does not explain"
+    return r
 
 
 PAIRS = (("opus", "sonnet", "sonnet"), ("sonnet", "haiku", "haiku"), ("fable", "opus", "fable"))
@@ -478,12 +542,19 @@ def probes_only_runs() -> list:
 
 
 def window_check(S: dict, lists: dict[str, list]) -> dict:
-    """Reproduce the reconciliation's pure-Opus jwork window under each exclusion list."""
+    """The reconciliation's pure-Opus window before 14 September, under each exclusion list,
+    for every account that has one: {label: {account: quantiles}}.
+
+    The reconciliation read it on jwork (docs/findings-2026-09-20-reconciliation.md). The
+    accounts are the data's: jwork and dave lost every pre-cut stretch with their transcripts
+    on 2026-10-15, and a window read by name then had nothing in it for section 5 to divide.
+    """
     out = {}
     for label, runs in lists.items():
         pure = C.pure_family_rows(clean(S, runs), CREDITS, "opus", CACHE_READ_WEIGHT)
-        v = [r["credits_per_pct"] for r in pure.get("jwork", []) if P(r["start"]) < CUT]
-        out[label] = quantiles(v) if v else None
+        by = {a: [r["credits_per_pct"] for r in rows if P(r["start"]) < CUT]
+              for a, rows in sorted(pure.items())}
+        out[label] = {a: quantiles(v) for a, v in by.items() if v}
     return out
 
 
@@ -538,6 +609,9 @@ def section2(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
                     # tokens per 1% is the window over the rate, so the rate ratio num:den is
                     # the token ratio the other way up.
                     r = ratio_bootstrap(vb, va, random.Random(f"{seed}/ratio/{key}/{m}"), resamples)
+                    if not r["measurable"]:
+                        per_mult[f"out{m}x"] = {"measurable": False, "n_num": len(va), "n_den": len(vb)}
+                        continue
                     per_mult[f"out{m}x"] = {"measurable": True, "n_num": len(va), "n_den": len(vb),
                                             **verdict(num, den, free, r["ratio"], r["interval"])}
                 out[key] = per_mult
@@ -582,38 +656,74 @@ def section3(data: dict[str, list[dict]], seed: int, resamples: int) -> dict:
 
 
 def tables(section3_out: dict) -> dict[str, dict[str, float]]:
-    """The rate tables section 4 prices with: Shellac's, and each gs fit's."""
+    """The rate tables section 4 prices with: Shellac's, and every account's own fit.
+
+    Every account section 3 fitted, not a named two: the accounts are the data's
+    (`fit_accounts`), and naming jwork and dave here kept masterrig's fit -- the only one left
+    once gs lost its pre-October transcripts on 2026-10-15 -- out of the comparison.
+    """
     shellac = dict(SHELLAC)
     shellac["fable"] = FABLE_POINT
     out = {"shellac": shellac}
-    for key, f in section3_out.items():
+    for key, f in sorted(section3_out.items()):
         account, era, mult = key.split("/")
-        if account in ("jwork", "dave") and mult == "out5x":
+        if mult == "out5x":
             out[f"fitted {account}/{era}"] = {k: v for k, v in f["rates"].items() if v > 0}
     return out
 
 
+def account_pairs(accounts) -> list[tuple[str, str]]:
+    """Every pair of the given accounts, each as (numerator, denominator) in sorted order.
+
+    Section 4 once compared jwork over dave by name. The accounts now come from the data, and
+    sorted order puts dave first, so the pair's order is spelled out in its key (`dave:jwork`
+    is dave's median over jwork's, as `opus:sonnet` is Opus's rate over Sonnet's) and in its
+    `numerator` and `denominator` fields: the ratio is the old one the other way up, and says
+    so, rather than reading as the old figure inverted.
+    """
+    accounts = sorted(accounts)
+    return [(a, b) for i, a in enumerate(accounts) for b in accounts[i + 1:]]
+
+
+def _pair_row(num: str, den: str, per: dict[str, list[float]], rng: random.Random,
+              resamples: int, **extra) -> dict:
+    """One pair's comparison: each side's median beside the ratio, or why there is none."""
+    return {"numerator": num, "denominator": den,
+            "medians": {a: (st.median(per[a]) if per[a] else None) for a in (num, den)},
+            **extra, **compare(per[num], per[den], rng, resamples)}
+
+
 def section4(data: dict[str, list[dict]], s3: dict, seed: int, resamples: int) -> dict:
-    """Does model mix, reset_verified or stretch length explain the jwork/Dave gap?"""
-    post = {a: [r for r in data[a] if r["era"] == "post" and r["ok"]] for a in ("jwork", "dave")}
-    out = {"n": {a: len(v) for a, v in post.items()}, "mix": {}, "shares": {}, "reset_verified": {},
-           "length": {}, "restricted": {}}
+    """Does model mix, reset_verified or stretch length explain the gap between two accounts?
+
+    Every pair of accounts with clean stretches after 14 September, from the data. A stretch
+    is valued at a table only where the table has a rate for every family it carries
+    (`priceable`); the rest are counted under `unpriced` for that table. Stretches that did
+    not move the meter are left out, since every figure here is per 1%.
+    """
+    post = {a: [r for r in data[a] if r["era"] == "post" and r["ok"] and r["delta"] > 0]
+            for a in sorted(data)}
+    post = {a: v for a, v in post.items() if v}
+    pairs = account_pairs(post)
+    out = {"accounts": sorted(post), "pairs": [f"{a}:{b}" for a, b in pairs],
+           "n": {a: len(v) for a, v in post.items()}, "mix": {}, "shares": {}, "unpriced": {},
+           "reset_verified": {}, "length": {}, "restricted": {}}
     for a, recs in post.items():
         out["shares"][a] = {f: st.median([r["share"][f] for r in recs]) for f in FAMILIES}
     for label, rates in tables(s3).items():
-        per = {a: [price(r, rates, 5) / r["delta"] for r in recs] for a, recs in post.items()}
-        if not all(per.values()):
-            continue
-        r = ratio_bootstrap(per["jwork"], per["dave"], random.Random(f"{seed}/mix/{label}"), resamples)
-        out["mix"][label] = {"jwork": st.median(per["jwork"]), "dave": st.median(per["dave"]),
-                             "ratio": r["ratio"], "interval": r["interval"],
-                             "verdict": "explains" if r["interval"][0] <= 1.0 <= r["interval"][1]
-                                        else "does not explain"}
+        valued = {a: [r for r in recs if priceable(r, rates)] for a, recs in post.items()}
+        out["unpriced"][label] = {a: len(post[a]) - len(v) for a, v in valued.items()}
+        per = {a: [price(r, rates, 5) / r["delta"] for r in v] for a, v in valued.items()}
+        for num, den in pairs:
+            key = f"{num}:{den}"
+            out["mix"].setdefault(key, {})[label] = _pair_row(
+                num, den, per, random.Random(f"{seed}/mix/{key}/{label}"), resamples,
+                unpriced={a: out["unpriced"][label][a] for a in (num, den)})
     shellac = tables(s3)["shellac"]
     out["quantisation"] = {}
     for a, recs in data.items():
         for era in ("pre", "post"):
-            sub = [r for r in recs if r["era"] == era and r["ok"]]
+            sub = [r for r in recs if r["era"] == era and r["ok"] and r["delta"] > 0]
             if len(sub) < MIN_N:
                 continue
             key = f"{a}/{era}"
@@ -624,35 +734,34 @@ def section4(data: dict[str, list[dict]], s3: dict, seed: int, resamples: int) -
             out["quantisation"][key] = {"n": len(sub),
                                         "per_stretch": st.median([r["windows"] / r["delta"] for r in sub]),
                                         "deltas": sorted({r["delta"] for r in sub})}
+            valued = [r for r in sub if priceable(r, shellac)]
             groups = {True: [], False: []}
-            for r in sub:
+            for r in valued:
                 groups[r["reset_verified"]].append(price(r, shellac, 5) / r["delta"])
             entry = {str(k): quantiles(v) if v else None for k, v in groups.items()}
+            entry["unpriced"] = len(sub) - len(valued)
             if all(len(v) >= MIN_N for v in groups.values()):
                 entry["ratio"] = ratio_bootstrap(groups[True], groups[False],
                                                  random.Random(f"{seed}/verified/{key}"), resamples)
             out["reset_verified"][key] = entry
-            cut = st.median([r["delta"] for r in sub])
-            halves = {"short": [price(r, shellac, 5) / r["delta"] for r in sub if r["delta"] <= cut],
-                      "long": [price(r, shellac, 5) / r["delta"] for r in sub if r["delta"] > cut]}
-            entry = {"cut_delta_pct": cut, **{k: quantiles(v) if v else None for k, v in halves.items()}}
+            cut = st.median([r["delta"] for r in valued]) if valued else None
+            halves = {"short": [price(r, shellac, 5) / r["delta"] for r in valued if r["delta"] <= cut],
+                      "long": [price(r, shellac, 5) / r["delta"] for r in valued if r["delta"] > cut]}
+            entry = {"cut_delta_pct": cut, "unpriced": len(sub) - len(valued),
+                     **{k: quantiles(v) if v else None for k, v in halves.items()}}
             if all(len(v) >= MIN_N for v in halves.values()):
                 entry["ratio"] = ratio_bootstrap(halves["long"], halves["short"],
                                                  random.Random(f"{seed}/length/{key}"), resamples)
             out["length"][key] = entry
     for label, keep in (("reset_verified only", lambda r: r["reset_verified"]),
                         ("delta_pct above 10", lambda r: r["delta"] > 10)):
-        per = {a: [price(r, shellac, 5) / r["delta"] for r in recs if keep(r)] for a, recs in post.items()}
-        if all(len(v) >= MIN_N for v in per.values()):
-            r = ratio_bootstrap(per["jwork"], per["dave"],
-                                random.Random(f"{seed}/restricted/{label}"), resamples)
-            out["restricted"][label] = {"n": {a: len(v) for a, v in per.items()},
-                                        "jwork": st.median(per["jwork"]), "dave": st.median(per["dave"]),
-                                        "ratio": r["ratio"], "interval": r["interval"],
-                                        "verdict": "explains" if r["interval"][0] <= 1.0 <= r["interval"][1]
-                                                   else "does not explain"}
-        else:
-            out["restricted"][label] = {"measurable": False, "n": {a: len(v) for a, v in per.items()}}
+        per = {a: [price(r, shellac, 5) / r["delta"] for r in recs if keep(r) and priceable(r, shellac)]
+               for a, recs in post.items()}
+        for num, den in pairs:
+            key = f"{num}:{den}"
+            out["restricted"].setdefault(key, {})[label] = _pair_row(
+                num, den, per, random.Random(f"{seed}/restricted/{key}/{label}"), resamples,
+                n={a: len(per[a]) for a in (num, den)})
     return out
 
 
@@ -783,6 +892,38 @@ def weight_pool(s3: dict, variant: str = "joint", mult: str = "out5x") -> dict:
 #: high end over its low end is under this ratio. Wider than that, the fit is not pinning
 #: the family down and the page publishes a status sentence instead of a number.
 MAX_INTERVAL_RATIO = 1.5
+#: A fitted rate under this many times Opus is a rate at zero. The fit works in log space,
+#: so a column the meter does not respond to drifts toward minus infinity until the loss
+#: stops moving, and the bootstrap, started from that point, stays there: on 2026-10-23 Haiku
+#: 5.5 sat at 8.4e-14x Opus with an "interval" [5.9e-14, 1.1e-13] and Haiku at 4.6e-72x
+#: [3.5e-72, 6.2e-72]. Those intervals are under 3x wide end to end, so the ratio test alone
+#: published Haiku 5.5 as provisional at 0.000x Opus. The cheapest family's list ratio is
+#: Haiku 5.5's 0.02x; this is two hundred times under it, and twenty orders above the
+#: collapsed values.
+RATE_FLOOR = 1e-4
+
+
+def x3(v: float | None) -> str:
+    """A rate or interval end with at least three significant figures: three decimals where
+    those show three (0.1 and up, so every figure the page has carried reads as before), and
+    three significant figures below, so 8.4e-14 and 0.018 do not both read 0.000."""
+    if v is None:
+        return "none"
+    if v == 0 or not np.isfinite(v) or abs(v) >= 0.1:
+        return f"{v:.3f}"
+    return f"{v:.3g}"
+
+
+def collapsed(iv: list[float] | None) -> bool:
+    """An interval that says nothing about a rate: missing, not finite, or wholly under
+    RATE_FLOOR (a rate the fit has driven to zero in every resample). A refit landing outside
+    such an interval has not moved anything the interval measured. A narrow interval away from
+    zero is not collapsed: stretches that fit a rate exactly give every resample the same
+    value, and that rate is measured, not unidentified."""
+    if not iv:
+        return True
+    lo, hi = iv
+    return not (np.isfinite(lo) and np.isfinite(hi)) or hi < RATE_FLOOR
 #: The output multiplier the pooled fit counts input-equivalent tokens at. Its cache-read
 #: column counts millions of tokens, like the family columns, and the fitted weight
 #: multiplies the Opus input rate, so it reads directly as data/prices.json's
@@ -1026,11 +1167,12 @@ def pooled_section(data: dict[str, list[dict]], seed: int, resamples: int) -> di
 
 
 def measurable(iv: list[float] | None, limit: float = MAX_INTERVAL_RATIO) -> bool:
-    """A bootstrap interval that pins a rate down: finite, above zero, and narrow enough."""
-    if not iv:
+    """A bootstrap interval that pins a rate down: finite, above zero (RATE_FLOOR), and
+    narrow enough."""
+    if not iv or collapsed(iv):
         return False
     lo, hi = iv
-    return bool(np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi / lo < limit)
+    return bool(lo >= RATE_FLOOR and hi / lo < limit)
 
 
 #: A family newer than the January reference table -- Opus 5.5, and any family of its own a
@@ -1061,8 +1203,12 @@ NOT_MEASURABLE = "not measurable, no clean stretch is {family}-heavy"
 #: value (tracker/gs_passive.py) -- and both stay on the record in `pooled`.
 NOT_PINNED = ("not measurable, the pooled fit cannot pin {family} down: its 80% interval is "
               "{ratio} wide end to end, and a published rate needs under {limit:g}x")
+#: The same, where every resample puts the family at zero (`collapsed`): the meter shows no
+#: response to its tokens that the fit can find, which is no rate at all.
+NOT_PINNED_ZERO = ("not measurable, the pooled fit cannot pin {family} down: it puts {family} at "
+                   "zero in every resample")
 #: The status of a provisional rate (PROVISIONAL_MAX_RATIO): figures only.
-PROVISIONAL = ("provisional: {family} {point:.3f}x Opus, 80% interval [{lo:.3f}x, {hi:.3f}x], "
+PROVISIONAL = ("provisional: {family} {point}x Opus, 80% interval [{lo}x, {hi}x], "
                "{ratio:.2f}x wide end to end; a rate is final when its interval is under {limit:g}x")
 
 
@@ -1101,10 +1247,12 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
         if ok:
             status = None
         elif provisional:
-            status = PROVISIONAL.format(family=name(f), point=point, lo=iv[0], hi=iv[1],
+            status = PROVISIONAL.format(family=name(f), point=x3(point), lo=x3(iv[0]), hi=x3(iv[1]),
                                         ratio=iv[1] / iv[0], limit=MAX_INTERVAL_RATIO)
+        elif f in free and collapsed(iv):
+            status = NOT_PINNED_ZERO.format(family=name(f))
         elif f in free:
-            wide = None if not iv or iv[0] <= 0 else iv[1] / iv[0]
+            wide = None if not iv or iv[0] < RATE_FLOOR else iv[1] / iv[0]
             ratio = "over 100x" if wide is None or wide >= 100 else f"{wide:.2f}x"
             status = NOT_PINNED.format(family=name(f), ratio=ratio, limit=MAX_INTERVAL_RATIO)
         else:
@@ -1158,8 +1306,8 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             iv = pooled_row["interval"]
             row["why"] = (("provisional, " if row["provisional"] else "") +
                 f"one fit pooled over {groups}: rates shared by every group, one credits-per-1% "
-                f"scale per group. {name(f)} {pooled_row['times_opus']:.3f}x Opus, 80% bootstrap "
-                f"interval [{iv[0]:.3f}, {iv[1]:.3f}] from {pooled.get('resamples')} resamples "
+                f"scale per group. {name(f)} {x3(pooled_row['times_opus'])}x Opus, 80% bootstrap "
+                f"interval [{x3(iv[0])}, {x3(iv[1])}] from {pooled.get('resamples')} resamples "
                 f"stratified by group; {pooled_row['n_stretches_carrying']} of the fit's "
                 f"{pooled.get('n')} stretches carry its tokens. The per-group fits are on this "
                 "record as diagnostics and enter no rate.")
@@ -1168,8 +1316,8 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
             row["why"] = (
                 f"the highest {name(f)} share of any clean stretch on a fitted account is "
                 f"{max_share[f]:.3f}. The pooled fit carries it and puts it at "
-                f"{pooled_row['times_opus']:.3f}x Opus, but its 80% interval runs "
-                f"[{iv[0]:.3f}x, {iv[1]:.3f}x], so the data do not pin it down, and neither the "
+                f"{x3(pooled_row['times_opus'])}x Opus, but its 80% interval runs "
+                f"[{x3(iv[0])}x, {x3(iv[1])}x], so the data do not pin it down, and neither the "
                 "value nor the interval is published: an interval is priced at its midpoint where "
                 "a family has no value (tracker/gs_passive.py), and this one's midpoint is not a "
                 "rate anything measured. The fit's point estimate still prices this family's "
@@ -1206,7 +1354,13 @@ def measured_rates(s1: dict, s3: dict, pooled: dict | None, variant: str = "join
         "unit": "credits per input token; the output rate is output_multiplier times it",
         "variant": "pooled", "output_multiplier": POOLED_OUT_MULT,
         "fits_pooled": list(pooled.get("groups") or []),
-        "anchor": {"family": ANCHOR, "input": opus_in, "output": opus_in * POOLED_OUT_MULT},
+        # How many of the pooled fit's stretches carry the anchor's tokens. The anchor is what
+        # ties the fitted rates to the unit: the group scales absorb any factor common to every
+        # column, so with no anchor tokens (and no held family) the free rates are pinned only
+        # up to one multiplier. `rate_moves` holds a refit with fewer than MIN_NONZERO of them.
+        "anchor": {"family": ANCHOR, "input": opus_in, "output": opus_in * POOLED_OUT_MULT,
+                   "n_stretches_carrying": (pooled.get("n_nonzero") or {}).get(ANCHOR),
+                   "groups_carrying": (pooled.get("groups_carrying") or {}).get(ANCHOR)},
         "per_family": per_family,
         "cache_read_weight": weight,
         "max_interval_ratio": MAX_INTERVAL_RATIO,
@@ -1249,29 +1403,141 @@ def section5(window: dict, mr: dict) -> dict:
     The rows are the publisher's own rule: a token figure only where the rate has a value, and
     the rate's status sentence with the inverted interval where it does not (cheapest rate
     against the top of the window, dearest against the bottom).
+
+    One window per account that has a pure-Opus pre-cut window (`window_check`). With none,
+    the section is not measurable and says why, rather than dividing a window that is not there.
     """
-    per_pct = window["harness-runs"]["median"]
-    credits = per_pct * 100
-    rows = {}
-    for f, a in mr["per_family"].items():
-        row = {"shellac_rate": a["reference_input"], "measured_rate": a["input"],
-               "rate_interval": a["interval"], "status": a["status"],
-               "rate_source": a["rate_source"],
-               "shellac_tokens": credits / a["reference_input"] if a["reference_input"] else None,
-               "measured_tokens": credits / a["input"] if a["input"] else None,
-               # An interval whose ends are both above zero inverts into a token interval; one
-               # that reaches zero does not -- a free rate buys an unbounded number of tokens,
-               # and `inf` is not a figure to publish beside the others. The rate interval is
-               # still carried above, so the reader sees what the fit did say.
-               "measured_tokens_interval": ([credits / a["interval"][1], credits / a["interval"][0]]
-                                            if a["interval"] and a["interval"][0] > 0
-                                            and a["interval"][1] > 0 else None)}
-        rows[f] = row
-    return {"window_credits_per_pct": per_pct, "window_credits": credits, "rows": rows}
+    by_account = {}
+    for account, q in sorted((window.get("harness-runs") or {}).items()):
+        per_pct = q["median"]
+        credits = per_pct * 100
+        rows = {}
+        for f, a in mr["per_family"].items():
+            row = {"shellac_rate": a["reference_input"], "measured_rate": a["input"],
+                   "rate_interval": a["interval"], "status": a["status"],
+                   "rate_source": a["rate_source"],
+                   "shellac_tokens": credits / a["reference_input"] if a["reference_input"] else None,
+                   "measured_tokens": credits / a["input"] if a["input"] else None,
+                   # An interval whose ends are both above zero inverts into a token interval;
+                   # one that reaches zero does not -- a free rate buys an unbounded number of
+                   # tokens, and `inf` is not a figure to publish beside the others. The rate
+                   # interval is still carried above, so the reader sees what the fit did say.
+                   "measured_tokens_interval": ([credits / a["interval"][1], credits / a["interval"][0]]
+                                                if a["interval"] and a["interval"][0] > 0
+                                                and a["interval"][1] > 0 else None)}
+            rows[f] = row
+        by_account[account] = {"window_credits_per_pct": per_pct, "window_credits": credits,
+                               "rows": rows}
+    out = {"measurable": bool(by_account), "by_account": by_account}
+    if not by_account:
+        out["why"] = ("not measurable: no account has a clean pure-Opus stretch before "
+                      "14 September to read a window from")
+    return out
+
+
+def diagnostic(label: str, fn, *args) -> dict:
+    """Run one of the diagnostic sections (4 and 5), recording a failure instead of raising it.
+
+    Nothing outside this tool reads either section, and the rates the publisher reads come
+    from section 6. A diagnostic that fails on data it was not written for -- section 4 on
+    the January table and two named accounts did, on every gs run from 2026-10-13T19:30Z to
+    2026-10-22 -- is reported on stderr and in its own JSON slot, and the refit still writes
+    the rates. The traceback goes to stderr, which bin/daily.sh keeps in its log.
+    """
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001 -- quarantine: any failure is recorded, none is raised
+        traceback.print_exc()
+        print(f"warning: section {label} failed and is recorded as failed: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return {"failed": f"{type(e).__name__}: {e}"}
 
 
 def pct(x: float) -> str:
     return f"{x * 100:+.0f}%"
+
+
+def _ratio_text(r: dict | None, what: str) -> str:
+    """A ratio as section 4 prints it, or why it has none."""
+    if not r:
+        return f"  (one side under {MIN_N}, not measurable)"
+    if not r.get("measurable"):
+        return f"  NOT MEASURABLE ({r.get('why')})"
+    return f" ratio {what}={r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}]"
+
+
+def _pair_text(m: dict) -> str:
+    num, den = m["numerator"], m["denominator"]
+    if not m["measurable"]:
+        return f"NOT MEASURABLE ({m['why']})"
+    return (f"{num}={m['medians'][num]:9,.0f} {den}={m['medians'][den]:9,.0f} "
+            f"ratio {num}/{den}={m['ratio']:.3f} [{m['interval'][0]:.3f}, {m['interval'][1]:.3f}] "
+            f"{m['verdict'].upper()} the gap")
+
+
+def show_section4(s4: dict) -> None:
+    print("\n4. The gap between accounts' credits per 1% after 14 September, every pair the data carry")
+    if s4.get("failed"):
+        print(f"   FAILED, recorded and not raised: {s4['failed']}")
+        return
+    if not s4["pairs"]:
+        print(f"   no pair to compare: {len(s4['accounts'])} account(s) with clean post-cut stretches")
+    print("   n: " + ", ".join(f"{a} {n}" for a, n in s4["n"].items()) + "   median raw-token shares:")
+    for a, sh in s4["shares"].items():
+        print(f"      {a:9} " + " ".join(f"{f}={v:.3f}" for f, v in sh.items()))
+    for label, counts in s4["unpriced"].items():
+        if any(counts.values()):
+            print(f"   {label}: left out, carrying a family it has no rate for: "
+                  + ", ".join(f"{a} {n}" for a, n in counts.items() if n))
+    for key, per in s4["mix"].items():
+        for label, m in per.items():
+            print(f"   {key:18} priced at {label:26} mix: {_pair_text(m)}")
+    for key, q in s4["quantisation"].items():
+        print(f"   whole-percent floor {key:16} n={q['n']:3} +-{q['per_stretch'] * 100:.1f}% a stretch, "
+              f"delta_pct values {', '.join(f'{d:.0f}' for d in q['deltas'])}")
+    for key, e in s4["reset_verified"].items():
+        parts = " ".join(f"{k}: n={v['n']} median={v['median']:,.0f}" for k, v in e.items()
+                         if k in ("True", "False") and v)
+        print(f"   reset_verified {key:16} {parts}{_ratio_text(e.get('ratio'), 'verified/not')}")
+    for key, e in s4["length"].items():
+        parts = " ".join(f"{k}: n={e[k]['n']} median={e[k]['median']:,.0f}" for k in ("short", "long") if e[k])
+        cut = "no stretch to cut" if e["cut_delta_pct"] is None else f"cut at delta_pct={e['cut_delta_pct']:.0f}"
+        print(f"   length         {key:16} {cut} {parts}{_ratio_text(e.get('ratio'), 'long/short')}")
+    for key, per in s4["restricted"].items():
+        for label, r in per.items():
+            print(f"   {key:18} restricted to {label:20} n={r['n'][r['numerator']]}/{r['n'][r['denominator']]} "
+                  f"{_pair_text(r)}")
+
+
+def show_section5(s5: dict) -> None:
+    if s5.get("failed") or not s5.get("by_account"):
+        print("\n5. The five-hour window per model: "
+              + (f"FAILED, recorded and not raised: {s5['failed']}" if s5.get("failed") else s5["why"]))
+        return
+    for account, w in s5["by_account"].items():
+        print(f"\n5. The five-hour window per model on {account}, at {w['window_credits']:,.0f} credits "
+              f"({w['window_credits_per_pct']:,.0f} per 1%), input-equivalent tokens at output 5x")
+        for f, row in w["rows"].items():
+            shellac = (f"Shellac rate={row['shellac_rate']:.3f} tokens={row['shellac_tokens']:,.0f}"
+                       if row["shellac_rate"] else f"Shellac rate=absent ({name(f)} is not in the table)")
+            if row["measured_rate"] and row["rate_interval"]:
+                iv = row["measured_tokens_interval"]
+                measured = (f"measured rate={row['measured_rate']:.3f} "
+                            f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}] "
+                            f"tokens={row['measured_tokens']:,.0f} [{iv[0]:,.0f}, {iv[1]:,.0f}]")
+            elif row["measured_rate"]:
+                measured = (f"{row['rate_source']} rate={row['measured_rate']:.3f} (the anchor) "
+                            f"tokens={row['measured_tokens']:,.0f}")
+            elif row["rate_interval"]:
+                iv = row["measured_tokens_interval"]
+                tokens = (f" tokens [{iv[0]:,.0f}, {iv[1]:,.0f}]" if iv
+                          else " tokens unbounded (the rate interval reaches zero)")
+                measured = (f"{row['status']}: rate interval "
+                            f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}]"
+                            f"{tokens}, no value")
+            else:
+                measured = row["status"] or "measured rate=NOT MEASURABLE"
+            print(f"   {f:10} {shellac:52} {measured}")
 
 
 def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict, mr: dict,
@@ -1287,10 +1553,12 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
     for a, e in excl.items():
         extra = ", ".join(f"{d['start'][:19]} ({d['era']})" for d in e["dropped"]) or "none"
         print(f"   {a:9} clean stretches {e['probes_only']:3} -> {e['harness_runs']:3}   removed beyond the current rule: {extra}")
-    for label, q in win.items():
-        if q:
-            print(f"   jwork pure-Opus pre-14-Sep window, {label:12} n={q['n']:2} median={q['median']:,.0f} "
-                  f"credits per 1% range={q['min']:,.0f}-{q['max']:,.0f}")
+    for label, by in win.items():
+        if not by:
+            print(f"   pure-Opus pre-14-Sep window, {label:12} no account has one")
+        for account, q in by.items():
+            print(f"   {account:9} pure-Opus pre-14-Sep window, {label:12} n={q['n']:2} "
+                  f"median={q['median']:,.0f} credits per 1% range={q['min']:,.0f}-{q['max']:,.0f}")
 
     print(f"\n1. Input-equivalent tokens per 1%, stretches one model carries at >= {DOMINANCE:.0%} of raw tokens")
     for key, row in s1.items():
@@ -1361,69 +1629,15 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
                       f"prior={r['prior']:.3f} {r['verdict'].upper()}; {r['free']} row moves "
                       f"{pct(r['row_move'])}{wide}")
 
-    print("\n4. The jwork/Dave gap after 14 September")
-    print(f"   n: jwork {s4['n']['jwork']}, dave {s4['n']['dave']}   median raw-token shares:")
-    for a, sh in s4["shares"].items():
-        print(f"      {a:6} " + " ".join(f"{f}={v:.3f}" for f, v in sh.items()))
-    for label, m in s4["mix"].items():
-        print(f"   priced at {label:20} jwork={m['jwork']:9,.0f} dave={m['dave']:9,.0f} "
-              f"ratio={m['ratio']:.3f} [{m['interval'][0]:.3f}, {m['interval'][1]:.3f}] "
-              f"mix {m['verdict'].upper()} the gap")
-    for key, q in s4["quantisation"].items():
-        print(f"   whole-percent floor {key:16} n={q['n']:3} +-{q['per_stretch'] * 100:.1f}% a stretch, "
-              f"delta_pct values {', '.join(f'{d:.0f}' for d in q['deltas'])}")
-    for key, e in s4["reset_verified"].items():
-        parts = " ".join(f"{k}: n={v['n']} median={v['median']:,.0f}" for k, v in e.items()
-                         if k in ("True", "False") and v)
-        r = e.get("ratio")
-        extra = (f" ratio verified/not={r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}]"
-                 if r else f"  (one side under {MIN_N}, not measurable)")
-        print(f"   reset_verified {key:16} {parts}{extra}")
-    for key, e in s4["length"].items():
-        parts = " ".join(f"{k}: n={e[k]['n']} median={e[k]['median']:,.0f}" for k in ("short", "long") if e[k])
-        r = e.get("ratio")
-        extra = (f" ratio long/short={r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}]"
-                 if r else f"  (one side under {MIN_N}, not measurable)")
-        print(f"   length         {key:16} cut at delta_pct={e['cut_delta_pct']:.0f} {parts}{extra}")
-    for label, r in s4["restricted"].items():
-        if r.get("measurable") is False:
-            print(f"   restricted to {label:20} NOT MEASURABLE "
-                  f"(n={r['n']['jwork']}/{r['n']['dave']}, need {MIN_N} a side)")
-        else:
-            print(f"   restricted to {label:20} jwork={r['jwork']:9,.0f} dave={r['dave']:9,.0f} "
-                  f"ratio={r['ratio']:.3f} [{r['interval'][0]:.3f}, {r['interval'][1]:.3f}] "
-                  f"n={r['n']['jwork']}/{r['n']['dave']} {r['verdict'].upper()} the gap")
-
-    print(f"\n5. The five-hour window per model, at {s5['window_credits']:,.0f} credits "
-          f"({s5['window_credits_per_pct']:,.0f} per 1%), input-equivalent tokens at output 5x")
-    for f, row in s5["rows"].items():
-        shellac = (f"Shellac rate={row['shellac_rate']:.3f} tokens={row['shellac_tokens']:,.0f}"
-                   if row["shellac_rate"] else f"Shellac rate=absent ({name(f)} is not in the table)")
-        if row["measured_rate"] and row["rate_interval"]:
-            iv = row["measured_tokens_interval"]
-            measured = (f"measured rate={row['measured_rate']:.3f} "
-                        f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}] "
-                        f"tokens={row['measured_tokens']:,.0f} [{iv[0]:,.0f}, {iv[1]:,.0f}]")
-        elif row["measured_rate"]:
-            measured = (f"{row['rate_source']} rate={row['measured_rate']:.3f} (the anchor) "
-                        f"tokens={row['measured_tokens']:,.0f}")
-        elif row["rate_interval"]:
-            iv = row["measured_tokens_interval"]
-            tokens = (f" tokens [{iv[0]:,.0f}, {iv[1]:,.0f}]" if iv
-                      else " tokens unbounded (the rate interval reaches zero)")
-            measured = (f"{row['status']}: rate interval "
-                        f"[{row['rate_interval'][0]:.3f}, {row['rate_interval'][1]:.3f}]"
-                        f"{tokens}, no value")
-        else:
-            measured = row["status"] or "measured rate=NOT MEASURABLE"
-        print(f"   {f:7} {shellac:52} {measured}")
+    show_section4(s4)
+    show_section5(s5)
 
     pf = mr.get("pooled_fit")
     print(f"\n6. The rates the publisher adopts: one fit pooled over "
           f"{', '.join(mr['fits_pooled']) or 'nothing'}, output {mr['output_multiplier']}x")
     if pf:
         print(f"   n={pf['n']} stretches, SSE={pf['sse']:.3f}, {pf['resamples']} resamples "
-              f"stratified by group; held: " + (", ".join(f"{f} at {v:.3f}x" for f, v in
+              f"stratified by group; held: " + (", ".join(f"{f} at {x3(v)}x" for f, v in
                                                           pf["held_rate"].items()) or "none"))
         print("   credits per 1% per group: " + ", ".join(
             f"{g} {v:,.0f}" for g, v in pf["credits_per_pct"].items()))
@@ -1431,18 +1645,18 @@ def show(excl: dict, win: dict, s1: dict, s2: dict, s3: dict, s4: dict, s5: dict
         ref = f"reference={row['reference_input']:.3f}" if row["reference_input"] else "reference=absent"
         if row["input"] is not None and row["interval"]:
             lo, hi = row["times_opus_interval"]
-            what = f"input={row['input']:.4f} ({row['times_opus']:.3f}x Opus [{lo:.3f}, {hi:.3f}])"
+            what = f"input={row['input']:.4g} ({x3(row['times_opus'])}x Opus [{x3(lo)}, {x3(hi)}])"
         elif row["input"] is not None:
             what = f"input={row['input']:.4f} (the anchor)"
         else:
             what = row["status"]
             if row.get("inferred"):
-                what += (f"; shown INFERRED at {row['inferred']['times_opus']:.3f}x Opus "
+                what += (f"; shown INFERRED at {x3(row['inferred']['times_opus'])}x Opus "
                          f"({row['inferred']['inferred_from']})")
             if row.get("pooled"):
                 iv = row["pooled"]["interval"]
-                what += (f" (fit point {row['pooled']['times_opus']:.3f}x Opus "
-                         f"[{iv[0]:.3f}, {iv[1]:.3f}])")
+                what += (f" (fit point {x3(row['pooled']['times_opus'])}x Opus "
+                         f"[{x3(iv[0])}, {x3(iv[1])}])")
         print(f"   {f:8} {row['rate_source']:9} {ref:18} {what}")
     w = mr["cache_read_weight"]
     if w.get("interval"):
@@ -1499,6 +1713,164 @@ def stretches_in_five_hour_unit(gs_passive: dict | None, masterrig_passive: dict
                                   five_hour_weight.interactive_equivalent(masterrig_passive, factor))
 
 
+#: The exit status of a refit that is held rather than written (`rate_moves`). Distinct from
+#: a crash (1) and a usage error (2), so bin/daily.sh can report it as its own outcome: the
+#: rates in force are unchanged and the refit waits beside them for someone to read it.
+HELD_EXIT = 3
+
+
+#: The exit status of a hold already reported: the same hold as the last run's, so bin/daily.sh
+#: need not raise it again. bin/daily.sh's `rates_due` reads only the file in force, whose
+#: `generated_at` a hold leaves on the day of the last written fit, so a held refit is due
+#: again on every 30-minute tick (review of fix/model-rates-refit, 2026-10-23). Without this
+#: each tick would refit for 82 s on gs and exit HELD_EXIT, a fresh alert for one unchanged
+#: hold. HELD_EXIT is kept for a hold that is new, or whose moves name different rates.
+STILL_HELD_EXIT = 4
+
+
+def candidate_path(path: Path) -> Path:
+    """Where a held refit is written: `model-rates.candidate.json` beside the file in force."""
+    return path.with_name(f"{path.stem}.candidate{path.suffix}")
+
+
+def _outside(value: float | None, iv: list[float] | None, rel: float = 1e-9) -> bool:
+    """A value outside an interval, by more than floating-point noise on the interval's own
+    scale: a refit of the same stretches reproduces a point at its interval's end to the last
+    few bits, not exactly, and an interval that reaches zero ends at 1e-13, not at 0."""
+    if value is None or not iv:
+        return False
+    lo, hi = iv
+    slack = rel * max(abs(lo), abs(hi))
+    return value < lo - slack or value > hi + slack
+
+
+def _sha256(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def hold_fingerprint(masterrig: Path, in_force: Path, command: str) -> dict:
+    """What a held refit was fitted from, as far as bin/daily.sh's `rates_due` reads it: the
+    local day (a written fit is redone once a day for the files it reads beside masterrig's),
+    the fit's code, masterrig's stretch record and the rates in force it was compared with,
+    plus the command. A candidate whose fingerprint matches the run about to start would be
+    refitted from the same inputs `rates_due` watches, so the run reports it and stops."""
+    code = (Path(__file__), Path(C.__file__), Path(five_hour_weight.__file__))
+    return {"date": datetime.now().astimezone().date().isoformat(),
+            "code": {p.name: _sha256(p) for p in code},
+            "masterrig": _sha256(masterrig), "in_force": _sha256(in_force), "command": command}
+
+
+def move_signature(moves: list[str]) -> list[str]:
+    """The moves with their figures blanked: which rates moved and how, not by how much, so a
+    hold the next day's data shift by a few thousandths is the hold already reported. Family
+    names carry digits too (Opus 5.5) and blank the same way on both sides."""
+    return sorted(re.sub(r"\d+(\.\d+)?", "#", m) for m in moves)
+
+
+def previous_hold(candidate: Path) -> dict | None:
+    """The `_meta.held` block of the candidate on disk, or None when there is none to read."""
+    try:
+        held = json.loads(candidate.read_text(encoding="utf-8"))["_meta"]["held"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return held if isinstance(held, dict) else None
+
+
+def _moved(old_value: float | None, old_iv: list[float] | None, new_value: float | None,
+           new_iv: list[float] | None) -> bool:
+    """Whether a refit moved a rate: the new point lies outside the interval in force -- or,
+    where the interval in force says nothing (`collapsed`), the new fit's own interval says
+    something and excludes the point in force. Two intervals that both say nothing are no
+    move, whatever their points: a rate the fit drove to zero that a refit puts anywhere its
+    own interval still reaches zero has not moved anything that was measured."""
+    if new_value is None or not old_iv:
+        return False
+    if not collapsed(old_iv):
+        return _outside(new_value, old_iv)
+    if old_value is None or not new_iv or collapsed(new_iv) or new_iv[0] < RATE_FLOOR:
+        return False
+    return _outside(old_value, new_iv)
+
+
+def rate_moves(old: dict, new: dict) -> list[str]:
+    """Why a refit must not replace the rates in force, one sentence each; empty when it may.
+
+    `old` and `new` are `measured_rates` blocks. A refit is held when, against the block in
+    force:
+
+    - a published rate moves (`_moved`): its new value lies outside the old rate's own
+      interval;
+    - a measured rate has no value any more, or drops back to provisional;
+    - a family the pooled fit carried without publishing it, the cache-read weight or the
+      headless factor moves outside its own interval -- all three price stretches in the
+      before-and-after comparison (tracker/credits.py `pooled_fit`), published or not;
+    - fewer than MIN_NONZERO of the new fit's stretches carry the anchor, so nothing ties the
+      fitted rates to the unit.
+
+    Not held: a provisional rate that loses its value. A provisional rate values no stretch
+    (tracker/gs_passive.py `stretch_credits`), and the page falls back to the family's
+    `inferred` rate, marked as inferred, as for every family the fit cannot measure. Nor is a
+    rate whose interval in force says nothing (`collapsed`, as Haiku 5.5's 0.000x [0.000,
+    0.000] provisional and the pooled Haiku's did on 2026-10-23) held for moving, unless the
+    refit's own interval measures it away from that point.
+
+    The first refit after the crash of 2026-10-13 to 2026-10-22, on a history that had lost
+    gs's pre-October transcripts, moved Opus 5.5 from 0.780x measured to 0.367x provisional,
+    Fable from 2.966x to 2.098x and the cache-read weight from 0.0097 to 0.0023. A move like
+    that may be real or may be what the inputs lost; either way it is read before it is
+    published. A family the old block did not publish, or did not carry, is free to arrive.
+    """
+    out = []
+    old_rows, new_rows = old.get("per_family") or {}, new.get("per_family") or {}
+    shown = set()
+    for f, o in old_rows.items():
+        if o.get("anchor") or o.get("input") is None:
+            continue
+        shown.add(f)
+        n = new_rows.get(f) or {}
+        iv = o.get("times_opus_interval")
+        was = f"{x3(o['times_opus'])}x Opus" + (" provisional" if o.get("provisional") else "")
+        if n.get("input") is None:
+            if not o.get("provisional") and not collapsed(iv):
+                out.append(f"{name(f)} no longer has a published rate (was {was})")
+            continue
+        if n.get("provisional") and not o.get("provisional"):
+            out.append(f"{name(f)} drops from measured to provisional ({was} -> "
+                       f"{x3(n['times_opus'])}x provisional)")
+        if _moved(o.get("times_opus"), iv, n.get("times_opus"), n.get("times_opus_interval")):
+            span = "" if collapsed(iv) else f" [{x3(iv[0])}, {x3(iv[1])}]"
+            out.append(f"{name(f)} moves from {was}{span} to {x3(n['times_opus'])}x, outside its "
+                       "interval")
+    old_fit, new_fit = old.get("pooled_fit") or {}, new.get("pooled_fit") or {}
+    for f, iv in sorted((old_fit.get("interval") or {}).items()):
+        v = (new_fit.get("times_opus") or {}).get(f)
+        was_v = (old_fit.get("times_opus") or {}).get(f)
+        if f not in shown and _moved(was_v, iv, v, (new_fit.get("interval") or {}).get(f)):
+            out.append(f"the pooled fit's {name(f)} (not published, priced in the before-and-after "
+                       f"comparison) moves from {x3(was_v)}x [{x3(iv[0])}, {x3(iv[1])}] to "
+                       f"{x3(v)}x, outside its interval")
+    iv = old_fit.get("cache_read_weight_interval")
+    v = new_fit.get("cache_read_weight")
+    if _outside(v, iv):
+        out.append(f"the cache-read weight moves from {old_fit['cache_read_weight']:.4g} "
+                   f"[{iv[0]:.4g}, {iv[1]:.4g}] to {v:.4g}, outside its interval")
+    o_unit, n_unit = old.get("five_hour_unit") or {}, new.get("five_hour_unit") or {}
+    iv = o_unit.get("interval")
+    if o_unit.get("headless_factor") is not None and n_unit.get("headless_factor") is None:
+        out.append(f"the headless factor is no longer measured (was {o_unit['headless_factor']:.3f})")
+    elif _outside(n_unit.get("headless_factor"), iv):
+        out.append(f"the headless factor moves from {o_unit['headless_factor']:.3f} "
+                   f"[{iv[0]:.3f}, {iv[1]:.3f}] to {n_unit['headless_factor']:.3f}, outside its interval")
+    carrying = (new.get("anchor") or {}).get("n_stretches_carrying")
+    if new_fit and carrying is not None and carrying < MIN_NONZERO:
+        out.append(f"only {carrying} of the pooled fit's stretches carry {name(ANCHOR)}, the unit "
+                   f"anchor, under the {MIN_NONZERO} that tie the fitted rates to the unit")
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("masterrig", type=Path, help="a masterrig stretch file, as tools/reconcile_window.py takes")
@@ -1510,9 +1882,30 @@ def main(argv: list[str] | None = None) -> int:
                          "with the rates, `zero` holds it at 0 as the reference table reads")
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
+    ap.add_argument("--accept-moves", action="store_true",
+                    help="write --json even where the refit moves a rate outside its interval (rate_moves); "
+                         "the moves accepted are recorded in _meta.accepted_moves")
     a = ap.parse_args(argv)
+    command = (f"python3 -m tools.model_rates {a.masterrig} --json {a.json}"
+               + ("" if a.variant == "joint" else f" --variant {a.variant}")
+               + ("" if a.exclusions == "harness-runs" else f" --exclusions {a.exclusions}")
+               + ("" if a.seed == SEED else f" --seed {a.seed}")
+               + ("" if a.resamples == RESAMPLES else f" --resamples {a.resamples}"))
+    if a.json:
+        fingerprint = hold_fingerprint(a.masterrig, a.json, command)
+        last = previous_hold(candidate_path(a.json))
+        if not a.accept_moves and last and last.get("fingerprint") == fingerprint:
+            # Held already today from these same inputs: a refit would only hold it again.
+            print(f"refit still held (exit {STILL_HELD_EXIT}): {candidate_path(a.json)} was fitted "
+                  f"today from the same code, {a.masterrig} and {a.json}, so it is not refitted, "
+                  f"and {a.json} is unchanged. It moves:\n  - " + "\n  - ".join(last.get("moves") or [])
+                  + "\nRead the moves, then rerun with --accept-moves to adopt it.", file=sys.stderr)
+            return STILL_HELD_EXIT
     gs_raw = json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8"))
     mr_raw = json.loads(a.masterrig.read_text(encoding="utf-8"))
+    # The rates are fitted on five-hour stretches, so none past the five-hour limit's end
+    # (tracker/five_hour_end.py): the fit freezes there with every other five-hour figure.
+    gs_raw, mr_raw, _ = five_hour_end.apply(gs_raw, mr_raw)
     unit = five_hour_unit(gs_raw, mr_raw)
     factor = unit["headless_factor"]
     S = stretches_in_five_hour_unit(gs_raw, mr_raw, factor)
@@ -1529,19 +1922,37 @@ def main(argv: list[str] | None = None) -> int:
     s1 = section1(data)
     s2 = section2(data, a.seed, a.resamples)
     s3 = section3(data, a.seed, a.resamples)
-    s4 = section4(data, s3, a.seed, a.resamples)
+    s4 = diagnostic("4", section4, data, s3, a.seed, a.resamples)
     pooled = pooled_section(data, a.seed, a.resamples)
     mr = measured_rates(s1, s3, pooled, a.variant)
     mr["five_hour_unit"] = unit
-    s5 = section5(win, mr)
-    show(excl, win, s1, s2, s3, s4, s5, mr, lists, a.exclusions)
+    s5 = diagnostic("5", section5, win, mr)
+    held, repeat = [], False
     if a.json:
-        command = (f"python3 -m tools.model_rates {a.masterrig} --json {a.json}"
-                   + ("" if a.variant == "joint" else f" --variant {a.variant}")
-                   + ("" if a.exclusions == "harness-runs" else f" --exclusions {a.exclusions}")
-                   + ("" if a.seed == SEED else f" --seed {a.seed}")
-                   + ("" if a.resamples == RESAMPLES else f" --resamples {a.resamples}"))
-        a.json.write_text(json.dumps({
+        # The guard (`rate_moves`): against the rates in force at --json, before anything is
+        # written over them. No file there, or no measured_rates block in it, is a first fit.
+        moves = rate_moves(C.load_model_rates(a.json), mr)
+        target, candidate = a.json, candidate_path(a.json)
+        meta_extra = {}
+        if moves and a.accept_moves:
+            meta_extra["accepted_moves"] = moves
+        elif moves:
+            held, target = moves, candidate
+            # The same rates moving against the same rates in force is the hold already
+            # reported (STILL_HELD_EXIT); the candidate is still rewritten with today's figures.
+            last = previous_hold(candidate) or {}
+            repeat = ((last.get("fingerprint") or {}).get("in_force") == fingerprint["in_force"]
+                      and last.get("signature") == move_signature(moves))
+            meta_extra["held"] = {
+                "moves": moves, "in_force": str(a.json),
+                "signature": move_signature(moves), "fingerprint": fingerprint,
+                "first_held_at": (last.get("first_held_at") if repeat else None)
+                or datetime.now().astimezone().isoformat(timespec="seconds"),
+                "what": ("this refit moved published rates beyond their intervals and was not "
+                         "written over the rates in force; read the moves, then rerun with "
+                         "--accept-moves to adopt it"),
+                "accept": f"{command} --accept-moves"}
+        target.write_text(json.dumps({
             "_meta": {
                 "what": "the meter's own per-model credit rates, fitted from the passive stretches "
                         "already in the repository. `measured_rates` is the block tracker/credits.py "
@@ -1556,6 +1967,7 @@ def main(argv: list[str] | None = None) -> int:
                              "docs/findings-2026-09-23-masterrig-admitted.md",
                              "docs/findings-2026-09-23-pooled-rates.md"],
                 "no_traffic": "read-only arithmetic over committed files; no account was driven",
+                **meta_extra,
             },
             "measured_rates": mr,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -1572,6 +1984,25 @@ def main(argv: list[str] | None = None) -> int:
             "adopt": adopt(s3, a.variant),
             "adopt_cache_read_zero": adopt(s3, "zero"),
             "adopt_output_3x": adopt(s3, a.variant, "out3x")}, indent=1, default=float) + "\n")
+        if not held and candidate.exists():
+            # A candidate an earlier run held is superseded by the rates just written.
+            candidate.unlink()
+    # The report prints after the file is written, so nothing in it can stop the rates landing.
+    show(excl, win, s1, s2, s3, s4, s5, mr, lists, a.exclusions)
+    if held and repeat:
+        print(f"\nHELD -> {candidate_path(a.json)}; the rates in force at {a.json} are unchanged")
+        print(f"refit still held (exit {STILL_HELD_EXIT}): the same rates move as in the hold first "
+              f"reported at {meta_extra['held']['first_held_at']}; {candidate_path(a.json)} is "
+              f"refreshed and {a.json} is unchanged:\n  - " + "\n  - ".join(held)
+              + "\nRead the moves, then rerun with --accept-moves to adopt it.", file=sys.stderr)
+        return STILL_HELD_EXIT
+    if held:
+        print(f"\nHELD -> {candidate_path(a.json)}; the rates in force at {a.json} are unchanged")
+        print(f"refit held (exit {HELD_EXIT}): the new fit is at {candidate_path(a.json)} and "
+              f"{a.json} is unchanged, because it moves:\n  - " + "\n  - ".join(held)
+              + "\nRead the moves, then rerun with --accept-moves to adopt it.", file=sys.stderr)
+        return HELD_EXIT
+    if a.json:
         print(f"\nJSON -> {a.json}")
     return 0
 

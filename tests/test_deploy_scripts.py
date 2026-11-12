@@ -98,7 +98,7 @@ class TestDeployScriptsSyntax(unittest.TestCase):
         self.assertIn("--prices data/prices.json", step)
         self.assertIn("--probes history/probes.jsonl", step)
         self.assertIn("--out history/gs-passive.json", step)
-        self.assertIn("|| echo \"warning: tracker.gs_passive failed", step)
+        self.assertIn("advisory tracker.gs_passive $? ", step)
         self.assertIn("--gs-passive history/gs-passive.json", text[publish:])
         commit = text.index('git -c user.name=publisher')
         self.assertIn("history/gs-passive.json", text[publish:commit])
@@ -114,7 +114,7 @@ class TestDeployScriptsSyntax(unittest.TestCase):
             self.assertLess(step, text.index(reader))
         block = text[step:text.index("python3 -m tracker.contributed")]
         self.assertIn("--prices data/prices.json", block)
-        self.assertIn("|| echo \"warning: tracker.list_prices failed", block)
+        self.assertIn("advisory tracker.list_prices $? ", block)
         self.assertLess(text.index("git add data/prices.json"), text.index('git -c user.name=publisher'))
 
     def test_daily_runs_contributed_before_publish_and_never_lets_it_stop_the_publish(self) -> None:
@@ -128,11 +128,86 @@ class TestDeployScriptsSyntax(unittest.TestCase):
         self.assertIn("--history history/contributed.jsonl", step)
         self.assertIn("--out data/contributed.json", step)
         self.assertIn('--env-file "$HOME/.claude-usage-notify.env"', step)
-        # Advisory: the step's failure is caught on the same command, not left to fail the script.
-        self.assertIn("|| echo \"warning: tracker.contributed failed", step)
+        # Advisory: the step's exit is handed to `advisory` (a warning line and a record for
+        # health), never left to fail the script.
+        self.assertIn("advisory tracker.contributed $? ", step)
         self.assertIn("--contributed data/contributed.json", text[publish:])
         commit = text.index('git -c user.name=publisher')
         self.assertIn("history/contributed.jsonl data/contributed.json", text[publish:commit])
+
+
+class TestDailyRestartsOnAChangedScript(unittest.TestCase):
+    """A pull that changes bin/daily.sh restarts the run on the new script.
+
+    On 2026-10-23 the 13:30Z run pulled PR #142, which added the four-account detector's
+    step to daily.sh, and bash went on reading the script it had open: the detector never
+    ran and the publish went out with no four_accounts block. These run daily.sh's own
+    restart_if_changed in a scratch clone whose pull brings a new version of the script.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        match = re.search(r"^restart_if_changed\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
+        assert match, "restart_if_changed not found in bin/daily.sh"
+        cls.func = match.group(0)
+        cls.text = text
+
+    def script(self, version: str, restart: bool) -> str:
+        return "\n".join([
+            "#!/usr/bin/env bash",
+            'SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"',
+            'cd "$(dirname "$0")" || exit 1',
+            self.func,
+            'SELF_BEFORE_PULL="$(cksum < "$SELF")"',
+            "git pull -q origin main",
+            'restart_if_changed "$SELF_BEFORE_PULL"' if restart else ': "$SELF_BEFORE_PULL"',
+            f'echo "ran {version} restarted=${{CUT_DAILY_RESTARTED:-}}"',
+            ""])
+
+    def run_pulling_a_new_version(self, restart: bool = True, env: dict | None = None):
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+               "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null"]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            origin, work, live = tmp_path / "origin.git", tmp_path / "work", tmp_path / "live"
+            subprocess.run([*git, "init", "-q", "--bare", str(origin)], check=True)
+            subprocess.run([*git, "clone", "-q", str(origin), str(work)], check=True)
+            (work / "daily.sh").write_text(self.script("old", restart))
+            subprocess.run([*git, "-C", str(work), "add", "daily.sh"], check=True)
+            subprocess.run([*git, "-C", str(work), "commit", "-qm", "old"], check=True)
+            subprocess.run([*git, "-C", str(work), "push", "-q", "origin", "HEAD:main"], check=True)
+            subprocess.run([*git, "clone", "-q", "-b", "main", str(origin), str(live)], check=True)
+            (work / "daily.sh").write_text(self.script("new", restart))
+            subprocess.run([*git, "-C", str(work), "commit", "-qam", "new"], check=True)
+            subprocess.run([*git, "-C", str(work), "push", "-q", "origin", "HEAD:main"], check=True)
+            run_env = {k: v for k, v in os.environ.items() if k != "CUT_DAILY_RESTARTED"}
+            return subprocess.run(["bash", str(live / "daily.sh")], capture_output=True, text=True,
+                                  env={**run_env, **(env or {})}, check=False, timeout=60)
+
+    def test_without_the_restart_the_run_is_the_old_script(self) -> None:
+        """The failure itself: the pull brings the new file, the run goes on as the old one."""
+        r = self.run_pulling_a_new_version(restart=False)
+        self.assertIn("ran old", r.stdout)
+
+    def test_a_pull_that_changes_the_script_restarts_on_the_new_one(self) -> None:
+        r = self.run_pulling_a_new_version()
+        self.assertEqual(r.stdout.strip(), "ran new restarted=1", r.stderr)
+        self.assertIn("the pull changed bin/daily.sh, restarting this run on the new one", r.stderr)
+
+    def test_it_restarts_at_most_once(self) -> None:
+        r = self.run_pulling_a_new_version(env={"CUT_DAILY_RESTARTED": "1"})
+        self.assertIn("ran old", r.stdout)
+        self.assertNotIn("restarting", r.stderr)
+
+    def test_daily_sh_checks_right_after_its_pull_and_before_any_step(self) -> None:
+        before = self.text.index('SELF_BEFORE_PULL="$(cksum < "$SELF")"')
+        pull = self.text.index('if ! git pull -q --rebase --autostash origin "$BRANCH"')
+        restart = self.text.index('restart_if_changed "$SELF_BEFORE_PULL"')
+        first_step = self.text.index("python3 -m tracker.")
+        self.assertLess(before, pull)
+        self.assertLess(pull, restart)
+        self.assertLess(restart, first_step)
 
 
 class TestDailyNotifyChange(unittest.TestCase):
@@ -145,7 +220,8 @@ class TestDailyNotifyChange(unittest.TestCase):
         assert match, "notify_change not found in bin/daily.sh"
         cls.func = match.group(0)
 
-    def _publishes(self, *publishes, notified=None, env_file=True, generated_at=None, days=None):
+    def _publishes(self, *publishes, notified=None, env_file=True, generated_at=None, days=None,
+                   extra=None):
         """Run notify_change once per publish, in order, in one repo checkout.
 
         Each publish is (last_change, newest weekly window[, curl status[, feeds]]): the
@@ -153,7 +229,8 @@ class TestDailyNotifyChange(unittest.TestCase):
         newest_stretch_end. `generated_at`, one stamp per publish, is each publish's own
         time, which the 24 and 48 hour rules measure from. `days`, one per publish, is
         the UTC day a stub `date` reports (2026-10-01 for every publish by default), which
-        the once-a-day failed-send rule keys on. Returns (procs, requests, alerts), one entry per
+        the once-a-day failed-send rule keys on. `extra`, one dict per publish, adds fields to
+        that publish's JSON (the hero's `headline`). Returns (procs, requests, alerts), one entry per
         publish, and sets self.state to the announced dates recorded, or None.
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -182,8 +259,12 @@ class TestDailyNotifyChange(unittest.TestCase):
                 public = {"last_change": last_change, "weekly_windows": {"passive": {"by_window": windows}}}
                 if generated_at is not None:
                     public["generated_at"] = generated_at[i]
+                if extra is not None:
+                    public.update(extra[i])
                 if feeds is not None:
-                    public["account_feeds"] = {label: {"newest_stretch_end": end, "state": "fresh"}
+                    # A feed is its newest_stretch_end, or the whole feed record as a dict.
+                    public["account_feeds"] = {label: end if isinstance(end, dict)
+                                               else {"newest_stretch_end": end, "state": "fresh"}
                                                for label, end in feeds.items()}
                 (data / "claude-usage.json").write_text(json.dumps(public), encoding="utf-8")
                 # A stub curl that never touches the network. It records the request
@@ -236,7 +317,8 @@ class TestDailyNotifyChange(unittest.TestCase):
     def _payload(request: str) -> dict:
         return json.loads(next(ln for ln in request.splitlines() if ln.startswith("{")))
 
-    CHANGE: ClassVar[dict] = {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"}
+    CHANGE: ClassVar[dict] = {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5",
+                              "state": "measured"}
     # masterrig's daily history pushes: the newest window each one carries.
     W1, W2, W3, W4 = ("2026-09-15T02:30:00+00:00", "2026-09-16T02:30:00+00:00",
                       "2026-09-17T02:30:00+00:00", "2026-09-18T02:30:00+00:00")
@@ -250,10 +332,11 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIn("authorization: Bearer s3cr3t", requests[1])
         self.assertEqual(
             self._payload(requests[1]),
-            {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5"},
+            {"date": "2026-09-11", "direction": "increased", "percent": 7, "model": "claude-opus-5",
+             "state": "measured"},
         )
         # Jonathan gets his own alert for the confirmed change, quoting the outcome.
-        self.assertIn("Observed change: increased 7% on 2026-09-11 (claude-opus-5)", alerts[1])
+        self.assertIn("Observed change: increased 7% on 2026-09-11 (claude-opus-5), measured", alerts[1])
         self.assertIn("HTTP 200", alerts[1])
 
     def test_hourly_republishes_of_the_same_windows_are_one_look(self) -> None:
@@ -265,7 +348,7 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertEqual(self._payload(requests[3])["date"], "2026-09-11")
 
     FIVE_HOUR: ClassVar[dict] = {"date": "2026-09-22", "direction": "increased", "percent": 38,
-                                 "scope": "five_hour"}
+                                 "scope": "five_hour", "state": "measured"}
     #: The live stall: the weekly windows stuck at 2026-09-24T18:10 for days.
     STALLED = "2026-09-24T18:10:00.103349+00:00"
 
@@ -281,9 +364,23 @@ class TestDailyNotifyChange(unittest.TestCase):
             (self.FIVE_HOUR, self.STALLED, "200", feeds2))
         self.assertEqual(requests[:2], ["", ""], "one look at the same evidence is not two")
         self.assertEqual(self._payload(requests[2]),
-                         {"date": "2026-09-22", "direction": "increased", "percent": 38, "scope": "five_hour"})
+                         {"date": "2026-09-22", "direction": "increased", "percent": 38, "scope": "window",
+                          "state": "measured"})
         self.assertIn("Observed change: increased 38% on 2026-09-22", alerts[2])
         self.assertEqual(self.state, ["2026-09-22"])
+
+    def test_a_newer_seven_day_step_is_new_evidence_past_the_five_hour_limits_end(self) -> None:
+        # Weekly-only accounts close no stretch and no window: their seven-day steps are what
+        # moves (tracker/five_hour_end.py), so a newer step is a second look.
+        STRETCH = "2026-10-30T23:37:06+00:00"
+        feeds1 = {"a2": {"newest_stretch_end": STRETCH, "newest_step_end": "2026-11-20T09:00:00+00:00"}}
+        feeds2 = {"a2": {"newest_stretch_end": STRETCH, "newest_step_end": "2026-11-21T09:00:00+00:00"}}
+        _procs, requests, _alerts = self._publishes(
+            (self.FIVE_HOUR, self.STALLED, "200", feeds1),
+            (self.FIVE_HOUR, self.STALLED, "200", feeds1),
+            (self.FIVE_HOUR, self.STALLED, "200", feeds2))
+        self.assertEqual(requests[:2], ["", ""])
+        self.assertEqual(self._payload(requests[2])["date"], "2026-09-22")
 
     def test_stalled_windows_and_unchanged_stretches_never_announce(self) -> None:
         # The bug this gate fixes, the other way round: with neither source moving, hourly
@@ -298,21 +395,23 @@ class TestDailyNotifyChange(unittest.TestCase):
         # The committed history replayed as masterrig pushed it (tests/test_detect.py):
         # 2026-09-15's windows certify -19% dated 2026-08-28 all day, 2026-09-16's move
         # it to the real cut, and the next push that still shows the cut announces it.
-        misdated = {"date": "2026-08-28", "direction": "decreased", "percent": 19, "scope": "weekly"}
-        cut = {"date": "2026-09-14", "direction": "decreased", "percent": 29, "scope": "weekly"}
+        misdated = {"date": "2026-08-28", "direction": "decreased", "percent": 19, "scope": "weekly",
+                    "state": "measured"}
+        cut = {"date": "2026-09-14", "direction": "decreased", "percent": 29, "scope": "weekly", "state": "measured"}
         _procs, requests, alerts = self._publishes(
             (misdated, self.W1), (misdated, self.W1), (cut, self.W2), (cut, self.W2),
             ({**cut, "percent": 28}, "2026-09-16T17:30:00.354502+00:00"))
         self.assertEqual(requests[:4], ["", "", "", ""])
         self.assertEqual(alerts[:4], ["", "", "", ""])
         self.assertEqual(self._payload(requests[4]),
-                         {"date": "2026-09-14", "direction": "decreased", "percent": 28, "scope": "weekly"})
+                         {"date": "2026-09-14", "direction": "decreased", "percent": 28, "scope": "weekly",
+                          "state": "measured"})
         self.assertEqual(self.state, ["2026-09-14"])
 
     def test_a_change_whose_date_moves_by_a_day_is_one_event_and_is_announced_once(self) -> None:
         # Window by window the real cut first dated itself 2026-09-13, then 2026-09-14.
-        cut13 = {"date": "2026-09-13", "direction": "decreased", "percent": 29, "scope": "weekly"}
-        cut14 = {"date": "2026-09-14", "direction": "decreased", "percent": 30, "scope": "weekly"}
+        cut13 = {"date": "2026-09-13", "direction": "decreased", "percent": 29, "scope": "weekly", "state": "measured"}
+        cut14 = {"date": "2026-09-14", "direction": "decreased", "percent": 30, "scope": "weekly", "state": "measured"}
         _procs, requests, _alerts = self._publishes(
             (cut13, "2026-09-15T16:30:00+00:00"), (cut14, "2026-09-15T21:30:00+00:00"),
             (cut13, self.W2), (cut13, self.W3), (cut14, self.W4))
@@ -425,16 +524,187 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIsNone(self.state)
 
     def test_from_24_hours_a_change_whose_interval_excludes_no_change_is_sent(self) -> None:
-        settled = {**self.MEASURED, "interval_excludes_no_change": True, "state": "provisional"}
+        settled = {**self.MEASURED, "interval_excludes_no_change": True, "state": "measured"}
         _procs, requests, alerts = self._timed(settled, 24.5)
         payload = self._payload(requests[1])
         self.assertEqual(payload["change_pct"], -2.0)
-        self.assertEqual(payload["state"], "provisional")
+        self.assertEqual(payload["state"], "measured")
         self.assertEqual(payload["metric"], "windows_per_week")
         self.assertNotIn("announced", json.dumps(payload))
         self.assertNotIn("announcement", alerts[1])
-        self.assertIn("-2% [-33.8, +56.5] windows_per_week, provisional", alerts[1])
+        self.assertIn("-2% [-33.8, +56.5] windows_per_week, measured", alerts[1])
         self.assertEqual(self.state, ["2026-09-22"])
+
+    #: The 2026-10-17 opus-4-6 record as the publisher would write it once unblocked: not
+    #: `provisional` (the flag is false on every meter-measured record), its interval
+    #: excludes no change, more than 48 hours old -- and its state is "provisional".
+    OCT17: ClassVar[dict] = {"date": "2026-10-17", "at": "2026-10-17T02:16:18+00:00",
+                             "direction": "decreased", "percent": 43, "scope": "both",
+                             "metric": "five_hour_limit", "change_pct": -43.2,
+                             "interval_pct": [-54.2, -33.4], "state": "provisional",
+                             "provisional": False, "interval_excludes_no_change": True}
+
+    def test_a_change_not_yet_measured_is_never_emailed_and_jonathan_hears_once(self) -> None:
+        procs, requests, alerts = self._timed(self.OCT17, 49, 50, 51)
+        self.assertEqual(requests, [""] * 6, "a provisional change reached the subscriber endpoint")
+        self.assertIsNone(self.state, "a held change must not be recorded as announced")
+        told = [a for a in alerts if a]
+        self.assertEqual(len(told), 1, alerts)
+        self.assertIn("Observed change, not emailed (provisional): decreased 43% on 2026-10-17", told[0])
+        self.assertIn("not emailed", procs[-1].stderr)
+        self.assertIn("2026-10-17 held:provisional", self.attempts)
+
+    def test_a_held_change_is_emailed_once_it_reads_measured(self) -> None:
+        measured = {**self.OCT17, "state": "measured"}
+        stamps = ["2026-10-19T03:00:00+00:00"] * 4
+        _procs, requests, alerts = self._publishes(
+            (self.OCT17, self.W1), (self.OCT17, self.W2), (measured, self.W3), (measured, self.W4),
+            generated_at=stamps)
+        self.assertEqual(requests[:2], ["", ""])
+        self.assertEqual(self._payload(requests[2])["state"], "measured")
+        self.assertIn("not emailed (provisional)", alerts[1])
+        self.assertIn("Observed change: decreased 43% on 2026-10-17", alerts[2])
+        self.assertEqual(self.state, ["2026-10-17"])
+
+    # The records the publisher wrote on the 2026-10-23 records (the offline lifecycle runs of
+    # feat/provisional-headline): today the hero states 9 October as the 5-hour limit while it
+    # is provisional, and `last_change` is 23 September, already announced; once 9 October is
+    # measured (the run of 2026-10-26) it is `last_change` as well.
+    SEP23_MEASURED: ClassVar[dict] = {
+        "date": "2026-09-23", "at": "2026-09-23T13:00:00+00:00", "direction": "increased",
+        "percent": 21, "state": "measured", "provisional": False, "metric": "weekly_limit",
+        "change_pct": 20.5, "interval_excludes_no_change": True, "scope": "both"}
+    OCT09_HERO_PROVISIONAL: ClassVar[dict] = {
+        "date": "2026-10-09", "at": "2026-10-09T16:00:00+00:00", "state": "provisional",
+        "provisional": True, "held_days": 4, "holds_needed": 7, "quantity": "five_hour_limit",
+        "limit": "5-hour limit", "direction": "increased", "percent": 15, "change_pct": 15.3}
+    OCT09_MEASURED: ClassVar[dict] = {
+        "date": "2026-10-09", "at": "2026-10-09T16:00:00+00:00", "direction": "decreased",
+        "percent": 9, "state": "measured", "provisional": False, "metric": "windows_per_week",
+        "change_pct": -9.3, "interval_excludes_no_change": True, "scope": "windows_per_week"}
+
+    def test_a_provisional_hero_is_never_emailed_and_is_emailed_once_measured(self) -> None:
+        # The email reads `last_change` alone, never `headline`: while the hero states the
+        # provisional 9 October change nothing is sent or alerted; the run it is measured it
+        # becomes `last_change` and is sent once.
+        hero_measured = {**self.OCT09_HERO_PROVISIONAL, "state": "measured", "provisional": False,
+                         "held_days": 7}
+        stamps = ["2026-10-23T14:00:00+00:00"] * 3 + ["2026-10-26T03:00:00+00:00"] * 3
+        _procs, requests, alerts = self._publishes(
+            (self.SEP23_MEASURED, self.W1), (self.SEP23_MEASURED, self.W2), (self.SEP23_MEASURED, self.W3),
+            (self.OCT09_MEASURED, self.W4), (self.OCT09_MEASURED, "2026-09-19T02:30:00+00:00"),
+            (self.OCT09_MEASURED, "2026-09-20T02:30:00+00:00"),
+            notified="2026-09-23", generated_at=stamps,
+            extra=[{"headline": self.OCT09_HERO_PROVISIONAL}] * 3 + [{"headline": hero_measured}] * 3)
+        self.assertEqual(requests[:3], ["", "", ""], "a provisional hero reached the subscriber endpoint")
+        self.assertEqual(alerts[:3], ["", "", ""])
+        self.assertEqual(requests[3], "", "one publish is not enough to announce")
+        self.assertEqual(self._payload(requests[4])["date"], "2026-10-09")
+        self.assertEqual(self._payload(requests[4])["state"], "measured")
+        self.assertEqual(requests[5], "", "a change is announced once")
+        self.assertEqual(self.state, ["2026-09-23", "2026-10-09"])
+        self.assertNotIn('"headline"', self.func, "the email never reads the hero's record")
+
+    # 9 October as the publisher writes it once measured, replayed to 2026-10-27 on the 23 Oct
+    # records: found on windows per week, `hero` the hero's sentence for it (the 5-hour limit).
+    OCT09_HERO_MEASURED: ClassVar[dict] = {
+        "date": "2026-10-09", "at": "2026-10-09T16:00:00+00:00", "state": "measured",
+        "provisional": False, "held_days": 8, "holds_needed": 7, "quantity": "five_hour_limit",
+        "line": "five_hour", "limit": "5-hour limit", "direction": "increased", "percent": 17,
+        "change_pct": 17.1, "interval_pct": [9.3, 25.5], "found_on": "ratio"}
+    OCT09_MEASURED_WITH_HERO: ClassVar[dict] = {
+        **OCT09_MEASURED, "change_pct": -9.2, "interval_pct": [-12.9, -5.2],
+        "five_hour_limit_change_pct": 17.1, "five_hour_limit_change_interval_pct": [9.3, 25.5],
+        "weekly_limit_change_pct": 5.6, "weekly_limit_change_interval_pct": [-0.0, 11.6],
+        "windows_per_week_change_pct": -9.2, "windows_per_week_change_interval_pct": [-12.9, -5.2],
+        "accounts": ["Max account 1", "Max account 2", "Max account 3", "Max account 4"],
+        "hero": OCT09_HERO_MEASURED}
+
+    def test_the_email_leads_with_the_heros_sentence_for_the_measured_change(self) -> None:
+        # Jonathan's decision, 2026-10-23: the email says what the hero says. The lead figure is
+        # `last_change.hero`'s (the 5-hour limit +17%), never the line the change was found on
+        # (windows per week -9%), and the figures that explain it ride beside it.
+        stamps = ["2026-10-27T03:00:00+00:00"] * 2
+        _procs, requests, alerts = self._publishes(
+            (self.OCT09_MEASURED_WITH_HERO, self.W1), (self.OCT09_MEASURED_WITH_HERO, self.W2),
+            notified="2026-09-23", generated_at=stamps)
+        payload = self._payload(requests[1])
+        hero = self.OCT09_HERO_MEASURED
+        self.assertEqual((payload["limit"], payload["direction"], payload["percent"]),
+                         (hero["quantity"], hero["direction"], hero["percent"]))
+        self.assertEqual(
+            {k: payload[k] for k in ("five_hour_limit_change_pct", "five_hour_limit_change_interval_pct",
+                                     "weekly_limit_change_pct", "weekly_limit_change_interval_pct",
+                                     "windows_per_week_change_pct",
+                                     "windows_per_week_change_interval_pct", "accounts")},
+            {"five_hour_limit_change_pct": 17.1, "five_hour_limit_change_interval_pct": [9.3, 25.5],
+             "weekly_limit_change_pct": 5.6, "weekly_limit_change_interval_pct": [-0.0, 11.6],
+             "windows_per_week_change_pct": -9.2, "windows_per_week_change_interval_pct": [-12.9, -5.2],
+             "accounts": 4})
+        self.assertNotIn("hero", payload)
+        self.assertIn("Observed change: 5-hour limit increased 17% on 2026-10-09", alerts[1])
+        self.assertEqual(self.state, ["2026-09-23", "2026-10-09"])
+
+    def test_a_change_with_no_limit_to_state_keeps_the_older_email(self) -> None:
+        # 14 September: neither limit's interval excludes no change, so `hero` is None and the
+        # payload is the found line's figure with no `limit`, as before.
+        sep14 = {"date": "2026-09-14", "at": "2026-09-14T09:00:00+00:00", "direction": "decreased",
+                 "percent": 17, "state": "measured", "provisional": False,
+                 "metric": "windows_per_week", "change_pct": -17.4, "scope": "windows_per_week",
+                 "weekly_limit_change_pct": -4.2, "interval_excludes_no_change": True, "hero": None}
+        _procs, requests, _alerts = self._publishes((sep14, self.W1), (sep14, self.W2))
+        self.assertEqual(self._payload(requests[1]),
+                         {"date": "2026-09-14", "direction": "decreased", "percent": 17,
+                          "metric": "windows_per_week", "change_pct": -17.4,
+                          "weekly_limit_change_pct": -4.2, "state": "measured"})
+
+    def test_a_change_with_no_state_is_emailed(self) -> None:
+        # Director's ruling (2026-10-23): a change with no `state` is not held. Only a stated
+        # state other than "measured" (the 17 Oct "provisional" record) keeps the email back.
+        stateless = {k: v for k, v in self.CHANGE.items() if k != "state"}
+        _procs, requests, alerts = self._publishes((stateless, self.W1), (stateless, self.W2))
+        self.assertEqual(requests[0], "")
+        self.assertIn("https://alldonesites.com/api/notify/send", requests[1])
+        self.assertNotIn("not emailed", alerts[1])
+        self.assertIn("Observed change: increased 7% on 2026-09-11", alerts[1])
+        self.assertEqual(self.state, ["2026-09-11"])
+
+    def test_a_weekly_detector_change_with_no_state_is_emailed(self) -> None:
+        # PINNED (director's ruling 2026-10-23): the weekly detector's events carry no `state`
+        # (the live 2026-09-13 windows_per_week event: state None, provisional False), and the
+        # 2026-09-14 weekly cut was emailed (.notified-change on gs). It is still emailed, once,
+        # exactly as the detector writes it.
+        weekly = {"date": "2026-09-14", "direction": "decreased", "percent": 29, "scope": "weekly",
+                  "metric": "windows_per_week", "provisional": False}
+        _procs, requests, alerts = self._publishes((weekly, self.W1), (weekly, self.W2), (weekly, self.W3))
+        self.assertEqual(requests[0], "")
+        self.assertIn("https://alldonesites.com/api/notify/send", requests[1])
+        self.assertEqual(self._payload(requests[1])["date"], "2026-09-14")
+        self.assertEqual(requests[2], "", "a weekly change is emailed once")
+        self.assertEqual(self.state, ["2026-09-14"])
+        told = [a for a in alerts if a]
+        self.assertEqual(len(told), 1, alerts)
+        self.assertIn("Observed change: decreased 29% on 2026-09-14", told[0])
+        self.assertNotIn("not emailed", told[0])
+
+    def test_every_published_scope_is_sent_as_one_the_site_accepts(self) -> None:
+        # The site's /api/notify/send answers 400 to any scope but "window" or "weekly"; the
+        # 21 and 29 Sep changes ("five_hour", "both") never reached subscribers that way. A
+        # windows-per-week change (the four-account detector's ratio) or an undetermined one
+        # is sent without a scope, which the site accepts.
+        sent = {}
+        for scope in ("five_hour", "both", "weekly", "windows_per_week", "undetermined"):
+            change = {**self.CHANGE, "scope": scope}
+            _procs, requests, _alerts = self._publishes((change, self.W1), (change, self.W2))
+            sent[scope] = self._payload(requests[1]).get("scope")
+        self.assertEqual(sent, {"five_hour": "window", "both": "window", "weekly": "weekly",
+                                "windows_per_week": None, "undetermined": None})
+
+    def test_a_provisional_flagged_change_is_never_emailed_whatever_its_state(self) -> None:
+        flagged = {**self.CHANGE, "provisional": True}
+        _procs, requests, _alerts = self._publishes((flagged, self.W1), (flagged, self.W2))
+        self.assertEqual(requests, ["", ""])
+        self.assertIsNone(self.state)
 
     def test_between_24_and_48_hours_an_unsettled_interval_waits(self) -> None:
         procs, requests, _alerts = self._timed(self.MEASURED, 30)
@@ -442,11 +712,11 @@ class TestDailyNotifyChange(unittest.TestCase):
         self.assertIn("waiting for 48", procs[1].stderr)
 
     def test_at_48_hours_the_change_is_sent_at_its_figure_then(self) -> None:
-        _procs, requests, _alerts = self._timed(self.MEASURED, 30, 48.5)
+        _procs, requests, _alerts = self._timed({**self.MEASURED, "state": "measured"}, 30, 48.5)
         self.assertEqual(requests[:2], ["", ""])
         payload = self._payload(requests[2])
         self.assertEqual((payload["date"], payload["change_pct"], payload["state"]),
-                         ("2026-09-22", -2.0, "measuring"))
+                         ("2026-09-22", -2.0, "measured"))
         self.assertEqual(requests[3], "", "never the same change twice")
         self.assertEqual(self.state, ["2026-09-22"])
 
@@ -492,6 +762,80 @@ SONNET_1433 = {"ts": "2026-09-06T14:33:05.254749+00:00", "model": "claude-sonnet
                "prompts": 63, "tick_from": 5, "tick_to": 8, "elapsed_s": 1569.897585, "payload": "prose",
                "payload_words": 12000, "ticks": 3, "skip": 1, "settle_s": 60, "expect_tokens_per_pct": 468000.0,
                "early_tick": False, "reset_start": False, "account": "dave"}
+
+
+class TestDailyRatesRefitExits(unittest.TestCase):
+    """Run bin/daily.sh's refit step with a stub python3 whose tools.model_rates exits a chosen
+    code: 3 (a new hold) alerts once with the moves, 4 (the hold already reported) stays
+    quiet, and neither reads as a crash or opens an advisory incident."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        text = (BIN / "daily.sh").read_text(encoding="utf-8")
+        moves = re.search(r"^rates_held_moves\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
+        advisory = re.search(r"^advisory\(\) \{.*?^\}$", text, re.DOTALL | re.MULTILINE)
+        step = re.search(r"^if rates_due; then\n.*?^fi$", text, re.DOTALL | re.MULTILINE)
+        assert moves and advisory and step, "the refit step is not where the test looks in bin/daily.sh"
+        cls.script = f"{advisory.group(0)}\n{moves.group(0)}\nrates_due() {{ return 0; }}\n{step.group(0)}\n"
+
+    def _run(self, rates_rc: int, moves=("Opus 5.5 0.780x measured -> 0.358x provisional",)):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "history").mkdir()
+            if moves is not None:
+                (root / "history" / "model-rates.candidate.json").write_text(
+                    json.dumps({"_meta": {"held": {"moves": list(moves)}}}), encoding="utf-8")
+            stub = root / "bin"
+            stub.mkdir()
+            log = root / "calls.log"
+            python = stub / "python3"
+            python.write_text(
+                "#!/usr/bin/env bash\n"
+                'if [ "$1 $2" = "-m tools.model_rates" ]; then exit "$RATES_RC"; fi\n'
+                'if [ "$1 $2" = "-m tracker.advisory" ]; then echo "advisory $*" >> "$CALLS"; exit 0; fi\n'
+                f'exec {sys.executable} "$@"\n', encoding="utf-8")
+            python.chmod(0o755)
+            env = dict(os.environ)
+            env.update(PATH=f"{stub}{os.pathsep}{env['PATH']}", RATES_RC=str(rates_rc), CALLS=str(log))
+            stub_alert = 'alert_jonathan() { printf \'alert %s\\n%s\\n\' "$1" "$2" >> "$CALLS"; }'
+            proc = subprocess.run(["bash", "-c", f"set -uo pipefail\n{stub_alert}\n{self.script}"],
+                                  check=False, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            calls = log.read_text(encoding="utf-8") if log.exists() else ""
+            return proc, calls
+
+    def test_a_new_hold_alerts_once_with_its_moves_and_is_no_crash(self) -> None:
+        proc, calls = self._run(3)
+        self.assertEqual(calls.count("alert "), 1, calls)
+        self.assertIn("alert Model rates refit held", calls)
+        self.assertIn("  - Opus 5.5 0.780x measured -> 0.358x provisional", calls)
+        self.assertIn("advisory -m tracker.advisory --step tools.model_rates --exit 3", calls)
+        self.assertIn("refit held (exit 3)", proc.stderr)
+        self.assertNotIn("failed", proc.stderr)
+
+    def test_a_hold_already_reported_is_quiet(self) -> None:
+        proc, calls = self._run(4)
+        self.assertNotIn("alert ", calls)
+        self.assertIn("advisory -m tracker.advisory --step tools.model_rates --exit 4", calls)
+        self.assertIn("still held (exit 4)", proc.stderr)
+        self.assertNotIn("failed", proc.stderr)
+
+    def test_a_hold_whose_candidate_cannot_be_read_still_alerts(self) -> None:
+        _proc, calls = self._run(3, moves=None)
+        self.assertIn("alert Model rates refit held", calls)
+        self.assertIn("could not read history/model-rates.candidate.json", calls)
+
+    def test_a_crash_is_still_a_warning_and_no_alert(self) -> None:
+        proc, calls = self._run(1)
+        self.assertNotIn("alert ", calls)
+        self.assertIn("advisory -m tracker.advisory --step tools.model_rates --exit 1", calls)
+        self.assertIn("warning: tools.model_rates failed with exit 1", proc.stderr)
+
+    def test_a_clean_refit_says_nothing(self) -> None:
+        proc, calls = self._run(0)
+        self.assertNotIn("alert ", calls)
+        self.assertIn("--exit 0", calls)
+        self.assertEqual(proc.stderr, "")
 
 
 class TestDailyInvariantsGate(unittest.TestCase):
@@ -565,6 +909,24 @@ class TestDailyInvariantsGate(unittest.TestCase):
         self.assertNotEqual(text, self.text)
         _, page, _, commits, _ = self._run(2, text)
         self.assertEqual((page, commits), ('{"page": "new"}\n', 2))
+
+    def test_a_withheld_run_ends_with_exit_9_unless_the_site_push_failed(self):
+        # 450 withheld runs from 2026-10-13 exited 0 and read as successes. The script's last
+        # lines decide its status; tests/redteam2/test_withheld_redteam2.py runs it whole.
+        tail = re.search(r'^if \[ "\$withheld" -eq 1 \].*\Z', self.text, re.DOTALL | re.MULTILINE)
+        self.assertIsNotNone(tail, "the withheld exit is not the end of bin/daily.sh")
+        for withheld, publish_rc, want in ((1, 0, 9), (0, 0, 0), (1, 1, 1), (0, 1, 1)):
+            with self.subTest(withheld=withheld, publish_rc=publish_rc):
+                proc = subprocess.run(["bash", "-c", f"withheld={withheld}; publish_rc={publish_rc}\n{tail.group(0)}"],
+                                      check=False, capture_output=True, text=True)
+                self.assertEqual(proc.returncode, want, proc.stderr)
+
+    def test_the_invariants_step_no_longer_claims_an_alert_it_did_not_send(self):
+        # "(alerted)" was printed on every withheld run; the one alert went out on 2026-10-05.
+        gate = re.search(r"^python3 -m tracker\.invariants .*?^fi$", self.text, re.DOTALL | re.MULTILINE)
+        self.assertNotIn("(alerted)", gate.group(0))
+        proc, *_ = self._run(2)
+        self.assertNotIn("alerted", proc.stderr)
 
     def test_an_advisory_failure_publishes_the_new_json(self):
         proc, page, staged, commits, pushes = self._run(1)

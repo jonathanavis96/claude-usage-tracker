@@ -128,7 +128,7 @@ def test_failed_alert_send_is_recorded(rig, capsys):
 
 
 def test_new_fault_during_open_incident_is_alerted(rig, monkeypatch):
-    monkeypatch.setattr(health, "first_failure",
+    monkeypatch.setattr(health, "all_failures",
                         lambda *a, **k: "token: access token expired 13h00m ago and not refreshed")
     for _ in range(3):  # healthy runs, a lasting health complaint: one incident opens
         rig.run([PY, "-c", "pass"], retries=0)

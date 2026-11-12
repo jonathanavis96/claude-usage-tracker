@@ -1,5 +1,12 @@
 """Detect step changes: in the probe's sparse dollar series, and in the weekly-windows series.
 
+Retired as the page's source of limit changes on 2026-10-23 (ADR 0001 rule 22): the
+four-account detector (tracker/four_accounts.py) finds every change the page states, and
+`detect_weighted_changes` and `detect_credit_changes` were removed with the event machinery
+they fed. What stays is the windows-per-week pooling (`pooled_windows`, `pooled_interval`)
+the weekly block reads, and `weighted_regimes` for the Max 5x history before the plan change,
+which the detector's accounts never covered. The derivations below are kept as written.
+
 Dollar series: sample readings
 ------------------------------
 
@@ -282,16 +289,6 @@ ROUNDING_Z = 2.0         # standard deviations of pooled error conceded
 # (derivation: module docstring, 3.).
 WINDOW_DISPERSION = 3.7
 
-# detect_credit_changes: one point per stretch, numerator meter credits, denominator
-# the stretch's own delta_pct (module docstring, "Credit stretches").
-MIN_STRETCH_PCT = 100.0   # points of five-hour meter movement each side of a split needs
-MIN_STRETCH_POINTS = 2    # ...spread over at least this many stretches
-# Variance of a stretch's credits-per-percent residual over the denominator-only
-# rounding model's, measured on jwork's 21 verified stretches of 17-21 Sep 2026
-# (derivation and the two lower estimates: module docstring).
-STRETCH_DISPERSION = 80.0
-
-
 @dataclass(frozen=True)
 class WeightedSeries:
     """The error model and evidence floors one weighted series certifies under.
@@ -314,11 +311,6 @@ class WeightedSeries:
 #: Five-hour over seven-day meter movement, one point per window (tracker/weekly.py).
 WINDOWS = WeightedSeries("windows_per_week", WINDOW_DISPERSION, MIN_BASE_D7, MIN_POOL_D7,
                          MIN_POOL_POINTS, 1.0)
-#: Meter credits over five-hour meter percent, one point per stretch (tracker/gs_passive.py).
-CREDIT_STRETCHES = WeightedSeries("credits_per_window", STRETCH_DISPERSION, MIN_STRETCH_PCT,
-                                  MIN_STRETCH_PCT, MIN_STRETCH_POINTS, 0.0)
-
-
 @dataclass(frozen=True)
 class ChangeEvent:
     date: date
@@ -536,40 +528,6 @@ def _residual(points: list[tuple]) -> float:
     if level is None:
         return sum(p[1] for p in points)
     return sum(abs(p[1] - level * p[2]) for p in points)
-
-
-def detect_weighted_changes(points: list[tuple], threshold: float = 0.15,
-                            series: WeightedSeries = WINDOWS) -> list[ChangeEvent]:
-    """Certified step changes in a (window_ending, d5, d7[, pieces]) series -- see the module docstring.
-
-    Points where neither meter moved are dropped; a point with d7 == 0 still pools.
-    Events are dated by the first window at the new level, in whatever zone the
-    timestamps carry.
-    """
-    return _detect_weighted(points, threshold, series)[0]
-
-
-def detect_credit_changes(points: list[tuple], threshold: float = 0.15) -> list[ChangeEvent]:
-    """Certified step changes in a (stretch_end, credits, delta_pct[, pieces]) series.
-
-    The same detector under the credit series' own error model and floors
-    (CREDIT_STRETCHES, and the module docstring's "Credit stretches"): pooled
-    credits per meter percent, each stretch weighted by the meter movement it
-    carries, both sides of a split above MIN_STRETCH_PCT points of that movement,
-    and the two intervals separated. `denominator_pct` on the event is the
-    five-hour meter percent behind the new level, not seven-day percent.
-    """
-    return _detect_weighted(points, threshold, CREDIT_STRETCHES)[0]
-
-
-def current_regime_points(points: list[tuple], threshold: float = 0.15,
-                          series: WeightedSeries = WINDOWS) -> list[tuple]:
-    """The points of the current regime, oldest first: from the newest event's
-    first window on, or the whole series when nothing has been certified. Compared
-    by full timestamp, so an earlier window on the event's own day (still at the old
-    level) stays out of the new regime."""
-    _, ordered, starts = _detect_weighted(points, threshold, series)
-    return ordered[starts[-1]:]
 
 
 def weighted_regimes(points: list[tuple], threshold: float = 0.15,

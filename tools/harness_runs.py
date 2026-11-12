@@ -134,8 +134,11 @@ def meter_series() -> dict[str, list[tuple[datetime, float]]]:
                 line = line.strip()
                 if line.startswith("{"):
                     r = json.loads(line)
-                    if "five_hour" in r:  # the rest are error rows, which read nothing
-                        rows.append((P(r["ts"]), float(r["five_hour"]["utilization"])))
+                    fh = r.get("five_hour")
+                    # Error rows read nothing; weekly-only (null) and five_hour_idle (made-up 0%)
+                    # rows have no five-hour figure.
+                    if isinstance(fh, dict) and fh.get("utilization") is not None and not r.get("five_hour_idle"):
+                        rows.append((P(r["ts"]), float(fh["utilization"])))
                 else:
                     m = LEGACY.match(line)
                     if m:

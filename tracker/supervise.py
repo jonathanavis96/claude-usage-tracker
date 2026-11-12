@@ -17,7 +17,8 @@ What one run does:
   4. State. --state (JSON) records last_ok, last_fail, last_reason, consecutive_failures
      and whether an incident is open.
   5. Alert. An incident opens when consecutive_failures reaches --fail-threshold, or when
-     tracker.health reports a failure that has lasted --stale-after seconds (default 1h).
+     tracker.health reports a failure that has lasted --stale-after seconds (default 1h),
+     each failing check on its own clock (health.all_failures, health_kinds).
      Opening sends ONE alert; while it stays open nothing more is sent; when a run
      succeeds and health is clean again ONE recovery message is sent and it closes.
 
@@ -46,12 +47,15 @@ An alert that fails to send leaves the incident unopened, so the next run tries 
 
 Exit 3 from bin/passive.sh means the checkout is off main: a retry cannot fix that, so it
 is not retried, counts as a failed run, and opens an incident on the first occurrence.
+Exit 9 from bin/daily.sh means a blocking invariant withheld the public JSON: not retried,
+a failed run, an incident after --fail-threshold runs in a row (an hour on gs).
 
 Exit status is the command's last exit status (0 when skipped).
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -81,8 +85,17 @@ EXIT_OP_IN_PROGRESS = 8
 #: so a dirty tree can be brief: it is named in the alert but waits for --fail-threshold.
 EXIT_DIRTY = 4
 EXIT_NEEDS_HAND = (EXIT_OFF_MAIN, EXIT_PULL_CONFLICT, EXIT_OP_IN_PROGRESS)
+#: bin/daily.sh: a blocking invariant withheld the public JSON, so the page kept the last one.
+#: Until 2026-10-22 that run exited 0: 450 runs from 2026-10-13T11:00Z withheld the page while
+#: this recorded health ok and pinged Kuma "up". It is a failed run (an incident after
+#: --fail-threshold, Kuma down), never retried: the same inputs withhold again, and daily.sh
+#: runs again in 30 minutes anyway.
+EXIT_WITHHELD = 9
+NO_RETRY = (*EXIT_NEEDS_HAND, EXIT_WITHHELD)
 #: The alert's reason for a wrapper's own exit codes; any other code reads "exit N after M attempts".
 EXIT_REASONS = {
+    EXIT_WITHHELD: ("the public JSON was withheld by a blocking invariant (exit 9): the page keeps its last "
+                    "published JSON; the invariants alert names the checks"),
     EXIT_OFF_MAIN: "checkout is off main (exit 3), run `git checkout main`",
     EXIT_DIRTY: "tracker/ has uncommitted changes in the cron checkout (exit 4): commit or stash them",
     EXIT_PULL_CONFLICT: ("git pull hit a conflict with origin/main (exit 7); the rebase was aborted and the "
@@ -277,7 +290,7 @@ def run_with_retry(cmd: list[str], log: Path | None, retries: int, backoff: floa
                     out.close()
                 except OSError:
                     pass
-        if code == 0 or code in EXIT_NEEDS_HAND or attempt == retries:
+        if code == 0 or code in NO_RETRY or attempt == retries:
             return code
         sleep(backoff * (2 ** attempt))
     return code
@@ -289,7 +302,11 @@ def health_kinds(reason: str | None) -> set[str]:
     One check can cover several things that fail on their own: `meters` covers one log
     per account (its reasons are joined with " | "), `publisher` both the tracker commit
     and the site push. Keying by check name alone let one account's open incident hide
-    another account's fault and withhold the first one's recovery."""
+    another account's fault and withhold the first one's recovery.
+
+    The `run` check failing is the runs failing, so it is the kind "runs", not a second
+    one: a withheld publish (exit 9) fails both, and as two kinds it sent a "further
+    problem" an hour after the incident opened, about the same runs."""
     kinds: set[str] = set()
     for part in (reason or "").split(" | "):
         part = part.strip()
@@ -297,32 +314,73 @@ def health_kinds(reason: str | None) -> set[str]:
             continue
         name = part.split(":")[0]
         m = re.search(r"claude-usage-meter-([\w.-]+?)\.log", part)
+        step = re.match(r"advisory: (\S+)", part)
         if m:
             kinds.add(f"{name}/{m.group(1)}")
         elif name == "publisher":
             kinds.add("publisher/site-push" if "site push" in part else "publisher/commit")
+        elif name == "run":
+            kinds.add("runs")
+        elif name == "page":
+            kinds.add("page/fetch" if "cannot fetch" in part else "page/age")
+        elif step:
+            kinds.add(f"advisory/{step.group(1)}")
         else:
             kinds.add(name)
     return kinds
 
 
+#: A kind an open incident already covers when it holds the kind named: the page going
+#: stale while the runs fail (a withheld publish, exit 9) is those runs, not a further problem.
+COVERED_BY = {"page/age": "runs"}
+
+
+def _parts_for(kinds: set[str], health_reason: str | None, state: dict, failing: bool) -> str:
+    """The reason text for `kinds`: the failed runs, then each health reason of those kinds."""
+    out = []
+    if failing and "runs" in kinds:
+        out.append(f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})")
+    for part in (health_reason or "").split(" | "):
+        k = health_kinds(part)
+        if k & kinds and not (out and k <= {"runs"}):
+            out.append(part.strip())
+    return " | ".join(out)
+
+
 def decide_alert(state: dict, now: float, health_reason: str | None, fail_threshold: int,
-                 stale_after: float, send: Sender, label: str, send_up: Sender | None = None) -> None:
+                 stale_after: float, send: Sender, label: str, send_up: Sender | None = None,
+                 immediate_kinds: frozenset[str] = frozenset()) -> None:
     """Open or close an incident, sending at most one message per transition.
 
-    `send` carries the opening message, `send_up` (default `send`) the recovery."""
-    if health_reason:
-        state.setdefault("unhealthy_since", now)
+    `health_reason` is every failing check (health.all_failures, joined with " | "); each
+    kind in it (health_kinds) keeps its own clock in `kinds_since` and counts once it has
+    failed for `stale_after`, so a brief fault of one kind beside a long one of another is
+    neither a further problem nor, when it clears, a recovery.
+
+    `send` carries the opening message, `send_up` (default `send`) the recovery.
+    `immediate_kinds` count at once, a check that already failed past its own limit (a lock
+    held past health's lock limit); their clocks still record when each was first seen."""
+    current = health_kinds(health_reason)
+    since = state.get("kinds_since") if isinstance(state.get("kinds_since"), dict) else None
+    if since is None:
+        # A state written before kinds had their own clocks: its one clock covers them all.
+        legacy = state.get("unhealthy_since")
+        since = {k: legacy for k in current} if isinstance(legacy, (int, float)) else {}
+    since = {k: since.get(k, now) for k in sorted(current)}
+    state.pop("unhealthy_since", None)
+    if since:
+        state["kinds_since"] = since
     else:
-        state.pop("unhealthy_since", None)
+        state.pop("kinds_since", None)
     failing = (state.get("consecutive_failures", 0) >= fail_threshold
                or state.get("last_exit") in EXIT_NEEDS_HAND)
-    stale = bool(health_reason) and now - state["unhealthy_since"] >= stale_after
-    # What kind of fault this is: failed runs, or the failing health check's name. An open
-    # incident of one kind must not swallow a later fault of another: that sends one more
-    # message and the incident takes on the new kind.
-    current = health_kinds(health_reason)
-    kinds = ({"runs"} if failing else set()) | (current if stale else set())
+    # An immediate kind counts at once; its clock still records when it was first seen.
+    stale_kinds = {k for k, t0 in since.items() if now - t0 >= stale_after or k in immediate_kinds}
+    stale = bool(stale_kinds)
+    # What kind of fault this is: failed runs, or a failing health check and its subject. An
+    # open incident of one kind must not swallow a later fault of another: that sends one
+    # more message and the incident takes on the new kind.
+    kinds = ({"runs"} if failing else set()) | stale_kinds
     # Part of an open incident cleared while something else still fails: say so, so a fix
     # for one account does not read as not working.
     if state.get("incident_open") and (failing or health_reason is not None):
@@ -334,19 +392,17 @@ def decide_alert(state: dict, now: float, health_reason: str | None, fail_thresh
                             f"still failing: {health_reason or state.get('last_reason')}"):
             state["incident_kinds"] = sorted(set(state.get("incident_kinds", [])) - set(cleared))
     have = set(state.get("incident_kinds", []))
-    unseen = {k for k in kinds if k not in have and k.split("/")[0] not in have}
+    unseen = {k for k in kinds if k not in have and k.split("/")[0] not in have
+              and COVERED_BY.get(k) not in have | kinds}
     if state.get("incident_open") and unseen:
-        new = sorted(unseen)
-        reason = (f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})"
-                  if "runs" in new else health_reason)
+        reason = _parts_for(unseen, health_reason, state, failing)
         if send(f"Claude usage tracker ({label}) has a further problem: {reason}. "
                 f"Check: python3 -m tracker.health --all"):
             state["incident_kinds"] = sorted(set(state.get("incident_kinds", [])) | kinds)
             state["incident_reason"] = f"{state.get('incident_reason')}; {reason}"
     if not state.get("incident_open"):
         if failing or stale:
-            reason = (f"{state['consecutive_failures']} runs in a row failed ({state.get('last_reason')})"
-                      if failing else health_reason)
+            reason = _parts_for(kinds, health_reason, state, failing)
             if not send(f"Claude usage tracker ({label}) needs attention: {reason}. "
                         f"Check: python3 -m tracker.health --all"):
                 state["last_alert_error"] = f"alert not sent at {now:.0f}: every channel failed"
@@ -383,14 +439,24 @@ def _kuma_first(send: Sender, kuma_file: Path | None, state: dict) -> tuple[Send
 
 
 def _alert_if_hung(pidfile: Path, state_path: Path, fail_threshold: int, send: Sender, label: str,
-                   t: float) -> None:
+                   t: float, stale_after: float = 3600.0, lock: Path | None = None) -> None:
     """A run holding the lock past health's lock limit is an incident, raised from here:
     the hung run itself will never get to its own health check."""
-    reason = health.check_lock(health.Config(lock_pidfile=pidfile), time.time())
+    # With no pid file (a run on a full disk goes on without one), check_lock ages the held
+    # lock by the stamp `supervise` puts on it as it takes it.
+    reason = health.check_lock(health.Config(lock_pidfile=pidfile, state=state_path, lock_file=lock), time.time())
     if reason is None:
         return
     state = health.read_state(state_path)
-    decide_alert(state, t, reason, fail_threshold, 0.0, send, label)
+    lock_kinds = frozenset(health_kinds(reason))
+    # Only the lock was checked here: the last finished run's health stands for the rest, so
+    # an open incident's other kinds neither read as recovered nor lose their clocks, and each
+    # still counts only once it has failed for `stale_after`, as in a finished run. The lock is
+    # already past its own limit, so it counts at once.
+    last = state.get("last_health")
+    if isinstance(last, str) and last != "ok":
+        reason = " | ".join([reason, *(p.strip() for p in last.split(" | ") if p.strip())])
+    decide_alert(state, t, reason, fail_threshold, stale_after, send, label, immediate_kinds=lock_kinds)
     write_state(state_path, state)
 
 
@@ -409,10 +475,18 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             print("skipped: previous run still going", file=sys.stderr)
-            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now())
+            _alert_if_hung(pidfile, state_path, fail_threshold, send, label, now(), stale_after, lock)
             return 0
+        with contextlib.suppress(OSError):
+            os.utime(lock)  # when this run took the lock: health.check_lock's age without a pid file
         clear_stale_pidfile(pidfile)
-        pidfile.write_text(str(os.getpid()))
+        try:
+            pidfile.write_text(str(os.getpid()))
+        except OSError as e:  # full disk: the pid file only serves the health check's lock age
+            with contextlib.suppress(OSError):  # stderr is a log on the same disk under cron
+                print(f"cannot write pid file {pidfile} ({e}); running without it", file=sys.stderr)
+            with contextlib.suppress(OSError):
+                pidfile.unlink(missing_ok=True)  # an empty one would read as a stale lock
         try:
             if log:
                 rotate_log(log, max_log_bytes, keep)
@@ -427,13 +501,14 @@ def supervise(cmd: list[str], *, lock: Path, state_path: Path, log: Path | None,
                 state["last_fail"] = t
                 state["last_reason"] = EXIT_REASONS.get(code, f"exit {code} after {retries + 1} attempts")
                 state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-            cfg = health_cfg or health.Config(state=state_path, lock_pidfile=pidfile,
-                                              logs=(log,) if log else ())
+            cfg = health_cfg or health.masterrig_config(state=state_path, lock_pidfile=pidfile, lock_file=lock,
+                                                        logs=(log,) if log else ())
             if not write_state(state_path, state):  # the run check reads it
                 # Nothing persists, so the in-a-row count cannot grow: alert on this run.
                 state["consecutive_failures"] = max(fail_threshold, state.get("consecutive_failures", 0))
                 state["last_reason"] = f"state file {state_path} unwritable (disk full or read-only)"
-            reason = health.first_failure(cfg, t, skip=("lock",))
+            # Every failing check, each its own incident kind (health.all_failures).
+            reason = health.all_failures(cfg, t, skip=("lock",))
             send_down, send_up = _kuma_first(send, kuma_file, state)
             decide_alert(state, t, reason, fail_threshold, stale_after, send_down, label, send_up=send_up)
             state["last_health"] = reason or "ok"
@@ -474,7 +549,9 @@ def main(argv: list[str] | None = None) -> int:
     lock = a.lock or (health.GS_LOCK if gs else ROOT / ".supervise.lock")
     state = a.state or (health.GS_STATE if gs else ROOT / ".supervise-state.json")
     log = a.log or (health.GS_LOG if gs else None)
-    cfg = health.gs_config(state=state, pidfile=lock.with_suffix(".pid"), logs=(log,) if log else ()) if gs else None
+    cfg = (health.gs_config(state=state, pidfile=lock.with_suffix(".pid"), lock_file=lock, logs=(log,) if log else ())
+           if gs else health.masterrig_config(state=state, lock_pidfile=lock.with_suffix(".pid"), lock_file=lock,
+                                              logs=(log,) if log else ()))
     return supervise(cmd, lock=lock, state_path=state, log=log,
                      retries=a.retries if a.retries is not None else (0 if gs else 2), backoff=a.backoff,
                      max_log_bytes=a.max_log_bytes, keep=a.keep,

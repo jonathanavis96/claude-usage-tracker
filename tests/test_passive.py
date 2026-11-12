@@ -77,3 +77,30 @@ class StoredHistoryTests(unittest.TestCase):
                 self.assertEqual(passive.main(["--out", str(out)]), 0)
             written = json.loads(out.read_text())
             self.assertEqual(len(written["history"]), 19 + 15)
+
+
+class RebuildMeterLogTests(unittest.TestCase):
+    """_rebuild reads tracker.meter_log's a1 log beside moonlighter's and the ceiling's.
+
+    With the ceiling blind (2026-10-18), moonlighter's 30-minute readings are all that is
+    left: two hours of a meter rising 1% every two minutes give four 15% intervals, under
+    MIN_INTERVALS_PER_DAY (5), so the day gets no rate. The sampler's two-minute readings of
+    the same meter give one interval per 1%.
+    """
+
+    def _rates(self, with_sampler: bool):
+        import tempfile
+        from pathlib import Path
+
+        from tests.test_masterrig_passive import blind_ceiling_home
+        from tracker import passive
+        with tempfile.TemporaryDirectory() as d:
+            return passive._rebuild(blind_ceiling_home(Path(d), with_sampler))[0]
+
+    def test_moonlighter_alone_gives_the_day_no_rate(self):
+        self.assertEqual(self._rates(with_sampler=False), {})
+
+    def test_the_sampler_log_is_merged_into_the_join(self):
+        rates = self._rates(with_sampler=True)
+        self.assertEqual(list(rates), [date(2026, 9, 14)])
+        self.assertEqual(rates[date(2026, 9, 14)].n, 60)

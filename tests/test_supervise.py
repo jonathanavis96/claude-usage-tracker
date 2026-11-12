@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -35,7 +37,7 @@ class SuperviseTest(unittest.TestCase):
         self.health_reason: str | None = None
         self.t = 1_000_000.0
         self.sleeps: list[float] = []
-        patcher = mock.patch.object(health, "first_failure", lambda *a, **k: self.health_reason)
+        patcher = mock.patch.object(health, "all_failures", lambda *a, **k: self.health_reason)
         patcher.start()
         self.addCleanup(patcher.stop)
         # Belt and braces: a test must never reach the real WhatsApp path.
@@ -54,6 +56,17 @@ class SuperviseTest(unittest.TestCase):
 
     def st(self) -> dict:
         return json.loads(self.state.read_text())
+
+    def test_masterrig_default_health_watches_a1s_meter_log(self):
+        # No health_cfg (the masterrig cron line): the masterrig profile, with `meters` on
+        # a1's own log, so a dead a1 feed alerts instead of hiding as the ceiling's did.
+        seen = []
+        with mock.patch.object(health, "all_failures", lambda cfg, *a, **k: seen.append(cfg)):
+            supervise.supervise([PY, "-c", "pass"], lock=self.lock, state_path=self.state, log=self.log,
+                                send=self.send, sleep=self.sleeps.append, now=lambda: self.t)
+        self.assertIn("meters", seen[0].checks)
+        self.assertEqual(seen[0].meter_logs, (health.GS_OPS / "claude-usage-meter-a1.log",))
+        self.assertEqual((seen[0].state, seen[0].logs), (self.state, (self.log,)))
 
     def test_success_records_last_ok_and_logs_output(self):
         self.assertEqual(self.run_cmd(0), 0)
@@ -84,6 +97,140 @@ class SuperviseTest(unittest.TestCase):
             self.assertFalse(self.state.exists(), "a skipped run must not touch state")
         finally:
             os.close(fd)
+
+    def test_hung_run_alert_keeps_the_open_incidents_other_kinds(self):
+        # A run holding the lock past health's limit is raised from the skipped run, which
+        # checks only the lock. Every other kind of the open incident then read as cleared:
+        # a false "meters/avis recovered" was sent and its clock was dropped.
+        meters = "meters: newest usable reading in claude-usage-meter-avis.log is 2h00m old (limit 15m)"
+        self.state.write_text(json.dumps({
+            "incident_open": True, "incident_kinds": ["meters/avis"], "incident_since": self.t - 7200,
+            "incident_reason": meters, "kinds_since": {"meters/avis": self.t - 9000},
+            "last_health": meters, "consecutive_failures": 0, "last_exit": 0, "last_ok": self.t - 7200}))
+        pidfile = self.lock.with_suffix(".pid")
+        pidfile.write_text(str(os.getpid()))
+        held = os.path.getmtime(pidfile) - 3 * 3600
+        os.utime(pidfile, (held, held))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertFalse([m for m in self.send.sent if "recovered" in m], self.send.sent)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("further problem", self.send.sent[0])
+        self.assertIn("has held the lock", self.send.sent[0])
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["lock", "meters/avis"])
+        self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 9000)
+
+    def test_hung_run_alert_does_not_hurry_another_kinds_own_clock(self):
+        # Code review round 3: the last run's other kinds ride along with the lock, but each
+        # keeps its own stale_after. A meter only 10 minutes stale must not alert from here.
+        meters = "meters: newest usable reading in claude-usage-meter-avis.log is 25m old (limit 15m)"
+        self.state.write_text(json.dumps({
+            "kinds_since": {"meters/avis": self.t - 600}, "last_health": meters,
+            "consecutive_failures": 0, "last_exit": 0, "last_ok": self.t - 600}))
+        pidfile = self.lock.with_suffix(".pid")
+        pidfile.write_text(str(os.getpid()))
+        held = os.path.getmtime(pidfile) - 3 * 3600
+        os.utime(pidfile, (held, held))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock", self.send.sent[0])
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["lock"])
+        self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 600)
+
+    def test_a_hung_run_with_no_pid_file_is_still_raised_from_the_locks_age(self):
+        # Code review round 4: a run that could not write its pid file (full disk) ran on, and
+        # if it then hung, check_lock found no pid file and no hung incident was ever raised.
+        # Every run stamps the lock file when it takes the lock, which stands in for the pid file.
+        self.assertEqual(self.run_cmd(0), 0)
+        self.assertLess(abs(os.path.getmtime(self.lock) - time.time()), 60)
+        held = time.time() - 3 * 3600
+        os.utime(self.lock, (held, held))
+        self.assertFalse(self.lock.with_suffix(".pid").exists())
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock 3h00m", self.send.sent[0])
+
+    def test_an_immediate_kind_counts_at_once_and_the_rest_keep_their_clocks(self):
+        # Code review round 8: the hung path backdated the lock's clock by hand and copied
+        # decide_alert's migration of an older state; decide_alert now takes the kind itself.
+        state = {"unhealthy_since": self.t - 60}  # an older state: one clock for every kind
+        reason = "lock: run pid 1 has held the lock 3h00m | meters: claude-usage-meter-avis.log is 25m old"
+        supervise.decide_alert(state, self.t, reason, 3, 3600.0, self.send, "masterrig",
+                               immediate_kinds=frozenset({"lock"}))
+        self.assertEqual(state["incident_kinds"], ["lock"])
+        self.assertEqual(state["kinds_since"]["lock"], self.t - 60)  # round 12: its true clock, never backdated
+        self.assertEqual(state["kinds_since"]["meters/avis"], self.t - 60)
+
+    def test_a_hung_run_with_no_pid_file_is_raised_whatever_the_locks_suffix(self):
+        # Code review round 9: health found the flock file by turning the pid file back into
+        # `<name>.lock`, so a lock named anything else was never found.
+        self.lock = self.tmp / "tracker.flock"
+        self.assertEqual(self.run_cmd(0), 0)
+        held = time.time() - 3 * 3600
+        os.utime(self.lock, (held, held))
+        self.state.write_text(json.dumps({"last_ok": held - 600}))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock 3h00m", self.send.sent[0])
+
+    def test_unwritable_pidfile_still_runs_and_alerts(self):
+        # A full disk refused the pid file's few bytes and the OSError escaped before the
+        # job ran: no run, no state, no alert, though the state and the run log both
+        # survive a full disk on purpose.
+        pidfile = self.lock.with_suffix(".pid")
+        real = Path.write_text
+
+        def full_disk(path, *a, **k):
+            if path == pidfile:
+                raise OSError(28, "No space left on device")
+            return real(path, *a, **k)
+
+        with mock.patch.object(Path, "write_text", full_disk):
+            for _ in range(3):
+                self.assertEqual(self.run_cmd(1, retries=0), 1)
+                self.t += 3600
+        self.assertEqual(self.st()["consecutive_failures"], 3)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+
+    def test_unwritable_pidfile_still_runs_when_stderr_is_on_the_same_full_disk(self):
+        # cron appends the supervisor's stderr to a log on the same disk, so the warning
+        # about the pid file can hit ENOSPC too; it must not stop the run either.
+        pidfile = self.lock.with_suffix(".pid")
+        real = Path.write_text
+
+        def full_disk(path, *a, **k):
+            if path == pidfile:
+                raise OSError(28, "No space left on device")
+            return real(path, *a, **k)
+
+        class FullStderr(io.StringIO):
+            def write(self, s):
+                raise OSError(28, "No space left on device")
+
+        with mock.patch.object(Path, "write_text", full_disk), mock.patch("sys.stderr", FullStderr()):
+            self.assertEqual(self.run_cmd(1, retries=0), 1)
+        self.assertEqual(self.st()["consecutive_failures"], 1)
 
     def test_stale_pidfile_is_cleared(self):
         self.lock.with_suffix(".pid").write_text("999999999")
@@ -126,6 +273,122 @@ class SuperviseTest(unittest.TestCase):
                 self.run_cmd(0)
                 self.assertIn("recovered", self.send.sent[-1])
 
+    def test_a_withheld_publish_exit_9_is_a_failed_run_never_retried(self):
+        # bin/daily.sh exits 9 when a blocking invariant withheld the public JSON. Neither
+        # profile retries it (masterrig's default is 2 retries), and it counts as a failure:
+        # on gs's threshold of 2 the incident opens on the second run, an hour in.
+        self.assertEqual(self.run_cmd(9, retries=2, backoff=5, fail_threshold=2), 9)
+        self.assertEqual(self.sleeps, [], "a withheld publish withholds again on the same inputs")
+        st = self.st()
+        self.assertEqual((st["last_exit"], st["consecutive_failures"]), (9, 1))
+        self.assertIn("withheld", st["last_reason"])
+        self.assertEqual(self.send.sent, [])
+        self.t += 1800
+        self.run_cmd(9, retries=0, fail_threshold=2)
+        self.assertEqual(len(self.send.sent), 1)
+        self.assertIn("2 runs in a row failed (the public JSON was withheld", self.send.sent[0])
+        self.assertNotIn("last_ok", self.st(), "a withheld run is never a success")
+
+    def test_the_run_check_and_the_failed_runs_are_one_incident(self):
+        # A withheld run fails both the runs and the `run` health check. As two kinds, the
+        # health line arrived an hour later as a "further problem" about the same runs.
+        sent = []
+        run = "run: bin/daily.sh withheld the public JSON (exit 9), last successful run 30m ago: ..."
+        st = {"consecutive_failures": 1, "last_reason": "withheld"}
+        for t in (0, 1800, 3600, 5400, 7200):
+            st["consecutive_failures"] += 1
+            supervise.decide_alert(st, t, run, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, sent)
+        self.assertEqual(st["incident_kinds"], ["runs"])
+        self.assertEqual(supervise.health_kinds(run), {"runs"})
+
+    # The review of 359b7c1: the supervisor read only health's first failure, so `advisory`
+    # (last in gs's order) never alerted while `run` failed, and a blind dave meter ahead of
+    # it sent "advisory/tools.model_rates recovered" for a step still crashing.
+    ALL_FAILURES = staticmethod(health.all_failures)   # the real one: setUp patches it
+    ADVISORY = ("advisory: tools.model_rates has failed on every run for 4h00m (limit 3h00m, last exit 1); "
+                "the publish keeps using its previous output")
+    DAVE = ("meters: dave is blind, no reading in claude-usage-meter-dave.log for 1h10m (limit 1h00m; "
+            "header probe held, no session on this host since its window lapsed): the publisher uses "
+            "this account, so what it spends meanwhile is not measured")
+
+    def test_a_blind_meter_beside_a_crashing_step_never_reads_as_the_step_recovering(self):
+        sent: list[str] = []
+        st = {"consecutive_failures": 0}
+        t = 0.0
+        seq = [self.ADVISORY] * 4 + [f"{self.DAVE} | {self.ADVISORY}"] * 6 + [self.ADVISORY] * 4
+        for reason in seq:
+            supervise.decide_alert(st, t, reason, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+            t += 1800
+        self.assertEqual(len(sent), 3, sent)
+        self.assertIn("needs attention: advisory: tools.model_rates", sent[0])
+        self.assertIn("further problem: meters: dave is blind", sent[1])
+        self.assertNotIn("tools.model_rates", sent[1], "the further problem names only what is new")
+        self.assertIn("meters/dave recovered; still failing: advisory: tools.model_rates", sent[2])
+        self.assertFalse(any("advisory/tools.model_rates recovered" in m for m in sent), sent)
+        self.assertEqual(st["incident_kinds"], ["advisory/tools.model_rates"])
+
+    def test_a_brief_fault_beside_a_lasting_one_is_neither_a_problem_nor_a_recovery(self):
+        # Each kind keeps its own clock: a 30-min dave gap inside an hours-old advisory
+        # incident is not stale yet, so it is not a further problem and not a recovery.
+        sent: list[str] = []
+        st = {"consecutive_failures": 0}
+        for t, reason in ((0, self.ADVISORY), (3600, self.ADVISORY), (5400, f"{self.DAVE} | {self.ADVISORY}"),
+                          (7200, self.ADVISORY), (9000, self.ADVISORY)):
+            supervise.decide_alert(st, t, reason, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, sent)
+        self.assertNotIn("meters/dave", st["kinds_since"])
+
+    def test_a_stale_page_while_the_runs_fail_is_the_same_incident(self):
+        # A withheld publish fails the runs (exit 9) and, two hours on, the page's age: one
+        # fault. The page going stale with the runs succeeding is its own (a failed deploy).
+        sent: list[str] = []
+        page = "page: the published JSON in the site checkout (claude-usage.json) was generated 3h00m ago"
+        st = {"consecutive_failures": 1, "last_reason": "withheld", "last_exit": 9}
+        for t in range(0, 6 * 3600, 1800):
+            st["consecutive_failures"] += 1
+            supervise.decide_alert(st, t, page if t >= 3600 else None, 2, 3600.0,
+                                   lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, sent)
+        self.assertEqual(supervise.health_kinds(page), {"page/age"})
+        st2 = {"consecutive_failures": 0}
+        for t in (0, 3600):
+            supervise.decide_alert(st2, t, page, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertIn("needs attention: page:", sent[-1])
+
+    def test_a_state_from_before_per_kind_clocks_keeps_its_clock(self):
+        sent: list[str] = []
+        st = {"consecutive_failures": 0, "unhealthy_since": 0}
+        supervise.decide_alert(st, 3600, self.ADVISORY, 2, 3600.0, lambda m: sent.append(m) or True, "gs")
+        self.assertEqual(len(sent), 1, "the deploy must not restart an hour-old fault's clock")
+        self.assertNotIn("unhealthy_since", st)
+        self.assertEqual(st["kinds_since"], {"advisory/tools.model_rates": 0})
+
+    def test_the_supervisor_alerts_on_every_failing_check_not_the_first(self):
+        # A withheld run fails `run`, and the refit has crashed for hours: both are kinds.
+        reasons = [("run", "run: bin/daily.sh withheld the public JSON (exit 9): the page is not updating"),
+                   ("page", None), ("advisory", self.ADVISORY)]
+        with mock.patch.object(health, "all_failures", self.ALL_FAILURES), \
+                mock.patch.object(health, "run_checks", lambda *a, **k: reasons):
+            for _ in range(3):
+                self.run_cmd(9, retries=0, fail_threshold=2)
+                self.t += 1800
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["advisory/tools.model_rates", "runs"])
+        self.assertIn("advisory: tools.model_rates", st["last_health"])
+        self.assertIn("run: bin/daily.sh withheld", st["last_health"])
+        self.assertEqual(len(self.send.sent), 2, self.send.sent)
+        self.assertIn("further problem: advisory: tools.model_rates", self.send.sent[1])
+
+    def test_page_and_advisory_reasons_are_their_own_kinds(self):
+        self.assertEqual(supervise.health_kinds("page: cannot fetch https://x for 2h10m (grace 2h00m): URLError"),
+                         {"page/fetch"})
+        self.assertEqual(supervise.health_kinds("page: https://x was generated 3h00m ago (limit 2h00m)"),
+                         {"page/age"})
+        self.assertEqual(supervise.health_kinds(
+            "advisory: tools.model_rates has failed on every run for 4h00m | advisory: tracker.gs_passive has failed"),
+            {"advisory/tools.model_rates", "advisory/tracker.gs_passive"})
+
     def test_one_account_recovering_under_an_open_meters_incident_is_reported(self):
         sent, ups = [], []
         dave = "meters: newest usable reading in claude-usage-meter-dave.log is 1h old (limit 15m)"
@@ -167,7 +430,10 @@ class SuperviseTest(unittest.TestCase):
                 os.kill(pid, 0)
             except ProcessLookupError:
                 break
-            if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+            try:
+                if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+                    break
+            except (FileNotFoundError, ProcessLookupError):  # reaped between the kill(0) and the read: gone
                 break
             _t.sleep(0.05)
         else:
@@ -297,13 +563,21 @@ class ProfileArgsTest(unittest.TestCase):
         kw = self.captured("--profile", "gs")
         self.assertEqual((kw["lock"], kw["state_path"], kw["log"]), (health.GS_LOCK, health.GS_STATE, health.GS_LOG))
         self.assertEqual((kw["retries"], kw["fail_threshold"], kw["label"]), (0, 2, "gs"))
-        self.assertEqual(kw["health_cfg"].checks, ("run", "meters", "lock", "sizes"))
+        self.assertEqual(kw["health_cfg"].checks, ("run", "page", "meters", "lock", "sizes", "advisory"))
+        self.assertEqual(kw["health_cfg"].page_json, health.GS_SITE / health.SITE_JSON)
+        self.assertEqual(kw["health_cfg"].advisory_state, health.GS_ADVISORY)
         self.assertEqual(kw["kuma_file"], supervise.kuma_url_file())
 
     def test_masterrig_defaults_unchanged(self):
         kw = self.captured("--kuma-url-file", "/x/url")
         self.assertEqual((kw["retries"], kw["fail_threshold"], kw["label"]), (2, 3, "masterrig"))
-        self.assertIsNone(kw["health_cfg"])
+        # The live page: a bare Config (as tests build) leaves it out.
+        cfg = kw["health_cfg"]
+        self.assertEqual(cfg.page_url, health.LIVE_PAGE_URL)
+        self.assertEqual(cfg.checks, health.MASTERRIG_CHECKS)
+        self.assertEqual(cfg.meter_logs, (health.GS_OPS / "claude-usage-meter-a1.log",))
+        self.assertEqual(cfg.state, supervise.ROOT / ".supervise-state.json")
+        self.assertEqual(cfg.lock_pidfile, supervise.ROOT / ".supervise.pid")
         self.assertEqual(kw["lock"], supervise.ROOT / ".supervise.lock")
         self.assertEqual(kw["kuma_file"], Path("/x/url"))
 

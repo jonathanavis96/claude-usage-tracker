@@ -1825,7 +1825,7 @@ git -C "$SITE" pull -q --rebase origin main
 python3 -m tracker.publish --probes probes.jsonl --passive history/passive.json --out "$SITE/website/public/data/claude-usage.json"
 cd "$SITE"
 git add website/public/data/claude-usage.json
-git -c user.name="Jonathan Avis" -c user.email="jonathanavis96@gmail.com" commit -q -m "data: refresh claude usage" || { echo "no change"; exit 0; }
+git -c user.name=publisher -c user.email=publisher@gs commit -q -m "data: refresh claude usage" || { echo "no change"; exit 0; }
 git push -q origin main
 ```
 

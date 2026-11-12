@@ -23,6 +23,7 @@ from tracker.gs_passive import (
     masterrig_account,
     report,
 )
+from tracker.samples import MixedAccountLog
 
 T0 = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
 RESETS = "2026-09-14T13:00:00+00:00"
@@ -86,12 +87,13 @@ def masterrig_home(root: Path, readings: int = 41, moonlighter_until: int = 30,
 
 
 class AccountTests(unittest.TestCase):
-    def test_the_masterrig_mapping_names_two_logs_of_one_meter(self):
+    def test_the_masterrig_mapping_names_three_logs_of_one_meter(self):
         a = masterrig_account(Path("/h"))
         self.assertEqual((a.name, a.config_dir), ("masterrig", Path("/h/.claude")))
         self.assertEqual((a.meter_log, a.meter_format), (Path("/h/.moonlighter/usage_log.jsonl"), "moonlighter"))
         self.assertEqual(a.extra_meter_logs,
-                         (MeterLog(Path("/h/.paperclip/ops/mis-usage-ceiling-systemd.log"), "ceiling"),))
+                         (MeterLog(Path("/h/.paperclip/ops/mis-usage-ceiling-systemd.log"), "ceiling"),
+                          MeterLog(Path("/h/.paperclip/ops/claude-usage-meter-a1.log"), "meter")))
         self.assertIsNone(a.legacy_meter_log)
         # It stays out of the gs mapping: it is a different kind of instrument.
         self.assertNotIn("masterrig", gs_accounts(Path("/h")))
@@ -136,6 +138,84 @@ class AccountTests(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 load_samples(Account("x", Path(d), log, "not-a-format"))
         self.assertIn("not-a-format", str(cm.exception))
+
+
+def a1_meter_line(ts: datetime, five_hour: float, identity: str = "a1a1a1a1a1a1") -> str:
+    """One tracker.meter_log reading of masterrig's own account, in that sampler's shape."""
+    return json.dumps({"ts": ts.isoformat(), "account": "a1", "identity": identity,
+                       "five_hour": {"utilization": five_hour, "resets_at": RESETS},
+                       "seven_day": {"utilization": 30.0, "resets_at": SEVEN_RESETS}})
+
+
+def blind_ceiling_home(root: Path, with_sampler: bool) -> Path:
+    """masterrig after 2026-10-18: moonlighter every 30 min, the ceiling log silent.
+
+    The meter rises 1% every two minutes for two hours and a $1 turn lands in each of
+    those two-minute gaps ($1 per 1%). `with_sampler` adds tracker.meter_log's a1 log,
+    read every two minutes as the timer's 110 s spacing gives.
+    """
+    home = root / "home"
+    (home / ".claude" / "projects" / "-proj").mkdir(parents=True)
+    (home / ".moonlighter").mkdir(parents=True)
+    ops = home / ".paperclip" / "ops"
+    ops.mkdir(parents=True)
+    (home / ".moonlighter" / "usage_log.jsonl").write_text("\n".join(
+        json.dumps({"ts": (T0 + timedelta(minutes=30 * i)).isoformat(),
+                    "five_hour": {"utilization": 15.0 * i, "resets_at": RESETS},
+                    "seven_day": {"utilization": 30.0, "resets_at": SEVEN_RESETS}})
+        for i in range(5)) + "\n")
+    # What the blind ceiling wrote from 2026-10-18 on: no reading lines at all.
+    (ops / "mis-usage-ceiling-systemd.log").write_text(
+        "2026-10-18T02:49:41+02:00 BLIND: claude-account.py status failed (exit 1): "
+        "cannot enumerate seats: HTTP 401: {\"error\":\"Unauthorized\"}\n")
+    if with_sampler:
+        (ops / "claude-usage-meter-a1.log").write_text(
+            "\n".join(a1_meter_line(T0 + timedelta(minutes=2 * i), 1.0 * i) for i in range(61)) + "\n")
+    (home / ".claude" / "projects" / "-proj" / "s.jsonl").write_text("\n".join(
+        turn_line(T0 + timedelta(minutes=2 * i + 1), f"m{i}") for i in range(60)) + "\n")
+    return home
+
+
+class A1MeterTests(unittest.TestCase):
+    """masterrig's account read by tracker.meter_log, the reader that replaced the blind ceiling.
+
+    From 2026-10-18 the only readings left were moonlighter's, 30 minutes apart, and
+    tracker/join.py pairs nothing further apart than MAX_PAIR_GAP (15 min): a1 formed no
+    stretch after 2026-10-17 11:14Z. The sampler's log is a third log of the same meter.
+    """
+
+    def _stretches(self, home: Path) -> list[dict]:
+        return report({"masterrig": masterrig_account(home)}, PRICES,
+                      now=T0 + timedelta(days=1))["accounts"]["masterrig"]["stretches"]
+
+    def test_moonlighter_alone_forms_no_stretch(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._stretches(blind_ceiling_home(Path(d), with_sampler=False)), [])
+
+    def test_with_the_sampler_the_same_meter_forms_stretches_at_the_true_rate(self):
+        with tempfile.TemporaryDirectory() as d:
+            stretches = self._stretches(blind_ceiling_home(Path(d), with_sampler=True))
+        self.assertEqual(len(stretches), 6)
+        for s in stretches:
+            self.assertEqual(s["delta_pct"], 10.0)
+            self.assertAlmostEqual(s["usd_per_pct"], 1.0)
+            self.assertTrue(s["reset_verified"])
+
+    def test_the_sampler_wins_a_minute_it_shares_with_moonlighter(self):
+        # Both carry reset times; merge_samples' source priority puts tracker.meter_log first.
+        with tempfile.TemporaryDirectory() as d:
+            samples = load_samples(masterrig_account(blind_ceiling_home(Path(d), with_sampler=True)))
+        self.assertEqual(len(samples), 61)
+        self.assertEqual({s.source for s in samples}, {"meter"})
+
+    def test_a_sampler_log_holding_another_account_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = blind_ceiling_home(Path(d), with_sampler=True)
+            log = home / ".paperclip" / "ops" / "claude-usage-meter-a1.log"
+            with open(log, "a") as fh:
+                fh.write(a1_meter_line(T0 + timedelta(hours=3), 1.0, identity="b2b2b2b2b2b2") + "\n")
+            with self.assertRaises(MixedAccountLog):
+                load_samples(masterrig_account(home))
 
 
 class RecordTests(unittest.TestCase):
@@ -184,7 +264,7 @@ class RecordTests(unittest.TestCase):
             r = self._report(masterrig_home(Path(d)))["accounts"]["masterrig"]
         self.assertEqual(r["meter"]["format"], "moonlighter")
         self.assertEqual(r["meter"]["samples"], 41)
-        self.assertEqual([e["format"] for e in r["meter"]["extra_logs"]], ["ceiling"])
+        self.assertEqual([e["format"] for e in r["meter"]["extra_logs"]], ["ceiling", "meter"])
         self.assertIn("mis-usage-ceiling-systemd.log", r["meter"]["extra_logs"][0]["log"])
         self.assertIn("web", r["meter"]["note"])
         # A gs account has the same fields, empty.

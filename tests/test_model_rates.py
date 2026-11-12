@@ -196,6 +196,13 @@ class QuantisationFloorTests(unittest.TestCase):
             prepare("jwork", [s])
 
 
+    def test_a_value_that_is_no_bundle_is_not_ok(self):
+        # PR #155 review, final round 4: price_tokens and the pooled valuation refuse a stretch
+        # holding a value that is no bundle, so the fit's `ok` column must not admit it.
+        s = _kept(POST, 10.0, {**_tokens(opus=(1_000_000, 0)), "claude-sonnet-5": 5})
+        self.assertFalse(prepare("jwork", [s])[0]["ok"])
+        self.assertTrue(prepare("jwork", [_kept(POST, 10.0, _tokens(opus=(1_000_000, 0)))])[0]["ok"])
+
 class JointCacheReadFitTests(unittest.TestCase):
     """Stretches built at a known cache-read weight, and what each fit makes of them.
 

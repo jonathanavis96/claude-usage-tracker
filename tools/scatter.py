@@ -93,7 +93,7 @@ def features(st: dict, credit: float, credits: dict, rates: dict, start: datetim
     fams: dict[str, float] = defaultdict(float)
     cache_read = turns_fast = 0.0
     for model, tok in st["tokens"].items():
-        if not isinstance(tok, dict) or not C.raw_tokens(tok):
+        if not C.holds_work(tok):
             continue
         fam = C.family(model, credits)
         value = C.comparison_value(credits, rates)

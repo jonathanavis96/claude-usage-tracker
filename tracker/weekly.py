@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import median
 
 from .detect import ratio_interval
+from .usage_api import as_utc
 
 _FIVE_HOUR_TOLERANCE = timedelta(seconds=120)
 _MIN_FIVE_HOUR_PCT = 50.0
@@ -75,8 +76,12 @@ def parse_row(d: dict) -> dict | None:
             "seven_resets_at": sd["resets_at"],
         }
         # Every stamp is parsed downstream; a row that cannot be is a gap, not a crash.
+        # A naive stamp is UTC (contrib/sample.py writes UTC, tracker/contributed.py reads
+        # it so): left naive, it raised TypeError against every aware stamp it met.
         for k in ("ts", "five_resets_at", "seven_resets_at"):
-            datetime.fromisoformat(row[k])
+            dt = datetime.fromisoformat(row[k])
+            if dt.tzinfo is None:
+                row[k] = as_utc(dt).isoformat()
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
     return row
@@ -255,6 +260,18 @@ def _iso_week_ending(ts: str) -> str:
     return sunday.isoformat()
 
 
+def _probe_week_key(resets_at: str | None, ts: str) -> str:
+    """A probe row's week: its own seven-day reset through `_week_key` (not resets_at[:10]:
+    the reset's sub-second jitter crosses midnight for a reset at 00:00 and would split one
+    week into two), else, with no reset or one that does not parse, the ISO week of `ts`."""
+    if resets_at:
+        try:
+            return _week_key(resets_at)
+        except (TypeError, ValueError):
+            pass
+    return _iso_week_ending(ts)
+
+
 def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     """Same shape as weekly_windows, but derived from probe rows' whole-run deltas.
 
@@ -268,7 +285,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
     crossed a five-hour reset mid-probe, so the delta is not a true five-hour
     movement); d7 = seven_day_after - seven_day_before is discarded when < 0.
     Rows are bucketed by the row's own weekly reset date when present
-    (`seven_day_resets_at`, first 10 chars), else by the ISO week (Sunday) its
+    (`seven_day_resets_at`, through `_week_key`), else by the ISO week (Sunday) its
     `ts` falls in. windows = d5/d7 for weeks with d5 >= 20 and d7 >= 10 (a
     single tick-probe run rarely moves the five-hour meter by much, so the
     passive log's 50-point floor would empty this out entirely). The d7 floor
@@ -308,7 +325,7 @@ def probe_weekly_windows(rows: list[dict], now: datetime | None = None) -> dict:
         # A probe row records no five-hour reset id: it sits in one window by construction only.
         by_window.append(_window_point(r["ts"], d5, d7, reset_verified=False))
         resets_at = r.get("seven_day_resets_at")
-        week_key = resets_at[:10] if resets_at else _iso_week_ending(r["ts"])
+        week_key = _probe_week_key(resets_at, r["ts"])
         b = buckets.setdefault(week_key, {"d5": 0.0, "d7": 0.0})
         b["d5"] += d5
         b["d7"] += d7

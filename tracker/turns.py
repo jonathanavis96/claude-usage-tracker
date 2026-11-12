@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -91,15 +92,26 @@ def parse_ts_or_none(s) -> datetime | None:
         return None
 
 
-def iter_turns(paths: Iterable[Path]) -> Iterator[Turn]:
-    seen: set[str] = set()
+def iter_turns(paths: Iterable[Path], keep: Callable[[Path, Turn], bool] | None = None,
+               seen: set[str] | None = None) -> Iterator[Turn]:
+    """Every turn of these transcripts, each message id once across all of them.
+
+    `keep(path, turn)`, when given, drops the turns it refuses after they are counted as
+    seen: a session two logins share is split turn by turn between them by the time of
+    each login's claim (tracker/extract.py `owner_at`), so one file can hold turns of two
+    accounts. `seen` lets several calls share one dedupe, so a caller can count what each
+    source added (tracker/gs_passive.py, one account's live, archived and shipped roots).
+    """
+    seen = set() if seen is None else seen
     for p in paths:
         try:
             fh = open(p, "r", encoding="utf-8", errors="replace")
         except FileNotFoundError:
             continue  # removed between listing and reading (Claude Code prunes old transcripts)
         with fh:
-            yield from turns_in(_json_lines(fh), seen, subagent="subagents" in Path(p).parts)
+            for t in turns_in(_json_lines(fh), seen, subagent="subagents" in Path(p).parts):
+                if keep is None or keep(p, t):
+                    yield t
 
 
 def _json_lines(fh: Iterable[str]) -> Iterator[dict]:
@@ -246,28 +258,56 @@ def session_tokens_by_model(paths: Iterable[Path], now: datetime | None = None,
 
 
 def transcript_session_id(path: Path) -> str:
-    """The session a transcript belongs to: its stem, or for a sub-agent file
-    (`<session>/subagents/agent-<id>.jsonl`) the parent session's id.
+    """The session a transcript belongs to: its stem, or for a sub-agent file the
+    session of the `subagents` directory it sits under, however deep.
 
     Sub-agents run under the parent's login and spend on its meter, but
     session-env has no entry of their own, so matching the stem alone dropped
     every one of them from jwork's join (191 of 1152 files, 45% of the turns,
     2026-09-10..16). contrib/sample.py restates this rule; it does not import tracker/.
+
+    A workflow's sub-agents sit one level further down, at
+    `<session>/subagents/workflows/wf_<id>/agent-<id>.jsonl`, and the old test of the
+    parent directory alone returned `agent-<id>`, a session no login claims. Every line
+    of such a file carries the ancestor's id as `sessionId` (607 jwork and 732 a1 nested
+    files on masterrig, 2026-10-22), so the nearest `subagents` ancestor is the session.
+    Misread, 237 jwork and 34 avis files on gs went to `unclaimed_tokens` for
+    `credits.unclaimed_shares` to fit back, $125.65 of jwork's work on 17 Oct alone.
     """
-    if path.parent.name == "subagents":
-        return path.parent.parent.name
+    parts = path.parts
+    for i in range(len(parts) - 2, 0, -1):
+        if parts[i] == "subagents":
+            return parts[i - 1]
     return path.stem
 
 
 def transcript_paths(root: Path, since: datetime | None) -> list[Path]:
+    """Every `*.jsonl` under `root`, following directory symlinks, with mtime at or after `since`.
+
+    Symlinked directories are followed because a login's projects tree can link a project
+    in from another (masterrig's `~/.claude-avis/projects/<a project>` points into
+    `~/.claude/projects` since 2026-10-18): `Path.rglob` does not follow them, and saw 13M of
+    the 2,499M tokens os.walk(followlinks=True) finds under ~/.claude-avis. A directory is
+    entered once by its real path, so a link back up the tree cannot loop.
+    """
     out = []
-    for p in Path(root).rglob("*.jsonl"):
-        if since is not None:
-            try:
-                mtime = p.stat().st_mtime
-            except FileNotFoundError:
+    entered: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        real = os.path.realpath(dirpath)
+        if real in entered:
+            dirnames[:] = []
+            continue
+        entered.add(real)
+        for name in filenames:
+            if not name.endswith(".jsonl"):
                 continue
-            if datetime.fromtimestamp(mtime, tz=timezone.utc) < since:
-                continue
-        out.append(p)
+            p = Path(dirpath) / name
+            if since is not None:
+                try:
+                    mtime = p.stat().st_mtime
+                except FileNotFoundError:
+                    continue
+                if datetime.fromtimestamp(mtime, tz=timezone.utc) < since:
+                    continue
+            out.append(p)
     return sorted(out)

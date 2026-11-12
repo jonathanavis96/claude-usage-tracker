@@ -34,6 +34,10 @@ _Avoid_: entry, sample, reading
 One meter value observed after a prompt, inside a probe.
 _Avoid_: sample, observation
 
+**Weekly-only reading**:
+A reading of an account with no 5-hour limit: the endpoint sends `"five_hour": null` (rate-limit headers carry no `5h-*` field) while the seven-day meter reads normally, seen on some Max 20x accounts from 2026-10-31. Logged with five_hour null and `weekly_only: true`; never a 0% meter, and never a 5-hour sample.
+_Avoid_: idle window, failed read
+
 **Alignment**:
 The first tick a probe waits for so that measurement starts on a whole-percent boundary. The alignment span is discarded.
 _Avoid_: warm-up, calibration, sync
@@ -76,12 +80,16 @@ _Avoid_: multiplier, penalty
 **Meter weight**:
 How much harder the meter charges one model than another for the same list value. Currently 1.0 for every model.
 
+**Pinned at list**:
+A family every change figure values at its input list-price ratio to the Opus anchor (data/prices.json) instead of its fitted rate (`credits.PINNED_AT_LIST`). Only Opus 5.5, at 0.8x Opus, since 2026-10-23, because the meters accept that ratio (ADR 0001 rule 23). Its fitted rate is still the per-model figure the page publishes, and the four-account detector moves no pinned family across a rate interval. Every other family, and every cache read, stays at the fit.
+_Avoid_: list-until-separable (rule 10, a different, temporary hold)
+
 **Reference mix**:
 The frozen, versioned token-class mix (data/reference_mix.json) that converts a meter budget into tokens per window, and those tokens into API list value, for the page. It is a scenario, not a measurement of anyone's workload: it changes only with a new id, so figures stay comparable through time (audit 2026-09-16, finding 11). Replaces the passive split, which moved with every day's sessions.
 _Avoid_: real-world mix, session profile, passive split
 
 **Weekly windows**:
-How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). `weekly_windows` publishes both raw series (`passive`, `probe`) plus one `{current, history}` object per plan. Each raw series also carries the same pairs bucketed by five-hour window (`by_window`, one `Window point` per window); the weekly rows are what the page charts, the window points are what detection and the live plan's `current` run on.
+How many full five-hour windows the seven-day limit holds, measured rather than assumed, from two independent sources: the passive meter log (paired five-hour and seven-day deltas within a single window of each, bucketed by week, each week's total five-hour movement divided by its total seven-day movement) and each probe row's own whole-run before/after meter reads (same division, bucketed by the probe's own weekly reset date or, lacking that, its ISO calendar week). `weekly_windows` publishes both raw series (`passive`, `probe`) plus one `{current, history}` object per plan. Each raw series also carries the same pairs bucketed by five-hour window (`by_window`, one `Window point` per window); the weekly rows are what the page charts, the window points are what the windows-per-week regimes pool and the live plan's `current` runs on.
 Since 2026-10-05 this meter ratio is published for reference only: the windows per week the page states is the measured **Weekly limit** over the window.
 _Avoid_: 28 (the calendar count of five-hour windows in a week; not the measured figure)
 
@@ -105,9 +113,9 @@ _Avoid_: bucket, sample
 Total d5 over total d7 across a set of window points, as opposed to a median of their individual ratios. Every level, confirmation and `current` on the weekly series is pooled, so a heavy window counts for more than a thin one. A pool of n pieces concedes min(n, 2 sqrt n) points of rounding to each total for its interval (tracker/detect.py).
 _Avoid_: average, mean
 
-_Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped, and a passive window point counts as `max20` only when its window starts after `PLAN_CHANGE` day. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it), published as `historical_only` with its regimes and the plan change as the account owner's unverified record; `max20` is the live plan and the only one change detection runs on. The probe runs publish as their own `probe` series and never replace passive `max20` weeks (finding 13). `pro` has no measurement of its own and publishes none: nothing is copied from `max5` (finding 6). Every plan carries `"assumed": false` and an `availability` reason. Weekly rows paired before the finding-3 repair (no `pieces`) are published as `legacy_uncertain` and nothing is computed from them.
+_Plan_: The count is per plan, not one continuous series -- Jonathan's Max 5x -> Max 20x move (`PLAN_CHANGE`, tracker/passive.py) splits the passive history in two. A passive week whose span crosses `PLAN_CHANGE` belongs to neither plan and is dropped, and a passive window point counts as `max20` only when its window starts after `PLAN_CHANGE` day. `max5` is frozen passive-era history with no probe series and no change detection (Jonathan is not reverting to it), published as `historical_only` with its regimes and the plan change as the account owner's unverified record; `max20` is the live plan, and its windows-per-week regimes open at the four-account detector's provisional and measured changes. The probe runs publish as their own `probe` series and never replace passive `max20` weeks (finding 13). `pro` has no measurement of its own and publishes none: nothing is copied from `max5` (finding 6). Every plan carries `"assumed": false` and an `availability` reason. Weekly rows paired before the finding-3 repair (no `pieces`) are published as `legacy_uncertain` and nothing is computed from them.
 
-_Current_: `max20.current` is the pooled ratio of the current `Regime`'s repaired, reset-verified window points over the trailing fortnight (anchored on the newest point), so it follows a certified change from the publish that certifies it; with fewer than 10 points of d7 it is null. There is no fallback to a median of weekly rows. `max5.current` and `pro.current` are null without contemporaneous measurements; historical Max 5x evidence remains historical and is never copied into Pro. `current_estimate` carries the value's rounding interval, points, pieces, evidence dates, staleness (against the publish time) and quality.
+_Current_: `max20.current` is the pooled ratio of the current `Regime`'s repaired, reset-verified window points over the trailing fortnight (anchored on the newest point) after the four-account detector's newest provisional or measured change, so it follows a change from the publish at which it turns provisional (flagged `provisional` until it is measured); with fewer than 10 points of d7 it is null. There is no fallback to a median of weekly rows. `max5.current` and `pro.current` are null without contemporaneous measurements; historical Max 5x evidence remains historical and is never copied into Pro. `current_estimate` carries the value's rounding interval, points, pieces, evidence dates, staleness (against the publish time) and quality.
 
 **Stretch**:
 One gs account's meter movement of at least 10%, pooled from consecutive same-window readings of that account's own meter log, with the meter dollars that account's own transcripts spent across it. The unit of passive measurement on gs (tracker/join.py `build_stretches`). Whole-percent rounding carries one point per separate window piece, so a 10% stretch reads to about ±10% and a busy day's pooled stretches to a few percent.
@@ -140,8 +148,12 @@ _Avoid_: normalization, scale factor
 The compatible source behind a metric (`instrument`, `rates[model].evidence.source`). Measured passive readings require reset ids in the meter log and no unpriced work; capture completeness is diagnosed but not verified. Legacy reset-less passive evidence (jwork's ceiling log) remains a conditional reference with no change events. Missing passive evidence makes rates unavailable; probe payloads remain a separate series and never replace passive figures on an incompatible scale. History begins at the first compatible observation and is not backfilled.
 
 **Regime**:
-A detector segment over compatible observations. A published regime carries the raw pooled level, its rounding interval, evidence count and provenance. It is an account-scoped estimate, not an Anthropic policy statement.
+A segment between two of the four-account detector's provisional or measured changes, over compatible observations. Every regime boundary on the page is a provisional or measured change, and every one of those opens one; a candidate never does (ADR 0001 rule 22, amended 2026-10-23). A regime opened by a provisional change its chart draws is a provisional level, flagged `provisional` wherever it is shown, and so is every current figure read off it. A published regime carries its pooled level, its rounding interval, evidence count and provenance; each earlier regime is restated from the next by the detector's size at the change between them (`chained`), with its own reading kept beside it. It is an estimate from these accounts, not an Anthropic policy statement.
 _Avoid_: era, level, plateau
+
+**Five-hour limit's end**:
+The instant the tracker's five-hour series stops: the earliest last five-hour reading among the accounts that have switched to weekly-only readings (the "Ultra" plan, rolled out per account from 2026-10-30; tracker/five_hour_end.py, ADR 0001 rule 24). Each account's switch is read off its own meter log. Every five-hour figure is frozen there and published as final (`five_hour_limit_removed`), not stale. The weekly limit reads on. No date is configured: a later switch needs nothing done.
+_Avoid_: Ultra cut, five-hour removal date
 
 ### Operation
 
@@ -166,23 +178,31 @@ A drifted row whose rerun agreed with the earlier median. It stays in history bu
 _Avoid_: bad row, glitch
 
 **Change**:
-A step detected in one published series: an observed change in this account's metric, not a proven change to Anthropic's limits. Published events and `last_change` carry a `scope`, `"window"` or `"weekly"`, naming which series the change was detected on, plus `metric`, `onset`, `confirmation` and `attribution: observed_account_metric_change`. Window-scope events (the smoothed passive detector) are `provisional`, and bin/daily.sh announces neither provisional nor legacy-uncertain ones. It announces a change only once two consecutive publishes of new weekly evidence (a newer window in `weekly_windows.passive`) show it dated within a day of each other, and never announces a date within a day of one it has already announced (`.notified-change`, one date per line; the last observation is in `.weekly-change-seen`).
+A step every Max account takes at the same instant, found by the **Four-account detector** on one of its two searched lines: credits per 1% of the seven-day meter (the weekly limit) or five-hour points per seven-day point (windows per week). A change is a `candidate` the day it is first found, `provisional` while the daily run keeps finding it, and `measured` once found on seven runs in a row, each find within a week of the median of the finds before it, after which it is never moved or withdrawn. Its instant is the median of its finds, and its `instant_range` spans every find. Only a measured change reaches `events`, `last_change` and the subscriber email (ADR 0001 rule 22). A provisional one opens a provisional level on every chart that shows it, and a regime boundary in every series, marked dashed with its figure (`change_markers`), and is the **Hero** when it is the newest that can be stated; measured, the same step is solid, and withdrawn, the single level returns (amended 2026-10-23). A candidate moves nothing. Its record states its size on the line that found it (`metric`, `change_pct`, `interval_pct`, at the rates in force), each direct limit's own size beside it, `scope`, the direct limits that moved (decided the day it was measured, `decided`), and `rate_limited` with `interval_with_rates_pct` where a family's rate interval moves the figure more than its own interval does. bin/daily.sh never announces a date within a day of one it has already announced (`.notified-change`, one date per line; the last observation is in `.weekly-change-seen`).
 _Avoid_: shift, event
 
-**Weekly ratio change**:
-An account-scoped change point in paired five-hour/seven-day movement. A split certifies only when both sides clear the d7 floors, their pooled levels differ by more than 15%, and their rounding intervals do not overlap. Detected on the window points, never on the calendar-week rows (a mid-week step blends into the week's average). Events publish onset bounds, confirmation evidence and the metric name; they do not claim that Anthropic changed a weekly cap or establish causation.
+**Hero**:
+The page's headline sentence, "Anthropic last <increased|decreased> Claude's <5-hour|weekly> limit by N% on <date>.", published as `headline` (ADR 0001 rule 22, amended 2026-10-23). It states the newest provisional-or-measured **Change** (never a candidate or a withdrawn find) as the 5-hour or the weekly limit: of the two sizes whose 95% interval excludes no change, the larger; decided the run the change is measured and never re-decided (`decided.stated`). A change with neither, or with no sizes, is passed over (`passed_over`). Tagged "provisional" until the change is measured. Never windows per week, never the generic "limits".
+_Avoid_: headline change, last change (that is `last_change`, the newest measured change, which the email reads)
+
+**Four-account detector**:
+The daily search for limit changes (tracker/four_accounts.py, ADR 0001 rule 22). Each Max account is its own ruler. At every six-hour instant it compares each account's 14 days after with its 14 days before, and the instant flags when shuffling the accounts' days makes a step that large less than once in a thousand tries, every voting account agrees, and the step holds with any one account left out. A step one account takes alone is a counting problem on that account (`not_limit_changes`). No date is an input. Its state is history/four-accounts.json, and the page's `four_accounts` block is its newest run.
+_Avoid_: pooled detector, change-point detector (the window-point and credit-series detectors before it were retired)
+
+**Weekly ratio change** (retired 2026-10-23):
+An account-scoped change point in paired five-hour/seven-day movement, retired with ADR 0001 rule 22: windows per week now steps only at the four-account detector's provisional and measured changes. A split certifies only when both sides clear the d7 floors, their pooled levels differ by more than 15%, and their rounding intervals do not overlap. Detected on the window points, never on the calendar-week rows (a mid-week step blends into the week's average). Events publish onset bounds, confirmation evidence and the metric name; they do not claim that Anthropic changed a weekly cap or establish causation.
 _Avoid_: plan change (that is Jonathan's own subscription move, not a measured step)
 
 **Plan-wide**:
-A change candidate's direct measurement (the five-hour window change on the five-hour meter, or the weekly limit change on the seven-day meter) that holds with each of its combined accounts left out in turn: recombined without that account, every refit keeps the direction with a 95% interval that still excludes no change. A plan limit changes for every account at the same instant, so a change one account alone produces, or a change resting on one account, is not plan-wide. A candidate is certified once either measurement is plan-wide with an interval that excludes no change; only then does it enter `events`, become `last_change`, reach the email and step the measurement it was certified on (`window_change`, `weekly_change`, `certified_on`, `applies`, `withheld_reason` in `credits.five_hour_on_meters.candidates`; ADR 0001 rules 9 and 11).
-_Avoid_: consistent, agreed (the credit series' two-account agreement is a different rule)
+A step that holds with each voting account left out in turn: the other accounts, pooled without it, still step the same way at |z| >= 1.96 (`four_accounts.plan_wide`). A plan limit changes for every account at the same instant, so a step one account alone produces, or one resting on one account, is not a limit change. The four-account detector applies it on every line (ADR 0001 rule 22); the joint rate fit keeps its own leave-one-out (`plan_wide_verdict`, rule 8).
+_Avoid_: consistent, agreed (agreement is the detector's separate test that no voting account steps apart from the others)
 
 **Rate check**:
 The test that a joint fit's new-family rate is one a list price can explain: its 95% interval overlaps half to twice the family's input list-price ratio to its base family in data/prices.json. A fit that fails it has not separated the rate from the limit change, so it stays unseparated (`joint_fit.rate_check`; ADR 0001 rule 8). A family with no list price skips it.
 _Avoid_: rate sanity check, plausibility filter
 
 **Invariant**:
-A publish-time check over the built public JSON (`tracker/invariants.py`) that returns plain-sentence failures. A failing invariant alerts once per incident and never blocks the publish.
+A publish-time check over the built public JSON (`tracker/invariants.py`) that returns plain-sentence failures. A failing invariant alerts once per incident. Checks 4-8, which hold every figure the page states for a change to the four-account detector's, block the publish: the last published JSON stays and the run exits 9.
 _Avoid_: assertion, guard (in prose about the JSON)
 
 **Alert**:

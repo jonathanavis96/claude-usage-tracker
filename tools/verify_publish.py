@@ -34,6 +34,7 @@ import urllib.request
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -63,6 +64,8 @@ def publisher_argv(root: Path, prices: Path, out: Path) -> list[str]:
         "--gs-passive", str(root / "history/gs-passive.json"),
         "--effort", str(root / "data/effort_matrix.json"),
         "--masterrig-passive", str(root / "history/masterrig-passive.json"),
+        "--masterrig-speed", str(root / "history/masterrig-speed.json"),
+        "--four-accounts", str(root / "history/four-accounts.json"),
         "--prices", str(prices),
         "--alert-env-file", str(out.parent / "no-alert.env"),
         "--out", str(out),
@@ -70,15 +73,20 @@ def publisher_argv(root: Path, prices: Path, out: Path) -> list[str]:
 
 
 def rebuild(root: Path, now: datetime) -> dict:
-    """Run the cron's publisher over the files under `root`, at `now`, into a scratch file."""
-    from tracker import publish
+    """Run the cron's publisher over the files under `root`, at `now`, into a scratch file.
+
+    The publisher takes no argument for the measured rates or the harness runs, and reads
+    both from the checkout its own code is in; they are pointed at `root` for this run."""
+    from tracker import credits, publish
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         prices = tmp / "prices.json"
         shutil.copyfile(root / "data/prices.json", prices)
         out = tmp / "claude-usage.json"
-        with redirect_stdout(io.StringIO()):
+        with redirect_stdout(io.StringIO()), \
+                mock.patch.object(credits, "MODEL_RATES_PATH", root / "history/model-rates.json"), \
+                mock.patch.object(credits, "HARNESS_RUNS_PATH", root / "history/harness-runs.jsonl"):
             rc = publish.main(publisher_argv(root, prices, out), post=lambda *a, **k: None,
                               environ={}, now=now)
         if rc != 0:

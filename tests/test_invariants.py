@@ -2,66 +2,128 @@
 
 Each check has a passing fixture and a failing one. The fixture is the smallest public JSON
 the checks read: `credits.window_tokens` (headline, per-family rows, regimes, account
-regimes) and `credits.five_hour_on_meters.candidates`.
+regimes), `weekly_windows.max20`, and the four-account detector's `four_accounts`,
+`last_change`, `headline` and `events` (ADR 0001 rule 22), built with the detector's own
+publishing functions from two measured changes and one provisional one.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
-import re
+import math
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tracker import four_accounts as F
 from tracker import invariants as I
 from tracker import supervise
 
-CUT = "2026-09-14T12:00:00+00:00"
-SEP22 = "2026-09-22T19:41:49.479000+00:00"
+SEP14 = "2026-09-14T16:00:00+00:00"
+SEP24 = "2026-09-24T14:00:00+00:00"
+OCT09 = "2026-10-09T16:00:00+00:00"
 
 
-def _candidate(at=SEP22, *, applies=False, change_pct=None, interval_pct=None,
-               separable=False, rate_check="passed", plan_wide="passed",
-               ratio=0.97, ratio_interval=(0.68, 1.43)):
-    return {"family": "opus-5-5", "at": at, "applies": applies, "measurable": True,
-            "change_pct": change_pct, "interval_pct": interval_pct,
-            "windows_per_week_ratio": ratio, "windows_per_week_ratio_interval": list(ratio_interval),
-            "joint_fit": {"separable": separable, "rate_check": {"state": rate_check}},
-            "plan_wide": {"state": plan_wide},
-            "withheld_reason": None if applies else "interval test (ADR 0001 rule 9) failed"}
+def _size(pct, lo, hi, accounts=("a1", "a2")):
+    return {"change_pct": pct, "interval_pct": [lo, hi], "excludes_no_change": lo > 0 or hi < 0,
+            "_d": math.log1p(pct / 100), "accounts": list(accounts),
+            "per_account": {a: {"change_pct": pct} for a in accounts}}
+
+
+def _change(at, found_on, state, sizes):
+    found = sizes[found_on]
+    h = F.hours(F.parse(at))
+    return {"at": at, "_h": h, "instant_range": [h, h], "found_on": found_on,
+            "sign": 1 if found["change_pct"] > 0 else -1, "state": state, "carried": state == "measured",
+            "found_today": True, "held_days": 9 if state == "measured" else 3,
+            "first_found": "2026-09-19", "measured_on": "2026-09-25" if state == "measured" else None,
+            "p": 0.00025, "z": -6.9, "change_pct": found["change_pct"],
+            "interval_pct": found["interval_pct"], "accounts": found["accounts"],
+            "reading": F.reading(sizes), "sizes": sizes}
+
+
+def _run() -> dict:
+    """A detector run: 14 Sep on the ratio (-17.1%), 24 Sep on the seven-day line (+34.4%,
+    five-hour +31.4% drawn too), 9 Oct provisional."""
+    changes = [
+        _change(SEP14, "ratio", "measured", {"ratio": _size(-17.1, -24.5, -9.0),
+                                             "seven_day": _size(-2.2, -13.9, 10.9),
+                                             "five_hour": _size(10.3, -9.2, 34.1)}),
+        _change(SEP24, "seven_day", "measured", {"ratio": _size(-1.3, -9.5, 7.6),
+                                                 "seven_day": _size(34.4, 25.7, 43.7),
+                                                 "five_hour": _size(31.4, 14.0, 51.4)}),
+        _change(OCT09, "ratio", "provisional", {"ratio": _size(-8.9, -15.2, -2.2),
+                                                "seven_day": _size(4.1, -2.7, 11.3),
+                                                "five_hour": _size(9.9, 1.2, 19.2)}),
+    ]
+    lines = {line: {a: [["2026-10-20", 1.0, 3.0, 1.0]] for a in ("a1", "a2", "a3", "a4")}
+             for line in F.LINES}
+    return {"schema": F.SCHEMA, "method": F.METHOD, "day": "2026-10-23",
+            "data_until": "2026-10-23T00:00:00+00:00", "rule": F.RULE, "valuation": F.VALUATION,
+            "headless_factor": {"value": 1.42}, "interval_coverage": {},
+            "accounts": {a: {"label": F.public_label(a), "lines": {}} for a in ("a1", "a2", "a3", "a4")},
+            "changes": [F._public_change(c) | {"sizes": {k: {kk: vv for kk, vv in v.items() if kk != "_d"}
+                                                         for k, v in c["sizes"].items()}}
+                        for c in changes],
+            "withdrawn": [], "not_limit_changes": [], "lines": lines,
+            "levels": {line: F.levels(changes, line) for line in F.LINES}, "seconds": 1.2}
 
 
 def _good() -> dict:
-    """Today's shape: a run read directly in Opus 5.5 from the cut, one withheld boundary."""
-    regimes = [
-        {"from": None, "until": CUT, "value": 450, "source": "before_cluster",
-         "measured_family": "opus", "measured_value": 450},
-        {"from": CUT, "until": SEP22, "value": 500, "source": "unmeasured_boundary_run_cluster",
-         "measured_family": "opus-5-5", "measured_value": 665},
-        {"from": SEP22, "until": None, "value": 500, "source": "unmeasured_boundary_run_cluster",
-         "measured_family": "opus-5-5", "measured_value": 665},
-    ]
-
-    # The withheld boundary opens no per-week or account regime: those rows run from the cut.
-    spans = [(None, CUT), (CUT, None)]
+    """A page consistent with the detector: every regime opens at a provisional or measured
+    change and steps by the detector's size on its line, where the detector draws that line,
+    and the levels the provisional 9 October change opens are flagged provisional."""
+    run = _run()
+    spans = [(None, SEP14), (SEP14, SEP24), (SEP24, OCT09), (OCT09, None)]
+    # The window (five-hour): carried at 14 Sep, +31.4% at 24 Sep, +9.9% at 9 Oct (provisional:
+    # the level since is the newest, and the levels before it are restated through its size).
+    window = [455, 455, 598, 657]
+    # The week (seven-day): carried at 14 Sep, +34.4% at 24 Sep, carried at 9 Oct; windows per
+    # week (the ratio): -17.1% at 14 Sep, carried at 24 Sep, -8.9% at 9 Oct (provisional).
+    week = [3000, 3000, 4032, 4032]
+    wpw = [6.5862, 5.46, 5.46, 4.974]
+    prov = [False, False, False, True]
+    regimes = [{"from": f, "until": u, "value": v, "source": "known_date_regime_cluster",
+                "measured_family": "opus-5-5", "measured_value": round(v * 665 / 657),
+                "provisional": pv}
+               for (f, u), v, pv in zip(spans, window, prov)]
 
     def acct(windows, measured):
-        return [{"from": f, "until": u, "window": w, "measured_window": m}
-                for (f, u), w, m in zip(spans, windows, measured)]
-    return {"credits": {
-        "window_tokens": {
-            "all": {"value": 500}, "measured_family": "opus-5-5",
-            "per_family": {"opus": {"all": {"value": 500}, "measured_directly": False,
+        return [{"from": f, "until": u, "window": w, "measured_window": m, "provisional": pv}
+                for (f, u), w, m, pv in zip(spans, windows, measured, prov)]
+    return {
+        "generated_at": "2026-10-23T02:45:00+00:00",
+        "credits": {"window_tokens": {
+            "all": {"value": 657}, "measured_family": "opus-5-5", "provisional": True,
+            "per_family": {"opus": {"all": {"value": 657}, "measured_directly": False,
                                     "rate_source": "anchor"},
                            "opus-5-5": {"all": {"value": 665}, "measured_directly": True,
                                         "rate_source": "measured"}},
             "regimes": regimes,
-            "per_week_regimes": [{"from": f, "until": u} for f, u in spans],
-            "account_regimes": {"a1": acct([410, 470], [None, None]),
-                                "a2": acct([490, 610], [460, 800]),
-                                "a3": acct([None, 395], [None, 620])}},
-        "five_hour_on_meters": {"candidates": [_candidate()]}}}
+            "per_week_regimes": [{"from": f, "until": u, "value": v, "windows_per_week": w,
+                                  "provisional": False, "windows_per_week_provisional": pv}
+                                 for (f, u), v, w, pv in zip(spans, week, wpw, prov)],
+            "per_week": {"provisional": False, "windows_per_week_provisional": True},
+            "account_regimes": {"Max account 1": acct([410, 420, 546, 600], [None, None, None, None]),
+                                "Max account 2": acct([446, 473, 637, 700], [420, 455, 728, 800]),
+                                "Max account 3": acct([None, None, 582, 640], [None, None, 620, 620])}},
+            "window_credits": {"provisional": True,
+                               "regimes": [{"from": f, "until": u, "provisional": pv}
+                                           for (f, u), pv in zip(spans, prov)]}},
+        "weekly_windows": {"max20": {
+            "provisional": True,
+            "regimes": [{"opened_by": None, "windows": 6.5862}, {"opened_by": SEP14, "windows": 5.46},
+                        {"opened_by": SEP24, "windows": 5.46},
+                        {"opened_by": OCT09, "windows": 4.974, "provisional": True}],
+            "by_account": {"Max account 1": {"regimes": [{"opened_by": None}, {"opened_by": SEP14}]}}}},
+        "four_accounts": F.public_block(run),
+        "last_change": F.last_change(run),
+        "headline": F.headline(run),
+        "events": F.events(run),
+    }
 
 
 def _wt(doc):
@@ -74,32 +136,42 @@ def _headline(doc, anchor_value):
     scale = wt["per_family"]["opus-5-5"]["all"]["value"] / wt["all"]["value"]
     wt["all"]["value"] = wt["per_family"]["opus"]["all"]["value"] = anchor_value
     wt["per_family"]["opus-5-5"]["all"]["value"] = round(anchor_value * scale)
+    wt["regimes"][-1]["measured_value"] = wt["per_family"]["opus-5-5"]["all"]["value"]
     return doc
+
+
+def _contradiction() -> dict:
+    """A page whose headline states the provisional 9 October change: blocking."""
+    doc = _good()
+    run = _run()
+    run["changes"][2]["state"] = "measured"
+    doc["last_change"] = F.last_change(run)
+    return doc
+
+
+class GoodPageTest(unittest.TestCase):
+    def test_the_fixture_passes_every_check(self):
+        self.assertEqual(I.run_checks(_good()), {name: [] for name, _ in I.CHECKS})
 
 
 class HeadlineInsideItsAccountsTest(unittest.TestCase):
     def test_passes_inside_the_scaled_account_range(self):
-        # 665 / 500 scales the accounts to about 525 .. 811; the headline 665 is inside.
         self.assertEqual(I.headline_inside_accounts(_good()), [])
 
     def test_fails_above_every_account(self):
-        # The pre-fix shape: a headline chained through two factors, above every account.
         doc = _headline(_good(), 990)
         (msg,) = I.headline_inside_accounts(doc)
         self.assertIn("Opus 5.5", msg)
-        self.assertIn("1,317", msg)
-        self.assertIn("a2", msg)  # names the account at the edge it left
+        self.assertIn("1,002", msg)
+        self.assertIn("Max account 2", msg)  # names the account at the edge it left
 
     def test_allows_five_percent_for_rounding(self):
-        # The page scales accounts and headline alike, so the anchor figure is what moves.
-        self.assertEqual(I.headline_inside_accounts(_headline(_good(), round(610 * 1.04))), [])
-        self.assertEqual(len(I.headline_inside_accounts(_headline(_good(), round(610 * 1.06)))), 1)
-        self.assertEqual(I.headline_inside_accounts(_headline(_good(), round(395 * 0.96))), [])
-        self.assertEqual(len(I.headline_inside_accounts(_headline(_good(), round(395 * 0.94)))), 1)
+        self.assertEqual(I.headline_inside_accounts(_headline(_good(), round(700 * 1.04))), [])
+        self.assertEqual(len(I.headline_inside_accounts(_headline(_good(), round(700 * 1.06)))), 1)
 
     def test_needs_two_accounts_with_a_window(self):
         doc = _good()
-        for label in ("a2", "a3"):
+        for label in ("Max account 2", "Max account 3"):
             _wt(doc)["account_regimes"][label][-1]["window"] = None
         _wt(doc)["per_family"]["opus-5-5"]["all"]["value"] = 5000
         self.assertEqual(I.headline_inside_accounts(doc), [])
@@ -111,157 +183,6 @@ class HeadlineInsideItsAccountsTest(unittest.TestCase):
         self.assertEqual(I.headline_inside_accounts(doc), [])
         _wt(doc)["all"]["value"] = _wt(doc)["per_family"]["opus"]["all"]["value"] = 900
         self.assertEqual(len(I.headline_inside_accounts(doc)), 1)
-
-
-class NoUnprovenStepTest(unittest.TestCase):
-    def _scaled(self, **cand):
-        doc = _good()
-        doc["credits"]["five_hour_on_meters"]["candidates"] = [_candidate(**cand)]
-        _wt(doc)["regimes"][2]["source"] = "previous_regime_scaled_by_known_date_change"
-        return doc
-
-    def test_carried_and_measured_regimes_pass(self):
-        self.assertEqual(I.no_unproven_step(_good()), [])
-
-    def test_a_step_from_a_published_change_passes(self):
-        doc = self._scaled(applies=True, change_pct=20.0, interval_pct=[8.0, 33.0], separable=True)
-        self.assertEqual(I.no_unproven_step(doc), [])
-
-    def test_a_step_from_a_withheld_change_fails(self):
-        doc = self._scaled(applies=True, change_pct=48.3, interval_pct=[3.3, 89.2], separable=True,
-                           plan_wide="failed")
-        (msg,) = I.no_unproven_step(doc)
-        self.assertIn(SEP22, msg)
-        self.assertIn("plan-wide", msg)
-
-    def test_a_step_failing_the_rate_check_fails(self):
-        doc = self._scaled(applies=True, change_pct=33.3, interval_pct=[17.3, 53.5], separable=True,
-                           rate_check="failed")
-        self.assertIn("rate check", I.no_unproven_step(doc)[0])
-
-    def test_a_step_with_no_record_of_rules_8_and_9_fails(self):
-        # The pre-fix JSON carried neither record: a step it cannot show passed them fails.
-        doc = self._scaled(applies=True, change_pct=48.3, interval_pct=[3.3, 89.2], separable=True)
-        cand = doc["credits"]["five_hour_on_meters"]["candidates"][0]
-        del cand["plan_wide"], cand["joint_fit"]["rate_check"]
-        (msg,) = I.no_unproven_step(doc)
-        self.assertIn("no record", msg)
-
-    def test_a_step_with_no_change_behind_it_fails(self):
-        doc = self._scaled()
-        doc["credits"]["five_hour_on_meters"]["candidates"] = []
-        self.assertIn("no five-hour change candidate", I.no_unproven_step(doc)[0])
-
-    def test_the_published_rate_interval_is_read_again(self):
-        # Records from older code said separable; today's span test and rule 8 refuse it.
-        doc = self._scaled(applies=True, change_pct=33.3, interval_pct=[17.3, 53.5], separable=True)
-        cand = doc["credits"]["five_hour_on_meters"]["candidates"][0]
-        cand["family"] = "sonnet-5-5"
-        cand["joint_fit"].update(base_family="sonnet", rate_relative_interval=[2.4298, 6.5116])
-        (msg,) = I.no_unproven_step(doc)
-        self.assertIn("spans 2.68x", msg)
-        self.assertIn("read against data/prices.json", msg)
-        cand["joint_fit"]["rate_relative_interval"] = [0.9, 1.1]
-        self.assertEqual(I.no_unproven_step(doc), [])
-
-    def test_the_cut_regime_is_the_certified_weekly_change(self):
-        doc = _good()
-        _wt(doc)["regimes"][1]["source"] = "before_cluster_scaled_by_five_hour_change"
-        self.assertEqual(I.no_unproven_step(doc), [])
-
-
-class DirectWindowChangeTest(unittest.TestCase):
-    """A record carrying its direct window change (ADR 0001 rule 11) is proved by it."""
-
-    def _window(self, certified=True, plan_wide="passed", interval=(8.0, 33.0)):
-        return {"certified": certified, "plan_wide": {"state": plan_wide},
-                "interval_pct": list(interval) if interval else None}
-
-    def _scaled(self, window, applies=True):
-        doc = _good()
-        cand = _candidate(applies=applies, change_pct=20.0, interval_pct=[8.0, 33.0])
-        cand["window_change"] = window
-        doc["credits"]["five_hour_on_meters"]["candidates"] = [cand]
-        _wt(doc)["regimes"][2]["source"] = "previous_regime_scaled_by_known_date_change"
-        return doc
-
-    def test_a_certified_window_change_proves_its_step_without_a_separable_fit(self):
-        self.assertEqual(I.no_unproven_step(self._scaled(self._window())), [])
-
-    def test_an_uncertified_window_change_does_not(self):
-        (msg,) = I.no_unproven_step(self._scaled(
-            self._window(certified=False, plan_wide="failed", interval=(-2.0, 30.0))))
-        self.assertIn("plan-wide", msg)
-        self.assertIn("includes no change", msg)
-        self.assertIn("not certified", msg)
-
-    def test_a_withheld_candidate_does_not_even_with_a_certified_window(self):
-        (msg,) = I.no_unproven_step(self._scaled(self._window(), applies=False))
-        self.assertIn("withheld", msg)
-
-    def test_a_change_certified_on_the_weekly_limit_alone_is_no_five_hour_step(self):
-        # 22 September today: it applies on the seven-day meter, its window change is not
-        # certified, and the ratio points the other way. No five-hour step is published.
-        doc = _good()
-        cand = _candidate(applies=True, change_pct=31.7, interval_pct=[20.6, 43.8],
-                          ratio=1.0688, ratio_interval=(0.75, 1.6))
-        cand["window_change"] = self._window(certified=False, plan_wide="failed")
-        doc["credits"]["five_hour_on_meters"]["candidates"] = [cand]
-        self.assertEqual(I.steps_agree_with_meters(doc), [])
-        cand["window_change"]["certified"] = True
-        (msg,) = I.steps_agree_with_meters(doc)
-        self.assertIn("+31.7%", msg)
-
-
-class NoWithheldBoundaryTest(unittest.TestCase):
-    SEP29 = "2026-09-29T18:25:18.212000+00:00"
-
-    def _live(self):
-        """Shaped like the public JSON of 2026-10-04: per-week and account rows split at the
-        two withheld changes, 22 and 29 September."""
-        doc = _good()
-        wt = _wt(doc)
-        doc["credits"]["five_hour_on_meters"]["candidates"] = [_candidate(), _candidate(at=self.SEP29)]
-        bounds = [(None, CUT), (CUT, SEP22), (SEP22, self.SEP29), (self.SEP29, None)]
-        wt["per_week_regimes"] = [{"from": f, "until": u} for f, u in bounds]
-        wt["account_regimes"] = {label: [{"from": f, "until": u, "window": 470} for f, u in bounds]
-                                 for label in ("a1", "a2")}
-        return doc
-
-    def test_merged_rows_pass(self):
-        self.assertEqual(I.no_withheld_boundary(_good()), [])
-        doc = self._live()
-        wt = _wt(doc)
-        wt["per_week_regimes"] = [{"from": None, "until": CUT}, {"from": CUT, "until": None}]
-        wt["account_regimes"] = {label: rows[:2] for label, rows in wt["account_regimes"].items()}
-        self.assertEqual(I.no_withheld_boundary(doc), [])
-
-    def test_rows_split_at_a_withheld_change_fail(self):
-        msgs = I.no_withheld_boundary(self._live())
-        self.assertEqual(len(msgs), 2)
-        first = msgs[0]
-        self.assertIn("22 September", first)
-        self.assertIn("per_week_regimes", first)
-        self.assertIn("a1", first)
-        self.assertIn("a2", first)
-        self.assertIn("interval test (ADR 0001 rule 9) failed", first)
-        self.assertIn("29 September", msgs[1])
-
-    def test_a_published_change_may_open_a_row(self):
-        doc = self._live()
-        doc["credits"]["five_hour_on_meters"]["candidates"] = [
-            _candidate(applies=True, change_pct=-3.0, interval_pct=[-5.0, -1.0], separable=True),
-            _candidate(at=self.SEP29, applies=True, change_pct=7.0, interval_pct=[2.0, 12.0],
-                       separable=True)]
-        self.assertEqual(I.no_withheld_boundary(doc), [])
-
-    def test_a_long_withheld_reason_is_shortened(self):
-        doc = self._live()
-        for cand in doc["credits"]["five_hour_on_meters"]["candidates"]:
-            cand["withheld_reason"] = "plan-wide test failed: " + "x" * 400
-        for msg in I.no_withheld_boundary(doc):
-            self.assertLess(len(msg), 400)
-            self.assertIn("…", msg)
 
 
 class DirectMeansDirectTest(unittest.TestCase):
@@ -284,73 +205,624 @@ class DirectMeansDirectTest(unittest.TestCase):
 
 class AccountUnitsTest(unittest.TestCase):
     def test_passes_within_a_quarter(self):
-        # a3: 395 x 665/500 = 525 against 620 direct, 15% low: inside the bound.
         self.assertEqual(I.account_units(_good()), [])
 
     def test_fails_outside_a_quarter_and_names_the_account_and_both_numbers(self):
         doc = _good()
-        _wt(doc)["account_regimes"]["a3"][1]["window"] = 300  # 399 against 620
+        _wt(doc)["account_regimes"]["Max account 3"][2]["window"] = 300
         (msg,) = I.account_units(doc)
-        self.assertIn("a3", msg)
-        self.assertIn("399", msg)
+        self.assertIn("Max account 3", msg)
+        self.assertIn("304", msg)
         self.assertIn("620", msg)
-        self.assertIn(CUT, msg)
+        self.assertIn(SEP24, msg)
 
     def test_a_missing_reading_is_skipped(self):
         doc = _good()
-        _wt(doc)["account_regimes"]["a3"][1]["measured_window"] = None
-        _wt(doc)["account_regimes"]["a3"][1]["window"] = 1
+        _wt(doc)["account_regimes"]["Max account 3"][2]["measured_window"] = None
+        _wt(doc)["account_regimes"]["Max account 3"][2]["window"] = 1
         self.assertEqual(I.account_units(doc), [])
 
 
-class StepsAgreeWithMetersTest(unittest.TestCase):
-    def _doc(self, **cand):
+class HeadlineIsNewestStatedChangeTest(unittest.TestCase):
+    """The hero: the newest provisional-or-measured change with a clear 5-hour or weekly size,
+    as the larger clear one (Jonathan's decision, 2026-10-23)."""
+
+    def test_the_provisional_9_october_change_is_the_5_hour_limit(self):
+        h = _good()["headline"]
+        self.assertEqual((h["at"], h["state"], h["provisional"], h["quantity"], h["limit"],
+                          h["direction"], h["percent"], h["change_pct"], h["held_days"],
+                          h["holds_needed"]),
+                         (OCT09, "provisional", True, "five_hour_limit", "5-hour limit",
+                          "increased", 10, 9.9, 3, 7))
+        self.assertEqual(I.headline_is_newest_stated_change(_good()), [])
+
+    def test_the_measured_change_states_the_larger_clear_limit(self):
         doc = _good()
-        doc["credits"]["five_hour_on_meters"]["candidates"] = [_candidate(**cand)]
+        doc["four_accounts"]["changes"] = doc["four_accounts"]["changes"][:2]
+        doc["headline"] = F.headline(doc["four_accounts"])
+        self.assertEqual((doc["headline"]["at"], doc["headline"]["quantity"],
+                          doc["headline"]["percent"], doc["headline"]["provisional"]),
+                         (SEP24, "weekly_limit", 34, False))
+        self.assertEqual(I.headline_is_newest_stated_change(doc), [])
+        doc["headline"] = dict(doc["headline"], quantity="five_hour_limit", change_pct=31.4, percent=31)
+        msgs = I.headline_is_newest_stated_change(doc)
+        self.assertTrue(any("weekly_limit" in m and "+34.4%" in m for m in msgs), msgs)
+
+    def test_a_change_with_no_clear_limit_is_passed_over(self):
+        doc = _good()
+        doc["four_accounts"]["changes"] = doc["four_accounts"]["changes"][:1]
+        self.assertIsNone(F.headline(doc["four_accounts"]))
+        doc["headline"] = None
+        self.assertEqual(I.headline_is_newest_stated_change(doc), [])
+        both = _good()["four_accounts"]
+        both["changes"][1]["sizes"]["seven_day"]["excludes_no_change"] = False
+        both["changes"][1]["sizes"]["five_hour"]["excludes_no_change"] = False
+        both["changes"][2]["state"] = "candidate"
+        h = F.headline(both)
+        self.assertIsNone(h)
+
+    def test_the_ratio_is_never_the_heros_quantity(self):
+        h = _good()["headline"]
+        self.assertNotEqual(h["quantity"], "windows_per_week")
+        doc = _good()
+        doc["headline"] = dict(h, quantity="windows_per_week", change_pct=-8.9, percent=9,
+                               direction="decreased")
+        msgs = I.headline_is_newest_stated_change(doc)
+        self.assertTrue(any("not the 5-hour or the weekly limit" in m for m in msgs), msgs)
+
+    def test_a_candidate_or_a_withdrawn_find_is_never_the_hero(self):
+        doc = _good()
+        doc["four_accounts"]["changes"][2]["state"] = "candidate"
+        msgs = I.headline_is_newest_stated_change(doc)
+        self.assertTrue(any(SEP24 in m for m in msgs), msgs)
+        doc["headline"] = F.headline(doc["four_accounts"])
+        self.assertEqual((doc["headline"]["at"], doc["headline"]["quantity"]), (SEP24, "weekly_limit"))
+        self.assertEqual(I.headline_is_newest_stated_change(doc), [])
+        gone = _good()
+        gone["four_accounts"]["changes"] = gone["four_accounts"]["changes"][:2]
+        msgs = I.headline_is_newest_stated_change(gone)
+        self.assertTrue(any(OCT09 in m and SEP24 in m for m in msgs), msgs)
+
+    def test_another_figure_state_or_hold_fails(self):
+        for key, value, says in (("change_pct", 12.0, "12.0%"), ("percent", 12, "12%"),
+                                 ("state", "measured", "state is measured"),
+                                 ("provisional", False, "provisional tag"),
+                                 ("held_days", 6, "held 6 days")):
+            doc = _good()
+            doc["headline"][key] = value
+            msgs = I.headline_is_newest_stated_change(doc)
+            self.assertTrue(any(says in m for m in msgs), (key, msgs))
+
+    def test_another_limit_line_date_or_interval_fails(self):
+        # The review's mutation: the site renders `limit` and `date`, so each is held to the change.
+        for key, value in (("limit", "weekly limit"), ("date", "2026-10-08"), ("line", "seven_day"),
+                           ("interval_pct", [-2.7, 11.3]), ("direction", "decreased"),
+                           ("holds_needed", 8), ("found_on", "seven_day")):
+            doc = _good()
+            doc["headline"][key] = value
+            msgs = I.headline_is_newest_stated_change(doc)
+            self.assertTrue(any(f"hero's {key}" in m or "whole percent" in m for m in msgs), (key, msgs))
+        doc = _good()
+        doc["headline"].update(limit="weekly limit", date="2026-10-08", line="seven_day",
+                               interval_pct=[-2.7, 11.3])
+        self.assertGreaterEqual(len(I.headline_is_newest_stated_change(doc)), 4)
+        doc = _good()
+        doc["headline"]["passed_over"] = [{"at": SEP24, "state": "measured", "found_on": "seven_day",
+                                           "reason": "no_limit_interval_excludes_no_change"}]
+        msgs = I.headline_is_newest_stated_change(doc)
+        self.assertTrue(any("passes over" in m for m in msgs), msgs)
+
+    def test_a_measured_changes_limit_is_the_one_decided_when_it_was_measured(self):
+        # 24 Sep, both clear, weekly +34.4 the larger today; decided the 5-hour limit the day it
+        # was measured, so the hero still names the 5-hour limit (+31.4).
+        doc = _good()
+        doc["four_accounts"]["changes"] = doc["four_accounts"]["changes"][:2]
+        doc["four_accounts"]["changes"][1]["decided"] = {"on": "2026-09-25", "moved": {},
+                                                        "stated": "five_hour_limit",
+                                                        "stated_on": "2026-09-25"}
+        doc["four_accounts"]["change_markers"] = F.change_markers(doc["four_accounts"])
+        doc["headline"] = F.headline(doc["four_accounts"])
+        self.assertEqual((doc["headline"]["quantity"], doc["headline"]["change_pct"]), ("five_hour_limit", 31.4))
+        self.assertEqual(I.headline_is_newest_stated_change(doc), [])
+        doc["headline"] = dict(doc["headline"], quantity="weekly_limit", line="seven_day",
+                               limit="weekly limit", change_pct=34.4, percent=34,
+                               interval_pct=[25.7, 43.7])
+        msgs = I.headline_is_newest_stated_change(doc)
+        self.assertTrue(any("five_hour_limit" in m for m in msgs), msgs)
+
+    def test_no_headline_beside_a_stated_change_fails(self):
+        doc = _good()
+        doc["headline"] = None
+        (msg,) = I.headline_is_newest_stated_change(doc)
+        self.assertIn("no headline", msg)
+
+
+class LastChangeIsNewestMeasuredTest(unittest.TestCase):
+    def test_passes_on_the_newest_measured_change(self):
+        self.assertEqual(I.last_change_is_newest_measured(_good()), [])
+
+    def test_a_provisional_change_in_last_change_fails(self):
+        msgs = I.last_change_is_newest_measured(_contradiction())
+        self.assertTrue(any(OCT09 in m and SEP24 in m for m in msgs), msgs)
+        self.assertTrue(any("windows_per_week" in m for m in msgs), msgs)
+
+    def test_another_figure_for_the_same_change_fails(self):
+        doc = _good()
+        doc["last_change"]["change_pct"] = 30.0
+        doc["last_change"]["percent"] = 30
+        msgs = I.last_change_is_newest_measured(doc)
+        self.assertTrue(any("30.0%" in m and "34.4%" in m for m in msgs), msgs)
+        self.assertTrue(any("+30%" in m and "+34%" in m for m in msgs), msgs)
+
+    def test_a_last_change_with_nothing_measured_fails_and_none_passes(self):
+        doc = _good()
+        for c in doc["four_accounts"]["changes"]:
+            c["state"] = "provisional"
+        (msg,) = I.last_change_is_newest_measured(doc)
+        self.assertIn("measured none", msg)
+        doc["last_change"] = None
+        self.assertEqual(I.last_change_is_newest_measured(doc), [])
+
+    def test_a_measured_change_with_no_last_change_fails(self):
+        doc = _good()
+        doc["last_change"] = None
+        (msg,) = I.last_change_is_newest_measured(doc)
+        self.assertIn("no last_change", msg)
+
+    def test_a_record_with_no_whole_percent_is_named_not_a_crash(self):
+        # `percent` missing made the message's `{said:+d}` raise TypeError, so the check
+        # reported only "could not run" and every other figure it held was lost.
+        doc = _good()
+        del doc["last_change"]["percent"]
+        msgs = I.last_change_is_newest_measured(doc)
+        self.assertTrue(any("whole percent is none" in m and "+34%" in m for m in msgs), msgs)
+        doc = _good()
+        del doc["events"][1]["percent"]
+        doc["events"][0]["change_pct"] = 99.0
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("An event says none" in m and SEP24 in m for m in msgs), msgs)
+        self.assertTrue(any("99.0" in m and SEP14 in m for m in msgs), msgs)
+
+
+class EveryChangeDrawnTest(unittest.TestCase):
+    def test_passes_when_each_change_steps_its_own_line(self):
+        self.assertEqual(I.every_change_drawn(_good()), [])
+
+    def test_a_change_its_step_line_does_not_open_fails(self):
+        doc = _good()
+        levels = doc["four_accounts"]["levels"]["seven_day"]
+        doc["four_accounts"]["levels"]["seven_day"] = [levels[0], levels[2]]
+        doc["four_accounts"]["levels"]["seven_day"][1]["from"] = SEP14
+        (msg,) = I.every_change_drawn(doc)
+        self.assertIn(SEP24, msg)
+        self.assertIn("opens no segment", msg)
+
+    def test_a_step_line_stepping_by_another_size_fails(self):
+        # The segment from 9 October sits at 1.0, the one before it at 1 / 0.911 and the one
+        # from 14 September equal to it; at 1.1 before 14 Sep the line steps -0.20% there where
+        # the detector says -17.1%.
+        doc = _good()
+        doc["four_accounts"]["levels"]["ratio"][0]["index"] = 1.1
+        (msg,) = I.every_change_drawn(doc)
+        self.assertIn("-17.1%", msg)
+
+    def test_a_provisional_change_opens_a_provisional_level_with_a_dashed_marker(self):
+        # Jonathan's decision, 2026-10-23: the charts update provisionally too.
+        fa = _good()["four_accounts"]
+        self.assertEqual([(s["from"], s["opened_by"], s["provisional"]) for s in fa["levels"]["ratio"]],
+                         [(None, None, False), (SEP14, "measured", False),
+                          (SEP24, "measured", False), (OCT09, "provisional", True)])
+        # The seven-day line does not move at 9 Oct: its segment carries the level, no flag.
+        seven = fa["levels"]["seven_day"]
+        self.assertEqual((seven[-1]["from"], seven[-1]["index"], seven[-2]["index"], seven[-1]["provisional"]),
+                         (OCT09, 1.0, 1.0, False))
+        marks = {q: [(m["at"], m["style"], m["change_pct"]) for m in rows]
+                 for q, rows in fa["change_markers"].items()}
+        self.assertEqual(marks, {
+            "windows_per_week": [(SEP14, "step", -17.1), (OCT09, "dashed", -8.9)],
+            "weekly_limit": [(SEP24, "step", 34.4)],
+            "five_hour_limit": [(SEP24, "step", 31.4), (OCT09, "dashed", 9.9)]})
+
+    def test_a_provisional_change_that_opens_no_level_fails(self):
+        doc = _good()
+        doc["four_accounts"]["levels"]["ratio"] = doc["four_accounts"]["levels"]["ratio"][:-1]
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any(OCT09 in m and "opens no segment" in m for m in msgs), msgs)
+
+    def test_a_candidate_that_opens_a_level_fails(self):
+        doc = _good()
+        doc["four_accounts"]["changes"][2]["state"] = "candidate"
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any(OCT09 in m and "opens a segment" in m for m in msgs), msgs)
+
+    def test_a_provisional_change_with_no_dashed_marker_fails(self):
+        doc = _good()
+        markers = doc["four_accounts"]["change_markers"]
+        markers["windows_per_week"] = [m for m in markers["windows_per_week"] if m["at"] != OCT09]
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any(OCT09 in m and "no dashed marker" in m for m in msgs), msgs)
+        doc = _good()
+        doc["four_accounts"]["change_markers"]["windows_per_week"][1]["style"] = "step"
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any(OCT09 in m and "(step)" in m for m in msgs), msgs)
+
+    def test_a_missing_chart_quantity_fails(self):
+        # The review's mutation: with no five_hour_limit markers at all, the hero names a limit
+        # no chart marks.
+        doc = _good()
+        del doc["four_accounts"]["change_markers"]["five_hour_limit"]
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any("change_markers has the charts" in m for m in msgs), msgs)
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("five_hour_limit charts carry no marker" in m for m in msgs), msgs)
+        self.assertTrue(any("The hero names the five_hour_limit" in m and "no chart marks" in m
+                            for m in msgs), msgs)
+
+    def test_a_provisional_change_with_no_sizes_blocks_nothing(self):
+        # The 7 October replay: the 22 Sep change provisional with no sizes. No figure, so no
+        # marker and no hero; the page publishes, stating the newest change that has one.
+        run = _run()
+        run["changes"][2].update(sizes={}, change_pct=None, interval_pct=None)
+        doc = _good()
+        # With no size the change opens a regime that carries every level, and no level of it
+        # is provisional.
+        wt = _wt(doc)
+        wt["regimes"][-1]["value"] = wt["regimes"][-2]["value"]
+        wt["per_week_regimes"][-1]["windows_per_week"] = wt["per_week_regimes"][-2]["windows_per_week"]
+        doc["weekly_windows"]["max20"]["regimes"][-1]["windows"] = 5.46
+        for rows in [wt["regimes"], wt["per_week_regimes"], doc["credits"]["window_credits"]["regimes"],
+                     doc["weekly_windows"]["max20"]["regimes"], *wt["account_regimes"].values()]:
+            for r in rows:
+                r["provisional"] = r["windows_per_week_provisional"] = False
+        for block in (wt, doc["credits"]["window_credits"], doc["weekly_windows"]["max20"]):
+            block["provisional"] = False
+        wt["per_week"]["windows_per_week_provisional"] = False
+        doc["four_accounts"] = F.public_block(run)
+        doc["headline"] = F.headline(run)
+        self.assertEqual((doc["headline"]["at"], doc["headline"]["passed_over"][0]["reason"]),
+                         (SEP24, "no_limit_sizes"))
+        failed = {name for name, msgs in I.run_checks(doc).items() if msgs}
+        self.assertFalse(failed & I.BLOCKING, {n: I.run_checks(doc)[n] for n in failed})
+
+    def test_a_candidate_is_marked_nowhere(self):
+        doc = _good()
+        doc["four_accounts"]["changes"][2]["state"] = "candidate"
+        msgs = I.every_change_drawn(doc)
+        self.assertTrue(any("candidate change" in m and "marked on a chart" in m for m in msgs), msgs)
+
+    def test_an_event_that_is_not_a_measured_change_fails(self):
+        doc = _good()
+        doc["events"].insert(0, dict(doc["events"][0], at="2026-09-05T10:00:00+00:00", date="2026-09-05"))
+        (msg,) = I.every_change_drawn(doc)
+        self.assertIn("2026-09-05", msg)
+
+
+class OneFigurePerChangeTest(unittest.TestCase):
+    def test_passes_when_every_chart_steps_by_the_detectors_figure(self):
+        self.assertEqual(I.one_figure_per_change(_good()), [])
+
+    def test_a_window_step_of_another_size_fails(self):
+        doc = _good()
+        _wt(doc)["regimes"][1]["value"] = 520  # +26% at 24 Sep where the detector says +31%
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("window-size chart" in m and "+31%" in m for m in msgs), msgs)
+
+    def test_a_chart_stepping_where_the_detector_draws_nothing_fails(self):
+        doc = _good()
+        _wt(doc)["per_week_regimes"][2]["windows_per_week"] = 4.5  # the ratio is carried at 24 Sep
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("windows-per-week chart" in m and "+0%" in m for m in msgs), msgs)
+
+    def test_the_weekly_windows_block_is_read_on_the_ratio(self):
+        doc = _good()
+        doc["weekly_windows"]["max20"]["regimes"][1]["windows"] = 5.5
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("weekly_windows" in m for m in msgs), msgs)
+
+    def test_an_event_with_another_figure_fails(self):
+        doc = _good()
+        doc["events"][0]["percent"] = 22
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("An event says -22%" in m for m in msgs), msgs)
+
+    def test_a_marker_or_hero_with_another_figure_fails(self):
+        doc = _good()
+        doc["four_accounts"]["change_markers"]["five_hour_limit"][1]["percent"] = 12
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("five_hour_limit marker" in m and OCT09 in m for m in msgs), msgs)
+        doc = _good()
+        doc["headline"]["percent"] = 12
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("The hero says" in m and OCT09 in m for m in msgs), msgs)
+
+    def test_a_marker_on_a_line_the_detector_does_not_draw_fails(self):
+        doc = _good()
+        doc["four_accounts"]["change_markers"]["weekly_limit"].append(
+            dict(doc["four_accounts"]["change_markers"]["five_hour_limit"][1], change_pct=4.1, percent=4))
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("weekly_limit chart marks" in m and "does not draw" in m for m in msgs), msgs)
+
+    def test_a_side_figure_off_the_detectors_size_fails(self):
+        doc = _good()
+        doc["last_change"]["five_hour_limit_change_pct"] = 20.0
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("five_hour_limit_change_pct 20.0" in m for m in msgs), msgs)
+
+    def test_the_dollar_history_steps_by_the_five_hour_size(self):
+        doc = _good()
+        doc["history"] = {"opus": [{"date": "2026-09-23", "meter_budget_per_window": 100.0},
+                                   {"date": "2026-09-24", "meter_budget_per_window": 131.4}]}
+        self.assertEqual(I.one_figure_per_change(doc), [])
+        doc["history"]["opus"][1]["meter_budget_per_window"] = 120.0
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("dollar history" in m for m in msgs), msgs)
+
+    def test_half_a_percent_rounds_the_way_the_page_does(self):
+        self.assertEqual(I._page_round(-12.5), -12)
+        self.assertEqual(I._page_round(12.5), 13)
+
+    @staticmethod
+    def _one_change(size, true, week=None):
+        """A page with one measured change on the seven-day line, published at `size` (one
+        decimal) and drawn on the step line at `true`, the detector's unrounded step; with
+        `week`, the tokens-per-week chart's two levels either side of it."""
+        sizes = {"seven_day": _size(size, size - 8, size + 8),
+                 "five_hour": _size(1.0, -9.0, 11.0), "ratio": _size(-1.0, -11.0, 9.0)}
+        sizes["seven_day"]["_d"] = math.log1p(true / 100)
+        run = _run()
+        changes = [_change(SEP24, "seven_day", "measured", sizes)]
+        run["changes"] = [F._public_change(c) | {"sizes": {k: {kk: vv for kk, vv in v.items() if kk != "_d"}
+                                                           for k, v in c["sizes"].items()}}
+                          for c in changes]
+        doc = {"four_accounts": F.public_block(run)}
+        # The publisher draws the step line from the published one-decimal sizes; a step line
+        # drawn at the unrounded step is put in by hand, the way an older run published it.
+        doc["four_accounts"]["levels"] = {line: F.levels(changes, line) for line in F.LINES}
+        if week:
+            doc["credits"] = {"window_tokens": {"per_week_regimes": [
+                {"from": None, "until": SEP24, "value": week[0]},
+                {"from": SEP24, "until": None, "value": week[1]}]}}
         return doc
 
-    def test_a_step_the_ratio_points_the_same_way_passes(self):
-        # +48% five-hour, ratio 0.97: fewer windows per week, a larger window. Agrees.
-        doc = self._doc(applies=True, change_pct=48.3, interval_pct=[3.3, 89.2], separable=True)
-        self.assertEqual(I.steps_agree_with_meters(doc), [])
+    def test_a_size_rounded_up_to_a_half_reads_as_its_step(self):
+        # 20.467% publishes as 20.5% (+21%); its step line draws 20.467% (+20% unrounded).
+        # Halves go up, so a decrease's edge is the other side: -20.54% publishes as -20.5% (-20%).
+        for size, true in ((20.5, 20.467), (19.5, 19.4501), (20.5, 20.45), (-20.5, -20.54)):
+            with self.subTest(size=size, true=true):
+                self.assertEqual(I.one_figure_per_change(self._one_change(size, true)), [])
 
-    def test_a_step_against_an_inconclusive_ratio_fails(self):
-        # The pre-fix 29 Sep step: +33% five-hour while windows per week rose 6% [-43, +108].
-        doc = self._doc(at="2026-09-29T18:25:18.212000+00:00", applies=True, change_pct=33.3,
-                        interval_pct=[17.3, 53.5], separable=True, ratio=1.0607,
-                        ratio_interval=(0.5674, 2.0792))
-        (msg,) = I.steps_agree_with_meters(doc)
-        self.assertIn("+33.3%", msg)
-        self.assertIn("1.0607", msg)
+    def test_a_chart_step_just_under_a_half_reads_as_the_size(self):
+        doc = self._one_change(20.5, 20.5, week=(1000.0, 1204.6))  # the chart steps +20.46%
+        self.assertEqual(I.one_figure_per_change(doc), [])
 
-    def test_a_ratio_that_excludes_no_change_is_not_flagged(self):
-        # Then the weekly cap moved too, measured: g and the ratio may point either way.
-        doc = self._doc(applies=True, change_pct=10.0, interval_pct=[2.0, 18.0], separable=True,
-                        ratio=1.3, ratio_interval=(1.1, 1.5))
-        self.assertEqual(I.steps_agree_with_meters(doc), [])
+    def test_a_step_line_of_another_whole_percent_still_fails(self):
+        msgs = I.one_figure_per_change(self._one_change(21.0, 18.0))
+        self.assertTrue(any("seven_day step line steps +18.0%" in m and "+21%" in m for m in msgs), msgs)
 
-    def test_a_withheld_candidate_is_not_a_published_step(self):
-        doc = self._doc(applies=False, change_pct=33.3, interval_pct=[17.3, 53.5], ratio=1.0607,
-                        ratio_interval=(0.5674, 2.0792))
-        self.assertEqual(I.steps_agree_with_meters(doc), [])
+    def test_a_chart_of_another_whole_percent_still_fails(self):
+        msgs = I.one_figure_per_change(self._one_change(21.0, 21.0, week=(1000.0, 1180.0)))
+        self.assertTrue(any("tokens-per-week chart steps +18.0%" in m and "+21%" in m for m in msgs), msgs)
+
+
+class RegimesOpenAtStatedChangesTest(unittest.TestCase):
+    def test_passes_when_every_boundary_is_a_provisional_or_measured_change(self):
+        self.assertEqual(I.regimes_open_at_stated_changes(_good()), [])
+
+    def test_a_boundary_the_detector_did_not_find_fails(self):
+        doc = _good()
+        _wt(doc)["regimes"][1]["from"] = "2026-09-13T22:45:34+00:00"
+        msgs = I.regimes_open_at_stated_changes(doc)
+        self.assertTrue(any("2026-09-13T22:45:34" in m for m in msgs), msgs)
+        self.assertTrue(any(f"{SEP14} opens no regime" in m for m in msgs), msgs)
+
+    def test_a_provisional_change_must_open_a_regime(self):
+        doc = _good()
+        _wt(doc)["regimes"] = _wt(doc)["regimes"][:-1]
+        (msg,) = I.regimes_open_at_stated_changes(doc)
+        self.assertIn(f"{OCT09} opens no regime", msg)
+
+    def test_a_candidate_opens_no_regime(self):
+        doc = _good()
+        doc["four_accounts"]["changes"][2]["state"] = "candidate"
+        msgs = I.regimes_open_at_stated_changes(doc)
+        self.assertTrue(msgs and all(OCT09 in m and "not a provisional or measured" in m for m in msgs), msgs)
+
+
+class ProvisionalLevelsFlaggedTest(unittest.TestCase):
+    def test_passes_when_every_provisional_level_is_flagged(self):
+        self.assertEqual(I.provisional_levels_flagged(_good()), [])
+
+    def test_an_unflagged_provisional_level_fails_wherever_it_is(self):
+        for where in ("window", "credits", "wpw", "max20", "levels", "account"):
+            with self.subTest(where=where):
+                doc = _good()
+                wt = _wt(doc)
+                if where == "window":
+                    wt["regimes"][-1]["provisional"] = False
+                elif where == "credits":
+                    doc["credits"]["window_credits"]["regimes"][-1]["provisional"] = False
+                elif where == "wpw":
+                    wt["per_week_regimes"][-1]["windows_per_week_provisional"] = False
+                elif where == "max20":
+                    doc["weekly_windows"]["max20"]["regimes"][-1]["provisional"] = False
+                elif where == "levels":
+                    doc["four_accounts"]["levels"]["five_hour"][-1]["provisional"] = False
+                else:
+                    wt["account_regimes"]["Max account 2"][-1]["provisional"] = False
+                msgs = I.provisional_levels_flagged(doc)
+                self.assertTrue(any(OCT09 in m and "is a provisional level" in m for m in msgs), msgs)
+
+    def test_a_level_the_change_does_not_draw_is_not_provisional(self):
+        # The week does not move at 9 October: flagging it provisional says a step it never takes.
+        doc = _good()
+        _wt(doc)["per_week_regimes"][-1]["provisional"] = True
+        msgs = I.provisional_levels_flagged(doc)
+        self.assertTrue(any("is not a provisional level on the seven_day line" in m for m in msgs), msgs)
+
+    def test_a_current_figure_must_say_what_its_newest_row_says(self):
+        for block in ("window_tokens", "window_credits", "max20", "per_week"):
+            with self.subTest(block=block):
+                doc = _good()
+                target = {"window_tokens": _wt(doc), "window_credits": doc["credits"]["window_credits"],
+                          "max20": doc["weekly_windows"]["max20"],
+                          "per_week": _wt(doc)["per_week"]}[block]
+                key = "windows_per_week_provisional" if block == "per_week" else "provisional"
+                target[key] = False
+                self.assertTrue(I.provisional_levels_flagged(doc))
+
+    def test_the_dollar_history_and_rates_are_flagged_from_the_change_day(self):
+        doc = _good()
+        doc["history"] = {"opus": [{"date": "2026-10-08", "provisional": False},
+                                   {"date": "2026-10-09", "provisional": True},
+                                   {"date": "2026-10-10", "provisional": True}]}
+        doc["rates"] = {"opus": {"provisional": True}}
+        self.assertEqual(I.provisional_levels_flagged(doc), [])
+        doc["rates"]["opus"]["provisional"] = False
+        self.assertTrue(I.provisional_levels_flagged(doc))
+        doc["rates"]["opus"]["provisional"] = True
+        doc["history"]["opus"][1]["provisional"] = False
+        self.assertTrue(I.provisional_levels_flagged(doc))
+
+    def test_once_measured_nothing_is_provisional(self):
+        run = _run()
+        run["changes"][2]["state"] = "measured"
+        doc = _good()
+        doc["four_accounts"] = F.public_block(run)
+        msgs = I.provisional_levels_flagged(doc)
+        self.assertTrue(msgs)   # the fixture's rows still say provisional
+        self.assertFalse(any(s["provisional"] for segs in doc["four_accounts"]["levels"].values()
+                             for s in segs))
+
+
+class AccountsNamedByLabelTest(unittest.TestCase):
+    def test_passes_with_labels(self):
+        self.assertEqual(I.accounts_named_by_label(_good()), [])
+
+    def test_a_bare_key_or_an_account_name_fails(self):
+        doc = _good()
+        doc["four_accounts"]["lines"]["ratio"]["a2"] = []
+        doc["events"][0]["accounts"] = ["jwork", "Max account 1"]
+        msgs = I.accounts_named_by_label(doc)
+        self.assertTrue(any("four_accounts" in m and "lines.ratio.a2" in m for m in msgs), msgs)
+        self.assertTrue(any("events[0]" in m for m in msgs), msgs)
+
+
+class MeasuredChangesStillFoundTest(unittest.TestCase):
+    def test_a_measured_change_not_found_today_alerts_but_stays(self):
+        doc = _good()
+        doc["four_accounts"]["changes"][0]["found_today"] = False
+        (msg,) = I.measured_changes_still_found(doc)
+        self.assertIn(SEP14, msg)
+        self.assertIn("never withdrawn", msg)
+        self.assertNotIn("measured_changes_still_found", I.BLOCKING)
+
+
+class DetectorRanTest(unittest.TestCase):
+    def test_a_run_more_than_a_day_old_fails(self):
+        doc = _good()
+        self.assertEqual(I.detector_ran(doc), [])
+        doc["four_accounts"]["day"] = "2026-10-21"
+        (msg,) = I.detector_ran(doc)
+        self.assertIn("2026-10-21", msg)
+
+    def test_no_detector_block_fails(self):
+        doc = _good()
+        del doc["four_accounts"]
+        (msg,) = I.detector_ran(doc)
+        self.assertIn("no four_accounts block", msg)
+
+
+class EmailLeadsWithHeroRuleTest(unittest.TestCase):
+    """The email's lead (`last_change.hero`) is the hero's rule for the change it announces
+    (Jonathan's decision, 2026-10-23)."""
+
+    @staticmethod
+    def _oct09_measured() -> dict:
+        run = _run()
+        run["changes"][2]["state"] = "measured"
+        doc = _good()
+        doc["four_accounts"] = F.public_block(run)
+        doc["last_change"] = F.last_change(run)
+        doc["headline"] = F.headline(run)
+        return doc
+
+    def test_the_lead_is_the_heros_sentence_for_the_measured_change(self):
+        self.assertEqual(I.email_leads_with_hero_rule(_good()), [])
+        hero = _good()["last_change"]["hero"]
+        self.assertEqual((hero["at"], hero["quantity"], hero["direction"], hero["percent"]),
+                         (SEP24, "weekly_limit", "increased", 34))
+        # 9 October measured: found on windows per week (-8.9%), the email leads with what the
+        # hero says, the 5-hour limit +10%, the very record the hero states.
+        doc = self._oct09_measured()
+        self.assertEqual(I.email_leads_with_hero_rule(doc), [])
+        lead = doc["last_change"]["hero"]
+        self.assertEqual((doc["last_change"]["metric"], doc["last_change"]["percent"]),
+                         ("windows_per_week", 9))
+        self.assertEqual((lead["quantity"], lead["direction"], lead["percent"], lead["change_pct"]),
+                         ("five_hour_limit", "increased", 10, 9.9))
+        self.assertEqual(lead, {k: v for k, v in doc["headline"].items() if k != "passed_over"})
+
+    def test_another_lead_figure_or_limit_fails(self):
+        for key, value in (("percent", 9), ("direction", "decreased"), ("change_pct", -8.9),
+                           ("quantity", "weekly_limit"), ("limit", "weekly limit"),
+                           ("interval_pct", [-15.2, -2.2]), ("date", "2026-10-08")):
+            doc = self._oct09_measured()
+            doc["last_change"]["hero"][key] = value
+            msgs = I.email_leads_with_hero_rule(doc)
+            self.assertTrue(any(f"lead {key}" in m for m in msgs), (key, msgs))
+
+    def test_a_change_with_no_limit_to_state_has_no_lead_and_none_passes(self):
+        doc = _good()
+        run = _run()
+        run["changes"] = run["changes"][:1]
+        doc["four_accounts"] = F.public_block(run)
+        doc["last_change"] = F.last_change(run)
+        self.assertIsNone(doc["last_change"]["hero"])
+        self.assertEqual(I.email_leads_with_hero_rule(doc), [])
+        doc["last_change"]["hero"] = {"limit": "5-hour limit", "quantity": "five_hour_limit"}
+        (msg,) = I.email_leads_with_hero_rule(doc)
+        self.assertIn("no limit to state", msg)
+
+    def test_a_stated_change_with_no_lead_fails(self):
+        doc = _good()
+        doc["last_change"]["hero"] = None
+        (msg,) = I.email_leads_with_hero_rule(doc)
+        self.assertIn("no hero sentence for the email", msg)
 
 
 class RunAllTest(unittest.TestCase):
     def test_every_check_runs_and_is_named(self):
-        doc = _good()
-        self.assertEqual(I.run_checks(doc), {name: [] for name, _ in I.CHECKS})
         self.assertEqual([name for name, _ in I.CHECKS],
-                         ["headline_inside_accounts", "no_unproven_step", "direct_means_direct",
-                          "account_units", "steps_agree_with_meters", "no_withheld_boundary",
-                          "headline_matches_chart", "windows_per_week_implied",
-                          "one_figure_per_change", "weekly_routes_agree",
-                          "detected_windows_per_week_agree", "fourteen_sep_weekly_frozen"])
+                         ["headline_inside_accounts", "direct_means_direct", "account_units",
+                          "headline_is_newest_stated_change", "every_change_drawn",
+                          "one_figure_per_change", "regimes_open_at_stated_changes",
+                          "accounts_named_by_label", "measured_changes_still_found", "detector_ran",
+                          "last_change_is_newest_measured", "email_leads_with_hero_rule",
+                          "provisional_levels_flagged"])
+        self.assertEqual(I.BLOCKING, {"headline_is_newest_stated_change", "every_change_drawn",
+                                      "one_figure_per_change", "regimes_open_at_stated_changes",
+                                      "accounts_named_by_label", "last_change_is_newest_measured",
+                                      "email_leads_with_hero_rule", "provisional_levels_flagged"})
 
     def test_a_check_that_crashes_is_a_failure_not_a_crash(self):
         doc = _good()
         del _wt(doc)["regimes"]
         out = I.run_checks(doc)
         self.assertTrue(any("could not run" in m for msgs in out.values() for m in msgs))
+
+    def test_a_null_block_is_a_failure_not_a_crash(self):
+        # A null where a block is expected raised AttributeError, which run_checks did not
+        # catch: the run died with a traceback (exit 1, "publishing anyway"), so no blocking
+        # check ran and no alert was sent.
+        doc = _good()
+        _wt(doc)["per_family"]["opus-5-5"]["all"] = None
+        out = I.run_checks(doc)
+        self.assertTrue(any("could not run" in m for m in out["headline_inside_accounts"]), out)
+        self.assertEqual(set(out), {name for name, _ in I.CHECKS})
+        for null_doc in (None, []):
+            out = I.run_checks(null_doc)
+            self.assertTrue(out["every_change_drawn"], out)
+            self.assertTrue(I.BLOCKING & {k for k, v in out.items() if v}, out)
 
 
 class AlertTest(unittest.TestCase):
@@ -390,407 +862,92 @@ class AlertTest(unittest.TestCase):
         self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 1)
         self.assertIn("cannot read", self.sent[0])
 
-
-def _live_2026_10_05() -> dict:
-    """The page as published on 2026-10-05 15:01Z, cut to what checks 7-9 read: a +30%
-    weekly headline beside +32% steps on two charts, and a windows-per-week step at a
-    withheld window change."""
-    regimes = [{"from": None, "until": CUT, "value": 450593800},
-               {"from": CUT, "until": SEP22, "value": 501060306},
-               {"from": SEP22, "until": SEP29, "value": 501060306},
-               {"from": SEP29, "until": None, "value": 501060306}]
-    weeks = [{"from": None, "until": CUT, "value": 2575055593, "windows_per_week": 5.7148},
-             {"from": CUT, "until": SEP22, "value": 2278966037, "windows_per_week": 4.5483},
-             {"from": SEP22, "until": None, "value": 3007888270, "windows_per_week": 6.003}]
-    accounts = {"a1": [{"from": None, "window": 411689170, "windows_per_week": 5.5444},
-                       {"from": CUT, "window": 437652234, "windows_per_week": 4.8914},
-                       {"from": SEP22, "window": 437652234, "windows_per_week": 7.2003}]}
-    sep22 = dict(_candidate(applies=True, change_pct=31.8, interval_pct=[20.7, 43.8]),
-                 certified_on=["weekly_limit"],
-                 weekly_change={"certified": True, "change_pct": 29.6},
-                 window_change={"certified": False, "change_pct": 31.8,
-                                "interval_pct": [20.7, 43.8], "plan_wide": {"state": "failed"}})
-    sep29 = dict(_candidate(at=SEP29), weekly_change={"certified": False},
-                 window_change={"certified": False})
-    change = {"kind": "change", "date": "2026-09-22", "scope": "weekly", "metric": "weekly_limit",
-              "percent": 30, "change_pct": 29.6, "direction": "increased"}
-    return {"last_change": dict(change), "events": [
-        {"kind": "change", "date": "2026-09-14", "scope": "weekly", "percent": 25,
-         "direction": "decreased", "metric": "weekly_to_five_hour_ratio"}, dict(change)],
-        "credits": {"window_tokens": {"regimes": regimes, "per_week_regimes": weeks,
-                                      "account_regimes": accounts},
-                    "five_hour_on_meters": {"candidates": [sep22, sep29]}}}
-
-
-def _frozen(doc: dict) -> dict:
-    """A `_fixed` page with the 14 September week step bridged to the direct combined change
-    (ADR 0001 rule 20) at the size rule 21 froze, the windows-per-week chart and its event
-    following it (checks 7-9 and 12)."""
-    weeks = _wt(doc)["per_week_regimes"]
-    factor = weeks[1]["value"] / (1 + I.FROZEN_14SEP_WEEKLY_PCT / 100) / weeks[0]["value"]
-    weeks[0]["value"] = round(weeks[0]["value"] * factor)
-    weeks[0]["windows_per_week"] = round(weeks[0]["windows_per_week"] * factor, 4)
-    doc["events"][0]["percent"] = 19
-    return doc
-
-
-def _fixed(doc: dict) -> dict:
-    """The same page with this branch's data path: the 22 September week step is the
-    certified +29.6%, and windows per week is carried across the withheld window."""
-    weeks = _wt(doc)["per_week_regimes"]
-    factor = weeks[2]["value"] / 1.296 / weeks[1]["value"]
-    for row in weeks[:2]:
-        row["value"] = round(row["value"] * factor)
-        row["windows_per_week"] = round(row["windows_per_week"] * factor, 4)
-    weeks[2]["windows_per_week"] = weeks[1]["windows_per_week"]
-    a1 = _wt(doc)["account_regimes"]["a1"]
-    a1[2]["windows_per_week"] = a1[1]["windows_per_week"]
-    # The 14 September event states the windows-per-week chart's own step at its marker
-    # (ADR 0001 rule 17), not one account's detector step.
-    doc["events"][0].update(percent=20, metric="windows_per_week", at=CUT)
-    return doc
-
-
-SEP29 = "2026-09-29T18:25:18.212000+00:00"
-
-
-class ChartStepsTest(unittest.TestCase):
-    def test_reads_the_steps_the_page_draws(self):
-        steps = I.chart_steps(_live_2026_10_05())
-        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps["window"]], [(CUT, 11.2)])
-        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps["tokens_per_week"]],
-                         [(CUT, -11.5), (SEP22, 32.0)])
-        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps["windows_per_week"]],
-                         [(CUT, -20.4), (SEP22, 32.0)])
-
-    def test_percents_round_as_the_page_rounds_them(self):
-        # JavaScript Math.round, not round-half-to-even: -11.5% prints -11%, +32.5% +33%.
-        self.assertEqual([I._page_round(x) for x in (-11.5, 32.5, 29.6, -20.4)], [-11, 33, 30, -20])
-
-    def test_nothing_to_read_without_per_week_regimes(self):
-        doc = _live_2026_10_05()
-        _wt(doc)["per_week_regimes"] = _wt(doc)["per_week_regimes"][:1]
-        self.assertEqual(I.chart_steps(doc), {})
-        self.assertEqual(I.headline_matches_chart(doc), [])
-
-    def test_a_level_without_a_figure_is_not_drawn(self):
-        doc = _live_2026_10_05()
-        _wt(doc)["per_week_regimes"][1]["windows_per_week"] = None
-        steps = I.chart_steps(doc)["windows_per_week"]
-        self.assertEqual([(s["at"], round(s["pct"], 1)) for s in steps], [(SEP22, 5.0)])
-
-
-class HeadlineMatchesChartTest(unittest.TestCase):
-    def test_the_live_page_fails(self):
-        out = I.headline_matches_chart(_live_2026_10_05())
-        self.assertEqual(len(out), 1)
-        self.assertIn("+30%", out[0])
-        self.assertIn("tokens-per-week chart labels the same change +32%", out[0])
-
-    def test_the_fixed_page_passes(self):
-        self.assertEqual(I.headline_matches_chart(_fixed(_live_2026_10_05())), [])
-
-    def test_no_step_where_the_headline_says_one_fails(self):
-        doc = _fixed(_live_2026_10_05())
-        doc["last_change"]["metric"] = "five_hour_limit"
-        self.assertIn("window-size chart draws no step", I.headline_matches_chart(doc)[0])
-
-    def test_change_pct_must_round_to_the_percent(self):
-        doc = _fixed(_live_2026_10_05())
-        doc["last_change"]["change_pct"] = 31.8
-        self.assertIn("change_pct is 31.8", I.headline_matches_chart(doc)[0])
-
-
-class WindowsPerWeekImpliedTest(unittest.TestCase):
-    def test_the_live_page_fails_on_the_plan_and_the_account_line(self):
-        out = I.windows_per_week_implied(_live_2026_10_05())
-        self.assertEqual(len(out), 2)
-        self.assertIn("steps +32.0%", out[0])
-        self.assertIn("window change is withheld", out[0])
-        self.assertIn("a1's windows-per-week line steps +47.2%", out[1])
-
-    def test_the_fixed_page_passes(self):
-        self.assertEqual(I.windows_per_week_implied(_fixed(_live_2026_10_05())), [])
-
-    def test_a_step_the_weekly_and_window_steps_do_not_imply_fails(self):
-        doc = _fixed(_live_2026_10_05())
-        _wt(doc)["per_week_regimes"][0]["windows_per_week"] *= 1.05
-        out = I.windows_per_week_implied(doc)
-        self.assertEqual(len(out), 1)
-        self.assertIn("implies -20.4%", out[0])
-
-    def test_a_certified_window_change_may_step_by_division(self):
-        # A +20% window certified at 22 September: windows per week steps 1.296 / 1.2.
-        doc = _fixed(_live_2026_10_05())
-        _wt(doc)["account_regimes"] = {}
-        doc["credits"]["five_hour_on_meters"]["candidates"][0]["window_change"]["certified"] = True
-        for reg in _wt(doc)["regimes"][2:]:
-            reg["value"] = round(reg["value"] * 1.2)
-        weeks = _wt(doc)["per_week_regimes"]
-        weeks[2]["windows_per_week"] = round(weeks[1]["windows_per_week"] * 1.296 / 1.2, 4)
-        self.assertEqual(I.windows_per_week_implied(doc), [])
-
-
-class OneFigurePerChangeTest(unittest.TestCase):
-    def test_the_live_page_fails(self):
-        out = I.one_figure_per_change(_live_2026_10_05())
-        self.assertIn("The tokens-per-week chart says +32% on 2026-09-22 and an event "
-                      "says +30% on 2026-09-22, both for the tokens-per-week chart's "
-                      "quantity.", out)
-        # Its 14 September event (-25%) is read on the windows-per-week chart (-20%) too.
-        self.assertIn("The windows-per-week chart says -20% on 2026-09-14 and an event says "
-                      "-25% on 2026-09-14, both for the windows-per-week chart's quantity.", out)
-
-    def test_the_fixed_page_passes(self):
-        self.assertEqual(I.one_figure_per_change(_fixed(_live_2026_10_05())), [])
-
-    def test_the_meter_ratio_is_read_on_the_windows_per_week_chart(self):
-        # Five-hour over seven-day movement is windows per week: an event stating it is read
-        # against the windows-per-week chart's step at its marker (ADR 0001 rule 17).
-        doc = _fixed(_live_2026_10_05())
-        doc["events"].append({"kind": "change", "date": "2026-09-14", "percent": 19,
-                              "direction": "decreased", "metric": "weekly_to_five_hour_ratio"})
-        out = I.one_figure_per_change(doc)
-        self.assertEqual(len(out), 1)
-        self.assertIn("-20% on 2026-09-14", out[0])
-        self.assertIn("-19% on 2026-09-14", out[0])
-
-    def test_two_published_changes_disagreeing_fail(self):
-        doc = _fixed(_live_2026_10_05())
-        doc["events"][1]["percent"] = 29
-        self.assertTrue(I.one_figure_per_change(doc))
-
-
-def _live_2026_10_06() -> dict:
-    """The page as built on 2026-10-06 after #128, cut to what check 9 reads: the 14
-    September event stated Max account 1's own detector step (-25%, dated 13 September)
-    beside a windows-per-week chart stepping -10% at the 14 September 12:00Z boundary."""
-    regimes = [{"from": None, "until": CUT, "value": 673637730},
-               {"from": CUT, "until": SEP22, "value": 668922266},
-               {"from": SEP22, "until": None, "value": 799362108}]
-    weeks = [{"from": None, "until": CUT, "value": 3440589040, "windows_per_week": 5.1075},
-             {"from": CUT, "until": SEP22, "value": 3074969024, "windows_per_week": 4.5969},
-             {"from": SEP22, "until": None, "value": 3600788727, "windows_per_week": 4.5046}]
-    sep22 = {"kind": "change", "date": "2026-09-22", "at": SEP22, "scope": "both",
-             "metric": "five_hour_limit", "percent": 20, "change_pct": 19.5,
-             "direction": "increased"}
-    return {"last_change": {k: v for k, v in sep22.items() if k != "kind"}, "events": [
-        {"kind": "change", "date": "2026-09-13", "scope": "weekly", "percent": 25,
-         "direction": "decreased", "metric": "weekly_to_five_hour_ratio"}, sep22],
-        "credits": {"window_tokens": {"regimes": regimes, "per_week_regimes": weeks},
-                    "five_hour_on_meters": {"candidates": []}}}
-
-
-A1_STEP = "2026-09-13T16:30:00.008149+00:00"
-
-
-def _relabelled(doc: dict, at: str = A1_STEP) -> dict:
-    """The 2026-10-06 page with this branch's rule 17: the boundary drawn at the event's own
-    instant on every chart, and the event stating the windows-per-week step there."""
-    wt = _wt(doc)
-    for rows in (wt["regimes"], wt["per_week_regimes"]):
-        rows[0]["until"], rows[1]["from"] = at, at
-    doc["events"][0].update(date=at[:10], at=at, percent=10, metric="windows_per_week")
-    return doc
-
-
-class EventAtItsMarkerTest(unittest.TestCase):
-    """Check 9 on 2026-10-06: an event's figure is its chart's step at its marker, and its
-    date is the marker's."""
-
-    def test_the_live_page_fails_on_the_percent_and_the_date(self):
-        out = I.one_figure_per_change(_live_2026_10_06())
-        self.assertIn("The windows-per-week chart says -10% on 2026-09-14 and an event says "
-                      "-25% on 2026-09-13, both for the windows-per-week chart's quantity.", out)
-        self.assertTrue(any("dated 2026-09-13" in o and "marker" in o for o in out), out)
-        self.assertIn("one_figure_per_change", I.BLOCKING)
-
-    def test_the_relabelled_page_passes(self):
-        self.assertEqual(I.one_figure_per_change(_relabelled(_live_2026_10_06())), [])
-
-    def test_one_point_off_fails(self):
-        doc = _relabelled(_live_2026_10_06())
-        doc["events"][0]["percent"] = 11
-        self.assertEqual(len(I.one_figure_per_change(doc)), 1)
-
-    def test_the_right_percent_on_another_instant_fails(self):
-        doc = _relabelled(_live_2026_10_06())
-        doc["events"][0]["at"] = CUT
-        doc["events"][0]["date"] = CUT[:10]
-        out = I.one_figure_per_change(doc)
-        self.assertEqual(len(out), 1)
-        self.assertIn(f"its marker on the windows-per-week chart is at {A1_STEP}", out[0])
-
-    def test_an_event_with_no_step_at_its_marker_fails(self):
-        doc = _relabelled(_live_2026_10_06())
-        _wt(doc)["per_week_regimes"][1]["windows_per_week"] = 5.1075
-        out = I.one_figure_per_change(doc)
-        self.assertTrue(any("draws no step" in o for o in out), out)
-
-
-def _weekly_event(direct: dict, ratio: dict, *, quality="certified") -> dict:
-    """A weekly event carrying both routes: the direct weekly test and the ratio route.
-    Each argument maps a label (or "pooled") to (change_pct, interval_pct)."""
-    def pa(rows, key, iv):
-        return {k: {key: v[0], iv: list(v[1]), "combined": True} for k, v in rows.items() if k != "pooled"}
-    return {"kind": "change", "scope": "weekly", "date": "2026-09-14", "evidence_quality": quality,
-            "five_hour_window_credits": {"direct_tests": {"weekly_change": {
-                "change_pct": direct["pooled"][0], "interval_pct": list(direct["pooled"][1]),
-                "per_account": pa(direct, "change_pct", "interval_pct")}}},
-            "tokens_per_week_change": {
-                "signed_pct": ratio["pooled"][0], "signed_interval_pct": list(ratio["pooled"][1]),
-                "per_account": pa(ratio, "signed_pct", "signed_interval_pct")}}
-
-
-class WeeklyRoutesAgreeTest(unittest.TestCase):
-    """Check 10: on a certified weekly event the direct weekly change and the ratio route
-    (windows per week times the window) agree within their combined interval."""
-
-    # The live page of 2026-10-06 12:01Z, 14 September.
-    LIVE = _weekly_event({"a1": (-9.0, (-29.3, 17.0)), "a2": (-10.4, (-26.3, 8.8)),
-                          "pooled": (-9.9, (-22.3, 4.4))},
-                         {"a1": (-28.0, (-37.6, -16.8)), "a2": (-28.2, (-40.3, -13.1)),
-                          "pooled": (-28.0, (-38.6, -15.4))})
-
-    def test_the_live_page_fails_on_the_pooled_figure(self):
-        out = I.weekly_routes_agree({"events": [self.LIVE]})
-        self.assertEqual(len(out), 1)
-        self.assertIn("combined", out[0])
-        self.assertIn("-9.9%", out[0])
-        self.assertIn("-28.0%", out[0])
-
-    def test_routes_inside_each_others_reach_pass(self):
-        ok = _weekly_event({"a1": (-9.0, (-29.3, 17.0)), "pooled": (-9.9, (-22.3, 4.4))},
-                           {"a1": (-14.7, (-22.0, -6.6)), "pooled": (-14.0, (-21.0, -6.0))})
-        self.assertEqual(I.weekly_routes_agree({"events": [ok]}), [])
-
-    def test_one_account_apart_fails_by_name(self):
-        bad = _weekly_event({"a2": (-10.4, (-14.0, -6.0)), "pooled": (-10.4, (-14.0, -6.0))},
-                            {"a2": (-30.0, (-33.0, -27.0)), "pooled": (-10.4, (-14.0, -6.0))})
-        out = I.weekly_routes_agree({"events": [bad]})
-        self.assertEqual(len(out), 1)
-        self.assertIn("a2", out[0])
-
-    def test_a_provisional_event_or_a_missing_route_is_not_read(self):
-        prov = dict(self.LIVE, evidence_quality="provisional")
-        bare = {k: v for k, v in self.LIVE.items() if k != "tokens_per_week_change"}
-        self.assertEqual(I.weekly_routes_agree({"events": [prov, bare]}), [])
-
-    def test_it_is_a_registered_check_that_does_not_block(self):
-        self.assertIn("weekly_routes_agree", dict(I.CHECKS))
-        self.assertNotIn("weekly_routes_agree", I.BLOCKING)
-
-    @staticmethod
-    def _charted(event: dict, before: int, after: int) -> dict:
-        """`event` at 13 Sep 16:30Z beside a tokens-per-week chart stepping there."""
-        at = "2026-09-13T16:30:00+00:00"
-        return {"events": [dict(event, at=at)],
-                "credits": {"window_tokens": {"per_week_regimes": [
-                    {"from": None, "until": at, "value": before},
-                    {"from": at, "until": None, "value": after}]}}}
-
-    def test_the_charts_week_step_is_the_same_accounts_direct_change(self):
-        # ADR 0001 rule 20. The page of 2026-10-08 12:02Z drew 1,313,529 to 1,172,293 credits
-        # per 1% (-10.75%), Max account 3 on the after side only, beside a direct -9.9%.
-        same = _weekly_event({"a1": (-9.1, (-29.3, 16.9)), "a2": (-10.4, (-25.9, 8.4)),
-                              "pooled": (-9.9, (-22.1, 4.1))},
-                             {"a1": (-9.1, (-29.3, 16.9)), "a2": (-10.4, (-25.9, 8.4)),
-                              "pooled": (-9.9, (-22.1, 4.1))})
-        out = I.weekly_routes_agree(self._charted(same, 1313529, 1172293))
-        self.assertEqual(len(out), 1)
-        self.assertIn("-10.75%", out[0])
-        self.assertIn("rule 20", out[0])
-        self.assertEqual(I.weekly_routes_agree(self._charted(same, 3369340315, 3035775624)), [])
-
-
-class DetectedWindowsPerWeekAgreeTest(unittest.TestCase):
-    """Check 11: the detector's windows-per-week levels, in interactive-equivalent units,
-    agree with the week over the window (ADR 0001 rules 11 and 16) within their intervals."""
-
-    def doc(self, detected, derived):
-        return {"weekly_windows": {"max20": {"regimes": [
-                    {"start": s, "end": e, "windows": w, "rounding_interval": list(iv)}
-                    for s, e, w, iv in detected]}},
-                "credits": {"window_tokens": {"per_week_regimes": [
-                    {"from": f, "until": u, "windows_per_week": w,
-                     "windows_per_week_interval": list(iv) if iv else None}
-                    for f, u, w, iv in derived]}}}
-
-    START, END = "2026-08-15T00:00:00+00:00", "2026-10-06T00:00:00+00:00"
-    BEFORE_END = "2026-09-14T09:00:00+00:00"
-
-    def test_levels_inside_each_others_reach_pass(self):
-        doc = self.doc([(self.START, self.BEFORE_END, 5.6, (5.2, 6.0)), (CUT, self.END, 4.9, (4.5, 5.3))],
-                       [(None, CUT, 5.5, (4.6, 6.6)), (CUT, None, 4.8, (4.0, 5.8))])
-        self.assertEqual(I.detected_windows_per_week_agree(doc), [])
-
-    def test_a_detected_level_outside_the_derived_one_fails_by_date(self):
-        doc = self.doc([(self.START, self.BEFORE_END, 5.6, (5.2, 6.0)), (CUT, self.END, 4.0, (3.8, 4.2))],
-                       [(None, CUT, 5.5, (4.6, 6.6)), (CUT, None, 5.5, (5.0, 6.0))])
-        out = I.detected_windows_per_week_agree(doc)
-        self.assertEqual(len(out), 1)
-        self.assertIn("2026-09-14", out[0])
-        self.assertIn("is 4 [3.8, 4.2]", out[0])
-
-    def test_each_derived_row_is_read_against_the_level_it_overlaps_most(self):
-        # The detector draws one level across 22 September; the derived rows step there by
-        # less than either interval, so both read the one level and pass.
-        doc = self.doc([(self.START, self.BEFORE_END, 5.6, (5.2, 6.0)), (CUT, self.END, 4.9, (4.5, 5.3))],
-                       [(None, CUT, 5.5, (4.6, 6.6)), (CUT, SEP22, 4.6, (4.0, 5.3)),
-                        (SEP22, None, 5.1, (4.4, 5.9))])
-        self.assertEqual(I.detected_windows_per_week_agree(doc), [])
-
-    def test_a_row_without_an_interval_or_an_unbounded_level_is_not_read(self):
-        doc = self.doc([(self.START, self.END, 9.0, (5.0, None))], [(None, None, 5.0, None)])
-        self.assertEqual(I.detected_windows_per_week_agree(doc), [])
-        self.assertEqual(I.detected_windows_per_week_agree({}), [])
-
-    def test_it_is_a_registered_check_that_does_not_block(self):
-        self.assertIn("detected_windows_per_week_agree", dict(I.CHECKS))
-        self.assertNotIn("detected_windows_per_week_agree", I.BLOCKING)
-
-
-class FourteenSepFrozenTest(unittest.TestCase):
-    """Check 12: the 14 September weekly step stays at the size ADR 0001 rule 21 froze."""
-
-    AT = "2026-09-13T16:30:00+00:00"
-
-    def _page(self, direct: float, route: float, before: int = 1000, after: int = 901) -> dict:
-        event = _weekly_event({"pooled": (direct, (-22.1, 4.3))}, {"pooled": (route, (-22.1, 4.3))})
-        return {"events": [dict(event, at=self.AT)],
-                "credits": {"window_tokens": {"per_week_regimes": [
-                    {"from": None, "until": self.AT, "value": before},
-                    {"from": self.AT, "until": None, "value": after}]}}}
-
-    def test_the_frozen_figure_passes(self):
-        # The live page of 2026-10-09 15:02Z: -9.9% on both routes and the chart.
-        self.assertEqual(I.fourteen_sep_weekly_frozen(self._page(-9.9, -9.9)), [])
-
-    def test_a_moved_figure_fails_where_it_moved(self):
-        out = I.fourteen_sep_weekly_frozen(self._page(-10.0, -9.9))
-        self.assertEqual(len(out), 1)
-        self.assertIn("direct weekly change", out[0])
-        self.assertIn("rule 21", out[0])
-        out = I.fourteen_sep_weekly_frozen(self._page(-9.9, -9.9, 1000, 880))
-        self.assertEqual(len(out), 1)
-        self.assertIn("chart", out[0])
-
-    def test_a_later_weekly_event_is_not_read(self):
-        page = self._page(17.4, 17.4)
-        page["events"][0]["at"] = "2026-09-22T19:41:49+00:00"
-        self.assertEqual(I.fourteen_sep_weekly_frozen(page), [])
-
-    def test_it_is_a_registered_check_that_does_not_block(self):
-        self.assertIn("fourteen_sep_weekly_frozen", dict(I.CHECKS))
-        self.assertNotIn("fourteen_sep_weekly_frozen", I.BLOCKING)
-
-    def test_the_adr_states_the_frozen_figure(self):
-        # Moving the constant without changing ADR 0001 rule 21 (or the reverse) fails here.
-        adr = (Path(__file__).resolve().parents[1] / "docs" / "adr"
-               / "0001-acceptance-rules-for-published-figures.md").read_text(encoding="utf-8")
-        m = re.search(r"^21\. \*\*The 14 September weekly step is frozen at (-?\d+\.\d)%", adr, re.MULTILINE)
-        self.assertIsNotNone(m)
-        self.assertEqual(float(m.group(1)), I.FROZEN_14SEP_WEEKLY_PCT)
+    ADVISORY = staticmethod(lambda: _headline(copy.deepcopy(_good()), 990))   # check 1: exit 1
+    BLOCKING = staticmethod(_contradiction)                                  # check 11: exit 2
+    DAY = 24 * 3600
+
+    def test_an_incident_that_starts_withholding_says_so_once(self):
+        self.assertEqual(self.check(self.ADVISORY(), 0), 1)
+        self.assertIn("Published anyway", self.sent[0])
+        self.assertEqual(self.check(self.BLOCKING(), 1800), 2)
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("the public JSON is WITHHELD", self.sent[1])
+        self.assertIn("withheld since 1970-01-01T00:30Z", self.sent[1])
+        self.assertIn("last_change_is_newest_measured", self.sent[1])
+        self.assertNotIn("headline_inside_accounts", self.sent[1], "the withheld message names what blocks")
+        for t in range(3600, 6 * 3600, 1800):
+            self.check(self.BLOCKING(), t)
+        self.assertEqual(len(self.sent), 2, "nothing more while it keeps withholding")
+
+    def test_a_change_in_which_checks_fail_is_not_a_new_alert(self):
+        units = _good()
+        _wt(units)["account_regimes"]["Max account 3"][2]["window"] = 300   # check 3 instead of 1
+        drawn = _good()
+        drawn["four_accounts"]["levels"]["ratio"][0]["index"] = 1.1         # check 5 instead of 4
+        self.assertEqual([k for k, v in I.run_checks(units).items() if v], ["account_units"])
+        self.assertEqual([k for k, v in I.run_checks(drawn).items() if v],
+                         ["every_change_drawn", "one_figure_per_change"])
+        t = 0
+        for doc in [self.ADVISORY(), units] * 4:                            # warn-only sets flapping
+            self.assertEqual(self.check(doc, t), 1)
+            t += 1800
+        self.assertEqual(len(self.sent), 1, self.sent)
+        for doc in [self.BLOCKING(), drawn] * 4:                            # blocking sets flapping
+            self.assertEqual(self.check(doc, t), 2)
+            t += 1800
+        self.assertEqual(len(self.sent), 2, self.sent)
+        self.assertIn("WITHHELD", self.sent[1])
+
+    def test_a_withheld_page_is_said_again_every_24_hours(self):
+        self.check(self.BLOCKING(), 0)
+        self.assertIn("Not published", self.sent[0])
+        for t in range(1800, 3 * self.DAY + 1, 1800):
+            self.check(self.BLOCKING(), t)
+        self.assertEqual(len(self.sent), 4, [s[:80] for s in self.sent])
+        self.assertTrue(all("WITHHELD" in s for s in self.sent[1:]))
+        self.assertIn("(withheld since 1970-01-01T00:00Z, 72 h)", self.sent[3])
+
+    def test_a_withhold_that_flaps_waits_for_the_reminder(self):
+        self.check(self.ADVISORY(), 0)
+        self.check(self.BLOCKING(), 1800)            # withheld: said
+        self.check(self.ADVISORY(), 3600)            # published again: nothing
+        self.check(self.BLOCKING(), 5400)            # withheld again within a day: nothing
+        self.assertEqual(len(self.sent), 2)
+        self.check(self.BLOCKING(), 1800 + self.DAY)
+        self.assertEqual(len(self.sent), 3)
+        self.assertIn("WITHHELD", self.sent[2])
+
+    def test_recovery_closes_everything_and_a_new_withhold_alerts_at_once(self):
+        self.check(self.BLOCKING(), 0)
+        self.check(_good(), 1800)
+        self.assertIn("pass again after 30 min", self.sent[-1])
+        self.assertEqual(json.loads(self.state.read_text()).get("withheld_alerted_at"), None)
+        self.check(self.BLOCKING(), 3600)
+        self.assertEqual(len(self.sent), 3)
+        self.assertIn("Not published", self.sent[2])
+
+    def test_a_failed_withheld_send_is_tried_again_next_run(self):
+        self.check(self.ADVISORY(), 0)
+        ok = [False]
+        sent = self.sent
+
+        def flaky(text):
+            sent.append(text)
+            return ok[0]
+        self.doc.write_text(json.dumps(self.BLOCKING()))
+        I.check_file(self.doc, self.state, flaky, now=lambda: 1800)
+        ok[0] = True
+        I.check_file(self.doc, self.state, flaky, now=lambda: 3600)
+        self.assertEqual([("WITHHELD" in s) for s in sent], [False, True, True])
+
+    def test_the_log_line_says_what_was_sent(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.check(self.BLOCKING(), 0)
+            self.check(self.BLOCKING(), 1800)
+        lines = [ln for ln in out.getvalue().splitlines() if ln.startswith("invariants alert:")]
+        self.assertEqual(lines[0], "invariants alert: alert sent")
+        self.assertEqual(lines[1], "invariants alert: incident open 30 min, withheld 30 min, last said 30 min ago")
 
 
 class BlockingTest(unittest.TestCase):
@@ -804,12 +961,12 @@ class BlockingTest(unittest.TestCase):
         return True
 
     def test_a_contradiction_on_the_page_exits_2_and_says_not_published(self):
-        self.doc.write_text(json.dumps(_live_2026_10_05()))
+        self.doc.write_text(json.dumps(_contradiction()))
         self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 2)
         self.assertIn("Not published", self.sent[0])
 
-    def test_the_fixed_page_exits_0(self):
-        self.doc.write_text(json.dumps(_frozen(_fixed(_live_2026_10_05()))))
+    def test_the_consistent_page_exits_0(self):
+        self.doc.write_text(json.dumps(_good()))
         self.assertEqual(I.check_file(self.doc, self.state, self.send, now=lambda: 0), 0)
 
 
