@@ -52,6 +52,18 @@ class HealthTest(unittest.TestCase):
         self.log.write_text(json.dumps({"ts": iso(NOW - 2 * 3600), "five_hour": {"utilization": 1}}) + "\n")
         self.assertIn("collection: newest meter sample is 2h00m old", self.reasons()["collection"])
 
+    def test_a_weekly_only_reading_still_counts_as_collecting(self):
+        # An account with no five-hour limit logs five_hour null; its numeric seven_day
+        # proves collection is alive.
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None, "resets_at": None},
+                                        "seven_day": {"utilization": 17.0}, "weekly_only": True}) + "\n")
+        self.assertIsNone(self.reasons()["collection"])
+
+    def test_a_line_with_no_numeric_bucket_is_not_a_sample(self):
+        self.log.write_text(json.dumps({"ts": iso(NOW - 60), "five_hour": {"utilization": None},
+                                        "seven_day": {"utilization": None}}) + "\n")
+        self.assertIn("no reading", self.reasons()["collection"])
+
     def test_resets_at_style_offsets_are_parsed_not_string_compared(self):
         self.log.write_text(json.dumps({"ts": "2026-10-02T03:59:00+02:00", "five_hour": {"utilization": 1}}) + "\n")
         self.assertIsNone(self.reasons()["collection"])
@@ -127,6 +139,15 @@ class HealthTest(unittest.TestCase):
                                      "schema": ["seven_day.resets_at missing"]}) + "\n")
         self.assertIn("usage API changed shape", self.reasons()["meters"] or "")
 
+    def test_a_weekly_only_reading_is_not_a_schema_change(self):
+        meter = self.tmp / "meter-dave.log"
+        self.c.meter_logs = (meter,)
+        self.c.checks = ("meters",)
+        meter.write_text(json.dumps({"ts": iso(NOW - 60), "weekly_only": True,
+                                     "five_hour": {"utilization": None, "resets_at": None},
+                                     "seven_day": {"utilization": 8.0, "resets_at": iso(NOW + 86400)}}) + "\n")
+        self.assertIsNone(self.reasons()["meters"])
+
     def test_stale_publisher(self):
         self.c.publisher_max_age_s = 300
         self.assertIn("publisher: history/gs-passive.json last committed 10m ago", self.reasons()["publisher"])
@@ -155,6 +176,74 @@ class HealthTest(unittest.TestCase):
         self.c.lock_pidfile.write_text(str(os.getpid()))
         os.utime(self.c.lock_pidfile, (NOW - 3 * 3600, NOW - 3 * 3600))
         self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+
+    def test_a_held_lock_with_no_pid_file_is_aged_by_the_lock_file(self):
+        # Code review round 5: a run that could not write its pid file (full disk) and then
+        # hung read as a healthy lock here, while supervise alerted on it and pointed here.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 4 * 3600}))  # the hung run began after it
+        self.assertIsNone(self.reasons().get("lock"))  # not held: an old lock file is no run at all
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            # Round 6: the check reads /proc/locks and never takes a lock of its own, which
+            # would make a supervised run starting in the same instant skip itself.
+            with mock.patch("fcntl.flock", side_effect=AssertionError("health took a lock")):
+                self.assertIn("a run with no pid file has held the lock 3h00m", self.reasons()["lock"])
+            os.utime(lock, (NOW - 600, NOW - 600))
+            self.assertIsNone(self.reasons().get("lock"))
+        finally:
+            os.close(fd)
+
+    def test_a_lock_stamp_older_than_the_last_finished_run_does_not_age_the_lock(self):
+        # Code review round 7: when the stamp itself could not be written (a read-only disk),
+        # the lock still carries an earlier run's time, which would read as hours held.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 120}))
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertIsNone(self.reasons().get("lock"))
+        finally:
+            os.close(fd)
+
+    def test_a_held_lock_is_found_by_its_holder_when_the_device_reads_differently(self):
+        # Code review round 7: /proc/locks prints the superblock's device, which differs from
+        # stat's on btrfs subvolumes and overlayfs; the holder's open files settle it.
+        import fcntl
+        lock = self.c.lock_pidfile.with_suffix(".lock")
+        lock.write_text("")
+        os.utime(lock, (NOW - 3 * 3600, NOW - 3 * 3600))
+        self.state.write_text(json.dumps({"last_ok": NOW - 4 * 3600}))
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        row = f"1: FLOCK  ADVISORY  WRITE {os.getpid()} ff:ff:{os.stat(lock).st_ino} 0 EOF\n"
+        try:
+            with mock.patch.object(health, "_proc_locks", return_value=row):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+            # Round 11: a holder whose files cannot be read (hidepid, another user) is no veto.
+            with mock.patch.object(health, "_proc_locks", return_value=row.replace(str(os.getpid()), "1")), \
+                    mock.patch.object(health, "_holds_open", return_value=None):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+            other = f"1: FLOCK  ADVISORY  WRITE 1 ff:ff:{os.stat(lock).st_ino} 0 EOF\n"
+            with mock.patch.object(health, "_proc_locks", return_value=other), \
+                    mock.patch.object(health, "_holds_open", return_value=False):
+                self.assertIsNone(self.reasons().get("lock"))  # the same inode on another device
+            # Round 8: device and inode agreeing is enough, though the holder's pid shows no
+            # such file (another pid namespace).
+            st = os.stat(lock)
+            same = f"1: FLOCK  ADVISORY  WRITE 1 {os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino} 0 EOF\n"
+            with mock.patch.object(health, "_proc_locks", return_value=same), \
+                    mock.patch.object(health, "_holds_open", return_value=False):
+                self.assertIn("has held the lock 3h00m", self.reasons()["lock"])
+        finally:
+            os.close(fd)
 
     def test_sizes(self):
         self.c.max_log_bytes = 10
@@ -266,6 +355,8 @@ class GsProfileTest(unittest.TestCase):
         self.publish(NOW - 600)
         self.c = health.gs_config(state=self.state, pidfile=self.ops / "x.pid", ops=self.ops, repo=self.tmp,
                                   site=self.site)
+        # Never the machine's own ~/.claude-dave: its sessions/ changes the hold.
+        self.c.meter_config_dirs = {a: self.tmp / f"cfg-{a}" for a in health.GS_METER_ACCOUNTS}
 
     def publish(self, generated_at):
         page = self.site / health.SITE_JSON
@@ -436,10 +527,55 @@ class GsProfileTest(unittest.TestCase):
     def test_a_held_header_probe_is_not_stale(self):
         # Window lapsed 2 h ago and meter_log holds its probe until a session runs: no lines, no failure.
         self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 3 * 3600)
         self.assertIsNone(health.first_failure(self.c, NOW))
         # Seven-day meter at 100% until tomorrow: held as well.
         self.write_header_meter(NOW - 3 * 3600, five_reset=NOW + 3600, seven=100.0)
         self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def dave_config_dir(self, sessions_touched=None):
+        """A dave config dir whose `sessions/` last changed at `sessions_touched` (None: no such dir)."""
+        cfg = self.tmp / "cfg-dave"
+        (cfg / "sessions").mkdir(parents=True, exist_ok=True)
+        if sessions_touched is None:
+            (cfg / "sessions").rmdir()
+        else:
+            os.utime(cfg / "sessions", (sessions_touched, sessions_touched))
+        self.c.meter_config_dirs = {"dave": cfg}
+
+    def test_a_session_after_the_reset_ends_the_hold_and_the_age_rule_applies(self):
+        # meter_log probes again once `sessions/` changes after the reset, so a log still
+        # silent 40 min later is a dead meter, not a held one.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 40 * 60)
+        self.assertIn("newest usable reading in claude-usage-meter-dave.log is 3h",
+                      health.first_failure(self.c, NOW))
+
+    def test_a_lapsed_window_with_no_session_since_stays_held(self):
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600)
+        self.dave_config_dir(sessions_touched=NOW - 2 * 3600)
+        self.assertIsNone(health.first_failure(self.c, NOW), "touched at the reset itself: still held")
+        self.dave_config_dir(sessions_touched=None)
+        self.assertIsNone(health.first_failure(self.c, NOW), "no sessions/ yet: meter_log holds too")
+
+    def test_a_capped_week_stays_held_whatever_sessions_ran(self):
+        # meter_log's capped hold does not read sessions/, and a capped account cannot be probed.
+        self.write_header_meter(NOW - 3 * 3600, five_reset=NOW - 2 * 3600, seven=100.0)
+        self.dave_config_dir(sessions_touched=NOW - 40 * 60)
+        self.assertIsNone(health.first_failure(self.c, NOW))
+
+    def test_health_holds_exactly_when_meter_log_does(self):
+        from tracker import meter_log
+        when = datetime.fromtimestamp(NOW, timezone.utc)
+        for touched in (NOW - 40 * 60, NOW - 2 * 3600, NOW - 3 * 3600, None):
+            with self.subTest(touched=touched):
+                self.dave_config_dir(sessions_touched=touched)
+                row = {"source": "ratelimit_headers",
+                       "five_hour": {"resets_at": iso(NOW - 2 * 3600)},
+                       "seven_day": {"utilization": 22.0, "resets_at": iso(NOW + 86400)}}
+                cfg = self.c.meter_config_dirs["dave"]
+                self.assertEqual(health._header_hold(row, NOW, cfg),
+                                 meter_log.header_hold(row, cfg, when) is not None)
 
     def test_a_header_probe_in_a_live_window_still_goes_stale(self):
         self.write_header_meter(NOW - 1800, five_reset=NOW + 3600)

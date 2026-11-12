@@ -96,11 +96,13 @@ from . import speed
 from .capture import ACCEPTED, COLLECTION_GAP, UNJUDGED, UNPRICED, Verdict, check
 from .cloud_sessions import CloudSpan, cloud_spans, overlaps
 from .join import Stretch, build_stretches, bundle_meter_usd, window_points
+from . import five_hour_end
 from .meter_log import MASTERRIG_METER_LOG
 from .rows import usable_rows
 from .samples import Sample, infer_resets, merge_samples, parse_log
 from .turns import iter_turns, transcript_paths, transcript_session_id
 from .unclaimed import airlock_record
+from .usage_api import as_utc
 from .unclaimed import attribute as attribute_unclaimed
 from .weekly_meter import seven_day_steps
 
@@ -237,14 +239,20 @@ def masterrig_account(home: Path | None = None) -> Account:
                    meter_note=MASTERRIG_METER_NOTE, cloud_dir=home / "private" / "cloud")
 
 
-def _read(path: Path, fmt: str, since: datetime | None) -> list[Sample]:
+def _read(path: Path, fmt: str, since: datetime | None, weekly: bool = False) -> list[Sample]:
     if not path.exists():
         return []
     with open(path, encoding="utf-8", errors="replace") as fh:  # one bad byte costs its line only
-        return parse_log(fmt, fh, since)
+        return parse_log(fmt, fh, since, weekly=weekly)
 
 
-def load_samples(account: Account, until: datetime | None = None) -> list[Sample]:
+def _newest(*sample_lists: list[Sample]) -> str | None:
+    """The newest reading's time across `sample_lists`, ISO, or None when all are empty."""
+    stamps = [s[-1].ts for s in sample_lists if s]
+    return max(stamps).isoformat() if stamps else None
+
+
+def load_samples(account: Account, until: datetime | None = None, *, weekly: bool = False) -> list[Sample]:
     """Every reading of this account's meter, in time order.
 
     `meter_log` and each of `extra_meter_logs` read the same meter, so they are
@@ -259,10 +267,13 @@ def load_samples(account: Account, until: datetime | None = None) -> list[Sample
     A sample whose reset came from that inference, rather than the log, is
     marked by suffixing its `source` with `-inferred` (`_reset_source` reads
     this to record each stretch's `reset_source`).
+
+    `weekly=True` also keeps readings with no five-hour figure, as `five_hour=None`
+    (tracker/samples.py parse_moonlighter): for seven-day readers only.
     """
-    samples = _read(account.meter_log, account.meter_format, account.meter_since)
+    samples = _read(account.meter_log, account.meter_format, account.meter_since, weekly)
     if account.extra_meter_logs:
-        samples = merge_samples(samples, *(_read(m.path, m.format, account.meter_since)
+        samples = merge_samples(samples, *(_read(m.path, m.format, account.meter_since, weekly)
                                            for m in account.extra_meter_logs))
     if account.legacy_meter_log is not None and account.legacy_meter_log.exists():
         first = min((s.ts for s in samples), default=None)
@@ -859,7 +870,12 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         joined = samples if INFERRED_RESET_VERIFIED else [
             replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in samples]
         since = samples[0].ts if samples else None
-        split = (_split_sources(account, since, withhold.get(name, ()), home, resolved) if samples
+        # The weekly steps read readings with no five-hour figure too (weekly_only), so the
+        # transcripts are chosen by those readings' coverage: an account whose log holds only
+        # weekly-only readings still gets its turns, not steps of zero credits.
+        weekly_samples = load_samples(account, until, weekly=True)
+        weekly_since = weekly_samples[0].ts if weekly_samples else None
+        split = (_split_sources(account, weekly_since, withhold.get(name, ()), home, resolved) if weekly_samples
                  else _Splitted([], None, [], [], {}, "", set()))
         files, own_sessions, unclaimed_files = split.kept, split.meta, split.unclaimed
         turns, per_source = account_turns(split, until)
@@ -876,8 +892,12 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
         reset_sources[name] = {s.start: _reset_source(s, samples) for s in stretches[name]}
         weekly[name] = window_points(joined)
         # The weekly limit measured directly: every one-point step of the seven-day meter
-        # with this account's own tokens in it (tracker/weekly_meter.py).
-        steps = seven_day_steps(joined, turns, prices, cloud[name], fast=fast)
+        # with this account's own tokens in it (tracker/weekly_meter.py). Read with the
+        # weekly-only readings kept (five_hour None), so an account with no five-hour limit
+        # still measures its weekly limit; their five-hour pairs break, as a gap does.
+        weekly_joined = weekly_samples if INFERRED_RESET_VERIFIED else [
+            replace(s, resets_at=None) if s.source.endswith("-inferred") else s for s in weekly_samples]
+        steps = seven_day_steps(weekly_joined, turns, prices, cloud[name], fast=fast)
         root = account.config_dir / "projects"
         meta[name] = {
             "meter": {"log": str(account.meter_log), "format": account.meter_format,
@@ -887,7 +907,10 @@ def report(accounts: dict[str, Account], prices: dict, probe_rows: Iterable[dict
                       "reset_verified_samples": sum(1 for s in joined if s.resets_at is not None),
                       "since": account.meter_since.isoformat() if account.meter_since else None,
                       "samples": len(samples), "first": since.isoformat() if since else None,
-                      "last": samples[-1].ts.isoformat() if samples else None},
+                      # The newest reading of either kind: a weekly-only account's meter is
+                      # still read, so its feed is not stopped (publish `_account_feeds`).
+                      "last": _newest(samples, weekly_samples),
+                      **five_hour_end.meter_fields(samples, weekly_samples)},
             "transcripts": {"root": str(root), "resolves_to": str(root.resolve()),
                             "shared_with": shared_with(account, home or account.config_dir.parent),
                             "files": len(files), "turns": len(turns), "withheld_patterns": list(withhold.get(name, ())),
@@ -972,8 +995,7 @@ def summarise(stretches: dict[str, list[Stretch]], reset_sources: dict[str, dict
 
 
 def _utc_day(stamp: str) -> str:
-    at = datetime.fromisoformat(stamp)
-    return (at.astimezone(timezone.utc) if at.tzinfo else at).date().isoformat()
+    return as_utc(datetime.fromisoformat(stamp)).astimezone(timezone.utc).date().isoformat()
 
 
 def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
@@ -1008,15 +1030,21 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
             # A stretch with a model these prices do not cover is left out whole:
             # valuing that model at $0 would deflate the reading and look like a
             # cheaper meter, and the stretch's percent is spent on it all the same.
-            valued = {m: bundle_meter_usd(m, tok, prices) for m, tok in s["tokens"].items()}
-            if any(v is None for v in valued.values()):
+            # A bundle of no tokens (Claude Code's `<synthetic>` rows) hides no work and is
+            # skipped, as `passive_credit_points` skips it; with nothing else left, no reading.
+            valued = {m: bundle_meter_usd(m, tok, prices)
+                      for m, tok in credit_model.bundles_with_work(s["tokens"]).items()}
+            if not valued or any(v is None for v in valued.values()):
                 continue
             # Per UTC day, as the docstring says: a +02:00 stretch's own date is not its UTC date.
             key = _utc_day(s["end"]) if by == "day" else s["end"]
             groups.setdefault(key, []).append((s, sum(valued.values())))
         for ss in groups.values():
             usd = sum(v for _, v in ss)
-            out.append((datetime.fromisoformat(ss[-1][0]["end"]), usd / sum(s["delta_pct"] for s, _ in ss) * 100))
+            # A naive end is UTC, as `_utc_day` files it: left naive it would not sort against
+            # an aware one, and the whole series would fail on one hand-written stamp.
+            end = as_utc(datetime.fromisoformat(ss[-1][0]["end"]))
+            out.append((end, usd / sum(s["delta_pct"] for s, _ in ss) * 100))
     return sorted(out)
 
 
@@ -1028,11 +1056,6 @@ def passive_dollar_readings(report: dict, prices: dict, by: str = "day",
 #: at least one family whose rate was fitted; one that reads `anchor` was pure Opus.
 CREDIT_RATE_SOURCES = ("anchor", "measured", "interval_midpoint", "reference_table",
                        "inferred_list_price")
-
-
-def _empty(tok) -> bool:
-    """A token bundle that holds no tokens (Claude Code's `<synthetic>` placeholder rows)."""
-    return isinstance(tok, dict) and not credit_model.raw_tokens(tok)
 
 
 def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
@@ -1080,7 +1103,9 @@ def stretch_credits(tokens: dict, credits: dict, model_rates: dict | None,
         # rows carry the model id `<synthetic>` and zero tokens, belong to no family, and
         # would otherwise drop the whole stretch as unpriced. One that ever carries tokens
         # is not skipped, and lands in `unpriced_credit_models`.
-        if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
+        if not isinstance(tok, dict):
+            return None, "unpriced"  # no bundle: refused whole (`credits.bundles_with_work`)
+        if not credit_model.holds_work(tok):
             continue
         fam = credit_model.family(model, credits)
         if fam is None:
@@ -1153,8 +1178,8 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0 or not s.get("tokens"):
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
-                   if not _empty(tok)):
+            if any(bundle_meter_usd(m, tok, prices) is None
+                   for m, tok in credit_model.bundles_with_work(s["tokens"]).items()):
                 continue
             value, _source = stretch_credits(s["tokens"], credits, model_rates, prices)
             if value is None or not s.get("delta_pct"):
@@ -1164,7 +1189,8 @@ def passive_credit_points(report: dict, prices: dict, credits: dict,
                 # `<synthetic>` ones. The meter moved and no work explains it, so it is no
                 # reading of credits per percent, and a zero here would pull the level down.
                 continue
-            out.append((datetime.fromisoformat(s["end"]), value, float(s["delta_pct"]),
+            # A naive end is UTC, as in passive_dollar_readings: left naive it would not sort.
+            out.append((as_utc(datetime.fromisoformat(s["end"])), value, float(s["delta_pct"]),
                         int(s.get("windows") or 1)))
     return sorted(out, key=lambda p: p[0])
 
@@ -1181,9 +1207,10 @@ def unpriced_credit_models(report: dict, prices: dict, credits: dict,
     out = set()
     for account in report.get("accounts", {}).values():
         for s in account.get("stretches") or []:
-            for model, tok in (s.get("tokens") or {}).items():
-                # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows).
-                if not isinstance(tok, dict) or model in out or not credit_model.raw_tokens(tok):
+            for model, tok in credit_model.bundles_with_work(s.get("tokens")).items():
+                # A bundle of no tokens hides no work (Claude Code's `<synthetic>` rows); a value
+                # that is no bundle at all cannot be valued, so it is listed like a missing price.
+                if model in out:
                     continue
                 if (bundle_meter_usd(model, tok, prices) is None
                         or stretch_credits({model: tok}, credits, model_rates, prices)[0] is None):
@@ -1204,8 +1231,8 @@ def credit_rate_sources(report: dict, prices: dict, credits: dict,
                 continue
             if s.get("unpriced_tokens", 0) > 0:
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in s["tokens"].items()
-                   if not _empty(tok)):
+            if any(bundle_meter_usd(m, tok, prices) is None
+                   for m, tok in credit_model.bundles_with_work(s["tokens"]).items()):
                 continue
             value, source = stretch_credits(s["tokens"], credits, model_rates, prices)
             # The same admission rule as passive_credit_points: priced and charged.
@@ -1268,9 +1295,12 @@ def fit_output_weight(rpt: dict, prices: dict) -> dict:
             if st.get("capture_status", st["status"]) != ACCEPTED:
                 continue
             base = out = 0.0
-            for m, tok in st["tokens"].items():
+            work = credit_model.bundles_with_work(st["tokens"])
+            if not work:
+                continue  # only `<synthetic>` rows, or no bundle: a collection gap, not a zero row
+            for m, tok in work.items():
                 price = prices.get(m)
-                if price is None:
+                if price is None or not isinstance(tok, dict):  # unpriced, or no bundle at all
                     break
                 base += (tok.get("input", 0) * price["input"] + tok.get("cache_write", 0) * price["cache_write"]) / 1e6
                 out += tok.get("output", 0) * price["output"] / 1e6
@@ -1303,9 +1333,7 @@ def _utc_arg(value: str, *, end_of_day: bool = False) -> datetime:
     on comparison. A bare date means the whole day: its start for --since, its
     last second for --until, so `--since 2026-09-05 --until 2026-09-15` spans
     both days inclusive."""
-    t = datetime.fromisoformat(value)
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
+    t = as_utc(datetime.fromisoformat(value))
     if end_of_day and len(value) == 10:
         t = t.replace(hour=23, minute=59, second=59)
     return t

@@ -9,7 +9,7 @@ appends the raw log below it for the debugging that the summary cannot do.
 
 The summary is derived only from what the log says. Each explanation names the
 condition that actually tripped (`ProbeAbort` reasons in tracker/probe.py, the
-`<account> busy:` and `<account> weekly:` lines from `choose_account`, a Python
+`<account> busy:`, `weekly:`, `weekly-only:` and `malformed:` lines from `choose_account`, a Python
 traceback for a crash), and
 an unrecognised log falls back to quoting its last line rather than guessing.
 
@@ -34,6 +34,13 @@ BUSY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) busy: (?P<why>.+)$")
 # An account passed over for its seven-day meter (issue #38). The `<name> weekly meter N%`
 # figure lines have no colon after "weekly" and are not skips.
 WEEKLY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) weekly: (?P<why>.+)$")
+# tracker.probe's `weekly-only` skip: an account with no five-hour limit (ADR 0001 rule 24).
+WEEKLY_ONLY_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) weekly-only: (?P<why>.+)$")
+# tracker.probe's `malformed` skip: the usage response had a reshaped value, so the
+# account's meter could not be read (usage_api.schema_problems names what changed).
+MALFORMED_RE = re.compile(r"^(?:\S+Z )?(?P<name>\w+) malformed: (?P<why>.+)$")
+#: run_tick_probe's abort on a reading that turned malformed mid-run.
+MALFORMED_ABORT = "usage response malformed"
 ABORT_RE = re.compile(r"^(?:\S+Z )?probe aborted on (?P<name>\w+): (?P<why>.+)$")
 WAIT_RE = re.compile(r"^(?:\S+Z )?window resets in (?P<s>\d+)s: waiting for it")
 # A traceback ends with the exception line: the first unindented line after the
@@ -81,6 +88,10 @@ def _parse(log_text: str) -> dict:
             skips.append((m.group("name"), "busy", m.group("why")))
         elif (m := WEEKLY_RE.match(line)):
             skips.append((m.group("name"), "weekly", m.group("why")))
+        elif (m := WEEKLY_ONLY_RE.match(line)):
+            skips.append((m.group("name"), "weekly-only", m.group("why")))
+        elif (m := MALFORMED_RE.match(line)):
+            skips.append((m.group("name"), "malformed", m.group("why")))
         elif (m := ABORT_RE.match(line)):
             abort = (m.group("name"), m.group("why"))
         elif (m := WAIT_RE.match(line)):
@@ -124,6 +135,10 @@ def _abort_explanation(why: str, parsed: dict) -> str:
         return (f"Then the meter rose more than the probe's own prompts can explain "
                 f"({why}). Someone else was using the account at the same time, and a shared "
                 f"reading would be contaminated, so the probe stopped.")
+    if why.startswith(MALFORMED_ABORT):
+        return (f"Then the usage endpoint's response no longer has the shape this collector "
+                f"reads ({why.removeprefix(MALFORMED_ABORT).lstrip(': ')}). The meter cannot be "
+                f"read from it, so the probe stopped rather than spend prompts on it.")
     if why == "deadline":
         return (f"Then the run used up its whole wall-clock budget ({MAX_WAIT_H} hours, shared "
                 f"between waiting for an idle account and probing) before its last tick.")
@@ -157,12 +172,42 @@ def summary(model: str, rc: int, what: str, log_text: str, payload: str = "prose
 
     if rc == 3:
         last = {n: (how, why) for n, how, why in parsed["skips"]}
-        said = {"busy": "was busy", "weekly": "was too close to its weekly limit"}
-        who = "; ".join(f"{n} {said[last[n][0]]} ({last[n][1]})" for n in sorted(last)) if last else \
+        said = {"busy": "was busy", "weekly": "was too close to its weekly limit",
+                "weekly-only": "has no five-hour limit",
+                "malformed": "returned a malformed usage response"}
+        who = "; ".join(f"{n} {said.get(last[n][0], last[n][0])} ({last[n][1]})" for n in sorted(last)) if last else \
             "the log does not say which accounts were checked"
         pids = any(how == "busy" and "pid" in why for _, how, why in parsed["skips"])
         hint = (" A `pid` reason means a Claude session was running on that account; if "
                 "those sessions are stale, closing them frees the account." if pids else "")
+        hows = {how for how, _ in last.values()}
+        if "malformed" in hows:
+            # A schema change: it does not clear by waiting, and must not read as an idle-account
+            # or weekly-only skip, both of which say nothing is broken.
+            return (f"Outcome: SKIPPED. {kind} never started, because the usage endpoint returned "
+                    f"a response this collector cannot read. No measurement was recorded.\n\n"
+                    f"Why each account was skipped: {who}.{hint}\n\n"
+                    f"What happens next: this needs a look. The response no longer has the shape "
+                    f"tracker/usage_api.py reads, so every probe on that account will skip until "
+                    f"the reader is updated for it. {keeps}")
+        if hows == {"weekly-only"}:
+            # tracker.probe gives up at once when every account is weekly-only: waiting cannot
+            # give one its limit back. An earlier round's other skip means it waited first.
+            waited = any(how != "weekly-only" for _, how, _ in parsed["skips"])
+            return (f"Outcome: SKIPPED. {kind} never started, because no account still has a "
+                    f"five-hour limit to measure{', after a wait for a busy one' if waited else ''}. "
+                    f"No measurement was recorded.\n\n"
+                    f"Why each account was skipped: {who}. A tick probe needs a five-hour "
+                    f"meter, which a weekly-only account no longer has.\n\n"
+                    f"What happens next: nothing is broken. {keeps}")
+        if "weekly-only" in hows and "weekly" not in hows:
+            # Another account was busy, so the probe waited the full time for it.
+            return (f"Outcome: SKIPPED. {kind} never started, because no account with a five-hour "
+                    f"limit was idle within the {MAX_WAIT_H}-hour wait. No measurement was "
+                    f"recorded.\n\n"
+                    f"Why each account was skipped: {who}.{hint} A tick probe needs a five-hour "
+                    f"meter, which a weekly-only account no longer has.\n\n"
+                    f"What happens next: nothing is broken. {keeps}")
         if any(how == "weekly" for how, _ in last.values()):
             # Issue #38: a spent week must not read as the no-idle-account blackout of #21.
             return (f"Outcome: SKIPPED. {kind} never started, because no account was both idle "
@@ -185,11 +230,14 @@ def summary(model: str, rc: int, what: str, log_text: str, payload: str = "prose
         account, why = parsed["abort"]
         waited = parsed["waited"]
         waited_note = (f" It first waited {waited // 60} minutes for a window reset." if waited else "")
+        nxt = (f"this needs a look: tracker/usage_api.py must be updated for the new response "
+               f"shape, or every probe on that account will stop the same way. {keeps}"
+               if why.startswith(MALFORMED_ABORT) else
+               f"nothing needs fixing by hand. {keeps} The tokens spent on this run are the only loss.")
         return (f"{head}\n\n"
                 f"What happened: it ran on the \"{account}\" account.{waited_note} "
                 f"{_progress(parsed['readings'])} {_abort_explanation(why, parsed)}\n\n"
-                f"What happens next: nothing needs fixing by hand. {keeps} The tokens spent on "
-                f"this run are the only loss.")
+                f"What happens next: {nxt}")
 
     exc = parsed["exc"]
     error = f"Last error: {exc}" if exc else "The log shows no Python error line; see the debug log below."

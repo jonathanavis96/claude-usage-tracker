@@ -8,6 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .turns import _1M_MARKER, _DATE_SUFFIX
+
 
 @dataclass(frozen=True)
 class RunUsage:
@@ -28,6 +30,19 @@ def build_argv(model: str, effort: str) -> list[str]:
     return ["claude", "-p", "--model", model, "--effort", effort, "--output-format", "json", "--restricted"]
 
 
+def _base_id(model: str) -> str:
+    """A model id without its presentation suffixes: the `[1m]` context marker and a dated
+    snapshot. Not tracker.turns.normalized_raw_model, whose aliases price an older model as a
+    newer one; that is right for pricing and wrong for asking which model served a run."""
+    return _DATE_SUFFIX.sub("", _1M_MARKER.sub("", model))
+
+
+def _served_as_asked(key: str, model_hint: str) -> bool:
+    """Whether a modelUsage key is the model asked for, up to presentation suffixes. A bare
+    prefix is not enough: `claude-opus-5-5` starts with `claude-opus-5` and is another model."""
+    return _base_id(key) == _base_id(model_hint)
+
+
 def parse_result(stdout: str, model_hint: str) -> RunUsage:
     d = json.loads(stdout)
     if d.get("is_error"):
@@ -36,13 +51,27 @@ def parse_result(stdout: str, model_hint: str) -> RunUsage:
     if mu:
         # Take the entry for the model we asked for; a haiku sidecar can appear first.
         # Falling back to another model would silently measure the wrong one.
-        model = next((k for k in mu if k == model_hint or k.startswith(model_hint)), None)
-        if model is None:
+        # Every key that is the model asked for counts, summed: a run can be reported under its
+        # dated id and its `[1m]` variant at once, and taking the first would drop the other's.
+        keys = [k for k in mu if _served_as_asked(k, model_hint)]
+        if not keys:
             raise RuntimeError(f"no usage for {model_hint}: {list(mu)}")
-        m = mu[model]
-        return RunUsage(model, int(m.get("inputTokens") or 0), int(m.get("outputTokens") or 0),
-                        int(m.get("cacheReadInputTokens") or 0), int(m.get("cacheCreationInputTokens") or 0),
-                        m.get("costUSD", d.get("total_cost_usd")), (d.get("duration_ms") or 0) / 1000)
+        model = model_hint if model_hint in mu else keys[0]
+
+        def total(field: str) -> int:
+            return sum(int(mu[k].get(field) or 0) for k in keys)
+        # The keys' own costs when every one carries it; when none does, the run's total, as
+        # before; when only some do, unknown: a part sum prices the summed tokens low, and the
+        # run's total carries a sidecar model's cost too.
+        costs = [mu[k].get("costUSD") for k in keys]
+        if all(c is not None for c in costs):
+            cost = sum(costs)
+        elif all(c is None for c in costs):
+            cost = d.get("total_cost_usd")
+        else:
+            cost = None
+        return RunUsage(model, total("inputTokens"), total("outputTokens"), total("cacheReadInputTokens"),
+                        total("cacheCreationInputTokens"), cost, (d.get("duration_ms") or 0) / 1000)
     u = d.get("usage") or {}
     return RunUsage(model_hint, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
                     int(u.get("cache_read_input_tokens") or 0), int(u.get("cache_creation_input_tokens") or 0),

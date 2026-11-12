@@ -35,7 +35,10 @@ inverse variance. The instant flags when:
 The strongest flagged instant becomes a change, the history is split there, and the search
 repeats until nothing flags. A step one account takes alone is a counting problem on that
 account (`not_limit_changes`), never a limit change. No date is read anywhere: no cut, no
-announcement, no family's first use, no account list.
+announcement, no family's first use, no account list. The one instant the lines are cut at,
+the five-hour limit's end, is read off the accounts' own meter logs
+(tracker/five_hour_end.py, ADR 0001 rule 24): past it the five-hour and ratio lines have no
+readings, and the seven-day line reads every step, weekly-only ones included.
 
 The search runs once a day on the data known at midnight UTC (`hold`). A change is a
 `candidate` the day it is first found, `provisional` while it keeps being found, and
@@ -112,6 +115,7 @@ from pathlib import Path
 import numpy as np
 
 from . import credits as credit_model
+from . import five_hour_end
 from .atomic import write_text_atomic
 from .capture import COLLECTION_GAP
 # What the publisher and the invariants read lives in the stdlib module; re-exported here.
@@ -241,7 +245,7 @@ def family_parts(credits: dict, model_rates: dict):
     def parts(tokens: dict) -> dict[str, float]:
         out: dict[str, float] = {}
         for model, tok in (tokens or {}).items():
-            if not isinstance(tok, dict) or not credit_model.raw_tokens(tok):
+            if not credit_model.holds_work(tok):
                 continue
             fam = credit_model.family(model, credits)
             if fam is None:
@@ -313,7 +317,7 @@ class Reading:
     t1: float
     credits: float | None
     headless: float
-    d5: float
+    d5: float | None  # None on a step whose five-hour movement is unknown (weekly-only)
     d7: float
     fam: dict | None = None
     hfam: dict | None = None
@@ -338,6 +342,10 @@ def account_readings(body: dict, name: str, value, runs: list, until: datetime |
         for row in rows:
             if _flag_out(row, name, runs):
                 continue
+            # A weekly-only step (no five-hour reading, or past the five-hour limit's end,
+            # tracker/five_hour_end.py) still reads the weekly limit: its five-hour movement is
+            # unknown, not 0, so `d5` is None and only the ratio leaves it out.
+            unknown5 = kind == "steps" and row.get("five_hour_measured") is False
             t0, t1 = parse(row["start"]), parse(row["end"])
             if until is not None and t1 > until:
                 continue
@@ -345,13 +353,13 @@ def account_readings(body: dict, name: str, value, runs: list, until: datetime |
             head = value(row.get("headless_tokens") or {}) if row.get("headless_tokens") else 0.0
             if cr is not None and head is None:
                 cr = None
-            d5 = float((row.get("delta_pct") if kind == "stretches" else row.get("d5")) or 0)
+            d5 = None if unknown5 else float((row.get("delta_pct") if kind == "stretches" else row.get("d5")) or 0)
             d7 = float(row.get("d7") or 1) if kind == "steps" else 0.0
             fam = hfam = None
             if parts is not None and cr is not None:
                 fam = {k: round(v, 1) for k, v in parts(row.get("tokens") or {}).items() if v}
                 hfam = {k: round(v, 1) for k, v in parts(row.get("headless_tokens") or {}).items() if v}
-            out[kind].append(Reading(hours(t0), hours(t1), cr, head or 0.0, d5 or 0.0, d7,
+            out[kind].append(Reading(hours(t0), hours(t1), cr, head or 0.0, None if d5 is None else d5 or 0.0, d7,
                                      fam or None, hfam or None))
     return out
 
@@ -442,7 +450,7 @@ def headless_factor(steps: dict[str, list[Reading]]) -> dict:
     rows = []
     for label, rs in steps.items():
         for r in rs:
-            if not r.credits:
+            if not r.credits or r.d5 is None:
                 continue
             wk = from_hours(r.t1).isocalendar()
             rows.append((f"{label}-{wk[0]}-{wk[1]:02d}", r.d5, min(max(r.headless / r.credits, 0.0), 1.0)))
@@ -521,6 +529,8 @@ def series(readings: dict[str, dict], line: str, factor: float | None) -> dict[s
             if line == "seven_day":
                 w, d = r.credits, r.d7
             elif line == "ratio":
+                if r.d5 is None:
+                    continue
                 share = min(max(r.headless / r.credits, 0.0), 1.0) if r.credits else 0.0
                 w, d = r.d5 / (1.0 + (h - 1.0) * share), r.d7
             else:
@@ -862,17 +872,36 @@ def search(scanner: Scanner, taus: np.ndarray, fixed: list[float] = (),
     return found
 
 
+def _too_near(t: float, breaks: list[float]) -> bool:
+    """Whether hour `t` is within MIN_GAP_HOURS of one of `breaks` (the other changes), where
+    `search` places no change: a step read there is that change's, not the one being placed
+    (at a break's own instant `sides` would not even cut, so the step read is that change's)."""
+    return any(abs(t - b) < MIN_GAP_HOURS for b in breaks)
+
+
+def _neighbours_ground(t: float, own: float, others: list[float]) -> bool:
+    """Whether hour `t` belongs to another change rather than to the change at `own`: within
+    MIN_GAP_HOURS of one (`_too_near`) and no nearer to `own` than to it. Changes carried from
+    a state written before the gap was kept can lie closer than MIN_GAP_HOURS, and the hours
+    nearer to such a change stay its own, so it can still be found again."""
+    return any(abs(t - b) < MIN_GAP_HOURS and abs(t - b) <= abs(t - own) for b in others)
+
+
 def refine(prep: Prepared, line: str, grid_tau: float, neighbours: list[float]) -> tuple[float, list[float]]:
     """The change's instant: the hour with the largest |z| within REFINE_HOURS of its grid
     instant, on the line that found it, sides cut at the neighbouring changes; and the range of
     hours whose |z| is within INSTANT_RANGE_Z of it."""
     zs, ts = [], []
     for t in np.arange(grid_tau - REFINE_HOURS, grid_tau + REFINE_HOURS + 1e-9, 1.0):
+        # A neighbour's ground, as in `search`, is no candidate at all (not even at z 0, which
+        # would widen a weak change's range onto it); the grid instant the search chose stays.
+        if abs(float(t) - grid_tau) > 1e-9 and _too_near(float(t), neighbours):
+            continue
         r = step_at(prep, line, float(t), *sides(float(t), neighbours), n_perm=0)
         zs.append(abs(r["z"]) if r and r["k"] >= 2 else 0.0)
         ts.append(float(t))
     zs = np.array(zs)
-    if zs.max() <= 0:
+    if not zs.size or zs.max() <= 0:
         return grid_tau, [grid_tau, grid_tau]
     best = ts[int(np.argmax(zs))]
     close = [t for t, z in zip(ts, zs) if z >= zs.max() - INSTANT_RANGE_Z]
@@ -1060,31 +1089,53 @@ def rate_dependence(variants: dict, valued: dict | None, line: str, tau: float,
     }
 
 
+def _capture_shares(rows: list, points, tau: float, lo: float, hi: float) -> dict:
+    """Each side's share of `rows`' meter points (`points(r)`) not in a collection gap, or
+    None on a side with no movement."""
+    rows = [r for r in rows if r.credits is not None and (points(r) or 0) > 0]
+    if not rows:
+        return {"before": None, "after": None}
+    W = np.array([r.credits for r in rows])
+    D = np.array([points(r) for r in rows], dtype=float)
+    tm = np.array([(r.t0 + r.t1) / 2 for r in rows])
+    ref = _weighted_median(W / D, D)
+    kept = W / D >= COLLECTION_GAP * ref
+    shares = {}
+    for side, (x, y) in (("before", (lo, tau)), ("after", (tau, hi))):
+        m = (tm >= x) & (tm < y)
+        tot = float(D[m].sum())
+        shares[side] = round(float(D[m & kept].sum()) / tot, 3) if tot > 0 else None
+    return shares
+
+
 def capture_audit(readings: dict[str, dict], tau: float, lo: float, hi: float,
                   accounts: list[str]) -> dict:
     """Spec 9.7's capture audit at a change: for each voting account, on each side, the share
     of its five-hour meter movement in stretches with captured work (not a collection gap: at
     least COLLECTION_GAP of the account's own meter-weighted median work per point). `failing`
     names the accounts under CAPTURE_MIN on either side: a capture gap every account shares
-    looks exactly like a limit change on the credit lines (the 17 October artifact)."""
+    looks exactly like a limit change on the credit lines (the 17 October artifact).
+
+    A side with no five-hour movement (past the five-hour limit's end, tracker/five_hour_end.py)
+    is read the same way on the seven-day steps, in seven-day points (`by_side` names which)."""
     out, failing = {}, []
     for a in accounts:
-        rows = [r for r in (readings.get(a) or {}).get("stretches") or []
-                if r.credits is not None and r.d5 > 0]
-        if not rows:
+        rs = readings.get(a) or {}
+        shares = _capture_shares(rs.get("stretches") or [], lambda r: r.d5, tau, lo, hi)
+        weekly = None
+        meter = {}
+        for side in ("before", "after"):
+            meter[side] = "five_hour"
+            if shares[side] is None:
+                weekly = weekly or _capture_shares(rs.get("steps") or [], lambda r: r.d7, tau, lo, hi)
+                if weekly[side] is not None:
+                    shares[side], meter[side] = weekly[side], "seven_day"
+        if shares["before"] is None and shares["after"] is None:
             continue
-        W = np.array([r.credits for r in rows])
-        D = np.array([r.d5 for r in rows])
-        tm = np.array([(r.t0 + r.t1) / 2 for r in rows])
-        ref = _weighted_median(W / D, D)
-        kept = W / D >= COLLECTION_GAP * ref
-        shares = {}
-        for side, (x, y) in (("before", (lo, tau)), ("after", (tau, hi))):
-            m = (tm >= x) & (tm < y)
-            tot = float(D[m].sum())
-            shares[side] = round(float(D[m & kept].sum()) / tot, 3) if tot > 0 else None
+        if weekly is not None:
+            shares = {**shares, "by_side": meter}
         out[a] = shares
-        if any(v is not None and v < CAPTURE_MIN for v in shares.values()):
+        if any(shares[s] is not None and shares[s] < CAPTURE_MIN for s in ("before", "after")):
             failing.append(a)
     return {"min_share": CAPTURE_MIN, "per_account": out, "failing": sorted(failing)}
 
@@ -1222,7 +1273,7 @@ def retest(scanner: Scanner, taus: np.ndarray, c: dict, breaks: list[float]) -> 
     nearest when none flags); a found day adds to `held_days`."""
     others = [b for b in breaks if b != c["_h"]]
     near = [(float(t), scanner.at(c["found_on"], float(t), others)) for t in taus
-            if _near_carried(c, float(t))]
+            if _near_carried(c, float(t)) and not _neighbours_ground(float(t), c["_h"], others)]
     near = [(t, r) for t, r in near if r]
     hits = [(_rank(r), t, r) for t, r in near
             if flagged(r) and (1 if r["d"] > 0 else -1) == c["sign"]]
@@ -1430,7 +1481,8 @@ def main(argv: list[str] | None = None) -> int:
                          "frozen inputs) and stop")
     a = ap.parse_args(argv)
     started = time.time()
-    now = parse(a.now) if a.now else datetime.now(UTC)
+    # An instant with an offset runs as its UTC day: the runs are one per UTC day.
+    now = parse(a.now).astimezone(UTC) if a.now else datetime.now(UTC)
     today = now.date()
     until = datetime(today.year, today.month, today.day, tzinfo=UTC)
     prices_raw = json.loads(a.prices.read_text(encoding="utf-8"))
@@ -1440,6 +1492,9 @@ def main(argv: list[str] | None = None) -> int:
     valued = valuation_block(rates_raw, credits)
     gs = json.loads(a.gs_passive.read_text(encoding="utf-8")) if a.gs_passive.exists() else None
     mr = json.loads(a.masterrig_passive.read_text(encoding="utf-8")) if a.masterrig_passive.exists() else None
+    # Every five-hour reading past the five-hour limit's end is cut (tracker/five_hour_end.py):
+    # the five-hour and ratio lines stop there, and the seven-day line reads on.
+    gs, mr, _ = five_hour_end.apply(gs, mr)
     recs = records(gs, mr)
     names = sorted(recs, key=lambda n: min((parse(r["start"]) for r in recs[n]["weekly_steps"]
                                             + recs[n]["stretches"] if r.get("start")),
@@ -1466,9 +1521,20 @@ def main(argv: list[str] | None = None) -> int:
         if start is None:
             print("four_accounts: fewer than two accounts with readings, nothing to run", file=sys.stderr)
             return 0
+        if start > today:
+            # No daily run to build yet: the state is left as it was, never written as null.
+            print(f"four_accounts: the first possible day is {start}, after {today}: nothing to run",
+                  file=sys.stderr)
+            return 0
         state = replay(readings, start, today, log=lambda s: print(s, file=sys.stderr, flush=True),
                        valued=valued)
     else:
+        if state["latest"]["day"] > today.isoformat():
+            # A day before the newest run (a clock that went back, or --now in the past) has
+            # no previous run to hold from; running it would put an older run in `latest`.
+            print(f"four_accounts: the newest run in {a.state} is {state['latest']['day']}, after "
+                  f"{today}: nothing to run (--replay rebuilds the hold)", file=sys.stderr)
+            return 0
         if state["latest"]["day"] == today.isoformat() and not a.force:
             print(f"four_accounts: the run for {today} is already in {a.state}", file=sys.stderr)
             return 0

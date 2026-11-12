@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -35,6 +36,34 @@ def run(published: dict) -> tuple[int, str]:
 
 
 class VerifyPublishTest(unittest.TestCase):
+    def test_every_input_comes_from_root_not_the_working_directory(self):
+        root, tmp = Path("/some/checkout"), Path("/scratch")
+        argv = vp.publisher_argv(root, tmp / "prices.json", tmp / "out.json")
+        self.assertEqual(argv[argv.index("--masterrig-speed") + 1], "/some/checkout/history/masterrig-speed.json")
+        # publish.py defaults these relative to the working directory; each must be named.
+        for flag in ("--effort", "--masterrig-passive", "--masterrig-speed", "--four-accounts"):
+            self.assertTrue(argv[argv.index(flag) + 1].startswith("/some/checkout/"), flag)
+
+    def test_rebuild_reads_the_measured_rates_and_harness_runs_of_root(self):
+        from tracker import credits
+        seen = {}
+
+        def fake_main(argv, post, environ, now):
+            seen.update(rates=credits.MODEL_RATES_PATH, runs=credits.HARNESS_RUNS_PATH)
+            Path(argv[argv.index("--out") + 1]).write_text("{}", encoding="utf-8")
+            return 0
+
+        before = credits.MODEL_RATES_PATH, credits.HARNESS_RUNS_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data").mkdir()
+            (root / "data/prices.json").write_text("{}", encoding="utf-8")
+            with mock.patch("tracker.publish.main", fake_main):
+                vp.rebuild(root, datetime(2026, 9, 23, tzinfo=timezone.utc))
+        self.assertEqual(seen, {"rates": root / "history/model-rates.json",
+                                "runs": root / "history/harness-runs.jsonl"})
+        self.assertEqual((credits.MODEL_RATES_PATH, credits.HARNESS_RUNS_PATH), before)
+
     def test_equal_documents_pass(self):
         rc, out = run(EQUAL)
         self.assertEqual(rc, 0)

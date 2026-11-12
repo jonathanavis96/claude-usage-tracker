@@ -68,6 +68,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .atomic import append_line
 from .header_usage import (
     DEFAULT_ENV_FILE,
     DEFAULT_MODEL,
@@ -81,6 +82,7 @@ from .usage_api import (
     Utilization,
     _default_fetch,
     read_usage,
+    schema_problems,
 )
 
 EXIT_OK, EXIT_REFUSED, EXIT_READ_FAILED = 0, 2, 4
@@ -169,29 +171,17 @@ def sample_line(u: Utilization, account: str, identity: str) -> dict:
             "seven_day": {"utilization": u.seven_day, "resets_at": u.seven_day_resets_at}}
 
 
-def schema_problems(body: dict) -> list[str]:
-    """What in a usage response no longer has the shape this collector reads.
-
-    A renamed key reads as null, and null is also what an idle window returns, so without
-    this a schema change would be logged as ordinary readings and freeze the published
-    series with nobody told (red-team, 2026-10-02)."""
-    out = []
-    for bucket in ("five_hour", "seven_day"):
-        b = body.get(bucket)
-        if not isinstance(b, dict):
-            out.append(f"no {bucket} bucket")
-            continue
-        for key in ("utilization", "resets_at"):
-            if key not in b:
-                out.append(f"{bucket}.{key} missing")
-    return out
-
-
 def log_owner(log: Path) -> str | None:
-    """The identity on the log's first labelled line; None for a new or empty log."""
+    """The identity on the log's first labelled line; None for a new or empty log.
+
+    A bad byte costs its line only, as it does for every other reader of the log: decoded
+    strictly, one undecodable byte in the first chunk raised here and failed every tick.
+    """
     try:
-        with open(log, encoding="utf-8") as fh:
+        with open(log, encoding="utf-8", errors="replace") as fh:
             for line in fh:
+                if "\ufffd" in line:
+                    continue  # a bad byte: its identity could be the corrupted one
                 try:
                     ident = json.loads(line).get("identity")
                 except (ValueError, AttributeError):
@@ -209,15 +199,8 @@ def _append(log: Path, line: dict) -> bool:
     A run killed mid-write leaves a partial last line with no newline; a newline goes
     first in that case so this line starts on its own and is not glued onto the fragment.
     """
-    data = (json.dumps(line) + "\n").encode("utf-8")
     try:
-        log.parent.mkdir(parents=True, exist_ok=True)
-        with open(log, "ab+") as fh:
-            if fh.tell() > 0:
-                fh.seek(-1, 2)
-                if fh.read(1) != b"\n":
-                    data = b"\n" + data
-            fh.write(data)
+        append_line(log, (json.dumps(line) + "\n").encode("utf-8"))
         return True
     except OSError as e:
         print(f"cannot write {log}: {type(e).__name__}: {e}", file=sys.stderr)
@@ -462,7 +445,13 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
             seen["problems"] = problems
         else:
             u = read_usage(config_dir, fetch=capturing_fetch, now=clock)
-        if u.five_hour is None:
+        # Since 2026-10-31 some accounts have no five-hour limit: the endpoint sends
+        # "five_hour": null (the headers carry no 5h-* field) with seven_day intact. That is
+        # a real reading of an account with one meter, logged as five_hour null and
+        # weekly_only, never as a made-up 0%. With neither meter it is still a failed read.
+        if u.seven_day is None and u.five_hour is None:
+            raise ValueError("no five_hour or seven_day utilization in the usage response")
+        if u.five_hour is None and not u.weekly_only:
             raise ValueError("no five_hour utilization in the usage response")
     except AuthExpired as e:
         # Same token before and after the 401: not transient. Logged with its own
@@ -497,6 +486,8 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
         print(f"{account}: usage read failed ({type(e).__name__}), logged as a gap", file=sys.stderr)
         return EXIT_READ_FAILED
     line = sample_line(u, account, identity)
+    if u.weekly_only:
+        line["weekly_only"] = True
     if header_extras is not None:
         line.update({"source": "ratelimit_headers", "model": model, "ratelimit": header_extras})
         if seen.get("problems"):
@@ -517,7 +508,8 @@ def _sample_locked(config_dir: Path, account: str, log: Path, identity: str,
     if not _append(log, line):
         print(f"{account}: reading not recorded, the log could not be written", file=sys.stderr)
         return EXIT_READ_FAILED
-    print(f"{account}: five_hour={u.five_hour:.0f}% seven_day={u.seven_day}")
+    five = "none (weekly-only)" if u.five_hour is None else f"{u.five_hour:.0f}%"
+    print(f"{account}: five_hour={five} seven_day={u.seven_day}")
     return EXIT_OK
 
 

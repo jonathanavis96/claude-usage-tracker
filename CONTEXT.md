@@ -34,6 +34,10 @@ _Avoid_: entry, sample, reading
 One meter value observed after a prompt, inside a probe.
 _Avoid_: sample, observation
 
+**Weekly-only reading**:
+A reading of an account with no 5-hour limit: the endpoint sends `"five_hour": null` (rate-limit headers carry no `5h-*` field) while the seven-day meter reads normally, seen on some Max 20x accounts from 2026-10-31. Logged with five_hour null and `weekly_only: true`; never a 0% meter, and never a 5-hour sample.
+_Avoid_: idle window, failed read
+
 **Alignment**:
 The first tick a probe waits for so that measurement starts on a whole-percent boundary. The alignment span is discarded.
 _Avoid_: warm-up, calibration, sync
@@ -146,6 +150,10 @@ The compatible source behind a metric (`instrument`, `rates[model].evidence.sour
 **Regime**:
 A segment between two of the four-account detector's provisional or measured changes, over compatible observations. Every regime boundary on the page is a provisional or measured change, and every one of those opens one; a candidate never does (ADR 0001 rule 22, amended 2026-10-23). A regime opened by a provisional change its chart draws is a provisional level, flagged `provisional` wherever it is shown, and so is every current figure read off it. A published regime carries its pooled level, its rounding interval, evidence count and provenance; each earlier regime is restated from the next by the detector's size at the change between them (`chained`), with its own reading kept beside it. It is an estimate from these accounts, not an Anthropic policy statement.
 _Avoid_: era, level, plateau
+
+**Five-hour limit's end**:
+The instant the tracker's five-hour series stops: the earliest last five-hour reading among the accounts that have switched to weekly-only readings (the "Ultra" plan, rolled out per account from 2026-10-30; tracker/five_hour_end.py, ADR 0001 rule 24). Each account's switch is read off its own meter log. Every five-hour figure is frozen there and published as final (`five_hour_limit_removed`), not stale. The weekly limit reads on. No date is configured: a later switch needs nothing done.
+_Avoid_: Ultra cut, five-hour removal date
 
 ### Operation
 

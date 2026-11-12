@@ -410,6 +410,28 @@ class TranscriptTests(unittest.TestCase):
             self.assertEqual(sample.tokens_since([], NOW - timedelta(hours=1), NOW), {})
 
 
+class CorruptTranscriptLineTests(unittest.TestCase):
+    def test_one_odd_line_costs_that_line_not_the_whole_run(self):
+        # Every one of these raised out of iter_turns and ended the contributor's run.
+        good = rec("msg_ok", NOW - timedelta(minutes=5))
+        odd = [
+            "[1, 2]",                                                         # JSON, not an object
+            json.dumps({"type": "assistant", "timestamp": "yesterday-ish",    # malformed stamp
+                        "message": {"id": "msg_bad_ts", "usage": {"input_tokens": 1}}}),
+            json.dumps({"type": "assistant", "timestamp": 12345,              # non-string stamp
+                        "message": {"id": "msg_num_ts", "usage": {"input_tokens": 1}}}),
+            json.dumps({"type": "assistant", "timestamp": _iso(NOW), "message": "flattened"}),
+            json.dumps({"type": "assistant", "timestamp": _iso(NOW),          # non-numeric count
+                        "message": {"id": "msg_bad_n", "usage": {"input_tokens": "lots"}}}),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "t.jsonl"
+            p.write_text("\n".join(odd + [good]) + "\n", encoding="utf-8")
+            turns = list(sample.iter_turns([p]))
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0][2]["cache_write"], 400)
+
+
 class PooledProjectsTests(unittest.TestCase):
     """<config dir>/projects can be a symlink several accounts share; own_session_filter
     keeps only transcripts with a matching <config dir>/session-env/<sessionId>/ dir."""

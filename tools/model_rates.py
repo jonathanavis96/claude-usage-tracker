@@ -73,7 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.harness_runs import effort_matrix_row, probe_rows
 from tracker import credits as C
-from tracker import five_hour_weight
+from tracker import five_hour_end, five_hour_weight
 
 CUT = C.CUT_AT
 P = datetime.fromisoformat
@@ -205,6 +205,9 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
         ie = {m: {f: 0.0 for f in FAMILIES + ("other",)} for m in OUT_MULTS}
         raw = {f: 0.0 for f in FAMILIES + ("other",)}
         reads = {f: 0.0 for f in FAMILIES + ("other",)}
+        # A value that is no bundle cannot be priced, and price_tokens and the pooled valuation
+        # refuse its stretch (credits.bundles_with_work), so the fit must not admit it either.
+        malformed = any(not isinstance(tok, dict) for tok in t.values())
         for model, tok in t.items():
             if not isinstance(tok, dict):
                 continue
@@ -219,7 +222,7 @@ def prepare(account: str, kept: list[dict]) -> list[dict]:
                     "era": "pre" if P(s["start"]) < CUT else "post",
                     "regime": regime_of(P(s["start"]), P(s["end"])),
                     "reset_verified": bool(s.get("reset_verified")),
-                    "ie": ie, "raw": raw, "total_raw": total, "ok": raw["other"] == 0,
+                    "ie": ie, "raw": raw, "total_raw": total, "ok": raw["other"] == 0 and not malformed,
                     # Cache reads are kept out of `ie` and out of `raw` (both read the
                     # reference literally, at a weight of zero) and carried here on their
                     # own, so the joint fit can put a column of them in the design matrix
@@ -1900,6 +1903,9 @@ def main(argv: list[str] | None = None) -> int:
             return STILL_HELD_EXIT
     gs_raw = json.loads(Path("history/gs-passive.json").read_text(encoding="utf-8"))
     mr_raw = json.loads(a.masterrig.read_text(encoding="utf-8"))
+    # The rates are fitted on five-hour stretches, so none past the five-hour limit's end
+    # (tracker/five_hour_end.py): the fit freezes there with every other five-hour figure.
+    gs_raw, mr_raw, _ = five_hour_end.apply(gs_raw, mr_raw)
     unit = five_hour_unit(gs_raw, mr_raw)
     factor = unit["headless_factor"]
     S = stretches_in_five_hour_unit(gs_raw, mr_raw, factor)

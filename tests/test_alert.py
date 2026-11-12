@@ -244,3 +244,80 @@ class AlertEdgeTests(unittest.TestCase):
             p = Path(d, "env")
             p.write_bytes(b"NOTIFY_ALERT_TO=\xff\xfe\n")
             self.assertIsInstance(read_env_file(p), dict)
+
+
+class DefaultPostErrorTests(unittest.TestCase):
+    """_default_post raises OSError, and only OSError, when no usable reply came back:
+    every caller (main, supervise.email_sender) catches exactly that."""
+
+    def test_endpoint_with_no_scheme_is_an_oserror_not_a_crash(self):
+        # A NOTIFY_SEND_URL missing its https:// raised ValueError, which main and
+        # supervise.email_sender let through: the supervisor died before its state write.
+        with self.assertRaises(OSError):
+            _default_post("alldonesites.com/api/notify/send", {}, b"{}")
+        out, err = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            p = env_file(d, "NOTIFY_SEND_SECRET=s3cr3t\nNOTIFY_ALERT_TO=inbox\n")
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = main(["--env-file", str(p), "--source", "gs", "--subject", "x", "--text", "y",
+                           "--endpoint", "alldonesites.com/api/notify/send"], environ={})
+        self.assertEqual(rc, 1)
+        self.assertIn("warning: alert 'x' not sent", err.getvalue())
+        self.assertNotIn("s3cr3t", out.getvalue() + err.getvalue())
+
+    def test_reply_cut_short_is_an_oserror(self):
+        import http.client
+        from unittest import mock
+        with mock.patch("urllib.request.urlopen", side_effect=http.client.IncompleteRead(b"")):
+            with self.assertRaises(OSError):
+                _default_post(SEND_URL, {}, b"{}")
+
+    def test_a_bad_endpoint_url_is_not_quoted_in_the_error(self):
+        # Code review round 6: urllib's ValueError quotes the whole URL, and a mistyped one can
+        # carry a token in its query string; the error went to stderr and cron logs.
+        with self.assertRaises(OSError) as caught:
+            _default_post("notify.example/send?key=s3cr3t", {}, b"{}")
+        self.assertNotIn("s3cr3t", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIn("bad endpoint URL", str(caught.exception))
+
+    def test_an_endpoint_url_http_client_refuses_is_not_quoted_either(self):
+        # Code review round 8: http.client.InvalidURL is an HTTPException, not a ValueError,
+        # and quotes the path and query (a control character) or the port it cannot read.
+        for url in ("https://127.0.0.1/send?key=s3cr3t x", "https://127.0.0.1:s3cr3t/send"):
+            with self.assertRaises(OSError) as caught:
+                _default_post(url, {}, b"{}")
+            self.assertNotIn("s3cr3t", str(caught.exception), url)
+            self.assertIsNone(caught.exception.__cause__)
+
+    def test_a_header_value_http_refuses_is_an_oserror(self):
+        # Code review round 5: a secret with a trailing newline (environ values are not
+        # stripped) or a character latin-1 cannot hold raised ValueError or
+        # UnicodeEncodeError from inside urlopen, past callers that catch only OSError.
+        for bad in ("s3cr3t\n", "s3cr3t\u2603"):
+            with self.assertRaises(OSError) as caught:
+                _default_post("http://127.0.0.1:9/send", {"authorization": f"Bearer {bad}"}, b"{}")
+            self.assertNotIn("s3cr3t", str(caught.exception))
+
+    def test_an_error_reply_cut_short_keeps_its_status_not_a_crash(self):
+        # Code review round 3: an error status whose body is cut short raised IncompleteRead
+        # from inside the HTTPError handler, past the sibling HTTPException clause. The
+        # status arrived, so it is the reply; anything else garbled there is an OSError.
+        import http.client
+        import urllib.error
+        from unittest import mock
+
+        class Torn(io.BytesIO):
+            def read(self, *a):
+                raise http.client.IncompleteRead(b"par", 10)
+        err = urllib.error.HTTPError(SEND_URL, 502, "Bad Gateway", {}, Torn())
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            self.assertEqual(_default_post(SEND_URL, {}, b"{}"), (502, "par"))
+
+        class Garbled(io.BytesIO):
+            def read(self, *a):
+                raise http.client.HTTPException("garbled")
+        err = urllib.error.HTTPError(SEND_URL, 502, "Bad Gateway", {}, Garbled())
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(OSError):
+                _default_post(SEND_URL, {}, b"{}")

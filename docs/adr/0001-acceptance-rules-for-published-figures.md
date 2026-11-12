@@ -4,7 +4,7 @@ Status: accepted, 2026-09-23; rules 8 and 9 added 2026-10-04; rules 10 to 13 add
 rule 15 added 2026-10-06; rule 17 added 2026-10-06; rule 22 added 2026-10-23, superseding
 rules 1, 2, 13, 15, 17, 20 and 21, rule 9 as a rule for changes, rule 11's certification and
 rule 16's check 11; rule 22 amended 2026-10-23 (the hero and the provisional chart markers)
-and again 2026-10-23 (provisional changes open provisional levels)
+and again 2026-10-23 (provisional changes open provisional levels); rule 24 added 2026-11-02
 
 ## Context
 
@@ -843,6 +843,49 @@ These are the acceptance rules. Each names where it lives.
     Source: `tracker/credits.py` (`PINNED_AT_LIST`, `pinned_rate`, `comparison_rate`),
     `tracker/four_accounts.py` (`rate_intervals`, `valuation_block`, `VALUATION_RULE`),
     `tests/test_pinned_at_list.py`.
+
+24. **Past the five-hour limit's end the tracker measures the weekly limit only, added
+    2026-11-02.** Max 20x accounts are losing the five-hour limit one at a time (Anthropic now
+    names the plan "Ultra"; `rateLimitTier` still reads max 20x). The usage endpoint sends
+    `five_hour: null` beside a normal seven-day meter. Each account's switch is read off its
+    own meter log by tracker.gs_passive (`meter.five_hour_last`, `meter.weekly_only_since`).
+    An account counts as switched after `MIN_WEEKLY_ONLY_HOURS` (6) of weekly-only readings.
+    The five-hour series ends at the earliest switched account's last five-hour reading
+    (`five_hour_end.end_of`), and every five-hour reading after it is cut before anything
+    reads it (`five_hour_end.trimmed`, applied by the publisher, the four-account detector
+    and the per-family refit):
+    - stretches and window points after the end are dropped;
+    - seven-day steps after it keep their credits and seven-day point, with their five-hour
+      movement unknown (`five_hour_measured` false).
+    So the five-hour line, the ratio, tokens per window and windows per week freeze at their
+    level there. Each is published as final, not stale (`freshness.ended_at`, reason
+    `five_hour_limit_removed`), and the page gets a `five_hour_limit` block with the end and
+    each account's switch by label.
+    The detector's seven-day line reads every seven-day step, weekly-only ones included,
+    while the ratio and the headless fit leave them out. Where a side has no five-hour
+    movement, the capture audit reads that side on the seven-day steps. An account that
+    switches later (avis on 2026-11-02) needs nothing done: its readings past the end were
+    never five-hour evidence.
+    - Why. After the first switch the four-account rule cannot hold on a five-hour line:
+      fewer accounts carry one, and those that do are losing it. Before this rule, the
+      detector dropped weekly-only steps from every line, so from 2026-10-30 three of the
+      four accounts gave the weekly limit nothing.
+    - Not done. A weekly-limit change that came with the switch would reach each account at
+      its own switch, not at one instant, so rule 22 would not certify it. Rule 22 stands,
+      and no switch-aligned test was added (Jonathan, 2026-11-02).
+    - Before and after, on gs's records of 2026-11-02 ~20:00Z (the gs-passive rebuilt with
+      the new fields; masterrig's file from 2026-10-30), main against this rule:
+      - `last_change` and the hero: unchanged (9 October, -9.2% windows per week; hero "5-hour
+        limit increased 17%");
+      - meter budget per window: 211.34 -> 212.12 (+0.4%: avis's stretches after the end left
+        out), with every model's tokens per window by the same ratio;
+      - max20 windows per week (meters): 4.28 -> 4.18;
+      - the detector's 23 September seven-day size: +24.0% -> +24.3% (the weekly-only steps
+        after the end now read). The 14 September and 9 October ratio sizes do not move.
+    Source: `tracker/five_hour_end.py`, `tracker/gs_passive.py` (meter block),
+    `tracker/four_accounts.py` (`account_readings`, `series`, `headless_factor`,
+    `capture_audit`), `tracker/publish.py` (`build_public_json`, `_end_weekly_windows`,
+    `_account_feeds`), `tools/model_rates.py`, `tests/test_five_hour_end.py`.
 
 ### Pending
 

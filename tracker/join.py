@@ -18,7 +18,7 @@ from statistics import median
 
 from .samples import Sample
 from .turns import Turn, normalize_model, normalized_raw_model
-from .usage_api import same_reset
+from .usage_api import parse_instant, same_reset
 from .weekly import _window_point, capped
 
 CLASSES = ("input", "output", "cache_read", "cache_write")
@@ -62,15 +62,17 @@ def _is_reset(a: Sample, b: Sample) -> bool:
     # `a` says when its window ends; `b` (often a ceiling reading, which carries no reset
     # id) is at or past that instant, so they belong to different windows even if `b` is
     # higher. Parsed, with 5 s for the seconds of jitter resets_at carries.
-    if a.resets_at and b.resets_at is None:
-        try:
-            end = datetime.fromisoformat(a.resets_at.replace("Z", "+00:00"))
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            if b.ts > end + timedelta(seconds=5):
-                return True
-        except ValueError:
-            pass
+    if b.resets_at is None and (end := parse_instant(a.resets_at)) is not None:
+        if b.ts > end + timedelta(seconds=5):
+            return True
+    # The mirror case: `b` names its window and `a` (a reset-less reading above 0%) was
+    # taken before that window began (five hours before its reset), so the meter fell to
+    # 0 between them even when `b` has already climbed past `a`. A 0% reading with no
+    # reset id is a meter with no window open, which the next window starts from. A
+    # minute of slack, as same_reset allows, for the stamp's rounding and jitter.
+    if a.resets_at is None and a.five_hour > 0 and (end := parse_instant(b.resets_at)) is not None:
+        if a.ts < end - FIVE_HOURS - timedelta(seconds=60):
+            return True
     return b.five_hour < a.five_hour
 
 
@@ -160,7 +162,7 @@ def bundle_meter_usd(model: str, tokens: dict, prices: dict) -> float | None:
     """
     m = priced_model(model, prices)
     price = prices.get(m) if m else None
-    if price is None:
+    if price is None or not isinstance(tokens, dict):  # a value that is no bundle: unpriced
         return None
     weights = price.get("class_weight", {})
     value = sum(tokens.get(c, 0) * price[c] * weights.get(c, 1.0) / 1e6 for c in CLASSES)

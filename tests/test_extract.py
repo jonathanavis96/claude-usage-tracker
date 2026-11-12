@@ -5,7 +5,9 @@ import os
 import shutil
 import tarfile
 import tempfile
+import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -166,6 +168,61 @@ class ClaimTests(unittest.TestCase):
             self.assertIn(started, claims["s1"])
             self.assertIn(prompt, claims["s1"])
 
+    def test_a_path_that_vanished_costs_only_its_own_birth_time(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            kept = [Path(d, "s1"), Path(d, "s2")]
+            old = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+            for p in kept:
+                p.mkdir()
+                os.utime(p, (old, old))  # an mtime far from the birth time
+            w = subprocess.run(["stat", "-c", "%W", "--", str(kept[0])], capture_output=True, text=True).stdout.strip()
+            if not w.isdigit() or int(w) <= 0:
+                self.skipTest("this filesystem keeps no birth time")
+            got = X._births([kept[0], Path(d, "gone"), kept[1]])
+            self.assertNotIn(Path(d, "gone"), got)
+            for p in kept:
+                self.assertGreater(got[p], old + 86400, f"{p.name} fell back to its mtime")
+
+
+    def test_a_name_that_is_not_utf8_neither_crashes_nor_loses_its_time(self):
+        # Code review round 1: with %n in the format, stat's stdout carries the names, and a
+        # strict decode of a Latin-1 byte raised UnicodeDecodeError out of _births.
+        with tempfile.TemporaryDirectory() as d:
+            odd = Path(os.fsdecode(os.path.join(os.fsencode(d), b"caf\xe9")))
+            odd.mkdir()
+            plain = Path(d, "plain")
+            plain.mkdir()
+            got = X._births([odd, plain])
+            self.assertIn(odd, got)
+            self.assertIn(plain, got)
+
+    def test_a_name_with_a_newline_cannot_take_over_another_paths_times(self):
+        # Code review round 8: `a\nx` printed as two rows, and its first fragment is the path
+        # `a` itself, which then took `a\nx`'s birth and mtime.
+        with tempfile.TemporaryDirectory() as d:
+            plain, tricky = Path(d, "a"), Path(d, "a\nx")
+            plain.mkdir()
+            os.utime(plain, (1_000_000_000, 1_000_000_000))
+            time.sleep(1.1)  # a birth time a second apart, where the filesystem keeps one
+            tricky.mkdir()
+            os.utime(tricky, (1_500_000_000, 1_500_000_000))
+            alone = X._births([plain])[plain]
+            with mock.patch.object(Path, "stat", side_effect=OSError("fallback not wanted")):
+                got = X._births([plain, tricky])
+            self.assertEqual(set(got), {plain, tricky})
+            self.assertEqual(got[plain], alone)
+
+    def test_a_name_holding_a_unicode_line_break_is_still_matched_to_its_row(self):
+        # Code review round 5: splitlines() also splits on U+2028, U+0085 and their kind, so
+        # such a name never matched its stat row and lost its birth time to the fallback.
+        with tempfile.TemporaryDirectory() as d:
+            odd = [Path(d, f"a{sep}b") for sep in ("\u2028", "\x85", "\x0c", "\x1e", "", "\n", "\r", "\r\n")]
+            for p in odd:
+                p.mkdir()
+            with mock.patch.object(Path, "stat", side_effect=OSError("fallback not wanted")):
+                got = X._births(odd)
+            self.assertEqual(sorted(got), sorted(odd))
 
 class ExtractTests(unittest.TestCase):
     """masterrig's layout on 2026-10-22, in miniature: a1 in ~/.claude, avis linking one of a1's

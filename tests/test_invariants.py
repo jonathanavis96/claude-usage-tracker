@@ -369,6 +369,20 @@ class LastChangeIsNewestMeasuredTest(unittest.TestCase):
         (msg,) = I.last_change_is_newest_measured(doc)
         self.assertIn("no last_change", msg)
 
+    def test_a_record_with_no_whole_percent_is_named_not_a_crash(self):
+        # `percent` missing made the message's `{said:+d}` raise TypeError, so the check
+        # reported only "could not run" and every other figure it held was lost.
+        doc = _good()
+        del doc["last_change"]["percent"]
+        msgs = I.last_change_is_newest_measured(doc)
+        self.assertTrue(any("whole percent is none" in m and "+34%" in m for m in msgs), msgs)
+        doc = _good()
+        del doc["events"][1]["percent"]
+        doc["events"][0]["change_pct"] = 99.0
+        msgs = I.one_figure_per_change(doc)
+        self.assertTrue(any("An event says none" in m and SEP24 in m for m in msgs), msgs)
+        self.assertTrue(any("99.0" in m and SEP14 in m for m in msgs), msgs)
+
 
 class EveryChangeDrawnTest(unittest.TestCase):
     def test_passes_when_each_change_steps_its_own_line(self):
@@ -795,6 +809,20 @@ class RunAllTest(unittest.TestCase):
         del _wt(doc)["regimes"]
         out = I.run_checks(doc)
         self.assertTrue(any("could not run" in m for msgs in out.values() for m in msgs))
+
+    def test_a_null_block_is_a_failure_not_a_crash(self):
+        # A null where a block is expected raised AttributeError, which run_checks did not
+        # catch: the run died with a traceback (exit 1, "publishing anyway"), so no blocking
+        # check ran and no alert was sent.
+        doc = _good()
+        _wt(doc)["per_family"]["opus-5-5"]["all"] = None
+        out = I.run_checks(doc)
+        self.assertTrue(any("could not run" in m for m in out["headline_inside_accounts"]), out)
+        self.assertEqual(set(out), {name for name, _ in I.CHECKS})
+        for null_doc in (None, []):
+            out = I.run_checks(null_doc)
+            self.assertTrue(out["every_change_drawn"], out)
+            self.assertTrue(I.BLOCKING & {k for k, v in out.items() if v}, out)
 
 
 class AlertTest(unittest.TestCase):

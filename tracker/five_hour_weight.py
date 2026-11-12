@@ -105,8 +105,8 @@ def _rows(steps: dict[str, list[dict]], value, labels: dict[str, str],
     out = []
     for name, rows in steps.items():
         for st in rows:
-            if "headless_tokens" not in st:
-                continue
+            if "headless_tokens" not in st or st.get("five_hour_measured") is False:
+                continue  # no split, or no five-hour reading (weekly_only): not a d5 of 0
             total = value(st.get("tokens") or {})
             head = value(st["headless_tokens"]) if st["headless_tokens"] else 0.0
             if not total or head is None:

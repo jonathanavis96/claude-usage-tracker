@@ -16,9 +16,10 @@ from .gs_passive import credit_rate_sources, passive_dollar_readings, unpriced_c
 from .join import bundle_meter_usd
 from .passive import PLAN_CHANGE, PLAN_CHANGE_AT
 from .rows import usable_rows
+from .usage_api import as_utc, parse_instant
 from .speed import load_history as load_speed_history
 from .speed import speed_block
-from . import five_hour_weight, weekly_meter
+from . import five_hour_end, five_hour_weight, weekly_meter
 from .weekly import _iso_week_ending, probe_weekly_windows
 
 # The credits table (she-llac.com/claude-limits) gives each plan's credits per
@@ -70,6 +71,8 @@ WEEKLY_WINDOW_RATIOS_BASIS = {
 # New accounts are appended, never inserted: an existing label must keep naming the same
 # account across published runs, or a reader's saved comparison silently repoints.
 ACCOUNT_LABELS = (("masterrig", "a1"), ("jwork", "a2"), ("dave", "a3"), ("avis", "a4"))
+#: The same accounts by the label the page shows (tracker/four_accounts_page.py `account_labels`).
+ACCOUNT_PAGE_LABELS = tuple((name, f"Max account {label[1:]}") for name, label in ACCOUNT_LABELS)
 MAX_SAMPLE_AGE_DAYS = 10
 #: How old an account's feed may be at publish time before `account_feeds` calls it
 #: stopped. masterrig's bin/passive.sh pushes about once a day (an hourly cron that runs
@@ -245,7 +248,10 @@ def _eligible_stretches(gs_passive: dict | None, prices: dict, *, allow_legacy_u
                 continue
             if st.get("reset_verified") is not True and not allow_legacy_unverified:
                 continue
-            if any(bundle_meter_usd(m, tok, prices) is None for m, tok in st.get("tokens", {}).items()):
+            # As passive_dollar_readings selects: a zero-token bundle (`<synthetic>`) is skipped,
+            # and a stretch with no bundle left holds no captured work.
+            bundles = credit_model.bundles_with_work(st.get("tokens"))
+            if not bundles or any(bundle_meter_usd(m, tok, prices) is None for m, tok in bundles.items()):
                 continue
             out.append({**st, "_account": acct.get("account")})
     return out
@@ -336,6 +342,11 @@ def flag_provisional_levels(changes: list[dict], credits_block: dict, weekly: di
             rows(block.get("regimes"), "windows_per_week", "opened_by")
 
 
+def _in_utc(readings: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
+    # A naive stamp is UTC, as gs_passive._utc_day reads it, never the host's local time.
+    return [(as_utc(ts).astimezone(timezone.utc), v) for ts, v in readings]
+
+
 def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, prices: dict, now: datetime,
                       effort_usd: dict | None = None, gs_passive: dict | None = None,
                       reference_mix: dict | None = None, *, masterrig_passive: dict | None = None,
@@ -423,6 +434,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     """
     if not prices:
         raise ValueError("price table has no models")
+    # The five-hour limit's end (tracker/five_hour_end.py): read off the accounts' own meter
+    # logs, and every five-hour reading after it is cut before anything below reads them, so
+    # every five-hour figure freezes there and the weekly limit reads on. None while every
+    # account still has a five-hour limit.
+    five_hour_limit = five_hour_end.public_block(gs_passive, masterrig_passive, dict(ACCOUNT_PAGE_LABELS))
+    gs_passive, masterrig_passive, five_hour_ended = five_hour_end.apply(gs_passive, masterrig_passive)
+    passive = five_hour_end.trimmed_passive(passive, five_hour_ended)
     probe_weekly = probe_weekly_windows(probe_rows, now=now)
     # The credits block needs every probe row, outliers and output rows included: a run
     # that was thrown out as a reading still moved the account's meter, so the stretches
@@ -433,8 +451,13 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     probe_rows = usable_rows(probe_rows)
     credits = credits or CREDITS
 
-    all_readings = passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True) if gs_passive else []
-    verified_readings = passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else []
+    # In UTC: each reading is one UTC day's (passive_dollar_readings groups by `_utc_day`) but
+    # keeps its last stretch's own offset, and every regime, history day and evidence bound
+    # below is a `.date()`, compared with the detector's UTC change instants: a +02:00 reading
+    # just after midnight read as the next day and fell after a change it preceded.
+    all_readings = _in_utc(passive_dollar_readings(gs_passive, prices, by="day", allow_legacy_unverified=True)
+                           if gs_passive else [])
+    verified_readings = _in_utc(passive_dollar_readings(gs_passive, prices, by="day") if gs_passive else [])
     evidence_status = "measured" if verified_readings else ("conditional" if all_readings else "unavailable")
     series = sorted(verified_readings if verified_readings else all_readings)
     # The measured per-family credit rates, needed here and again for the credits block.
@@ -464,17 +487,27 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
     # else (ADR 0001 rule 22, amended 2026-10-23). Each opens a regime in every series below,
     # and each series steps there by the detector's own size on its line.
     changes = four_accounts.regime_changes(four_accounts_run)
-    regime_start = changes[-1]["at"].date() if changes else None
-
     measured_at = series[-1][0] if series else None
+    # Past the limit's end the frozen figure is held at the newest regime with readings
+    # (`_chained_levels`, regimes split by date in `regime_index` below), so its evidence is that
+    # regime: a change past the end, which only the seven-day line can find, opens one with no
+    # five-hour reading unless it falls on a day that still has one. By date, as the regimes are.
+    last_read = measured_at.date() if five_hour_ended is not None and measured_at is not None else None
+    five_hour_changes = [c for c in changes if last_read is None or c["at"].date() <= last_read]
+    regime_start = five_hour_changes[-1]["at"].date() if five_hour_changes else None
+
     current = [(ts, v) for ts, v in series
                if (regime_start is None or ts.date() >= regime_start) and ts >= measured_at - timedelta(days=7)]
     stale = measured_at < now - timedelta(days=MAX_SAMPLE_AGE_DAYS) if measured_at else None
+    if five_hour_ended is not None and measured_at is not None:
+        stale = False  # a five-hour figure past the limit's end is final, not stale
 
     stretches = _eligible_stretches(gs_passive, prices, allow_legacy_unverified=evidence_status == "conditional")
     if current:
         since = current[0][0].date().isoformat()
-        stretches = [st for st in stretches if st["end"][:10] >= since]
+        # By UTC day on both sides, as the readings are (`_in_utc`): a +02:00 stretch's own
+        # date string is the next day's for its first two hours.
+        stretches = [st for st in stretches if (_utc(st["end"]) or "")[:10] >= since]
     else:
         stretches = []
     movement = sum(float(st.get("delta_pct", 0)) for st in stretches)
@@ -484,6 +517,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                "unavailable": ["no_eligible_passive_measurement"]}[evidence_status]
     if stale:
         reasons = [*reasons, "evidence_stale"]
+    if five_hour_ended is not None:
+        reasons = [*reasons, "five_hour_limit_removed"]
     evidence = {"source": "passive" if series else None,
                 "reset_verified": evidence_status == "measured",
                 "observed_from": current[0][0].isoformat() if current else None,
@@ -510,7 +545,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                "unpriced_work": False if series else None}
     freshness = {"as_of": measured_at.isoformat() if measured_at else None,
                  "stale_after": (measured_at + timedelta(days=MAX_SAMPLE_AGE_DAYS)).isoformat() if measured_at else None,
-                 "stale": stale}
+                 "stale": stale,
+                 "ended_at": five_hour_ended.isoformat() if five_hour_ended else None}
 
     latest_row = max(probe_rows, key=lambda r: r["ts"]) if probe_rows else None
     latest_row_per_model: dict[str, dict] = {}
@@ -560,7 +596,8 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                       for idx, dates in regime_dates.items()}
     held = _chained_levels(regime_values, changes)
 
-    last_day = now.date()
+    # The five-hour series ends at the limit's end: no day after it is held or derived.
+    last_day = min(now.date(), five_hour_ended.date()) if five_hour_ended else now.date()
     # Days before the first reading are held at the first regime's value: passive.json's
     # own legacy `history` (tracker/passive.py, masterrig's transcript-derived daily
     # rates, predating gs_passive) can reach further back than the first gs_passive
@@ -652,9 +689,14 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
                 d += timedelta(days=1)
         history[model] = hist
 
+    # Windows per week is five-hour over seven-day movement, so it has no reading past the
+    # five-hour limit's end: a change after it would open an empty regime and null the frozen
+    # level. Its regimes split only at the changes up to the end; every other series keeps them all.
+    ratio_changes = changes if five_hour_ended is None else [c for c in changes if c["at"] <= five_hour_ended]
     weekly_windows = _weekly_block(passive.get("weekly_windows"), probe_weekly, now,
                                    gs_passive=gs_passive, masterrig_passive=masterrig_passive,
-                                   five_hour=(factor, five_hour_value), changes=changes)
+                                   five_hour=(factor, five_hour_value), changes=ratio_changes)
+    _end_weekly_windows(weekly_windows, five_hour_ended)
     # The cache split the session figures assume is the watched accounts' own, from
     # history/passive.json. An archive or a fixture without one falls back to the frozen
     # reference mix and says which it used, rather than publishing a session count whose
@@ -690,6 +732,7 @@ def build_public_json(probe_rows: list[dict], passive: dict, effort: dict, price
         "meter_read_at": _last_meter_read(gs_passive),
         "passive_generated_at": passive.get("generated_at"),
         "account_feeds": feeds,
+        "five_hour_limit": five_hour_limit,
         "plan_measured": "max20",
         "instrument": "passive" if series else "unavailable",
         "availability": {"rates": quality["status"], "evidence": evidence_status,
@@ -1542,6 +1585,27 @@ def _segment_regimes(points: list[tuple], changes: list[dict], chain: bool = Tru
     return regimes
 
 
+def _end_weekly_windows(weekly: dict, ended: datetime | None) -> None:
+    """Mark max20's windows per week final at the five-hour limit's end: five-hour movement
+    over seven-day movement has no numerator after it, so `current` is the level there, not
+    a stale one (`current_estimate.stale` false), and the series is not live (`ended_at`)."""
+    if ended is None:
+        return
+    block = weekly.get("max20")
+    if not isinstance(block, dict):
+        return
+    block["ended_at"] = ended.isoformat()
+    cur = block.get("current_estimate")
+    if isinstance(cur, dict):
+        cur["stale"] = False
+        cur["reasons"] = [r for r in cur.get("reasons") or [] if r != "evidence_stale"] + ["five_hour_limit_removed"]
+    avail = block.get("availability")
+    if isinstance(avail, dict) and avail.get("reason") == "evidence_stale":
+        avail["reason"] = "five_hour_limit_removed"
+    elif isinstance(avail, dict) and avail.get("status") == "measured" and avail.get("reason") is None:
+        avail["reason"] = "five_hour_limit_removed"
+
+
 def _regime_current(points: list[tuple], now: datetime, changes: list[dict]) -> dict | None:
     """max20's current estimate: the newest WEEKLY_CURRENT_DAYS of window points after the
     detector's newest measured change, pooled.
@@ -1760,13 +1824,8 @@ def _max5_window_points(passive_points: list[dict]) -> list[tuple[datetime, floa
 
 def _utc(stamp) -> str | None:
     """An ISO stamp as UTC, or None for anything that is not a parseable stamp."""
-    if not isinstance(stamp, str) or not stamp:
-        return None
-    try:
-        dt = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+    dt = parse_instant(stamp)
+    return dt.astimezone(timezone.utc).isoformat() if dt is not None else None
 
 
 def _account_feeds(gs_passive: dict | None, masterrig_passive: dict | None, credits: dict,
@@ -1782,9 +1841,10 @@ def _account_feeds(gs_passive: dict | None, masterrig_passive: dict | None, cred
     even while the file itself is fresh), falling back to that file's `generated_at`.
     `newest_stretch_end` is the newest end among the account's stretches the per-model fits
     select from: harness-clean, capture-accepted (masterrig exempt, as in _credits_block)
-    and priceable in credits. `state` is "stopped" when `feed_at` is older than the
-    feed's schedule allows (MASTERRIG_FEED_MAX_AGE, GS_FEED_MAX_AGE), else "idle" when
-    `newest_stretch_end` is null or older than IDLE_AFTER, else "fresh". An account with
+    and priceable in credits; `newest_step_end` the newest of its seven-day steps. `state` is
+    "stopped" when `feed_at` is older than the feed's schedule allows
+    (MASTERRIG_FEED_MAX_AGE, GS_FEED_MAX_AGE), else "idle" when neither end is within
+    IDLE_AFTER, else "fresh". An account with
     no file, or no block in its file, is omitted. Only labels are published.
     """
     by_account = credit_model.stretches_by_account(gs_passive, masterrig_passive)
@@ -1806,13 +1866,21 @@ def _account_feeds(gs_passive: dict | None, masterrig_passive: dict | None, cred
         rows = [st for st in priceable.get(name, [])
                 if credit_model.price_tokens(st["tokens"], credits).priced]
         stretch_end = _utc(credit_model.newest_end(rows))
+        # Past the five-hour limit's end there are no stretches, only seven-day steps: an
+        # account using its weekly limit is not idle (tracker/five_hour_end.py).
+        report = masterrig_passive if name == "masterrig" else gs_passive
+        steps = (((report or {}).get("accounts") or {}).get(name) or {}).get("weekly_steps") or []
+        step_end = _utc(max((st["end"] for st in steps if st.get("end")),
+                            key=lambda e: datetime.fromisoformat(e), default=None))
+        active = max((datetime.fromisoformat(e) for e in (stretch_end, step_end) if e), default=None)
         if feed_at is None or now - datetime.fromisoformat(feed_at) > max_age:
             state = "stopped"
-        elif stretch_end is None or now - datetime.fromisoformat(stretch_end) > IDLE_AFTER:
+        elif active is None or now - active > IDLE_AFTER:
             state = "idle"
         else:
             state = "fresh"
-        feeds[label] = {"feed_at": feed_at, "newest_stretch_end": stretch_end, "state": state}
+        feeds[label] = {"feed_at": feed_at, "newest_stretch_end": stretch_end,
+                        "newest_step_end": step_end, "state": state}
     return feeds
 
 
@@ -1826,12 +1894,14 @@ def _last_meter_read(gs_passive: dict | None) -> str | None:
     reading, not the derivation, and neither the old field nor
     `passive_generated_at` (when a file was rebuilt, on another host) answers that.
     """
+    # Compared as instants, in UTC like `account_feeds`: a string max puts a 'Z' or a non-UTC
+    # offset out of time order, and lets a stamp that is not a time at all win.
     stamps = [
-        (a.get("meter") or {}).get("last")
+        _utc((a.get("meter") or {}).get("last"))
         for a in ((gs_passive or {}).get("accounts") or {}).values()
     ]
-    usable = [t for t in stamps if isinstance(t, str) and t]
-    return max(usable) if usable else None
+    usable = [t for t in stamps if t]
+    return max(usable, key=datetime.fromisoformat) if usable else None
 
 
 def load_contributed(path: Path | None) -> dict | None:

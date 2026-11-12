@@ -31,8 +31,8 @@ How a window is rejected
   `claude-opus-5` are the same model, and bucketing on the raw id splits one
   pure Opus window into two impure ones.
 
-Result as of 2026-09-15 (20x era, masterrig, jonathanavis96@gmail.com)
----------------------------------------------------------------------
+Result as of 2026-09-15 (20x era, masterrig)
+------------------------------------------
     claude-opus-5     n=15  median $4.940 per 1%   range $0.08-$12.74
     claude-fable-5-1  n=21  median $2.535 per 1%   range $0.28-$3.53
 

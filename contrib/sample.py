@@ -164,25 +164,30 @@ def iter_turns(paths: Iterable[Path]) -> Iterator[tuple[datetime, str, dict[str,
     for p in paths:
         with open(p, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
+                # One odd line (a torn write, a hand edit, a format change) costs that line,
+                # never the whole run.
                 try:
                     d = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if d.get("type") != "assistant":
-                    continue
-                m = d.get("message") or {}
-                u = m.get("usage")
-                mid = m.get("id")
-                if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
+                    if not isinstance(d, dict) or d.get("type") != "assistant":
+                        continue
+                    m = d.get("message")
+                    if not isinstance(m, dict):
+                        continue
+                    u = m.get("usage")
+                    mid = m.get("id")
+                    if not isinstance(u, dict) or not mid or mid in seen or not d.get("timestamp"):
+                        continue
+                    turn = (_parse_ts(d["timestamp"]), m.get("model") or "unknown", {
+                        "input": int(u.get("input_tokens") or 0),
+                        "output": int(u.get("output_tokens") or 0),
+                        "cache_read": int(u.get("cache_read_input_tokens") or 0),
+                        "cache_write": int(u.get("cache_creation_input_tokens") or 0),
+                        "cache_write_1h": int((u.get("cache_creation") or {}).get("ephemeral_1h_input_tokens") or 0),
+                    })
+                except (ValueError, TypeError, AttributeError):  # JSONDecodeError is a ValueError
                     continue
                 seen.add(mid)
-                yield (_parse_ts(d["timestamp"]), m.get("model") or "unknown", {
-                    "input": int(u.get("input_tokens") or 0),
-                    "output": int(u.get("output_tokens") or 0),
-                    "cache_read": int(u.get("cache_read_input_tokens") or 0),
-                    "cache_write": int(u.get("cache_creation_input_tokens") or 0),
-                    "cache_write_1h": int((u.get("cache_creation") or {}).get("ephemeral_1h_input_tokens") or 0),
-                })
+                yield turn
 
 
 def transcript_paths(root: Path, since: datetime | None) -> list[Path]:

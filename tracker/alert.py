@@ -29,6 +29,7 @@ tests and a dry run point the helper at a local server.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import socket
@@ -101,13 +102,31 @@ def alert_config(env_file: Path = ENV_FILE, environ: Mapping[str, str] | None = 
 
 
 def _default_post(url: str, headers: Mapping[str, str], body: bytes) -> tuple[int, str]:
-    req = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
+    # Every failure to get a usable reply is an OSError, the one exception callers catch.
+    try:
+        req = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
+    except ValueError:  # no scheme or host (a NOTIFY_SEND_URL typo): nothing to reach
+        # urllib's message quotes the whole URL, whose query string may carry a key: never
+        # repeat it, nor chain it.
+        raise OSError("bad endpoint URL (no scheme or host)") from None
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         with e:
-            return e.code, e.read().decode("utf-8", "replace")
+            try:
+                return e.code, e.read().decode("utf-8", "replace")
+            except http.client.IncompleteRead as cut:  # an error reply cut short: its status stands
+                return e.code, cut.partial.decode("utf-8", "replace")
+            except http.client.HTTPException as bad:
+                raise OSError(f"HTTP {e.code}, reply {type(bad).__name__}") from None
+    except http.client.HTTPException as e:  # a reply cut short or garbled, or a URL refused
+        # Named, not quoted: InvalidURL's message repeats the URL's path, query or port, which
+        # may carry a key.
+        raise OSError(f"no usable reply: {type(e).__name__}") from None
+    except ValueError as e:  # UnicodeEncodeError too: a header value http refuses to send
+        # http.client quotes the offending value, which may be the secret: never chain it.
+        raise OSError(f"request refused before sending: {type(e).__name__} in a header or URL") from None
 
 
 def alert_body(subject: str, text: str, to: str, *, source: str, now: datetime) -> dict:

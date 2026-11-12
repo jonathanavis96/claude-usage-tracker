@@ -54,6 +54,22 @@ class SevenDayStepTests(unittest.TestCase):
         self.assertEqual([outputs(s) for s in steps], [50, 0, 7])
         self.assertEqual(steps[1]["start"], steps[1]["end"])
 
+    def test_weekly_only_readings_still_measure_the_weekly_limit(self):
+        # An account with no five-hour limit: five_hour None on every reading.
+        samples = [sample(0, None, 20, resets=None), sample(5, None, 21, resets=None),
+                   sample(10, None, 22, resets=None), sample(15, None, 23, resets=None)]
+        steps = W.seven_day_steps(samples, [turn(6, 10), turn(12, 1)], PRICES)
+        self.assertEqual([s["seven_day"] for s in steps], [22, 23])
+        self.assertEqual([outputs(s) for s in steps], [10, 1])
+        self.assertEqual([s["d5"] for s in steps], [0, 0])
+
+    def test_a_step_with_no_five_hour_reading_says_so(self):
+        samples = [sample(0, 10, 20), sample(5, 11, 21), sample(10, 12, 22),
+                   sample(15, None, 23, resets=None), sample(20, None, 24, resets=None)]
+        steps = W.seven_day_steps(samples, [], PRICES)
+        self.assertEqual([(s["seven_day"], s["five_hour_measured"]) for s in steps],
+                         [(22, True), (23, False), (24, False)])
+
     def test_no_step_spans_a_weekly_reset_or_a_gap(self):
         samples = [sample(0, 0, 50), sample(5, 0, 51), sample(10, 0, 2, seven_resets="W2"),
                    sample(15, 0, 3, seven_resets="W2"), sample(60, 0, 4, seven_resets="W2"),
@@ -106,6 +122,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([value(s["tokens"]) for s in whole["jwork"]], [6])
         self.assertEqual([value(s["tokens"]) for s in W.clean_steps(by, [])["masterrig"]], [5])
 
+    def test_a_naive_withheld_stretch_is_read_as_utc(self):
+        # PR #155 review, final round 1: a naive stretch stamp is UTC everywhere else, but here
+        # it was compared naive with an aware step and raised TypeError.
+        day = datetime(2026, 9, 10, tzinfo=timezone.utc)
+        withheld = {"jwork": [{"start": "2026-09-10T01:00:00", "end": "2026-09-10T02:00:00",
+                               "status": "withheld"}]}
+        by = {"jwork": [step(day, 1), step(day + timedelta(hours=1), 2)]}
+        kept = W.clean_steps(by, [], withheld)
+        self.assertEqual([value(s["tokens"]) for s in kept["jwork"]], [1])
+
     def test_a_step_over_work_the_transcripts_did_not_see_is_left_out(self):
         # The capture check withheld the stretch (status not accepted): the meter moved with
         # work no transcript on this host holds, so its steps read too few credits per point.
@@ -133,6 +159,25 @@ class SelectionTests(unittest.TestCase):
                         lambda t: None if "x" in t else value(t))
         self.assertEqual([r["credits"] for r in rows], [0.0])
         self.assertEqual(rows[0]["day"], "2026-09-20")
+
+    def test_a_naive_steps_day_is_its_utc_day_whatever_the_hosts_zone(self):
+        # PR #155 review, final round 3: clean_steps reads a naive step as UTC, but valued
+        # filed it by astimezone, which reads a naive time in the host's zone.
+        import os
+        import time
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "Africa/Johannesburg"
+        time.tzset()
+        try:
+            naive = {"start": "2026-11-05T00:30:00", "end": "2026-11-05T01:00:00",
+                     "d7": 1, "d5": 0, "tokens": {}}
+            self.assertEqual(W.valued([naive], value)[0]["day"], "2026-11-05")
+        finally:
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
 
     def test_the_day_is_the_utc_day_of_the_steps_end(self):
         late = {"start": "2026-09-21T01:00:00+02:00", "end": "2026-09-21T01:30:00+02:00",
@@ -178,6 +223,14 @@ class LevelTests(unittest.TestCase):
         self.assertEqual(W.valued([st], value)[0]["d5"], 10)
         lvl = W.level({"a1": [row]}, "t")
         self.assertEqual((lvl["windows_per_week_meters"], lvl["raw_windows_per_week_meters"]), (8.0, 10.0))
+
+    def test_weekly_only_steps_count_for_credits_but_not_windows_per_week(self):
+        a = rows_for([[100, 100]], d5=5)
+        b = [{**r, "d5": 0, "five_hour_measured": False} for r in rows_for([[100, 100]])]
+        lvl = W.level({"a1": a + b}, "t")
+        self.assertEqual(lvl["seven_day_points"], 4)
+        self.assertAlmostEqual(lvl["credits_per_pct"], 100.0)
+        self.assertAlmostEqual(lvl["windows_per_week_meters"], 5.0)
 
     def test_no_steps_is_no_level(self):
         lvl = W.level({"a1": []}, "t")

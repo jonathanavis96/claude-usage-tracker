@@ -31,6 +31,12 @@ dave busy: meter moved 7% -> 8%
 probe skipped: no idle account within max wait
 """
 
+# 2026-11: dave has no five-hour limit (weekly-only, ADR 0001 rule 24), jwork is mid-turn.
+WEEKLY_ONLY_SKIP_LOG = """00:00:01Z jwork busy: pid 1942517
+00:00:02Z dave weekly-only: no five-hour limit, so no tick to measure
+probe skipped: no usable account within max wait (jwork busy: pid 1942517; dave weekly-only: no five-hour limit, so no tick to measure)
+"""
+
 # Issue #38: dave passed over for its weekly meter, jwork for a session mid-turn.
 WEEKLY_SKIP_LOG = """00:00:01Z jwork busy: pid 1942517
 00:00:02Z dave weekly meter 99%
@@ -94,6 +100,65 @@ class TestSummary(unittest.TestCase):
         self.assertIn("dave was busy (meter moved 7% -> 8%)", s)
         self.assertIn("jwork was busy (pid 1942517, 2355887)", s)
         self.assertIn("nothing is broken", s)
+
+    def test_skipped_names_a_weekly_only_account_rather_than_saying_none_were_checked(self):
+        # Code review round 4: jwork was busy for the whole wait, so the wait is the outcome;
+        # blaming dave's missing five-hour limit alone hid that jwork was blocked for hours.
+        s = summary("claude-opus-5", 3, "Rotation run", WEEKLY_ONLY_SKIP_LOG)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because no "
+                                     "account with a five-hour limit was idle within the 4-hour wait."), s)
+        self.assertIn("dave has no five-hour limit (no five-hour limit, so no tick to measure)", s)
+        self.assertIn("jwork was busy (pid 1942517)", s)
+        self.assertIn("closing them frees the account", s)
+        self.assertNotIn("does not say which accounts", s)
+        self.assertNotIn("Who was busy", s)
+
+    def test_skipped_after_waiting_for_a_busy_account_says_it_waited(self):
+        # Code review round 5: jwork was busy before it too read weekly-only, so the probe
+        # waited; the last skips alone said it gave up at once.
+        log = ("00:00:01Z jwork busy: pid 1942517\n"
+               "00:00:02Z dave weekly-only: no five-hour limit, so no tick to measure\n"
+               "00:15:01Z jwork weekly-only: no five-hour limit, so no tick to measure\n"
+               "00:15:02Z dave weekly-only: no five-hour limit, so no tick to measure\n")
+        s = summary("claude-opus-5", 3, "Rotation run", log)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because no "
+                                     "account still has a five-hour limit to measure, after a wait for a "
+                                     "busy one."), s)
+
+    def test_skipped_with_every_account_weekly_only_claims_no_wait(self):
+        log = ("00:00:02Z dave weekly-only: no five-hour limit, so no tick to measure\n"
+               "probe skipped: every account is weekly-only, nothing to wait for "
+               "(dave weekly-only: no five-hour limit, so no tick to measure)\n")
+        s = summary("claude-opus-5", 3, "Rotation run", log)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because no "
+                                     "account still has a five-hour limit to measure."), s)
+        self.assertNotIn("wait", s.split("\n\n")[0])
+
+    def test_skipped_for_a_malformed_response_says_something_is_broken(self):
+        # Codex on PR #155: dave's response was unreadable for the whole wait while jwork is
+        # weekly-only; the summary said no account has a five-hour limit and nothing is broken.
+        log = ("00:00:02Z jwork weekly-only: no five-hour limit, so no tick to measure\n"
+               "00:00:03Z dave malformed: five_hour.utilization is not a number\n"
+               "04:00:03Z dave malformed: five_hour.utilization is not a number\n"
+               "probe skipped: no usable account within max wait (jwork weekly-only: no five-hour "
+               "limit, so no tick to measure; dave malformed: five_hour.utilization is not a number)\n")
+        s = summary("claude-opus-5", 3, "Rotation run", log)
+        self.assertTrue(s.startswith("Outcome: SKIPPED. Rotation run for Opus 5 never started, because the "
+                                     "usage endpoint returned a response this collector cannot read."), s)
+        self.assertIn("dave returned a malformed usage response (five_hour.utilization is not a number)", s)
+        self.assertIn("jwork has no five-hour limit", s)
+        self.assertNotIn("nothing is broken", s)
+        self.assertIn("this needs a look", s)
+
+    def test_an_abort_on_a_malformed_response_needs_a_look(self):
+        log = ("00:01:00Z prompt 1: five_hour=10.0 resets_at=2026-09-13T12:30:00+00:00 spent=input=2 "
+               "output=5 cache_read=0 cache_write=0\n"
+               "00:02:00Z probe aborted on dave: usage response malformed: five_hour.utilization is not a number\n")
+        s = summary("claude-opus-5", 4, "Rotation run", log)
+        self.assertIn("five_hour.utilization is not a number", s)
+        self.assertIn("no longer has the shape", s)
+        self.assertNotIn("nothing needs fixing by hand", s)
+        self.assertIn("this needs a look", s)
 
     def test_skipped_tells_a_weekly_meter_apart_from_a_busy_account(self):
         s = summary("claude-opus-5", 3, "Rotation run", WEEKLY_SKIP_LOG)

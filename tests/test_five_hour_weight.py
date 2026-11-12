@@ -75,6 +75,14 @@ class HeadlessFactorTest(unittest.TestCase):
         self.assertEqual(block["accounts_without_split"], ["a2"])
         self.assertEqual(block["n_steps"], 60)
 
+    def test_a_weekly_only_step_is_not_a_zero_five_hour_reading(self):
+        # A step with no five-hour reading records d5 0; fitted as 0 it would bias the factor.
+        weekly_only = [{**step(i, 0.5, 0.0, regime_shift=timedelta(days=10)), "five_hour_measured": False}
+                       for i in range(30)]
+        clean = {"one": exact_steps(1.2), "two": exact_steps(1.2, account_level=0.8)}
+        mixed = {"one": clean["one"] + weekly_only, "two": clean["two"]}
+        self.assertEqual(W.headless_factor(mixed, value, LABELS, [CUT]), W.headless_factor(clean, value, LABELS, [CUT]))
+
     def test_too_few_steps_publish_no_factor_and_say_why(self):
         block = W.headless_factor({"one": exact_steps(1.5, n=20)}, value, LABELS, [CUT])
         self.assertIsNone(W.factor_of(block))

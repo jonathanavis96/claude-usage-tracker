@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -95,6 +97,140 @@ class SuperviseTest(unittest.TestCase):
             self.assertFalse(self.state.exists(), "a skipped run must not touch state")
         finally:
             os.close(fd)
+
+    def test_hung_run_alert_keeps_the_open_incidents_other_kinds(self):
+        # A run holding the lock past health's limit is raised from the skipped run, which
+        # checks only the lock. Every other kind of the open incident then read as cleared:
+        # a false "meters/avis recovered" was sent and its clock was dropped.
+        meters = "meters: newest usable reading in claude-usage-meter-avis.log is 2h00m old (limit 15m)"
+        self.state.write_text(json.dumps({
+            "incident_open": True, "incident_kinds": ["meters/avis"], "incident_since": self.t - 7200,
+            "incident_reason": meters, "kinds_since": {"meters/avis": self.t - 9000},
+            "last_health": meters, "consecutive_failures": 0, "last_exit": 0, "last_ok": self.t - 7200}))
+        pidfile = self.lock.with_suffix(".pid")
+        pidfile.write_text(str(os.getpid()))
+        held = os.path.getmtime(pidfile) - 3 * 3600
+        os.utime(pidfile, (held, held))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertFalse([m for m in self.send.sent if "recovered" in m], self.send.sent)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("further problem", self.send.sent[0])
+        self.assertIn("has held the lock", self.send.sent[0])
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["lock", "meters/avis"])
+        self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 9000)
+
+    def test_hung_run_alert_does_not_hurry_another_kinds_own_clock(self):
+        # Code review round 3: the last run's other kinds ride along with the lock, but each
+        # keeps its own stale_after. A meter only 10 minutes stale must not alert from here.
+        meters = "meters: newest usable reading in claude-usage-meter-avis.log is 25m old (limit 15m)"
+        self.state.write_text(json.dumps({
+            "kinds_since": {"meters/avis": self.t - 600}, "last_health": meters,
+            "consecutive_failures": 0, "last_exit": 0, "last_ok": self.t - 600}))
+        pidfile = self.lock.with_suffix(".pid")
+        pidfile.write_text(str(os.getpid()))
+        held = os.path.getmtime(pidfile) - 3 * 3600
+        os.utime(pidfile, (held, held))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock", self.send.sent[0])
+        st = self.st()
+        self.assertEqual(st["incident_kinds"], ["lock"])
+        self.assertEqual(st["kinds_since"]["meters/avis"], self.t - 600)
+
+    def test_a_hung_run_with_no_pid_file_is_still_raised_from_the_locks_age(self):
+        # Code review round 4: a run that could not write its pid file (full disk) ran on, and
+        # if it then hung, check_lock found no pid file and no hung incident was ever raised.
+        # Every run stamps the lock file when it takes the lock, which stands in for the pid file.
+        self.assertEqual(self.run_cmd(0), 0)
+        self.assertLess(abs(os.path.getmtime(self.lock) - time.time()), 60)
+        held = time.time() - 3 * 3600
+        os.utime(self.lock, (held, held))
+        self.assertFalse(self.lock.with_suffix(".pid").exists())
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock 3h00m", self.send.sent[0])
+
+    def test_an_immediate_kind_counts_at_once_and_the_rest_keep_their_clocks(self):
+        # Code review round 8: the hung path backdated the lock's clock by hand and copied
+        # decide_alert's migration of an older state; decide_alert now takes the kind itself.
+        state = {"unhealthy_since": self.t - 60}  # an older state: one clock for every kind
+        reason = "lock: run pid 1 has held the lock 3h00m | meters: claude-usage-meter-avis.log is 25m old"
+        supervise.decide_alert(state, self.t, reason, 3, 3600.0, self.send, "masterrig",
+                               immediate_kinds=frozenset({"lock"}))
+        self.assertEqual(state["incident_kinds"], ["lock"])
+        self.assertEqual(state["kinds_since"]["lock"], self.t - 60)  # round 12: its true clock, never backdated
+        self.assertEqual(state["kinds_since"]["meters/avis"], self.t - 60)
+
+    def test_a_hung_run_with_no_pid_file_is_raised_whatever_the_locks_suffix(self):
+        # Code review round 9: health found the flock file by turning the pid file back into
+        # `<name>.lock`, so a lock named anything else was never found.
+        self.lock = self.tmp / "tracker.flock"
+        self.assertEqual(self.run_cmd(0), 0)
+        held = time.time() - 3 * 3600
+        os.utime(self.lock, (held, held))
+        self.state.write_text(json.dumps({"last_ok": held - 600}))
+        fd = os.open(self.lock, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.assertEqual(self.run_cmd(1), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+        self.assertIn("has held the lock 3h00m", self.send.sent[0])
+
+    def test_unwritable_pidfile_still_runs_and_alerts(self):
+        # A full disk refused the pid file's few bytes and the OSError escaped before the
+        # job ran: no run, no state, no alert, though the state and the run log both
+        # survive a full disk on purpose.
+        pidfile = self.lock.with_suffix(".pid")
+        real = Path.write_text
+
+        def full_disk(path, *a, **k):
+            if path == pidfile:
+                raise OSError(28, "No space left on device")
+            return real(path, *a, **k)
+
+        with mock.patch.object(Path, "write_text", full_disk):
+            for _ in range(3):
+                self.assertEqual(self.run_cmd(1, retries=0), 1)
+                self.t += 3600
+        self.assertEqual(self.st()["consecutive_failures"], 3)
+        self.assertEqual(len(self.send.sent), 1, self.send.sent)
+
+    def test_unwritable_pidfile_still_runs_when_stderr_is_on_the_same_full_disk(self):
+        # cron appends the supervisor's stderr to a log on the same disk, so the warning
+        # about the pid file can hit ENOSPC too; it must not stop the run either.
+        pidfile = self.lock.with_suffix(".pid")
+        real = Path.write_text
+
+        def full_disk(path, *a, **k):
+            if path == pidfile:
+                raise OSError(28, "No space left on device")
+            return real(path, *a, **k)
+
+        class FullStderr(io.StringIO):
+            def write(self, s):
+                raise OSError(28, "No space left on device")
+
+        with mock.patch.object(Path, "write_text", full_disk), mock.patch("sys.stderr", FullStderr()):
+            self.assertEqual(self.run_cmd(1, retries=0), 1)
+        self.assertEqual(self.st()["consecutive_failures"], 1)
 
     def test_stale_pidfile_is_cleared(self):
         self.lock.with_suffix(".pid").write_text("999999999")
@@ -294,7 +430,10 @@ class SuperviseTest(unittest.TestCase):
                 os.kill(pid, 0)
             except ProcessLookupError:
                 break
-            if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+            try:
+                if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+                    break
+            except (FileNotFoundError, ProcessLookupError):  # reaped between the kill(0) and the read: gone
                 break
             _t.sleep(0.05)
         else:

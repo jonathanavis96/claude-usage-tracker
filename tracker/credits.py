@@ -80,6 +80,7 @@ from pathlib import Path
 from statistics import median
 
 from .detect import ratio_interval
+from .usage_api import as_utc
 
 PRICES_PATH = Path(__file__).resolve().parent.parent / "data" / "prices.json"
 #: The meter's own per-model rates, fitted from the passive stretches by
@@ -431,6 +432,31 @@ def raw_tokens(tok: dict) -> int:
     return sum(tok.get(c, 0) for c in ("input", "output", "cache_read", "cache_write"))
 
 
+def holds_work(tok) -> bool:
+    """A token bundle with tokens in it: neither Claude Code's zero-token `<synthetic>`
+    placeholder rows nor a value that is no bundle at all. What every per-bundle loop counts."""
+    return isinstance(tok, dict) and bool(raw_tokens(tok))
+
+
+def bundles_with_work(tokens: dict | None) -> dict:
+    """`tokens` less its zero-token `<synthetic>` rows, which hide no work. Empty when nothing
+    is left: every reader of a stretch's work (the passive dollar series, the output-weight
+    fit, the evidence beside a rate) reads that as no reading through this, so the evidence
+    counts exactly the stretches the series reads. A value that is no bundle at all is kept:
+    it cannot be valued (`join.bundle_meter_usd` reads it as unpriced), so its stretch is
+    refused whole rather than read without that model's work. Pricing differs on purpose
+    (`work_bundles`): a stretch of nothing but empty bundles stays unpriced, not priced at 0."""
+    return {m: tok for m, tok in (tokens or {}).items() if not (isinstance(tok, dict) and not holds_work(tok))}
+
+
+def work_bundles(tokens: dict) -> dict:
+    """`tokens` less its zero-token bundles, when another bundle holds work: an empty
+    `<synthetic>` row beside real work hides none and must not unprice the stretch. A stretch
+    of nothing but empty bundles is returned as it is, so it is priced exactly as it always was;
+    so is one whose only other value is no bundle at all, which holds no work either."""
+    return bundles_with_work(tokens) if any(holds_work(t) for t in tokens.values()) else tokens
+
+
 @dataclass(frozen=True)
 class Priced:
     """One stretch's tokens split into what a published rate prices and what it does not.
@@ -469,8 +495,13 @@ def price_tokens(tokens: dict, credits: dict, weight: float | None = None) -> Pr
     known = fable_in = fable_out = charged = 0.0
     raw = 0
     priced = True
-    for model, tok in tokens.items():
+    # A bundle of no tokens (Claude Code's `<synthetic>` rows) beside real work is nothing to
+    # price, and tools/model_rates.py's `ok` column counts its stretch: skipped, not unpriced.
+    for model, tok in work_bundles(tokens).items():
         if not isinstance(tok, dict):
+            # A value that is no bundle cannot be priced, so neither can its stretch, as the
+            # published series refuses it (`bundles_with_work`).
+            priced = False
             continue
         at_in, at_out = input_side(tok, weight), tok.get("output", 0)
         raw += raw_tokens(tok)
@@ -513,14 +544,22 @@ def harness_runs(path: Path | None = None) -> list[HarnessRun]:
     out: list[HarnessRun] = []
     if not p.exists():
         return out
-    for line in p.read_text(encoding="utf-8").splitlines():
+    for number, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            # A run that cannot be read cannot be excluded, so the read still stops; the
+            # error names the file and line, which a bare decode error from cron does not.
+            raise json.JSONDecodeError(f"{p}:{number}: {e.msg}", e.doc, e.pos) from e
+        if not isinstance(row, dict):
+            raise ValueError(f"{p}:{number}: a run row is not a JSON object")
         if not row.get("account") or not row.get("start") or not row.get("end"):
             continue
-        out.append(HarnessRun(row["account"], datetime.fromisoformat(row["start"]),
-                              datetime.fromisoformat(row["end"]), run_reason(row)))
+        # A naive stamp is UTC, as a stretch's is (`stretch_span`), so the two always compare.
+        out.append(HarnessRun(row["account"], as_utc(datetime.fromisoformat(row["start"])),
+                              as_utc(datetime.fromisoformat(row["end"])), run_reason(row)))
     return sorted(out, key=lambda r: (r.account, r.start))
 
 
@@ -531,6 +570,16 @@ def run_reason(row: dict) -> str:
     ended = row.get("outcome") or "ran"
     detail = f": {row['detail']}" if row.get("detail") else ""
     return f"{what} {ended}{detail} from {str(row['start'])[:19]}Z"
+
+
+def stretch_span(st: dict) -> tuple[datetime, datetime] | None:
+    """A stretch's [start, end] as aware instants (a naive stamp is UTC), or None when it lacks
+    either stamp. The selection filters read a span through this, so none compares naive with
+    aware even on a stretch that did not come through `stretches_by_account`."""
+    start, end = st.get("start"), st.get("end")
+    if not start or not end:
+        return None
+    return as_utc(datetime.fromisoformat(start)), as_utc(datetime.fromisoformat(end))
 
 
 def overlapping_run(runs: list[HarnessRun], account: str, start: datetime,
@@ -560,8 +609,39 @@ def stretches_by_account(*reports: dict | None) -> dict[str, list[dict]]:
         if not accounts and report.get("stretches") is not None:
             accounts = {"masterrig": {"stretches": report["stretches"]}}
         for name, body in (accounts or {}).items():
-            out.setdefault(name, []).extend(body.get("stretches") or [])
+            out.setdefault(name, []).extend(_utc_stamped(st) for st in body.get("stretches") or [])
     return out
+
+
+def _utc_stamp(stamp):
+    """`stamp` written as UTC when it is a naive ISO stamp; anything else as it is (a bad one is
+    left for the reader that refuses it to say so)."""
+    if not isinstance(stamp, str) or not stamp:
+        return stamp
+    try:
+        at = datetime.fromisoformat(stamp)
+    except ValueError:
+        return stamp
+    return as_utc(at).isoformat() if at.tzinfo is None else stamp
+
+
+def _utc_stamped(st):
+    """The stretch with a naive `start`, `end` or `first_turns` stamp written as UTC, a copy
+    only when one is naive.
+
+    A stamp with no offset is UTC (`usage_api.as_utc`). Every writer stamps an offset, so the
+    record itself comes back as it is; a hand-written naive one would otherwise compare naive
+    with aware in whichever reader parses it next (the regime index, `newest_end`)."""
+    if not isinstance(st, dict):
+        return st
+    fixed = {key: _utc_stamp(st[key]) for key in ("start", "end")
+             if key in st and _utc_stamp(st[key]) is not st[key]}
+    turns = st.get("first_turns")
+    if isinstance(turns, dict):
+        utc_turns = {m: _utc_stamp(s) for m, s in turns.items()}
+        if any(utc_turns[m] is not turns[m] for m in turns):
+            fixed["first_turns"] = utc_turns
+    return {**st, **fixed} if fixed else st
 
 
 def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *,
@@ -583,9 +663,8 @@ def clean_stretches(by_account: dict[str, list[dict]], runs: list[HarnessRun], *
             # A record with no span cannot be tested against a harness run. Every real
             # stretch carries both stamps; a fixture may not, and a missing stamp must
             # not be read as "overlaps nothing" in one place and crash in another.
-            start, end = st.get("start"), st.get("end")
-            if start and end and overlapping_run(runs, account, datetime.fromisoformat(start),
-                                                 datetime.fromisoformat(end)) is not None:
+            span = stretch_span(st)
+            if span is not None and overlapping_run(runs, account, *span) is not None:
                 continue
             # Cloud-session work (tracker/cloud_sessions.py) is left out like a harness run:
             # its turns ran in Anthropic's cloud, teleported back or never seen here, so the
@@ -627,14 +706,22 @@ def masterrig_excluded(account: str, start: datetime, end: datetime, whole_histo
     return start < hi and end > lo
 
 
+def _masterrig_in_use(st: dict) -> bool:
+    """Whether a masterrig stretch is from MASTERRIG_FROM on (`masterrig_excluded` without
+    `whole_history`). One with no start stamp cannot be shown to be, so it is left out: the
+    cut exists to keep masterrig's untrustworthy early history out of every fit."""
+    # A naive stamp is UTC, as everywhere else: compared naive, it raised TypeError.
+    return bool(st.get("start")) and as_utc(datetime.fromisoformat(st["start"])) >= MASTERRIG_FROM
+
+
 def spans_cut(st: dict) -> bool:
     """True when a stretch starts before CUT_AT and ends after it.
 
     Such a stretch belongs to neither side of the change: its meter movement is part one
     regime and part the other, so it is dropped from both rather than filed by its start.
     """
-    start, end = st.get("start"), st.get("end")
-    return bool(start and end and datetime.fromisoformat(start) < CUT_AT < datetime.fromisoformat(end))
+    span = stretch_span(st)
+    return span is not None and span[0] < CUT_AT < span[1]
 
 
 def rate_fit_stretches(by_account: dict[str, list[dict]],
@@ -649,8 +736,7 @@ def rate_fit_stretches(by_account: dict[str, list[dict]],
     """
     kept = clean_stretches(by_account, runs, require="capture_status")
     if "masterrig" in kept:
-        kept["masterrig"] = [st for st in kept["masterrig"]
-                             if datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+        kept["masterrig"] = [st for st in kept["masterrig"] if _masterrig_in_use(st)]
     return {account: [st for st in rows if not spans_cut(st)] for account, rows in kept.items()}
 
 
@@ -668,10 +754,7 @@ def window_stretches(by_account: dict[str, list[dict]],
     A stretch spanning the cut stays in: `cut_side` files it by its start, as before.
     """
     kept = clean_stretches(by_account, runs, require="capture_status")
-    return {account: [st for st in rows
-                      if not (st.get("start") and st.get("end")
-                              and masterrig_excluded(account, datetime.fromisoformat(st["start"]),
-                                                     datetime.fromisoformat(st["end"]), False))]
+    return {account: [st for st in rows if account != "masterrig" or _masterrig_in_use(st)]
             for account, rows in kept.items()}
 
 
@@ -1768,12 +1851,15 @@ def _pooled_stretch_credits(tokens: dict, credits: dict, fit: dict) -> float | N
 
     Input-equivalent tokens exactly as the fit's design matrix counts them -- input plus
     cache write, plus `output_multiplier` times output, at the family's rate -- and every
-    cache read at the one fitted cache-read rate, whichever family it came from.
+    cache read at the one fitted cache-read rate, whichever family it came from. A bundle of
+    no tokens (Claude Code's `<synthetic>` rows) beside real work is skipped (`work_bundles`),
+    as the fit's `ok` column and `comparison_value` skip it, rather than leaving the stretch
+    unpriced.
     """
     total = 0.0
-    for model, tok in tokens.items():
+    for model, tok in work_bundles(tokens).items():
         if not isinstance(tok, dict):
-            continue
+            return None  # no bundle: the stretch is refused whole (`bundles_with_work`)
         fam = family(model, credits)
         rate = fit["input"].get(fam) if fam else None
         if rate is None:
@@ -1892,7 +1978,9 @@ def comparison_value(credits: dict, model_rates: dict | None = None,
     def value(tokens: dict) -> float | None:
         total = 0.0
         for model, tok in tokens.items():
-            if not isinstance(tok, dict) or not raw_tokens(tok):
+            if not isinstance(tok, dict):
+                return None  # no bundle: the stretch is refused whole (`bundles_with_work`)
+            if not holds_work(tok):
                 continue
             fam = family(model, credits)
             if fam is None:
@@ -2211,8 +2299,7 @@ def announced_change_stretches(by_account: dict[str, list[dict]],
     """
     kept = clean_stretches(by_account, runs, require="status")
     if "masterrig" in kept:
-        kept["masterrig"] = [st for st in kept["masterrig"]
-                             if datetime.fromisoformat(st["start"]) >= MASTERRIG_FROM]
+        kept["masterrig"] = [st for st in kept["masterrig"] if _masterrig_in_use(st)]
     return kept
 
 
@@ -2232,9 +2319,12 @@ def candidate_bounds(at: datetime, cands: list[dict]) -> tuple[datetime | None, 
 
 
 def _side_of(st: dict, at: datetime, lo: datetime | None, hi: datetime | None) -> str | None:
-    """Which side of `at` a stretch lies wholly on, within (lo, hi), or None if it spans one."""
-    start = datetime.fromisoformat(st["start"])
-    end = datetime.fromisoformat(st["end"])
+    """Which side of `at` a stretch lies wholly on, within (lo, hi), or None if it spans one
+    or has no span to place (`clean_stretches` keeps a stretch missing a stamp)."""
+    span = stretch_span(st)
+    if span is None:
+        return None
+    start, end = span
     if (lo is None or start >= lo) and end <= at:
         return "before"
     if start >= at and (hi is None or end <= hi):

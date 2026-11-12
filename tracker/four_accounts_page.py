@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .atomic import write_text_atomic
+from .usage_api import as_utc
 
 UTC = timezone.utc
 EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
@@ -95,7 +96,7 @@ def stamp(h: float) -> str:
 
 def parse(s: str) -> datetime:
     d = datetime.fromisoformat(s)
-    return d if d.tzinfo else d.replace(tzinfo=UTC)
+    return as_utc(d)
 
 
 def pct(x: float) -> float:
@@ -354,7 +355,7 @@ def last_change(block: dict | None) -> dict | None:
     found = measured_changes(block)
     if not found:
         return None
-    newest = max(found, key=lambda c: c["at"])
+    newest = max(found, key=lambda c: parse(c["at"]))
     record = change_record(newest, account_labels(block or {}))
     out = {k: v for k, v in record.items() if k not in ("kind", "label")}
     out["hero"] = stated_record(newest)

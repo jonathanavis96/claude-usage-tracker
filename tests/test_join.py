@@ -55,6 +55,26 @@ class IntervalTests(unittest.TestCase):
         iv = build_intervals([S(0, 90, reset=None), S(5, 3, reset=None)], [T(1)])
         self.assertEqual(iv, [])
 
+    def test_reset_less_reading_before_the_next_readings_window_began_is_a_reset(self):
+        # masterrig merges the ceiling log (no reset ids) with reset-bearing logs: a ceiling
+        # reading at 2% in the window ending 10:05, then the new window's first recorded
+        # reading at 3% (resets 15:05, so it began at 10:05). The meter fell to 0 between
+        # them; pairing them counts the old window's turn at 10:04 against the new window.
+        new = (T0 + timedelta(minutes=5, hours=5)).isoformat()
+        iv = build_intervals([S(3, 2, reset=None), S(12, 3, reset=new), S(20, 4, reset=new)],
+                             [T(4, cr=9_000_000), T(15)])
+        self.assertEqual(len(iv), 1)
+        self.assertEqual((iv[0].start, iv[0].delta_pct), (S(12, 0).ts, 1.0))
+        self.assertEqual(iv[0].tokens["cache_read"], 100_000)
+
+    def test_an_idle_reading_still_pairs_with_the_first_reading_of_the_window_it_opens(self):
+        # 0% with no reset id is a meter with no window open; the window that opens next
+        # starts from it, so the pair is that window's own movement, not a straddle.
+        new = (T0 + timedelta(minutes=5, hours=5)).isoformat()
+        iv = build_intervals([S(3, 0, reset=None), S(12, 1, reset=new)], [T(6)])
+        self.assertEqual(len(iv), 1)
+        self.assertEqual(iv[0].start, S(3, 0).ts)
+
 class DailyTests(unittest.TestCase):
     def test_median_and_interpolation(self):
         samples = [S(i * 5, 10 + i) for i in range(7)]           # 6 intervals of 1% on day 1

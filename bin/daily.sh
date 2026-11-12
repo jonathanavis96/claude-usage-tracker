@@ -361,7 +361,8 @@ notify_change() {
   # consecutive publishes of new evidence show it dated within a day of each other, and
   # never when it is within a day of a date already announced. New evidence means a newer
   # window in weekly_windows.passive, or a newer stretch on any account
-  # (account_feeds[].newest_stretch_end): this script publishes every half hour but the
+  # (account_feeds[].newest_stretch_end, or newest_step_end past the five-hour limit's end):
+  # this script publishes every half hour but the
   # histories arrive daily, and a re-read of the same windows and stretches is not a second
   # look. The observation is recorded before the env file is checked, so it never skips a day.
   #
@@ -418,8 +419,8 @@ def newest(stamps):
 windows = ((public.get("weekly_windows") or {}).get("passive") or {}).get("by_window") or []
 feeds = public.get("account_feeds") or {}
 evidence = (newest([w.get("window_ending") for w in windows if isinstance(w, dict)]
-                   + [f.get("newest_stretch_end") for f in (feeds.values() if isinstance(feeds, dict) else [])
-                      if isinstance(f, dict)])
+                   + [f.get(k) for f in (feeds.values() if isinstance(feeds, dict) else [])
+                      if isinstance(f, dict) for k in ("newest_stretch_end", "newest_step_end")])
             or public.get("passive_generated_at") or public.get("generated_at"))
 try:
     with open(os.environ["SEEN"], encoding="utf-8") as fh:
