@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-12T05:30:05.272805+00:00",
+ "generated_at": "2026-11-12T06:00:05.936781+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-12T05:29:15+00:00",
+    "last": "2026-11-12T05:58:10+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39146,7 +39146,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-12T05:26:07+00:00",
+    "last": "2026-11-12T05:58:12+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -72147,12 +72147,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 25585,
+    "reset_verified_samples": 25597,
     "since": null,
-    "samples": 28840,
+    "samples": 28852,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-12T05:29:15+00:00",
-    "five_hour_last": "2026-11-12T05:29:15+00:00",
+    "last": "2026-11-12T05:58:11+00:00",
+    "five_hour_last": "2026-11-12T05:58:11+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -88758,7 +88758,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-12T05:31:52.396126+00:00",
+  "generated_at": "2026-11-12T06:01:54.866959+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
