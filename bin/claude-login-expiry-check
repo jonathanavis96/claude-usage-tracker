@@ -46,9 +46,9 @@ REPO = Path(__file__).resolve().parent.parent   # ~/bin holds a symlink to this 
 def oauth_state(cfg: Path):
     try:
         o = json.loads((cfg / ".credentials.json").read_text()).get("claudeAiOauth", {})
-    except (OSError, ValueError):
+        end = o.get("refreshTokenExpiresAt")
+    except (OSError, ValueError, AttributeError):   # AttributeError: valid JSON, wrong shape
         return "unreadable", None
-    end = o.get("refreshTokenExpiresAt")
     if not o.get("refreshToken"):
         return "signed-out", end / 1000 if end else None
     if not end:
@@ -68,8 +68,11 @@ def token_state(name: str, var: str):
         return "no-token", None
     end = None
     if idx and (m := re.search(r"created (\d{4}-\d{2}-\d{2})", lines[idx - 1])):
-        issued = datetime.strptime(m.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end = (issued + timedelta(days=TOKEN_LIFE_DAYS)).timestamp()
+        try:   # a hand-edited comment can hold an impossible date: report no end date
+            issued = datetime.strptime(m.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end = (issued + timedelta(days=TOKEN_LIFE_DAYS)).timestamp()
+        except ValueError:
+            pass
     if _meter_rejected(OPS / f"claude-usage-meter-{name}.log"):
         return "rejected", end
     if end is None:
@@ -118,8 +121,11 @@ def main() -> int:
                             "A Claude Code login on the greenscape box is signed out or about to end.\n"
                             "Nothing renews it automatically; it needs an interactive /login or a new setup token.\n\n"
                             + "\n".join(bad)],
-                           cwd=REPO)
-        if r.returncode == 0:
+                           cwd=REPO, capture_output=True, text=True)
+        print(r.stdout, end="")
+        print(r.stderr, end="", file=sys.stderr)
+        # tracker.alert exits 0 when it skips for missing config, so 0 alone is not "sent".
+        if r.returncode == 0 and "alert: sent" in r.stdout:
             STAMP.parent.mkdir(parents=True, exist_ok=True); STAMP.write_text(today)
     return 1 if bad else 0
 
