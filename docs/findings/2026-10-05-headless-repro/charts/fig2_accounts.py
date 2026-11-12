@@ -1,5 +1,5 @@
 """Figure 2: per-account headless factors with 95% intervals (tools/headless_hypotheses.py,
-306-step window). Numbers read from repro/fits.json, original_window."""
+306-step window). Numbers read from recorded/fits.json, original_window."""
 import os
 
 import style

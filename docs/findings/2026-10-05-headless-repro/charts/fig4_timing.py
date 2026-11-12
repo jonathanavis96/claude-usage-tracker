@@ -1,5 +1,5 @@
 """Figure 4: timing-shift check. Each step's transcript turns are re-binned into meter steps
-with an offset; the factor is highest with no offset. Numbers read from repro/tables.json
+with an offset; the factor is highest with no offset. Numbers read from recorded/tables.json
 (tools/headless_hypotheses.py at da63a25, 306 steps)."""
 import os
 

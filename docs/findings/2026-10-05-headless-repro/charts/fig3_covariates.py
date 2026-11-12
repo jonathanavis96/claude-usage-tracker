@@ -1,5 +1,5 @@
 """Figure 3: the headless factor with each other variable added to the fit (covariate table,
-tools/headless_hypotheses.py at c87d4c7, 306 steps). Numbers read from repro/tables.json."""
+tools/headless_hypotheses.py at c87d4c7, 306 steps). Numbers read from recorded/tables.json."""
 import os
 
 import style
