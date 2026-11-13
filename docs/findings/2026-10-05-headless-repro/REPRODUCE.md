@@ -18,6 +18,17 @@ python3 meter_split.py             # which meter carries it
 python3 recorded.py                # the figures that need the private transcripts
 ```
 
+The five charts in `charts/` are drawn from the same files. That needs matplotlib as well, and
+the Liberation Sans font for an exact match:
+
+```sh
+cd charts
+for f in fig1_headline fig2_accounts fig3_covariates fig4_timing fig5_split; do python3 $f.py; done
+```
+
+Each script overwrites its PNG. On 2026-10-24 all five came out pixel-identical to the
+committed images.
+
 Each command finishes in under a minute. The expected output is below, command by command.
 It was checked on 2026-10-23 from a fresh clone, with Python 3.12.3 and numpy 2.4.2.
 
