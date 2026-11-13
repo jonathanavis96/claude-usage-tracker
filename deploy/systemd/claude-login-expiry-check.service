@@ -1,0 +1,9 @@
+[Unit]
+Description=Warn before a Claude Code seat's login ends (dates only, never token values)
+
+[Service]
+Type=oneshot
+ExecStart=%h/claude-usage-tracker/bin/claude-login-expiry-check --alert
+# Exit 1 means a seat needs attention; the mail has already gone.
+SuccessExitStatus=0 1
+Nice=10

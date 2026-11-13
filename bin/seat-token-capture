@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Move a `claude setup-token` result from a tmux pane into ~/.config/greenscape/env.
+
+Usage: seat-token-capture <tmux-session> <ENV_VAR_NAME>
+
+Reads the pane, finds the long-lived OAuth token the CLI printed, and writes
+ENV_VAR_NAME=<token> into the env file (mode 600), replacing an existing line
+for that name. The env file is copied to a timestamped sibling first. Never
+prints the token: output is only whether it was found, its length and prefix
+family. Clears the tmux scrollback and kills the session afterwards so the
+token does not linger on screen.
+"""
+import os, re, shutil, subprocess, sys, time
+from pathlib import Path
+
+if len(sys.argv) != 3 or not re.fullmatch(r"[A-Z][A-Z0-9_]*", sys.argv[2]):
+    sys.exit("usage: seat-token-capture <tmux-session> <ENV_VAR_NAME>")
+session, name = sys.argv[1], sys.argv[2]
+
+pane = subprocess.run(["tmux", "capture-pane", "-p", "-J", "-S", "-200", "-t", session],
+                      capture_output=True, text=True, check=True).stdout
+# `capture-pane -J` already rejoins lines the terminal wrapped. Joining every
+# newline as well glued the next line's first word ("Store") onto the token
+# (2026-10-12), so match on the pane as captured.
+m = re.findall(r"sk-ant-oat01-[A-Za-z0-9_\-]+", pane)
+if not m:
+    sys.exit("no token found in the pane yet (has the code been entered?)")
+token = m[-1]
+if len(token) != 108:
+    sys.exit(f"found a token of length {len(token)}, expected 108; not saved (check the pane by hand)")
+
+env = Path.home() / ".config/greenscape/env"
+if env.exists():
+    shutil.copy2(env, env.with_name(env.name + ".bak-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())))
+lines = env.read_text().splitlines() if env.exists() else []
+# The date comment above the variable is how claude-login-expiry-check knows when
+# the 1-year token ends; the old line's comment goes with it.
+keep = []
+for l in lines:
+    if re.match(rf"\s*(export\s+)?{name}=", l):
+        if keep and keep[-1].startswith("#") and "created" in keep[-1]:
+            keep.pop()
+        continue
+    keep.append(l)
+lines = keep
+today = time.strftime("%Y-%m-%d", time.gmtime())
+lines.append(f"# {name}: 1-year setup-token, created {today}, expires ~{int(today[:4]) + 1}{today[4:]}.")
+lines.append(f"{name}={token}")
+fd = os.open(env, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    f.write("\n".join(lines) + "\n")
+os.chmod(env, 0o600)
+
+subprocess.run(["tmux", "clear-history", "-t", session])
+subprocess.run(["tmux", "kill-session", "-t", session])
+print(f"saved {name} to {env} (length {len(token)}, sk-ant-oat01 family); env backed up; tmux session {session} closed")

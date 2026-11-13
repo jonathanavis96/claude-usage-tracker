@@ -48,7 +48,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# shellcheck source=deploy/lib.sh
+# shellcheck source=deploy/lib.sh disable=SC1091  # followed only with shellcheck -x
 declare -F cut_install >/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # The meter units are not installed here: report drift from deploy/systemd/, read-only.
@@ -56,7 +56,7 @@ declare -F cut_install >/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 cut_host_checks() {
   local repo="$1" u f drift=0
   [ -d "$repo/deploy/systemd" ] || { say "meter units: $repo/deploy/systemd missing, not compared"; return 0; }
-  for f in "$repo"/deploy/systemd/claude-usage-meter-*; do
+  for f in "$repo"/deploy/systemd/claude-usage-meter-* "$repo"/deploy/systemd/claude-login-expiry-check.*; do
     u="$(basename "$f")"
     if ! cmp -s "$f" "$HOME/.config/systemd/user/$u"; then
       drift=1; _warn "meter unit $u differs from deploy/systemd/$u (not changed here):"
@@ -67,6 +67,12 @@ cut_host_checks() {
     esac
   done
   [ "$drift" = 0 ] && say "meter units: all match deploy/systemd/"
+  # The seat-login scripts run from this checkout; ~/bin keeps their names as symlinks
+  # for the scripts and notes that call them by that path. Reported, never changed.
+  for f in claude-login-expiry-check seat-token-capture seat-token-start; do
+    [ "$(readlink -f "$HOME/bin/$f")" = "$(readlink -f "$repo/bin/$f")" ] \
+      || _warn "$HOME/bin/$f is not a symlink to $repo/bin/$f (docs/OPERATIONS.md, seat logins)"
+  done
 }
 
 BEGIN="# ===== CLAUDE USAGE TRACKER GS (managed by deploy/install-gs.sh) ====="
