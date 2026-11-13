@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-13T09:00:06.254077+00:00",
+ "generated_at": "2026-11-13T09:30:05.778212+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-13T08:58:45+00:00",
+    "last": "2026-11-13T09:29:21+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39991,7 +39991,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-13T09:00:51+00:00",
+    "last": "2026-11-13T09:26:18+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -74465,12 +74465,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 26306,
+    "reset_verified_samples": 26321,
     "since": null,
-    "samples": 29581,
+    "samples": 29596,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-13T09:00:50+00:00",
-    "five_hour_last": "2026-11-13T09:00:50+00:00",
+    "last": "2026-11-13T09:31:21+00:00",
+    "five_hour_last": "2026-11-13T09:31:21+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -74482,7 +74482,7 @@
      ".claude-jono"
     ],
     "files": 4045,
-    "turns": 93672,
+    "turns": 93678,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2242,
@@ -74503,7 +74503,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 1270,
-      "turns": 42210
+      "turns": 42216
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -91754,7 +91754,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-13T09:00:50+00:00",
+     "window_ending": "2026-11-13T09:31:21+00:00",
      "windows": null,
      "five_hour_pct": 1.0,
      "seven_day_pct": 0.0,
@@ -91776,7 +91776,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-13T09:02:12.704168+00:00",
+  "generated_at": "2026-11-13T09:32:26.552079+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
