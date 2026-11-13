@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-13T07:30:05.240113+00:00",
+ "generated_at": "2026-11-13T08:00:05.729050+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-13T07:29:00+00:00",
+    "last": "2026-11-13T07:59:13+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -34,11 +34,11 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 9374,
-    "turns": 197350,
+    "files": 9375,
+    "turns": 197351,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 5852,
+     "kept": 5853,
      "dropped": 5672,
      "subagent_files": 1994,
      "dropped_to": {
@@ -47,7 +47,7 @@
       ".claude-dave": 8
      },
      "attributed_by_record": {
-      "airlock_tune_env": 927,
+      "airlock_tune_env": 928,
       "auto_mail_default_login": 555,
       "harness_run": 465
      },
@@ -61,8 +61,8 @@
      {
       "source": "live",
       "root": "/home/jonathan/.claude-javiswork/projects",
-      "files": 2750,
-      "turns": 60378
+      "files": 2751,
+      "turns": 60379
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -39991,7 +39991,7 @@
     "since": null,
     "samples": 17554,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-13T07:29:01+00:00",
+    "last": "2026-11-13T07:59:15+00:00",
     "five_hour_last": "2026-10-31T20:47:55+00:00",
     "weekly_only_since": "2026-11-02T17:13:48+00:00"
    },
@@ -57555,6 +57555,51 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-13T07:29:01+00:00",
+     "end": "2026-11-13T07:44:10+00:00",
+     "seven_day": 27,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-13T07:44:10+00:00",
+     "end": "2026-11-13T07:49:11+00:00",
+     "seven_day": 28,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-13T07:49:11+00:00",
+     "end": "2026-11-13T07:59:15+00:00",
+     "seven_day": 29,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -74310,12 +74355,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 26262,
+    "reset_verified_samples": 26277,
     "since": null,
-    "samples": 29537,
+    "samples": 29552,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-13T07:31:04+00:00",
-    "five_hour_last": "2026-11-13T07:31:04+00:00",
+    "last": "2026-11-13T08:01:14+00:00",
+    "five_hour_last": "2026-11-13T08:01:14+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -74327,18 +74372,18 @@
      ".claude-jono"
     ],
     "files": 4045,
-    "turns": 93640,
+    "turns": 93653,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2242,
-     "dropped": 5653,
+     "dropped": 5654,
      "subagent_files": 1009,
      "dropped_to": {
       ".claude": 2,
-      ".claude-javiswork": 3315
+      ".claude-javiswork": 3316
      },
      "attributed_by_record": {
-      "airlock_tune_env": 816
+      "airlock_tune_env": 817
      },
      "unclaimed": 2336,
      "contested": 182
@@ -74348,7 +74393,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 1270,
-      "turns": 42178
+      "turns": 42191
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -91609,7 +91654,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-13T07:32:11.536485+00:00",
+  "generated_at": "2026-11-13T08:02:20.237637+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -174363,11 +174408,12 @@
     "model": "claude-opus-5-5",
     "account": "a2",
     "entrypoint": "sdk-cli",
-    "n": 1701,
+    "n": 1702,
     "fast_session_requests": 0,
     "output_hist": {
      "247": 20,
      "246": 33,
+     "228": 82,
      "242": 53,
      "237": 87,
      "239": 68,
@@ -174380,7 +174426,6 @@
      "240": 52,
      "236": 80,
      "229": 115,
-     "228": 81,
      "235": 80,
      "241": 60,
      "234": 97,
@@ -174414,6 +174459,7 @@
     "ttfb_hist": {
      "147": 1,
      "148": 5,
+     "39": 14,
      "105": 7,
      "136": 7,
      "157": 3,
@@ -174498,7 +174544,6 @@
      "3": 7,
      "72": 19,
      "20": 14,
-     "39": 13,
      "135": 5,
      "122": 2,
      "29": 21,
@@ -174946,7 +174991,7 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 78,
+    "n": 84,
     "fast_session_requests": 0,
     "output_hist": {
      "234": 6,
@@ -174954,9 +174999,9 @@
      "222": 5,
      "226": 9,
      "224": 2,
-     "231": 2,
-     "236": 1,
-     "230": 5,
+     "231": 3,
+     "236": 2,
+     "230": 6,
      "233": 2,
      "235": 1,
      "225": 4,
@@ -174966,18 +175011,19 @@
      "229": 3,
      "221": 2,
      "228": 5,
-     "220": 2,
+     "220": 3,
      "213": 1,
      "219": 1,
      "239": 3,
      "243": 1,
-     "232": 1,
+     "232": 2,
      "179": 1,
      "169": 1,
      "210": 1,
      "215": 1,
      "214": 1,
-     "206": 1
+     "206": 1,
+     "245": 1
     },
     "ttfb_hist": {
      "110": 1,
@@ -174990,12 +175036,12 @@
      "104": 1,
      "75": 4,
      "67": 3,
-     "99": 2,
+     "99": 3,
      "54": 3,
      "46": 1,
      "119": 1,
      "53": 1,
-     "51": 1,
+     "51": 2,
      "42": 1,
      "28": 1,
      "34": 1,
@@ -175015,7 +175061,7 @@
      "116": 1,
      "58": 1,
      "68": 4,
-     "83": 1,
+     "83": 2,
      "66": 1,
      "33": 1,
      "25": 1,
@@ -175030,9 +175076,11 @@
      "62": 1,
      "124": 1,
      "121": 1,
-     "84": 1,
+     "84": 2,
      "101": 1,
-     "86": 1
+     "86": 1,
+     "47": 1,
+     "59": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
