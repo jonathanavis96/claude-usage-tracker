@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-15T01:00:05.300236+00:00",
+ "generated_at": "2026-11-15T01:30:05.422260+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-15T00:58:45+00:00",
+    "last": "2026-11-15T01:29:01+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -35,7 +35,7 @@
      ".claude-jono"
     ],
     "files": 9416,
-    "turns": 197903,
+    "turns": 197919,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 5891,
@@ -74,7 +74,7 @@
       "source": "remote",
       "hosts": 1,
       "files": 3525,
-      "turns": 64059
+      "turns": 64075
      }
     ]
    },
@@ -21650,6 +21650,29 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-15T00:06:06+00:00",
+     "end": "2026-11-15T01:20:58+00:00",
+     "seven_day": 34,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-fable-5-2": {
+       "input": 56,
+       "output": 57945,
+       "cache_read": 20529999,
+       "cache_write": 80777,
+       "cache_write_1h": 80777
+      }
+     },
+     "unpriced_tokens": 20668777,
+     "turns": 25,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -40285,7 +40308,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-15T00:56:36+00:00",
+    "last": "2026-11-15T01:27:01+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -74809,12 +74832,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 27338,
+    "reset_verified_samples": 27353,
     "since": null,
-    "samples": 30732,
+    "samples": 30747,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-15T01:00:50+00:00",
-    "five_hour_last": "2026-11-15T01:00:50+00:00",
+    "last": "2026-11-15T01:31:01+00:00",
+    "five_hour_last": "2026-11-15T01:31:01+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -92890,7 +92913,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-15T01:02:05.712785+00:00",
+  "generated_at": "2026-11-15T01:32:05.738298+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -177377,7 +177400,7 @@
     "model": "claude-fable-5-2",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 19,
+    "n": 35,
     "fast_session_requests": 0,
     "output_hist": {
      "237": 1,
@@ -177395,7 +177418,21 @@
      "132": 1,
      "231": 1,
      "239": 1,
-     "228": 1
+     "228": 1,
+     "193": 1,
+     "217": 1,
+     "232": 3,
+     "212": 1,
+     "238": 1,
+     "233": 1,
+     "226": 1,
+     "222": 1,
+     "224": 1,
+     "204": 1,
+     "218": 1,
+     "234": 1,
+     "170": 1,
+     "159": 1
     },
     "ttfb_hist": {
      "143": 1,
@@ -177407,8 +177444,8 @@
      "178": 1,
      "91": 1,
      "81": 1,
-     "83": 1,
-     "124": 1,
+     "83": 2,
+     "124": 2,
      "78": 1,
      "176": 1,
      "118": 1,
@@ -177416,7 +177453,18 @@
      "107": 1,
      "90": 1,
      "103": 1,
-     "121": 1
+     "121": 1,
+     "197": 2,
+     "108": 2,
+     "167": 1,
+     "73": 2,
+     "193": 1,
+     "84": 1,
+     "198": 1,
+     "142": 1,
+     "86": 1,
+     "172": 1,
+     "186": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
