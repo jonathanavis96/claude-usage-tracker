@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-15T12:30:06.008039+00:00",
+ "generated_at": "2026-11-15T13:00:06.439429+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-15T12:30:04+00:00",
+    "last": "2026-11-15T12:59:07+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -22084,6 +22084,36 @@
      },
      "headless_turns": 20,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-15T11:32:04+00:00",
+     "end": "2026-11-15T12:46:48+00:00",
+     "seven_day": 45,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-sonnet-5-5": {
+       "input": 98,
+       "output": 51793,
+       "cache_read": 11329320,
+       "cache_write": 79190,
+       "cache_write_1h": 79190
+      },
+      "claude-fable-5-2": {
+       "input": 40,
+       "output": 59258,
+       "cache_read": 8439491,
+       "cache_write": 77314,
+       "cache_write_1h": 77314
+      }
+     },
+     "unpriced_tokens": 8576103,
+     "turns": 67,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -40719,7 +40749,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-15T12:29:05+00:00",
+    "last": "2026-11-15T13:00:09+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -75243,12 +75273,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 27550,
+    "reset_verified_samples": 27565,
     "since": null,
-    "samples": 31062,
+    "samples": 31077,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-15T12:30:04+00:00",
-    "five_hour_last": "2026-11-15T12:30:04+00:00",
+    "last": "2026-11-15T13:01:08+00:00",
+    "five_hour_last": "2026-11-15T13:01:08+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -93324,6 +93354,18 @@
      ],
      "pieces": 1,
      "reset_verified": false
+    },
+    {
+     "window_ending": "2026-11-15T13:01:08+00:00",
+     "windows": null,
+     "five_hour_pct": 2.0,
+     "seven_day_pct": 0.0,
+     "rounding_interval": [
+      0.2734,
+      null
+     ],
+     "pieces": 1,
+     "reset_verified": false
     }
    ]
   }
@@ -93336,7 +93378,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-15T12:31:30.543300+00:00",
+  "generated_at": "2026-11-15T13:01:32.708168+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
