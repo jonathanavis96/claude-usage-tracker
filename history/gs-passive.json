@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-15T14:30:06.073317+00:00",
+ "generated_at": "2026-11-15T15:00:05.589778+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-15T14:28:48+00:00",
+    "last": "2026-11-15T15:00:04+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39,11 +39,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 5893,
-     "dropped": 5739,
+     "dropped": 5740,
      "subagent_files": 2002,
      "dropped_to": {
       ".claude": 558,
-      ".claude-avis": 2559,
+      ".claude-avis": 2560,
       ".claude-dave": 8
      },
      "attributed_by_record": {
@@ -22137,6 +22137,36 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-15T13:43:04+00:00",
+     "end": "2026-11-15T14:41:05+00:00",
+     "seven_day": 47,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 12,
+       "output": 3143,
+       "cache_read": 366747,
+       "cache_write": 54196,
+       "cache_write_1h": 54196
+      },
+      "claude-fable-5-2": {
+       "input": 2,
+       "output": 1238,
+       "cache_read": 656896,
+       "cache_write": 764,
+       "cache_write_1h": 764
+      }
+     },
+     "unpriced_tokens": 658900,
+     "turns": 7,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -40772,7 +40802,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-15T14:28:50+00:00",
+    "last": "2026-11-15T15:00:05+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -75296,12 +75326,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 27608,
+    "reset_verified_samples": 27622,
     "since": null,
-    "samples": 31120,
+    "samples": 31134,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-15T14:30:58+00:00",
-    "five_hour_last": "2026-11-15T14:30:58+00:00",
+    "last": "2026-11-15T15:00:04+00:00",
+    "five_hour_last": "2026-11-15T15:00:04+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -93379,7 +93409,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-15T14:30:58+00:00",
+     "window_ending": "2026-11-15T15:00:04+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
@@ -93401,7 +93431,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-15T14:31:34.880288+00:00",
+  "generated_at": "2026-11-15T15:01:30.899151+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
