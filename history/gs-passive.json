@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-15T04:30:06.947630+00:00",
+ "generated_at": "2026-11-15T05:00:05.781629+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-15T04:29:43+00:00",
+    "last": "2026-11-15T04:58:48+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -21785,6 +21785,44 @@
      },
      "headless_turns": 58,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-15T03:58:15+00:00",
+     "end": "2026-11-15T04:44:06+00:00",
+     "seven_day": 38,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 64,
+       "output": 20678,
+       "cache_read": 7613032,
+       "cache_write": 49127,
+       "cache_write_1h": 49127
+      },
+      "claude-fable-5-2": {
+       "input": 32,
+       "output": 36924,
+       "cache_read": 8429332,
+       "cache_write": 59696,
+       "cache_write_1h": 59696
+      }
+     },
+     "unpriced_tokens": 8525984,
+     "turns": 45,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "claude-opus-5-5": {
+       "input": 32,
+       "output": 7703,
+       "cache_read": 3288277,
+       "cache_write": 25489,
+       "cache_write_1h": 25489
+      }
+     },
+     "headless_turns": 15,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -40420,7 +40458,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-15T04:30:50+00:00",
+    "last": "2026-11-15T04:56:39+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -74946,10 +74984,10 @@
     "note": null,
     "reset_verified_samples": 27381,
     "since": null,
-    "samples": 30831,
+    "samples": 30846,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-15T04:29:43+00:00",
-    "five_hour_last": "2026-11-15T04:29:43+00:00",
+    "last": "2026-11-15T05:00:58+00:00",
+    "five_hour_last": "2026-11-15T05:00:58+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -93025,7 +93063,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-15T04:32:01.640330+00:00",
+  "generated_at": "2026-11-15T05:01:31.667188+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
