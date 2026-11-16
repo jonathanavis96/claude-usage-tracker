@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-15T19:16:58.664434+00:00",
+ "generated_at": "2026-11-16T16:16:44.736900+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -31,7 +31,7 @@
     "since": null,
     "samples": 24641,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-11-15T19:15:04+00:00",
+    "last": "2026-11-16T16:15:18+00:00",
     "five_hour_last": "2026-10-31T11:20:00+00:00",
     "weekly_only_since": "2026-10-31T13:30:02.334304+02:00"
    },
@@ -39,13 +39,13 @@
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 9644,
-    "turns": 240582,
+    "files": 9656,
+    "turns": 241883,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 9644,
+     "kept": 9656,
      "dropped": 215,
-     "subagent_files": 3587,
+     "subagent_files": 3588,
      "dropped_to": {
       ".claude-avis": 133
      },
@@ -60,8 +60,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 9644,
-      "turns": 240582
+      "files": 9656,
+      "turns": 241883
      }
     ]
    },
@@ -26395,6 +26395,125 @@
      },
      "unpriced_tokens": 0,
      "turns": 287,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-15T16:46:12+00:00",
+     "end": "2026-11-16T08:57:17+00:00",
+     "seven_day": 10,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 702,
+       "output": 104953,
+       "cache_read": 99201088,
+       "cache_write": 804778,
+       "cache_write_1h": 804778
+      },
+      "claude-sonnet-4-6": {
+       "input": 7,
+       "output": 2638,
+       "cache_read": 149415,
+       "cache_write": 22287,
+       "cache_write_1h": 22287
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 282,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 7,
+       "output": 2638,
+       "cache_read": 149415,
+       "cache_write": 22287,
+       "cache_write_1h": 22287
+      }
+     },
+     "headless_turns": 5,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-16T08:57:17+00:00",
+     "end": "2026-11-16T11:27:19+00:00",
+     "seven_day": 11,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 832,
+       "output": 199484,
+       "cache_read": 69143768,
+       "cache_write": 945168,
+       "cache_write_1h": 945168
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 352,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-16T11:27:19+00:00",
+     "end": "2026-11-16T15:00:03.597613+02:00",
+     "seven_day": 12,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 828,
+       "output": 198690,
+       "cache_read": 96009291,
+       "cache_write": 649776,
+       "cache_write_1h": 649776
+      },
+      "claude-sonnet-5-5": {
+       "input": 32,
+       "output": 11545,
+       "cache_read": 931777,
+       "cache_write": 88144
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 371,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-16T15:00:03.597613+02:00",
+     "end": "2026-11-16T16:15:18+00:00",
+     "seven_day": 13,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 852,
+       "output": 205148,
+       "cache_read": 105883613,
+       "cache_write": 694106,
+       "cache_write_1h": 694106
+      },
+      "claude-sonnet-5-5": {
+       "input": 16,
+       "output": 6030,
+       "cache_read": 474819,
+       "cache_write": 104031
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 372,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
      "headless_turns": 0,
