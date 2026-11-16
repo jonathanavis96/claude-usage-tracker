@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-16T12:30:06.370189+00:00",
+ "generated_at": "2026-11-16T13:00:05.680818+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-16T12:29:05+00:00",
+    "last": "2026-11-16T12:58:09+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -39,11 +39,11 @@
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 5925,
-     "dropped": 5750,
+     "dropped": 5751,
      "subagent_files": 2013,
      "dropped_to": {
       ".claude": 558,
-      ".claude-avis": 2570,
+      ".claude-avis": 2571,
       ".claude-dave": 8
      },
      "attributed_by_record": {
@@ -22767,6 +22767,21 @@
      },
      "headless_turns": 2,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-16T11:41:08+00:00",
+     "end": "2026-11-16T12:35:23+00:00",
+     "seven_day": 68,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {},
+     "unpriced_tokens": 0,
+     "turns": 0,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -41402,7 +41417,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-16T12:28:06+00:00",
+    "last": "2026-11-16T12:59:14+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -75926,12 +75941,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 28228,
+    "reset_verified_samples": 28240,
     "since": null,
-    "samples": 31755,
+    "samples": 31769,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-16T12:31:08+00:00",
-    "five_hour_last": "2026-11-16T12:31:08+00:00",
+    "last": "2026-11-16T13:00:14+00:00",
+    "five_hour_last": "2026-11-16T13:00:14+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -75942,11 +75957,11 @@
      ".claude-javiswork",
      ".claude-jono"
     ],
-    "files": 4128,
-    "turns": 95273,
+    "files": 4129,
+    "turns": 95304,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 2320,
+     "kept": 2321,
      "dropped": 5726,
      "subagent_files": 1031,
      "dropped_to": {
@@ -75963,8 +75978,8 @@
      {
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
-      "files": 1348,
-      "turns": 43283
+      "files": 1349,
+      "turns": 43314
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -94234,7 +94249,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-16T12:31:08+00:00",
+     "window_ending": "2026-11-16T12:39:43+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
@@ -94256,7 +94271,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-16T12:31:34.771859+00:00",
+  "generated_at": "2026-11-16T13:01:35.690477+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -180016,28 +180031,57 @@
     "model": "claude-opus-5-5",
     "account": "a4",
     "entrypoint": "cli",
-    "n": 10,
+    "n": 32,
     "fast_session_requests": 0,
     "output_hist": {
-     "226": 1,
-     "230": 2,
+     "226": 2,
+     "230": 3,
      "233": 1,
      "224": 1,
-     "234": 2,
-     "235": 1,
-     "232": 1,
-     "228": 1
+     "234": 6,
+     "235": 2,
+     "232": 2,
+     "228": 3,
+     "221": 1,
+     "231": 1,
+     "237": 1,
+     "223": 2,
+     "238": 1,
+     "243": 1,
+     "236": 1,
+     "240": 1,
+     "220": 1,
+     "218": 2
     },
     "ttfb_hist": {
      "50": 1,
      "21": 2,
      "65": 1,
-     "69": 1,
+     "69": 2,
      "59": 1,
      "55": 1,
      "39": 1,
      "125": 1,
-     "131": 1
+     "131": 1,
+     "42": 2,
+     "109": 1,
+     "32": 1,
+     "81": 1,
+     "23": 1,
+     "51": 1,
+     "75": 1,
+     "30": 1,
+     "57": 2,
+     "52": 1,
+     "61": 1,
+     "80": 1,
+     "49": 1,
+     "91": 1,
+     "43": 1,
+     "70": 1,
+     "40": 1,
+     "58": 1,
+     "95": 1
     },
     "fast_output_hist": {},
     "fast_ttfb_hist": {}
