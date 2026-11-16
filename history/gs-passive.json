@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-16T10:30:05.992913+00:00",
+ "generated_at": "2026-11-16T11:00:06.083749+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-16T10:28:09+00:00",
+    "last": "2026-11-16T10:59:23+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -22706,6 +22706,29 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-16T08:57:04+00:00",
+     "end": "2026-11-16T10:45:04+00:00",
+     "seven_day": 66,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-fable-5-2": {
+       "input": 56,
+       "output": 34077,
+       "cache_read": 11722630,
+       "cache_write": 68915,
+       "cache_write_1h": 68915
+      }
+     },
+     "unpriced_tokens": 11825678,
+     "turns": 26,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -41341,7 +41364,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-16T10:27:09+00:00",
+    "last": "2026-11-16T10:58:19+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -75865,12 +75888,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 28170,
+    "reset_verified_samples": 28184,
     "since": null,
-    "samples": 31697,
+    "samples": 31711,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-16T10:30:14+00:00",
-    "five_hour_last": "2026-11-16T10:30:14+00:00",
+    "last": "2026-11-16T10:59:24+00:00",
+    "five_hour_last": "2026-11-16T10:59:24+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -94183,7 +94206,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-16T10:31:42.939119+00:00",
+  "generated_at": "2026-11-16T11:01:43.761682+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
