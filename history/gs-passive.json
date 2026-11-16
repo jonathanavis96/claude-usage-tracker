@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-16T12:00:05.797037+00:00",
+ "generated_at": "2026-11-16T12:30:06.370189+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-16T12:00:04+00:00",
+    "last": "2026-11-16T12:29:05+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -34,8 +34,8 @@
      ".claude-avis",
      ".claude-jono"
     ],
-    "files": 9462,
-    "turns": 200496,
+    "files": 9463,
+    "turns": 200501,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 5925,
@@ -73,8 +73,8 @@
      {
       "source": "remote",
       "hosts": 1,
-      "files": 3537,
-      "turns": 66241
+      "files": 3538,
+      "turns": 66246
      }
     ]
    },
@@ -22744,10 +22744,17 @@
        "cache_read": 7646828,
        "cache_write": 167225,
        "cache_write_1h": 167225
+      },
+      "claude-sonnet-5-5": {
+       "input": 10,
+       "output": 2998,
+       "cache_read": 293520,
+       "cache_write": 52599,
+       "cache_write_1h": 52599
       }
      },
      "unpriced_tokens": 0,
-     "turns": 61,
+     "turns": 66,
      "remote_sourced_turns": 0,
      "headless_tokens": {
       "claude-opus-5-5": {
@@ -41395,7 +41402,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-16T11:56:59+00:00",
+    "last": "2026-11-16T12:28:06+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -75919,12 +75926,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 28213,
+    "reset_verified_samples": 28228,
     "since": null,
-    "samples": 31740,
+    "samples": 31755,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-16T12:00:04+00:00",
-    "five_hour_last": "2026-11-16T12:00:04+00:00",
+    "last": "2026-11-16T12:31:08+00:00",
+    "five_hour_last": "2026-11-16T12:31:08+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -94227,7 +94234,7 @@
      "reset_verified": false
     },
     {
-     "window_ending": "2026-11-16T12:00:04+00:00",
+     "window_ending": "2026-11-16T12:31:08+00:00",
      "windows": null,
      "five_hour_pct": 2.0,
      "seven_day_pct": 0.0,
@@ -94249,7 +94256,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-16T12:01:33.749286+00:00",
+  "generated_at": "2026-11-16T12:31:34.771859+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -180040,9 +180047,12 @@
     "model": "claude-sonnet-5-5",
     "account": "a2",
     "entrypoint": "cli",
-    "n": 30,
+    "n": 33,
     "fast_session_requests": 0,
     "output_hist": {
+     "241": 2,
+     "233": 1,
+     "244": 1,
      "235": 2,
      "242": 2,
      "237": 2,
@@ -180059,17 +180069,18 @@
      "226": 1,
      "232": 1,
      "238": 1,
-     "241": 1,
      "230": 1,
      "256": 1,
      "264": 1,
      "252": 1
     },
     "ttfb_hist": {
+     "38": 2,
+     "35": 3,
+     "72": 1,
      "37": 5,
      "65": 1,
      "40": 1,
-     "35": 2,
      "46": 1,
      "36": 2,
      "34": 1,
@@ -180078,7 +180089,6 @@
      "84": 1,
      "80": 1,
      "21": 1,
-     "38": 1,
      "43": 1,
      "81": 1,
      "57": 1,
