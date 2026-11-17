@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-17T18:00:05.693686+00:00",
+ "generated_at": "2026-11-17T18:30:06.699673+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-17T17:59:51+00:00",
+    "last": "2026-11-17T18:30:01+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -41552,7 +41552,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-17T17:56:50+00:00",
+    "last": "2026-11-17T18:27:01+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -41561,7 +41561,7 @@
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
     "files": 5668,
-    "turns": 174130,
+    "turns": 174134,
     "withheld_patterns": [],
     "own_sessions": null,
     "sources": [
@@ -41569,7 +41569,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-dave/projects",
       "files": 2366,
-      "turns": 97548
+      "turns": 97552
      },
      {
       "source": "archive:transcripts-20261015/claude-dave",
@@ -59537,6 +59537,36 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-17T16:31:18+00:00",
+     "end": "2026-11-17T18:11:57+00:00",
+     "seven_day": 43,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-fable-5-2": {
+       "input": 152,
+       "output": 64503,
+       "cache_read": 20853698,
+       "cache_write": 118831,
+       "cache_write_1h": 118831
+      },
+      "claude-opus-5-5": {
+       "input": 256,
+       "output": 60332,
+       "cache_read": 22777582,
+       "cache_write": 206003,
+       "cache_write_1h": 206003
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 199,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -76292,12 +76322,12 @@
     "legacy_log": null,
     "extra_logs": [],
     "note": null,
-    "reset_verified_samples": 29075,
+    "reset_verified_samples": 29090,
     "since": null,
-    "samples": 32614,
+    "samples": 32629,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-17T18:01:51+00:00",
-    "five_hour_last": "2026-11-17T18:01:51+00:00",
+    "last": "2026-11-17T18:32:03+00:00",
+    "five_hour_last": "2026-11-17T18:32:03+00:00",
     "weekly_only_since": null
    },
    "transcripts": {
@@ -95520,12 +95550,12 @@
     },
     {
      "window_ending": "2026-11-17T18:39:59.870401+00:00",
-     "windows": 4.86,
-     "five_hour_pct": 34.0,
+     "windows": 5.0,
+     "five_hour_pct": 35.0,
      "seven_day_pct": 7.0,
      "rounding_interval": [
-      3.7838,
-      6.5514
+      3.9005,
+      6.7356
      ],
      "pieces": 1,
      "reset_verified": true
@@ -95541,7 +95571,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-17T18:02:46.415985+00:00",
+  "generated_at": "2026-11-17T18:32:47.090172+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -181749,16 +181779,16 @@
     "model": "claude-fable-5-2",
     "account": "a3",
     "entrypoint": "cli",
-    "n": 79,
+    "n": 86,
     "fast_session_requests": 0,
     "output_hist": {
      "219": 3,
-     "214": 4,
+     "214": 5,
      "218": 4,
      "229": 3,
      "225": 4,
      "223": 8,
-     "211": 4,
+     "211": 5,
      "216": 7,
      "221": 2,
      "215": 7,
@@ -181768,7 +181798,7 @@
      "240": 1,
      "244": 1,
      "233": 1,
-     "213": 2,
+     "213": 3,
      "245": 1,
      "212": 4,
      "228": 1,
@@ -181776,12 +181806,14 @@
      "226": 1,
      "243": 2,
      "209": 2,
-     "210": 3,
+     "210": 5,
      "220": 1,
      "234": 1,
      "207": 3,
      "208": 1,
-     "235": 1
+     "235": 1,
+     "217": 1,
+     "227": 1
     },
     "ttfb_hist": {
      "50": 1,
@@ -181790,7 +181822,7 @@
      "104": 2,
      "135": 2,
      "133": 1,
-     "76": 1,
+     "76": 2,
      "127": 1,
      "82": 3,
      "123": 1,
@@ -181806,15 +181838,15 @@
      "89": 3,
      "153": 1,
      "85": 2,
-     "87": 3,
-     "72": 3,
+     "87": 4,
+     "72": 4,
      "108": 2,
      "90": 1,
      "180": 1,
-     "94": 1,
+     "94": 2,
      "84": 1,
-     "71": 1,
-     "69": 2,
+     "71": 2,
+     "69": 3,
      "63": 1,
      "148": 1,
      "57": 1,
@@ -181830,7 +181862,7 @@
      "77": 1,
      "155": 1,
      "75": 1,
-     "68": 2,
+     "68": 3,
      "128": 1,
      "67": 1,
      "80": 1,
