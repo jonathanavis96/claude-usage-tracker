@@ -285,6 +285,25 @@
       "fetched": "2026-10-17"
     }
   },
+  "claude-fable-5-2": {
+    "input": 8,
+    "output": 40,
+    "cache_read": 0.2,
+    "cache_write": 10.0,
+    "cache_write_1h": 16.0,
+    "meter_weight": 1.0,
+    "meter_weight_source": "assumed, not measured: added automatically from the pricing page by tracker/list_prices.py (issue #130)",
+    "class_weight": {
+      "input": 1.0,
+      "output": 1.0,
+      "cache_read": 0.0,
+      "cache_write": 1.0
+    },
+    "list_price_source": {
+      "url": "https://docs.anthropic.com/en/docs/about-claude/pricing",
+      "fetched": "2026-11-17"
+    }
+  },
   "_output_weight": {
     "value": 1.0,
     "previous": 1.8,
