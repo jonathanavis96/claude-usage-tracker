@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-17T13:16:55.915530+00:00",
+ "generated_at": "2026-11-18T10:16:47.543688+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -31,7 +31,7 @@
     "since": null,
     "samples": 24641,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-11-17T13:16:15+00:00",
+    "last": "2026-11-18T10:14:54+00:00",
     "five_hour_last": "2026-10-31T11:20:00+00:00",
     "weekly_only_since": "2026-10-31T13:30:02.334304+02:00"
    },
@@ -39,13 +39,13 @@
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 9663,
-    "turns": 242829,
+    "files": 9672,
+    "turns": 243256,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 9663,
+     "kept": 9672,
      "dropped": 215,
-     "subagent_files": 3590,
+     "subagent_files": 3591,
      "dropped_to": {
       ".claude-avis": 133
      },
@@ -60,8 +60,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 9663,
-      "turns": 242829
+      "files": 9672,
+      "turns": 243256
      }
     ]
    },
@@ -24028,7 +24028,7 @@
        "cache_write_1h": 389222
       }
      },
-     "unpriced_tokens": 5658453,
+     "unpriced_tokens": 0,
      "turns": 151,
      "remote_sourced_turns": 0,
      "headless_tokens": {
@@ -24065,7 +24065,7 @@
        "cache_write": 0
       }
      },
-     "unpriced_tokens": 10928557,
+     "unpriced_tokens": 0,
      "turns": 74,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -24088,7 +24088,7 @@
        "cache_write_1h": 470095
       }
      },
-     "unpriced_tokens": 14632509,
+     "unpriced_tokens": 0,
      "turns": 41,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -24118,7 +24118,7 @@
        "cache_write_1h": 114122
       }
      },
-     "unpriced_tokens": 17013972,
+     "unpriced_tokens": 0,
      "turns": 244,
      "remote_sourced_turns": 91,
      "headless_tokens": {},
@@ -24163,21 +24163,21 @@
        "cache_write": 908110,
        "cache_write_1h": 908110
       },
-      "claude-haiku-5-5": {
-       "input": 10,
-       "output": 4901,
-       "cache_read": 248384,
-       "cache_write": 95099
-      },
       "claude-fable-5-2": {
        "input": 22,
        "output": 19204,
        "cache_read": 4959230,
        "cache_write": 23828,
        "cache_write_1h": 23828
+      },
+      "claude-haiku-5-5": {
+       "input": 10,
+       "output": 4901,
+       "cache_read": 248384,
+       "cache_write": 95099
       }
      },
-     "unpriced_tokens": 5002284,
+     "unpriced_tokens": 0,
      "turns": 212,
      "remote_sourced_turns": 102,
      "headless_tokens": {},
@@ -24207,7 +24207,7 @@
        "cache_write_1h": 117983
       }
      },
-     "unpriced_tokens": 11724869,
+     "unpriced_tokens": 0,
      "turns": 132,
      "remote_sourced_turns": 36,
      "headless_tokens": {},
@@ -24222,22 +24222,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 253,
-       "output": 68359,
-       "cache_read": 20471725,
-       "cache_write": 283244,
-       "cache_write_1h": 283244
-      },
       "claude-fable-5-2": {
        "input": 16,
        "output": 17475,
        "cache_read": 813678,
        "cache_write": 146690,
        "cache_write_1h": 146690
+      },
+      "claude-opus-5-5": {
+       "input": 253,
+       "output": 68359,
+       "cache_read": 20471725,
+       "cache_write": 283244,
+       "cache_write_1h": 283244
       }
      },
-     "unpriced_tokens": 977859,
+     "unpriced_tokens": 0,
      "turns": 113,
      "remote_sourced_turns": 10,
      "headless_tokens": {},
@@ -24252,22 +24252,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 321,
-       "output": 104629,
-       "cache_read": 24739000,
-       "cache_write": 465443,
-       "cache_write_1h": 465443
-      },
       "claude-fable-5-2": {
        "input": 110,
        "output": 67815,
        "cache_read": 11247482,
        "cache_write": 125437,
        "cache_write_1h": 125437
+      },
+      "claude-opus-5-5": {
+       "input": 321,
+       "output": 104629,
+       "cache_read": 24739000,
+       "cache_write": 465443,
+       "cache_write_1h": 465443
       }
      },
-     "unpriced_tokens": 11440844,
+     "unpriced_tokens": 0,
      "turns": 210,
      "remote_sourced_turns": 95,
      "headless_tokens": {},
@@ -24297,7 +24297,7 @@
        "cache_write_1h": 64377
       }
      },
-     "unpriced_tokens": 10709130,
+     "unpriced_tokens": 0,
      "turns": 98,
      "remote_sourced_turns": 41,
      "headless_tokens": {},
@@ -24327,7 +24327,7 @@
        "cache_write_1h": 142801
       }
      },
-     "unpriced_tokens": 5699920,
+     "unpriced_tokens": 0,
      "turns": 243,
      "remote_sourced_turns": 114,
      "headless_tokens": {},
@@ -24349,22 +24349,22 @@
        "cache_write": 867595,
        "cache_write_1h": 867595
       },
-      "claude-sonnet-4-6": {
-       "input": 8,
-       "output": 2702,
-       "cache_read": 189227,
-       "cache_write": 24792,
-       "cache_write_1h": 24792
-      },
       "claude-fable-5-2": {
        "input": 22,
        "output": 14159,
        "cache_read": 1781522,
        "cache_write": 24380,
        "cache_write_1h": 24380
+      },
+      "claude-sonnet-4-6": {
+       "input": 8,
+       "output": 2702,
+       "cache_read": 189227,
+       "cache_write": 24792,
+       "cache_write_1h": 24792
       }
      },
-     "unpriced_tokens": 1820083,
+     "unpriced_tokens": 0,
      "turns": 195,
      "remote_sourced_turns": 67,
      "headless_tokens": {
@@ -24652,7 +24652,7 @@
        "cache_write_1h": 111126
       }
      },
-     "unpriced_tokens": 3256721,
+     "unpriced_tokens": 0,
      "turns": 171,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -24713,7 +24713,7 @@
        "cache_write_1h": 113672
       }
      },
-     "unpriced_tokens": 141943,
+     "unpriced_tokens": 0,
      "turns": 51,
      "remote_sourced_turns": 31,
      "headless_tokens": {
@@ -24736,22 +24736,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 441,
-       "output": 123650,
-       "cache_read": 32328301,
-       "cache_write": 472442,
-       "cache_write_1h": 472442
-      },
       "claude-fable-5-2": {
        "input": 34,
        "output": 6627,
        "cache_read": 2110209,
        "cache_write": 136662,
        "cache_write_1h": 136662
+      },
+      "claude-opus-5-5": {
+       "input": 441,
+       "output": 123650,
+       "cache_read": 32328301,
+       "cache_write": 472442,
+       "cache_write_1h": 472442
       }
      },
-     "unpriced_tokens": 2253532,
+     "unpriced_tokens": 0,
      "turns": 217,
      "remote_sourced_turns": 105,
      "headless_tokens": {
@@ -24948,7 +24948,7 @@
        "cache_write_1h": 96366
       }
      },
-     "unpriced_tokens": 5994829,
+     "unpriced_tokens": 0,
      "turns": 142,
      "remote_sourced_turns": 46,
      "headless_tokens": {
@@ -24993,7 +24993,7 @@
        "cache_write_1h": 78985
       }
      },
-     "unpriced_tokens": 5049673,
+     "unpriced_tokens": 0,
      "turns": 378,
      "remote_sourced_turns": 29,
      "headless_tokens": {
@@ -25120,7 +25120,7 @@
        "cache_write_1h": 4907
       }
      },
-     "unpriced_tokens": 866748,
+     "unpriced_tokens": 0,
      "turns": 218,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25285,7 +25285,7 @@
        "cache_write_1h": 428116
       }
      },
-     "unpriced_tokens": 1869325,
+     "unpriced_tokens": 0,
      "turns": 85,
      "remote_sourced_turns": 0,
      "headless_tokens": {
@@ -25503,22 +25503,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 8,
-       "output": 1744,
-       "cache_read": 1576753,
-       "cache_write": 10654,
-       "cache_write_1h": 10654
-      },
       "claude-fable-5-2": {
        "input": 222,
        "output": 111312,
        "cache_read": 12792017,
        "cache_write": 932492,
        "cache_write_1h": 21391
+      },
+      "claude-opus-5-5": {
+       "input": 8,
+       "output": 1744,
+       "cache_read": 1576753,
+       "cache_write": 10654,
+       "cache_write_1h": 10654
       }
      },
-     "unpriced_tokens": 13836043,
+     "unpriced_tokens": 0,
      "turns": 115,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25548,22 +25548,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 20,
-       "output": 2920,
-       "cache_read": 3202684,
-       "cache_write": 5886,
-       "cache_write_1h": 5886
-      },
       "claude-fable-5-2": {
        "input": 68,
        "output": 178467,
        "cache_read": 5991248,
        "cache_write": 456830,
        "cache_write_1h": 16131
+      },
+      "claude-opus-5-5": {
+       "input": 20,
+       "output": 2920,
+       "cache_read": 3202684,
+       "cache_write": 5886,
+       "cache_write_1h": 5886
       }
      },
-     "unpriced_tokens": 6626613,
+     "unpriced_tokens": 0,
      "turns": 41,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25586,7 +25586,7 @@
        "cache_write_1h": 21826
       }
      },
-     "unpriced_tokens": 6923688,
+     "unpriced_tokens": 0,
      "turns": 29,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25601,21 +25601,21 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 116,
-       "output": 15590,
-       "cache_read": 3020678,
-       "cache_write": 456920
-      },
       "claude-fable-5-2": {
        "input": 54,
        "output": 41822,
        "cache_read": 6644234,
        "cache_write": 131338,
        "cache_write_1h": 27336
+      },
+      "claude-opus-5-5": {
+       "input": 116,
+       "output": 15590,
+       "cache_read": 3020678,
+       "cache_write": 456920
       }
      },
-     "unpriced_tokens": 6817448,
+     "unpriced_tokens": 0,
      "turns": 85,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25644,7 +25644,7 @@
        "cache_write_1h": 5525
       }
      },
-     "unpriced_tokens": 6797229,
+     "unpriced_tokens": 0,
      "turns": 126,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25659,22 +25659,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 368,
-       "output": 89981,
-       "cache_read": 16780379,
-       "cache_write": 393174,
-       "cache_write_1h": 2150
-      },
       "claude-fable-5-2": {
        "input": 70,
        "output": 87164,
        "cache_read": 9015264,
        "cache_write": 393053,
        "cache_write_1h": 8455
+      },
+      "claude-opus-5-5": {
+       "input": 368,
+       "output": 89981,
+       "cache_read": 16780379,
+       "cache_write": 393174,
+       "cache_write_1h": 2150
       }
      },
-     "unpriced_tokens": 9495551,
+     "unpriced_tokens": 0,
      "turns": 216,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25703,7 +25703,7 @@
        "cache_write_1h": 4469
       }
      },
-     "unpriced_tokens": 19694306,
+     "unpriced_tokens": 0,
      "turns": 289,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25748,7 +25748,7 @@
        "cache_write_1h": 13372
       }
      },
-     "unpriced_tokens": 12551855,
+     "unpriced_tokens": 0,
      "turns": 342,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25793,7 +25793,7 @@
        "cache_write_1h": 8716
       }
      },
-     "unpriced_tokens": 28681715,
+     "unpriced_tokens": 0,
      "turns": 219,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25808,21 +25808,21 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
+      "claude-fable-5-2": {
+       "input": 32,
+       "output": 28531,
+       "cache_read": 5388676,
+       "cache_write": 55588
+      },
       "claude-opus-5-5": {
        "input": 174,
        "output": 56773,
        "cache_read": 13271280,
        "cache_write": 165619,
        "cache_write_1h": 1098
-      },
-      "claude-fable-5-2": {
-       "input": 32,
-       "output": 28531,
-       "cache_read": 5388676,
-       "cache_write": 55588
       }
      },
-     "unpriced_tokens": 5472827,
+     "unpriced_tokens": 0,
      "turns": 103,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25852,7 +25852,7 @@
        "cache_write_1h": 6260
       }
      },
-     "unpriced_tokens": 15660786,
+     "unpriced_tokens": 0,
      "turns": 329,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25882,7 +25882,7 @@
        "cache_write_1h": 1968
       }
      },
-     "unpriced_tokens": 10253859,
+     "unpriced_tokens": 0,
      "turns": 250,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25897,22 +25897,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 206,
-       "output": 70702,
-       "cache_read": 21221687,
-       "cache_write": 947580,
-       "cache_write_1h": 4037
-      },
       "claude-fable-5-2": {
        "input": 48,
        "output": 65907,
        "cache_read": 11166780,
        "cache_write": 93954,
        "cache_write_1h": 3288
+      },
+      "claude-opus-5-5": {
+       "input": 206,
+       "output": 70702,
+       "cache_read": 21221687,
+       "cache_write": 947580,
+       "cache_write_1h": 4037
       }
      },
-     "unpriced_tokens": 11326689,
+     "unpriced_tokens": 0,
      "turns": 125,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25927,22 +25927,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 258,
-       "output": 65798,
-       "cache_read": 19555463,
-       "cache_write": 178495,
-       "cache_write_1h": 795
-      },
       "claude-fable-5-2": {
        "input": 116,
        "output": 28879,
        "cache_read": 9097183,
        "cache_write": 392719,
        "cache_write_1h": 4398
+      },
+      "claude-opus-5-5": {
+       "input": 258,
+       "output": 65798,
+       "cache_read": 19555463,
+       "cache_write": 178495,
+       "cache_write_1h": 795
       }
      },
-     "unpriced_tokens": 9518897,
+     "unpriced_tokens": 0,
      "turns": 185,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -25971,7 +25971,7 @@
        "cache_write_1h": 6050
       }
      },
-     "unpriced_tokens": 14044916,
+     "unpriced_tokens": 0,
      "turns": 139,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -26001,7 +26001,7 @@
        "cache_write_1h": 24167
       }
      },
-     "unpriced_tokens": 16393467,
+     "unpriced_tokens": 0,
      "turns": 54,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -26016,22 +26016,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 60,
-       "output": 13677,
-       "cache_read": 11730160,
-       "cache_write": 20011,
-       "cache_write_1h": 20011
-      },
       "claude-fable-5-2": {
        "input": 76,
        "output": 50027,
        "cache_read": 17113655,
        "cache_write": 599707,
        "cache_write_1h": 13025
+      },
+      "claude-opus-5-5": {
+       "input": 60,
+       "output": 13677,
+       "cache_read": 11730160,
+       "cache_write": 20011,
+       "cache_write_1h": 20011
       }
      },
-     "unpriced_tokens": 17763465,
+     "unpriced_tokens": 0,
      "turns": 63,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -26061,7 +26061,7 @@
        "cache_write_1h": 144480
       }
      },
-     "unpriced_tokens": 5817927,
+     "unpriced_tokens": 0,
      "turns": 31,
      "remote_sourced_turns": 0,
      "headless_tokens": {
@@ -26092,7 +26092,7 @@
        "cache_write_1h": 90998
       }
      },
-     "unpriced_tokens": 12243070,
+     "unpriced_tokens": 0,
      "turns": 53,
      "remote_sourced_turns": 0,
      "headless_tokens": {
@@ -26115,22 +26115,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 16,
-       "output": 2673,
-       "cache_read": 3251962,
-       "cache_write": 5812,
-       "cache_write_1h": 5812
-      },
       "claude-fable-5-2": {
        "input": 60,
        "output": 28829,
        "cache_read": 9947749,
        "cache_write": 237460,
        "cache_write_1h": 10147
+      },
+      "claude-opus-5-5": {
+       "input": 16,
+       "output": 2673,
+       "cache_read": 3251962,
+       "cache_write": 5812,
+       "cache_write_1h": 5812
       }
      },
-     "unpriced_tokens": 10214098,
+     "unpriced_tokens": 0,
      "turns": 34,
      "remote_sourced_turns": 0,
      "headless_tokens": {
@@ -26153,6 +26153,13 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
+      "claude-fable-5-2": {
+       "input": 126,
+       "output": 61541,
+       "cache_read": 17759546,
+       "cache_write": 239367,
+       "cache_write_1h": 239367
+      },
       "claude-opus-5-5": {
        "input": 68,
        "output": 11089,
@@ -26166,16 +26173,9 @@
        "cache_read": 155708,
        "cache_write": 70057,
        "cache_write_1h": 70057
-      },
-      "claude-fable-5-2": {
-       "input": 126,
-       "output": 61541,
-       "cache_read": 17759546,
-       "cache_write": 239367,
-       "cache_write_1h": 239367
       }
      },
-     "unpriced_tokens": 18060580,
+     "unpriced_tokens": 0,
      "turns": 91,
      "remote_sourced_turns": 0,
      "headless_tokens": {
@@ -26561,7 +26561,7 @@
        "cache_write_1h": 77057
       }
      },
-     "unpriced_tokens": 826204,
+     "unpriced_tokens": 0,
      "turns": 417,
      "remote_sourced_turns": 0,
      "headless_tokens": {
@@ -26584,22 +26584,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 14,
-       "output": 1098,
-       "cache_read": 725758,
-       "cache_write": 1562,
-       "cache_write_1h": 1562
-      },
       "claude-fable-5-2": {
        "input": 176,
        "output": 126693,
        "cache_read": 16642794,
        "cache_write": 194588,
        "cache_write_1h": 194588
+      },
+      "claude-opus-5-5": {
+       "input": 14,
+       "output": 1098,
+       "cache_read": 725758,
+       "cache_write": 1562,
+       "cache_write_1h": 1562
       }
      },
-     "unpriced_tokens": 16964251,
+     "unpriced_tokens": 0,
      "turns": 82,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -26614,22 +26614,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 8,
-       "output": 512,
-       "cache_read": 439435,
-       "cache_write": 871,
-       "cache_write_1h": 871
-      },
       "claude-fable-5-2": {
        "input": 72,
        "output": 64316,
        "cache_read": 12498289,
        "cache_write": 90281,
        "cache_write_1h": 90281
+      },
+      "claude-opus-5-5": {
+       "input": 8,
+       "output": 512,
+       "cache_read": 439435,
+       "cache_write": 871,
+       "cache_write_1h": 871
       }
      },
-     "unpriced_tokens": 12652958,
+     "unpriced_tokens": 0,
      "turns": 33,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -26652,7 +26652,7 @@
        "cache_write_1h": 203174
       }
      },
-     "unpriced_tokens": 22910312,
+     "unpriced_tokens": 0,
      "turns": 49,
      "remote_sourced_turns": 0,
      "headless_tokens": {},
@@ -26667,22 +26667,22 @@
      "d7": 1,
      "d5": 0,
      "tokens": {
-      "claude-opus-5-5": {
-       "input": 419,
-       "output": 119085,
-       "cache_read": 42727063,
-       "cache_write": 514955,
-       "cache_write_1h": 514955
-      },
       "claude-fable-5-2": {
        "input": 96,
        "output": 48026,
        "cache_read": 8032926,
        "cache_write": 86929,
        "cache_write_1h": 86929
+      },
+      "claude-opus-5-5": {
+       "input": 419,
+       "output": 119085,
+       "cache_read": 42727063,
+       "cache_write": 514955,
+       "cache_write_1h": 514955
       }
      },
-     "unpriced_tokens": 8167977,
+     "unpriced_tokens": 0,
      "turns": 249,
      "remote_sourced_turns": 123,
      "headless_tokens": {},
