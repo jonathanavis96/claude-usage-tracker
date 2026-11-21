@@ -28,18 +28,29 @@ Split by the month the held-out stretch starts, jwork -> dave reads 0.692 on dav
 September stretches and 0.458 on its 64 October ones. The gap did not shrink once all of
 dave's work was counted; it grew. Missing transcripts are not the explanation.
 
-The explanation that fits is a per-account meter. `docs/findings/2026-10-04-account-agreement.md`
-(#139) measured it directly: credits per 1% of the **seven-day** meter agree across jwork,
-dave and avis within -3% to +9% in every regime, while credits per 1% of the **five-hour** meter
-do not (22-29 September: jwork 278k, dave 164k, avis 287k). Dave's five-hour meter moves 5.4
-to 7.5 points per seven-day point, against 4.0 to 5.0 on the others, so for the same work
-dave's five-hour percent is 0.55 to 0.8 the size of the others'. The holdout predicts
-five-hour meter points, so it sees exactly that factor; 0.506 sits a little below that range
-because October adds dave stretches it does not cover.
+Most of it is the five-hour meter charging headless work more, plus a smaller offset that is
+still unexplained. `docs/findings/2026-10-04-account-agreement.md` (#139) measured both:
 
-This does not touch the published rates. They are stated relative to the Opus anchor, with
-one free scale per account and side of each change, so an account-wide meter factor cancels
-out of them (the 2026-09-23 note's point 3).
+- Credits per 1% of the **seven-day** meter agree across jwork, dave and avis within -3% to +9%
+  in every regime, while credits per 1% of the **five-hour** meter do not (22-29 September:
+  jwork 278k, dave 164k, avis 287k).
+- Its section 4 traces most of that to headless `claude -p` work: the five-hour meter charges
+  it about 1.5x as much as interactive work, on every account, and dave's work is 97% headless
+  after 22 September. Allowing for the headless share takes dave's excess from 1.33x to
+  **1.10x [1.03, 1.18]**. That last tenth is a per-account offset nobody has explained.
+
+`tools/holdout.py` fits raw transcript tokens, with no headless factor, so its 0.506 carries
+both parts: the workload-dependent headless effect and the remaining offset. It cannot say
+how much of either is left in the rates the tracker publishes.
+
+What the published rates see is different. `tools/model_rates.py` fits them in the five-hour
+unit (`five_hour_unit`, `stretches_in_five_hour_unit`: headless tokens counted at the fitted
+headless factor, ADR 0001 rule 12), so the headless effect is modelled before the fit rather
+than cancelled by it. The remaining 1.10x is account-wide, and the rates are stated relative
+to the Opus anchor with one free scale per account and side of each change, so a constant
+offset of that kind cancels out of them (the 2026-09-23 note's point 3). Whether the offset is
+constant across workloads has not been tested; a holdout run in the five-hour unit would
+test it and is not done here.
 
 ## 2. Two cache-read weights are in force: 0 for reference credits, the pooled fit for comparisons
 
@@ -83,14 +94,16 @@ Yes, and the data no longer back either side cleanly.
 - **Against 0.** In September dave's own fit sat at 0 on the bound (`docs/findings-2026-09-23-cache-read.md`).
   Today no fit puts the weight at 0: every per-account interval sits above it, masterrig
   before the cut only just (0.0002).
-- **Against 0.003.** It sits inside dave's interval and outside every other fit's.
+- **Against 0.003.** It sits inside dave's interval after the cut and masterrig's before the cut
+  ([0.0002, 0.0107], the widest), and outside the pooled fit and the other three.
 - **Against any pooled value.** The accounts still disagree: dave after the cut [0.0025, 0.0055]
-  and jwork after the cut [0.0101, 0.0147] do not overlap. The per-account meter factor of
+  and jwork after the cut [0.0101, 0.0147] do not overlap. The account offset of
   section 1 cannot be the cause, because each fit has its own scale; this disagreement is not
   explained.
 
 So the condition the September line set, "explain the gap before adopting a pooled weight", is
-met for the meter gap (per-account five-hour meter, #139) and is not met for the weight itself
+mostly met for the meter gap (the headless effect, #139, with a 1.10x offset still unexplained)
+and is not met for the weight itself
 (the per-account weights still disagree). Nothing changes here: the reference weight stays 0 and
 the comparisons keep the pooled fit's weight, as rule 23 has them. The open choice is the
 reference weight alone (0.003 against 0); moving it, or taking the comparisons off the pooled
