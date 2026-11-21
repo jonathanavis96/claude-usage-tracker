@@ -217,6 +217,25 @@ These are the acceptance rules. Each names where it lives.
     `masterrig_excluded` and `MASTERRIG_PHANTOM` stay in the rate fits and the window
     cluster (rule 18).
 
+14. **60% dominance for a per-account fit, added 2026-09-23 (#81).** A per-account fit
+    (one account, one side of the 14 September cut) qualifies for a family only if 3 or
+    more of its stretches carry at least 60% of their raw tokens on that family. A fit in
+    which the family is only ever a minority column has no stretch whose meter movement
+    the family explains, and its coefficient is whatever the majority columns leave. The
+    Opus anchor is exempt. Every fit that returned a coefficient stays on the record in
+    `measured_rates.per_family.<family>.per_fit`, with `qualified` and a `qualification`
+    sentence.
+    What it gates: since the pooled fit (#86, the same day) became the source of every
+    published rate, the per-account fits are diagnostics and enter no rate, so this rule
+    decides only which per-account fits are marked as qualified. The published rate of a
+    family is gated by rule 5 and by `measurable` on the pooled fit's interval, not by
+    this rule. Recorded in force 2026-11-20 (it was listed as pending, not yet in the
+    code, after the code had it).
+    Source: `tools/model_rates.py` (`DOMINANCE_SHARE = 0.60`, `DOMINANCE_MIN_N = 3`,
+    `adopt`, `measured_rates`), `tests/test_model_rates.py` (the dominance tests).
+    Findings: `docs/findings-2026-09-23-opus-5-5-and-dominance.md`,
+    `docs/findings-2026-11-20-cache-read-weight.md`.
+
 15. **Windows per week times the window is read on one set of readings, in one unit,
     added 2026-10-06.** Weekly credits per 1% of the seven-day meter equal credits per 1% of
     the five-hour meter times five-hour points per seven-day point, on the same readings.
@@ -886,15 +905,6 @@ These are the acceptance rules. Each names where it lives.
     `tracker/four_accounts.py` (`account_readings`, `series`, `headless_factor`,
     `capture_audit`), `tracker/publish.py` (`build_public_json`, `_end_weekly_windows`,
     `_account_feeds`), `tools/model_rates.py`, `tests/test_five_hour_end.py`.
-
-### Pending
-
-14. **60% dominance for a family's fit (pending, not yet in the code).** A fit counts toward a
-   family's rate only if 3 or more of its stretches are at least 60% that family. Another
-   PR is adding this; when it merges, this entry takes its source location and moves up
-   into the list above. Until then the code has no such rule (the only dominance constant
-   today is `DOMINANCE = 0.95` at `tools/model_rates.py:63`, which selects single-model
-   stretches for section 1 and does not gate the fits).
 
 ## The rule for changing these
 
