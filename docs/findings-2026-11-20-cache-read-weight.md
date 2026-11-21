@@ -41,14 +41,25 @@ This does not touch the published rates. They are stated relative to the Opus an
 one free scale per account and side of each change, so an account-wide meter factor cancels
 out of them (the 2026-09-23 note's point 3).
 
-## 2. The cache-read weight in force is 0
+## 2. Two cache-read weights are in force: 0 for reference credits, the pooled fit for comparisons
 
-Every published credit figure prices cache reads at `data/prices.json` `_credits.cache_read_weight`,
-which is **0** (range [0, 0.015]), read by `tracker/credits.py` `cache_read_weight()` and used
-by `tracker/publish.py` and `tools/model_rates.py` (`CACHE_READ_WEIGHT = 0.0`).
+**Reference pricing uses 0.** The stretches' credit figures price cache reads at
+`data/prices.json` `_credits.cache_read_weight`, which is **0** (range [0, 0.015]), read by
+`tracker/credits.py` `cache_read_weight()` and `tools/model_rates.py` (`CACHE_READ_WEIGHT = 0.0`).
+This is what `tracker/publish.py` means when it marks the published `cache_read_weight` block
+`used_in_pricing: false`.
 
-The fitted weight is published beside it and prices nothing: `tracker/publish.py` marks the
-`cache_read_weight` block `used_in_pricing: false`. In `history/model-rates.json`:
+**Every comparison uses the pooled fitted weight.** `tracker/credits.py` `comparison_value`, the
+valuation every change figure prices a stretch with, values each cache read at the pooled fit's
+`cache_read_rate` whenever a pooled fit exists (`pooled_fit_prices`: the pooled
+`cache_read_weight` times Opus input). It falls back to the 0 reference weight only without one.
+Its callers include the four-account detector (`tracker/four_accounts.py` `valuation`), whose
+changes are the published headline and change figures, the five-hour headless factor and the
+new-family joint fits in `tracker/publish.py`. ADR 0001 rule 23 keeps this: Opus 5.5's cache
+reads share the one fitted cache-read weight. So today the published change figures already
+price cache reads at the pooled **0.0107**.
+
+In `history/model-rates.json`:
 
 | Fit | Weight (x Opus input) | 80% interval | n |
 |---|---|---|---|
@@ -80,10 +91,11 @@ Yes, and the data no longer back either side cleanly.
 
 So the condition the September line set, "explain the gap before adopting a pooled weight", is
 met for the meter gap (per-account five-hour meter, #139) and is not met for the weight itself
-(the per-account weights still disagree). The weight in force stays 0. Moving it to 0.003, to
-the pooled 0.0107, or anywhere else changes figures published on alldonesites.com and needs its
-own PR under the ADR's "rule for changing these", with the figures before and after, and
-Jonathan's go-ahead.
+(the per-account weights still disagree). Nothing changes here: the reference weight stays 0 and
+the comparisons keep the pooled fit's weight, as rule 23 has them. The open choice is the
+reference weight alone (0.003 against 0); moving it, or taking the comparisons off the pooled
+weight, changes figures published on alldonesites.com and needs its own PR under the ADR's
+"rule for changing these", with the figures before and after, and Jonathan's go-ahead.
 
 ## 4. ADR 0001 entry 14
 
