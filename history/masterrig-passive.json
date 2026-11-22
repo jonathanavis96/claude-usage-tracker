@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-21T22:16:54.719393+00:00",
+ "generated_at": "2026-11-22T19:16:56.252757+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -31,7 +31,7 @@
     "since": null,
     "samples": 24641,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-11-21T22:16:03+00:00",
+    "last": "2026-11-22T19:16:39+00:00",
     "five_hour_last": "2026-10-31T11:20:00+00:00",
     "weekly_only_since": "2026-10-31T13:30:02.334304+02:00"
    },
@@ -39,11 +39,11 @@
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 10378,
-    "turns": 265646,
+    "files": 10386,
+    "turns": 266630,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 10378,
+     "kept": 10386,
      "dropped": 215,
      "subagent_files": 3945,
      "dropped_to": {
@@ -60,8 +60,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 10378,
-      "turns": 265646
+      "files": 10386,
+      "turns": 266630
      }
     ]
    },
@@ -461,8 +461,26 @@
      {
       "session": "session_01AAEXL8kgk7fD6zksG8BRLB",
       "start": "2026-11-21T21:57:09+00:00",
-      "end": "2026-11-21T21:57:09+00:00",
-      "source": "launch"
+      "end": "2026-11-21T22:27:13.370000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL9SC2e7qYG2vcFuHf1",
+      "start": "2026-11-22T10:53:20+00:00",
+      "end": "2026-11-22T11:16:48.586000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL7xAHTXPvr3FLfb6zw",
+      "start": "2026-11-22T15:06:30+00:00",
+      "end": "2026-11-22T15:25:12.538000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL7cnhi6nTvGAqhV9hY",
+      "start": "2026-11-22T16:12:06+00:00",
+      "end": "2026-11-22T16:28:27.589000+00:00",
+      "source": "transcript"
      }
     ],
     "launches_unattributed": 0
@@ -30205,6 +30223,90 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-21T19:11:52+00:00",
+     "end": "2026-11-21T22:29:17+00:00",
+     "seven_day": 42,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 599,
+       "output": 332975,
+       "cache_read": 72964360,
+       "cache_write": 810420,
+       "cache_write_1h": 810420
+      },
+      "claude-sonnet-4-6": {
+       "input": 10,
+       "output": 4873,
+       "cache_read": 296274,
+       "cache_write": 31172,
+       "cache_write_1h": 31172
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 290,
+     "remote_sourced_turns": 76,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 10,
+       "output": 4873,
+       "cache_read": 296274,
+       "cache_write": 31172,
+       "cache_write_1h": 31172
+      }
+     },
+     "headless_turns": 8,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-21T22:29:17+00:00",
+     "end": "2026-11-22T11:20:14+00:00",
+     "seven_day": 43,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 839,
+       "output": 292386,
+       "cache_read": 74833779,
+       "cache_write": 940874,
+       "cache_write_1h": 940874
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 396,
+     "remote_sourced_turns": 91,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-22T11:20:14+00:00",
+     "end": "2026-11-22T16:36:29+00:00",
+     "seven_day": 44,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 844,
+       "output": 371841,
+       "cache_read": 70515935,
+       "cache_write": 880312,
+       "cache_write_1h": 880312
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 388,
+     "remote_sourced_turns": 115,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
     }
    ],
    "stretches": [
