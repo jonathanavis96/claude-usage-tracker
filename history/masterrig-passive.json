@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-24T12:23:54.568173+00:00",
+ "generated_at": "2026-11-25T09:16:49.465857+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -31,7 +31,7 @@
     "since": null,
     "samples": 24641,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-11-24T12:23:44+00:00",
+    "last": "2026-11-25T09:15:48+00:00",
     "five_hour_last": "2026-10-31T11:20:00+00:00",
     "weekly_only_since": "2026-10-31T13:30:02.334304+02:00"
    },
@@ -39,11 +39,11 @@
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 10453,
-    "turns": 267955,
+    "files": 10490,
+    "turns": 268178,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 10453,
+     "kept": 10490,
      "dropped": 215,
      "subagent_files": 3946,
      "dropped_to": {
@@ -60,8 +60,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 10453,
-      "turns": 267955
+      "files": 10490,
+      "turns": 268178
      }
     ]
    },
