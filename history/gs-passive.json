@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-25T05:00:05.941729+00:00",
+ "generated_at": "2026-11-25T05:30:06.769138+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -22,7 +22,7 @@
     "since": "2026-09-05T06:14:32+00:00",
     "samples": 21171,
     "first": "2026-09-05T06:14:32+00:00",
-    "last": "2026-11-25T05:00:07+00:00",
+    "last": "2026-11-25T05:29:05+00:00",
     "five_hour_last": "2026-10-30T23:37:06+00:00",
     "weekly_only_since": "2026-10-31T15:32:06+00:00"
    },
@@ -44441,7 +44441,7 @@
     "since": null,
     "samples": 17555,
     "first": "2026-09-15T21:15:21+00:00",
-    "last": "2026-11-25T04:58:06+00:00",
+    "last": "2026-11-25T05:29:05+00:00",
     "five_hour_last": "2026-11-13T10:18:56+00:00",
     "weekly_only_since": "2026-11-13T10:24:05+00:00"
    },
@@ -44450,7 +44450,7 @@
     "resolves_to": "/home/jonathan/.claude-dave/projects",
     "shared_with": [],
     "files": 6723,
-    "turns": 232201,
+    "turns": 232217,
     "withheld_patterns": [],
     "own_sessions": null,
     "sources": [
@@ -44458,7 +44458,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-dave/projects",
       "files": 3420,
-      "turns": 155616
+      "turns": 155632
      },
      {
       "source": "archive:transcripts-20261015/claude-dave",
@@ -68339,6 +68339,35 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-25T03:45:50+00:00",
+     "end": "2026-11-25T05:29:05+00:00",
+     "seven_day": 61,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 138,
+       "output": 51164,
+       "cache_read": 14591166,
+       "cache_write": 876811,
+       "cache_write_1h": 2388
+      },
+      "claude-sonnet-5-5": {
+       "input": 338,
+       "output": 86953,
+       "cache_read": 16536749,
+       "cache_write": 2679312
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 235,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -85098,7 +85127,7 @@
     "since": null,
     "samples": 36382,
     "first": "2026-09-23T09:47:44+00:00",
-    "last": "2026-11-25T05:02:09+00:00",
+    "last": "2026-11-25T05:31:06+00:00",
     "five_hour_last": "2026-11-23T05:03:23+00:00",
     "weekly_only_since": "2026-11-23T05:05:33+00:00"
    },
@@ -85111,7 +85140,7 @@
      ".claude-jono"
     ],
     "files": 4478,
-    "turns": 127390,
+    "turns": 127394,
     "withheld_patterns": [],
     "own_sessions": {
      "kept": 2656,
@@ -85132,7 +85161,7 @@
       "source": "live",
       "root": "/home/jonathan/.claude-avis/projects",
       "files": 1684,
-      "turns": 74846
+      "turns": 74850
      },
      {
       "source": "archive:transcripts-20261015/claude",
@@ -97645,6 +97674,29 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-24T20:57:57+00:00",
+     "end": "2026-11-25T05:10:28+00:00",
+     "seven_day": 56,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 616,
+       "output": 105867,
+       "cache_read": 53902875,
+       "cache_write": 639494,
+       "cache_write_1h": 639494
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 259,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
     }
    ],
    "stretches": [
@@ -109163,7 +109215,7 @@
  },
  "speed": {
   "schema": 2,
-  "generated_at": "2026-11-25T05:03:36.836528+00:00",
+  "generated_at": "2026-11-25T05:33:28.961489+00:00",
   "method": "trigger-to-last-block/v2",
   "rows": [
    {
@@ -204041,7 +204093,7 @@
     "model": "claude-sonnet-5-5",
     "account": "a3",
     "entrypoint": "cli",
-    "n": 486,
+    "n": 489,
     "fast_session_requests": 0,
     "output_hist": {
      "246": 23,
@@ -204053,10 +204105,10 @@
      "240": 24,
      "241": 20,
      "238": 18,
-     "237": 19,
+     "237": 20,
      "234": 11,
      "245": 27,
-     "228": 2,
+     "228": 3,
      "236": 18,
      "232": 8,
      "253": 13,
@@ -204067,7 +204119,7 @@
      "249": 22,
      "254": 9,
      "258": 5,
-     "259": 6,
+     "259": 7,
      "255": 9,
      "257": 8,
      "265": 2,
@@ -204116,12 +204168,12 @@
      "93": 3,
      "17": 5,
      "45": 13,
-     "51": 9,
+     "51": 10,
      "10": 5,
      "89": 4,
      "63": 7,
      "55": 5,
-     "9": 2,
+     "9": 3,
      "44": 3,
      "77": 7,
      "97": 1,
@@ -204146,7 +204198,7 @@
      "71": 2,
      "107": 3,
      "82": 1,
-     "30": 7,
+     "30": 8,
      "65": 2,
      "85": 2,
      "145": 1,
