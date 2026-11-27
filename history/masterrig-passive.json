@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-26T06:17:10.029703+00:00",
+ "generated_at": "2026-11-27T03:17:02.583774+00:00",
  "until": null,
  "capture_gate": false,
  "model_normalization": {
@@ -31,7 +31,7 @@
     "since": null,
     "samples": 24641,
     "first": "2026-06-13T00:51:22.743614+02:00",
-    "last": "2026-11-26T06:15:46+00:00",
+    "last": "2026-11-27T03:15:46+00:00",
     "five_hour_last": "2026-10-31T11:20:00+00:00",
     "weekly_only_since": "2026-10-31T13:30:02.334304+02:00"
    },
@@ -39,13 +39,13 @@
     "root": "/home/grafe/.claude/projects",
     "resolves_to": "/home/grafe/.claude/projects",
     "shared_with": [],
-    "files": 10518,
-    "turns": 269333,
+    "files": 10592,
+    "turns": 272249,
     "withheld_patterns": [],
     "own_sessions": {
-     "kept": 10518,
+     "kept": 10592,
      "dropped": 215,
-     "subagent_files": 3963,
+     "subagent_files": 3985,
      "dropped_to": {
       ".claude-avis": 133
      },
@@ -60,8 +60,8 @@
      {
       "source": "live",
       "root": "/home/grafe/.claude/projects",
-      "files": 10518,
-      "turns": 269333
+      "files": 10592,
+      "turns": 272249
      }
     ]
    },
@@ -481,6 +481,78 @@
       "start": "2026-11-22T16:12:06+00:00",
       "end": "2026-11-22T16:28:27.589000+00:00",
       "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL8z3fYNUdT2Nr6R11e",
+      "start": "2026-11-26T14:11:55+00:00",
+      "end": "2026-11-26T14:11:55+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXL8rhQCTZrDtHbRkXRS",
+      "start": "2026-11-26T14:12:00+00:00",
+      "end": "2026-11-26T14:12:00+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXL7Zr6mabHVHPWxbxrB",
+      "start": "2026-11-26T14:12:19+00:00",
+      "end": "2026-11-26T14:12:19+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXL8kUbAdM55NHzLL36p",
+      "start": "2026-11-26T14:12:24+00:00",
+      "end": "2026-11-26T14:36:48.031000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL9Bt4dbBxvXcdJ88Ep",
+      "start": "2026-11-26T22:16:24+00:00",
+      "end": "2026-11-26T22:16:24+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXL88MTLuo7MgZrwN7Yv",
+      "start": "2026-11-26T22:16:27+00:00",
+      "end": "2026-11-26T22:21:27.785000+00:00",
+      "source": "transcript"
+     },
+     {
+      "session": "session_01AAEXL8VmJjGHS6fhp6poUU",
+      "start": "2026-11-26T22:16:31+00:00",
+      "end": "2026-11-26T22:16:31+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXL96uuxXxnfvMoXLwcD",
+      "start": "2026-11-26T22:16:35+00:00",
+      "end": "2026-11-26T22:16:35+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXL8ewDPY25grmQcXucP",
+      "start": "2026-11-26T22:16:38+00:00",
+      "end": "2026-11-26T22:16:38+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXL99zwtaatSVKDQLbVp",
+      "start": "2026-11-26T22:16:43+00:00",
+      "end": "2026-11-26T22:16:43+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXLAohdQwkUcJQBVm8fJ",
+      "start": "2026-11-26T22:17:37+00:00",
+      "end": "2026-11-26T22:17:37+00:00",
+      "source": "launch"
+     },
+     {
+      "session": "session_01AAEXLAqVn2i1pCMxqiFSZX",
+      "start": "2026-11-26T23:22:00+00:00",
+      "end": "2026-11-26T23:22:00+00:00",
+      "source": "launch"
      }
     ],
     "launches_unattributed": 0
@@ -30491,6 +30563,403 @@
      "headless_tokens": {},
      "headless_turns": 0,
      "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T06:02:56+00:00",
+     "end": "2026-11-26T10:39:56+00:00",
+     "seven_day": 52,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-sonnet-5-5": {
+       "input": 80,
+       "output": 20570,
+       "cache_read": 3809259,
+       "cache_write": 113555,
+       "cache_write_1h": 103327
+      },
+      "claude-opus-5-5": {
+       "input": 900,
+       "output": 243539,
+       "cache_read": 58141267,
+       "cache_write": 1313950,
+       "cache_write_1h": 788429
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 461,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T10:39:56+00:00",
+     "end": "2026-11-26T12:28:56+00:00",
+     "seven_day": 53,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 500,
+       "output": 179039,
+       "cache_read": 58513560,
+       "cache_write": 685243,
+       "cache_write_1h": 660784
+      },
+      "claude-sonnet-5-5": {
+       "input": 206,
+       "output": 48348,
+       "cache_read": 8544979,
+       "cache_write": 498692,
+       "cache_write_1h": 91336
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 335,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T12:28:56+00:00",
+     "end": "2026-11-26T13:05:11+00:00",
+     "seven_day": 54,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-sonnet-5-5": {
+       "input": 710,
+       "output": 305663,
+       "cache_read": 57621618,
+       "cache_write": 986115
+      },
+      "claude-opus-5-5": {
+       "input": 380,
+       "output": 131610,
+       "cache_read": 27095373,
+       "cache_write": 524106,
+       "cache_write_1h": 154865
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 537,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T13:05:11+00:00",
+     "end": "2026-11-26T13:49:56+00:00",
+     "seven_day": 55,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-sonnet-5-5": {
+       "input": 232,
+       "output": 109663,
+       "cache_read": 15377706,
+       "cache_write": 417983
+      },
+      "claude-opus-5-5": {
+       "input": 568,
+       "output": 194866,
+       "cache_read": 43778861,
+       "cache_write": 853900,
+       "cache_write_1h": 459150
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 378,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T13:49:56+00:00",
+     "end": "2026-11-26T14:30:56+00:00",
+     "seven_day": 56,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-sonnet-5-5": {
+       "input": 80,
+       "output": 31149,
+       "cache_read": 3369570,
+       "cache_write": 106617
+      },
+      "claude-opus-5-5": {
+       "input": 561,
+       "output": 198667,
+       "cache_read": 74086771,
+       "cache_write": 525242,
+       "cache_write_1h": 525242
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 300,
+     "remote_sourced_turns": 93,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-26T14:30:56+00:00",
+     "end": "2026-11-26T16:43:16+00:00",
+     "seven_day": 57,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 420,
+       "output": 118854,
+       "cache_read": 30337312,
+       "cache_write": 993796,
+       "cache_write_1h": 993796
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 186,
+     "remote_sourced_turns": 2,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-26T17:01:23+00:00",
+     "end": "2026-11-26T22:17:01+00:00",
+     "seven_day": 58,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 377,
+       "output": 113201,
+       "cache_read": 32480658,
+       "cache_write": 803514,
+       "cache_write_1h": 803514
+      },
+      "claude-sonnet-5-5": {
+       "input": 146,
+       "output": 35223,
+       "cache_read": 6243704,
+       "cache_write": 207837
+      },
+      "claude-sonnet-4-6": {
+       "input": 8,
+       "output": 4448,
+       "cache_read": 210451,
+       "cache_write": 31513,
+       "cache_write_1h": 31513
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 246,
+     "remote_sourced_turns": 10,
+     "headless_tokens": {
+      "claude-sonnet-4-6": {
+       "input": 8,
+       "output": 4448,
+       "cache_read": 210451,
+       "cache_write": 31513,
+       "cache_write_1h": 31513
+      }
+     },
+     "headless_turns": 6,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-26T22:17:01+00:00",
+     "end": "2026-11-26T22:25:31+00:00",
+     "seven_day": 59,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 161,
+       "output": 40722,
+       "cache_read": 13049214,
+       "cache_write": 217433,
+       "cache_write_1h": 217433
+      },
+      "<synthetic>": {
+       "input": 0,
+       "output": 0,
+       "cache_read": 0,
+       "cache_write": 0
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 73,
+     "remote_sourced_turns": 32,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
+    },
+    {
+     "start": "2026-11-26T22:25:31+00:00",
+     "end": "2026-11-26T22:36:16+00:00",
+     "seven_day": 60,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 68,
+       "output": 20887,
+       "cache_read": 2986256,
+       "cache_write": 36874,
+       "cache_write_1h": 36874
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 24,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T22:36:16+00:00",
+     "end": "2026-11-26T22:44:56+00:00",
+     "seven_day": 61,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 48,
+       "output": 14202,
+       "cache_read": 2204719,
+       "cache_write": 75105,
+       "cache_write_1h": 75105
+      },
+      "claude-sonnet-5-5": {
+       "input": 38,
+       "output": 13694,
+       "cache_read": 261482,
+       "cache_write": 154367,
+       "cache_write_1h": 154367
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 39,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T22:44:56+00:00",
+     "end": "2026-11-26T22:55:41+00:00",
+     "seven_day": 62,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 92,
+       "output": 31174,
+       "cache_read": 6595311,
+       "cache_write": 155948,
+       "cache_write_1h": 155948
+      },
+      "claude-sonnet-5-5": {
+       "input": 50,
+       "output": 14994,
+       "cache_read": 368902,
+       "cache_write": 210284,
+       "cache_write_1h": 210284
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 68,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T22:55:41+00:00",
+     "end": "2026-11-26T23:17:01+00:00",
+     "seven_day": 63,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 210,
+       "output": 49629,
+       "cache_read": 23211565,
+       "cache_write": 169390,
+       "cache_write_1h": 169390
+      },
+      "claude-sonnet-5-5": {
+       "input": 122,
+       "output": 55257,
+       "cache_read": 5380430,
+       "cache_write": 381043,
+       "cache_write_1h": 169098
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 151,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": false
+    },
+    {
+     "start": "2026-11-26T23:17:01+00:00",
+     "end": "2026-11-27T00:22:56+00:00",
+     "seven_day": 64,
+     "five_hour_measured": false,
+     "d7": 1,
+     "d5": 0,
+     "tokens": {
+      "claude-opus-5-5": {
+       "input": 122,
+       "output": 19463,
+       "cache_read": 17243971,
+       "cache_write": 160687,
+       "cache_write_1h": 160687
+      }
+     },
+     "unpriced_tokens": 0,
+     "turns": 54,
+     "remote_sourced_turns": 0,
+     "headless_tokens": {},
+     "headless_turns": 0,
+     "cloud_session": true
     }
    ],
    "stretches": [
